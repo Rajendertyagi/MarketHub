@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eventhub"
+description = "EventHub - generic self-hosted MCP event server foundation"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dynamic = ["version"]
+dependencies = [
+    "mcp>=2.0.0,<3.0.0",
+    "starlette>=0.48.0,<2.0.0",
+    "uvicorn>=0.31.1,<1.0.0",
+    "sse-starlette>=3.0.0,<4.0.0",
+]
+
+[project.scripts]
+eventhub = "app.server:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "app.__init__.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["app*", "core*", "mcp_server*", "sources*", "market*", "brokers*", "api*"]

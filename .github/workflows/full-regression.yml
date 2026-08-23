@@ -1,0 +1,40 @@
+name: full-regression
+
+# Full regression suite (test/run_all.py --group all) on the platform the
+# suite was developed and validated on: Windows.
+#
+# Manual dispatch ONLY — no push/PR triggers, so the slow path never runs
+# automatically. Scoped to this repository; no deploy, publish, release,
+# or repository-setting changes.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      # UTF-8 mode for ALL Python processes in the job (runner + spawned test
+      # files + server subprocesses). Prevents cp1252 UnicodeEncodeError on
+      # windows-latest when tests print non-cp1252 characters.
+      PYTHONUTF8: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Full regression (hard 300s cap per file)
+        run: python test/run_all.py --group all --timeout 300
