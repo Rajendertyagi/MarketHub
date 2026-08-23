@@ -46,6 +46,10 @@ TOKEN = "SYNTHETIC_ACCESS_TOKEN_XYZ"
 URI_1 = "wss://feeder.example/feeds?requestId=R1&code=CODE1"
 URI_2 = "wss://feeder.example/feeds?requestId=R2&code=CODE2"
 KEYS = ["NSE_EQ|INE001TEST01", "NSE_INDEX|Nifty 50"]
+METADATA = {
+    KEYS[0]: ("NSE", "INE001TEST01"),
+    KEYS[1]: ("NSE", "Nifty 50"),
+}
 
 
 def _expect_raises(runner: R, label: str, exc_type: type, fn, needle: str | None = None) -> None:
@@ -133,13 +137,16 @@ def _make_feed(runner: R, *, rest_results=None, connections=None,
     connector = FakeConnector(connections if connections is not None
                               else [FakeConnection()])
     overrides = {"source_name": "upstox", "mode": "full",
-                 "instrument_keys": list(KEYS)}
+                 "instrument_keys": list(KEYS),
+                 "__metadata__": METADATA}
     overrides.update(config_overrides or {})
+    metadata = overrides.pop("__metadata__", METADATA)
     feed = UpstoxFeed(
         config=overrides,
         credentials=UpstoxCredentials(access_token=TOKEN),
         rest=rest,
         market_service=None,          # intentionally unused in D3.1
+        instrument_metadata=metadata,
         ws_connect=connector,
         sleep=sleep,
         random_jitter=jitter,
@@ -181,10 +188,13 @@ def test_config_validation(runner: R) -> None:
 
     base = {"source_name": "upstox", "mode": "full",
             "instrument_keys": ["NSE_EQ|A"]}
+    base_meta = {"NSE_EQ|A": ("NSE", "A")}
 
     def make(**over):
+        meta = over.pop("instrument_metadata", base_meta)
         cfg = dict(base); cfg.update(over)
-        return UpstoxFeed(config=cfg, credentials=creds, rest=_StubRest())
+        return UpstoxFeed(config=cfg, credentials=creds, rest=_StubRest(),
+                          instrument_metadata=meta)
 
     runner.assert_eq(name + "-ok", make().name, "upstox")
 
@@ -207,7 +217,10 @@ def test_config_validation(runner: R) -> None:
                    lambda: make(mode="mega"))
 
     # Dedup preserves first occurrence.
-    feed = make(instrument_keys=["NSE_EQ|B", "NSE_EQ|A", "NSE_EQ|B"])
+    dedup_keys = ["NSE_EQ|B", "NSE_EQ|A", "NSE_EQ|B"]
+    dedup_meta = {k: ("NSE", k.split("|")[-1]) for k in set(dedup_keys)}
+    feed = make(instrument_keys=dedup_keys,
+                instrument_metadata=dedup_meta)
     runner.assert_eq(name + "-dedupe-order",
                      list(feed._instrument_keys), ["NSE_EQ|B", "NSE_EQ|A"])
 
@@ -224,10 +237,38 @@ def test_config_validation(runner: R) -> None:
     # Wrong dependency types rejected.
     _expect_raises(runner, name + "-credentials-type", UpstoxConfigError,
                    lambda: UpstoxFeed(config=dict(base), credentials="tok",
-                                      rest=object()))
+                                      rest=_StubRest(),
+                                      instrument_metadata=base_meta))
     _expect_raises(runner, name + "-rest-type", UpstoxConfigError,
                    lambda: UpstoxFeed(config=dict(base), credentials=creds,
-                                      rest=None))
+                                      rest=None,
+                                      instrument_metadata=base_meta))
+
+    # Metadata validation: configured keys must have complete metadata.
+    _expect_raises(runner, name + "-missing-metadata", UpstoxConfigError,
+                   lambda: make(instrument_metadata={}),
+                   needle="canonical")
+    _expect_raises(runner, name + "-partial-metadata", UpstoxConfigError,
+                   lambda: make(instrument_metadata={
+                       KEYS[0]: ("NSE", "A")}),
+                   needle="canonical")
+
+    for label, bad_meta in [
+        ("empty-exchange", {k: ("", "v") for k in KEYS}),
+        ("blank-exchange", {k: ("  ", "v") for k in KEYS}),
+        ("non-str-exchange", {k: (123, "v") for k in KEYS}),
+        ("empty-ts", {k: ("NSE", "") for k in KEYS}),
+        ("blank-ts", {k: ("NSE", "  ") for k in KEYS}),
+        ("non-str-ts", {k: ("NSE", 42) for k in KEYS}),
+        ("wrong-shape", {k: "not-a-tuple" for k in KEYS}),
+        ("wrong-length", {k: ("NSE",) for k in KEYS}),
+    ]:
+        _expect_raises(runner, name + f"-meta-{label}", UpstoxConfigError,
+                       lambda bm=dict(bad_meta): make(instrument_metadata=bm))
+
+    # Valid metadata succeeds.
+    ok = make()
+    runner.assert_eq(name + "-valid-metadata-ok", ok.name, "upstox")
 
 
 # ---------------------------------------------------------------------------
@@ -422,6 +463,7 @@ async def test_backoff_policy(runner: R) -> None:
         config={"source_name": "upstox", "mode": "full",
                 "instrument_keys": KEYS},
         credentials=UpstoxCredentials(access_token=TOKEN),
+        instrument_metadata=METADATA,
         rest=FakeRest([URI_1] * 8),
         ws_connect=FakeConnector(
             [FakeConnection(incoming=[ConnectionClosed(None, None)]) for _ in range(7)]
@@ -468,6 +510,7 @@ async def test_backoff_cap_and_jitter_bound(runner: R) -> None:
         config={"source_name": "upstox", "mode": "full",
                 "instrument_keys": KEYS},
         credentials=UpstoxCredentials(access_token=TOKEN),
+        instrument_metadata=METADATA,
         rest=FakeRest([URI_1] * 9),
         ws_connect=FakeConnector(
             [FakeConnection(incoming=[ConnectionClosed(None, None)]) for _ in range(8)]
@@ -502,6 +545,7 @@ async def test_rest_error_classification(runner: R) -> None:
         config={"source_name": "upstox", "mode": "full",
                 "instrument_keys": KEYS},
         credentials=UpstoxCredentials(access_token=TOKEN),
+        instrument_metadata=METADATA,
         rest=FakeRest([UpstoxAuthError("invalid token")]),
         ws_connect=FakeConnector([]),
         sleep=_instant_sleep,
@@ -517,6 +561,7 @@ async def test_rest_error_classification(runner: R) -> None:
         config={"source_name": "upstox", "mode": "full",
                 "instrument_keys": KEYS},
         credentials=UpstoxCredentials(access_token=TOKEN),
+        instrument_metadata=METADATA,
         rest=FakeRest([UpstoxRestError("bad request", status_code=400,
                                        retryable=False)]),
         ws_connect=FakeConnector([]),
@@ -531,6 +576,7 @@ async def test_rest_error_classification(runner: R) -> None:
         config={"source_name": "upstox", "mode": "full",
                 "instrument_keys": KEYS},
         credentials=UpstoxCredentials(access_token=TOKEN),
+        instrument_metadata=METADATA,
         rest=FakeRest([UpstoxRestError("server busy", status_code=500,
                                        retryable=True), URI_1]),
         ws_connect=FakeConnector([FakeConnection(incoming=[b"\x01"])]),
@@ -567,6 +613,7 @@ async def test_rate_limit_retry_after(runner: R) -> None:
         config={"source_name": "upstox", "mode": "full",
                 "instrument_keys": KEYS},
         credentials=UpstoxCredentials(access_token=TOKEN),
+        instrument_metadata=METADATA,
         rest=FakeRest([rate_limited, URI_1]),
         ws_connect=FakeConnector([FakeConnection(incoming=[b"\x01"])]),
         sleep=real_sleep,
@@ -586,6 +633,7 @@ async def test_rate_limit_retry_after(runner: R) -> None:
         config={"source_name": "upstox", "mode": "full",
                 "instrument_keys": KEYS},
         credentials=UpstoxCredentials(access_token=TOKEN),
+        instrument_metadata=METADATA,
         rest=FakeRest([UpstoxRateLimitError("slow down",
                                             retry_after_seconds=120)]),
         sleep=real_sleep,
@@ -617,6 +665,7 @@ async def test_stop_behaviour(runner: R) -> None:
         config={"source_name": "upstox", "mode": "full",
                 "instrument_keys": KEYS},
         credentials=UpstoxCredentials(access_token=TOKEN),
+        instrument_metadata=METADATA,
         rest=FakeRest([]),
         ws_connect=FakeConnector([]),
         sleep=_instant_sleep,
@@ -631,6 +680,7 @@ async def test_stop_behaviour(runner: R) -> None:
         config={"source_name": "upstox", "mode": "full",
                 "instrument_keys": KEYS},
         credentials=UpstoxCredentials(access_token=TOKEN),
+        instrument_metadata=METADATA,
         rest=FakeRest([URI_1]),
         ws_connect=FakeConnector([conn]),
         sleep=_instant_sleep,
@@ -660,6 +710,7 @@ async def test_cancellation(runner: R) -> None:
         config={"source_name": "upstox", "mode": "full",
                 "instrument_keys": KEYS},
         credentials=UpstoxCredentials(access_token=TOKEN),
+        instrument_metadata=METADATA,
         rest=FakeRest([URI_1]),
         ws_connect=FakeConnector([conn]),
         sleep=_instant_sleep,

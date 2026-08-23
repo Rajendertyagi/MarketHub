@@ -40,6 +40,7 @@ from typing import Any, Callable
 
 from websockets.asyncio.client import connect as _websockets_connect
 
+from brokers.upstox.feed_processing import process_binary_frame
 from brokers.upstox.auth import UpstoxCredentials
 from brokers.upstox.errors import (
     UpstoxAuthError,
@@ -136,6 +137,7 @@ class UpstoxFeed:
         credentials: UpstoxCredentials,
         rest: Any,
         market_service: Any = None,
+        instrument_metadata: Mapping[str, tuple[str, str]] | None = None,
         ws_connect: Callable[..., Any] | None = None,
         sleep: Callable[[float], Any] | None = None,
         random_jitter: Callable[[float, float], float] | None = None,
@@ -182,6 +184,43 @@ class UpstoxFeed:
             )
         self._instrument_keys: tuple[str, ...] = tuple(keys)
 
+        # -- canonical identity metadata ---------------------------------------
+        # Every configured instrument_key MUST have complete metadata.
+        # Missing/malformed metadata is a configuration error (fail fast).
+        metadata: dict[str, tuple[str, str]] = {}
+        if instrument_metadata:
+            for mk, mv in instrument_metadata.items():
+                if not isinstance(mk, str) or not mk.strip():
+                    raise UpstoxConfigError(
+                        f"instrument_metadata key must be a non-empty string; "
+                        f"got {mk!r}"
+                    )
+                if not isinstance(mv, (tuple, list)) or len(mv) != 2:
+                    raise UpstoxConfigError(
+                        f"instrument_metadata[{mk!r}] must be a "
+                        f"(exchange, tradingsymbol) tuple"
+                    )
+                ex, ts = mv
+                if not isinstance(ex, str) or not ex.strip():
+                    raise UpstoxConfigError(
+                        f"instrument_metadata[{mk!r}].exchange must be a "
+                        f"non-empty string"
+                    )
+                if not isinstance(ts, str) or not ts.strip():
+                    raise UpstoxConfigError(
+                        f"instrument_metadata[{mk!r}].tradingsymbol must be a "
+                        f"non-empty string"
+                    )
+                metadata[mk.strip()] = (ex.strip(), ts.strip())
+
+        for key in keys:
+            if key not in metadata:
+                raise UpstoxConfigError(
+                    f"configured instrument_key {key!r} has no canonical "
+                    f"metadata; every configured key requires exchange and "
+                    f"tradingsymbol"
+                )
+
         # -- dependencies -----------------------------------------------------
         if not isinstance(credentials, UpstoxCredentials):
             raise UpstoxConfigError(
@@ -196,6 +235,13 @@ class UpstoxFeed:
         # MarketService is accepted now (stable constructor) but is
         # intentionally UNUSED until D3.2 wires market-data processing.
         self._market_service = market_service
+
+        # Canonical identity metadata: {instrument_key: (exchange, tradingsymbol)}.
+        # Frozen at construction so caller mutation cannot affect runtime.
+        from types import MappingProxyType
+        self._instrument_metadata: Mapping[str, tuple[str, str]] = (
+            MappingProxyType(metadata)
+        )
 
         # -- test seams ---------------------------------------------------------
         self._ws_connect: Callable[..., Any] = ws_connect or _default_ws_connect
@@ -404,7 +450,7 @@ class UpstoxFeed:
                     self._note_error(_safe_ws_summary(exc))
                     return "closed"
                 message = recv_task.result()
-                self._count_frame(message)
+                await self._process_frame(message)
                 recv_task = asyncio.create_task(ws.recv())
                 pending = {recv_task, stop_task}
         finally:
@@ -421,7 +467,59 @@ class UpstoxFeed:
         elif isinstance(message, str):
             self._counters["text_frames"] += 1
         self._last_message_at = self._utc_now_iso()
-        # D3.2 will call _process_frame(message) here.
+
+    async def _process_frame(self, message: Any) -> None:
+        """D3.2 market-data processing seam.
+
+        Counts the frame, then (for binary frames with a MarketService)
+        decodes/normalizes/applies via feed_processing. D3.1 callers that
+        pass ``market_service=None`` get counting-only behaviour.
+        """
+        self._count_frame(message)
+
+        if not isinstance(message, bytes) or not message:
+            return
+        if self._market_service is None:
+            return
+
+        received_ts = datetime.now(timezone.utc)
+        try:
+            result = process_binary_frame(
+                message, received_ts=received_ts,
+                instrument_metadata=self._instrument_metadata,
+            )
+        except Exception as exc:
+            from brokers.upstox.feed_protocol import ProtobufDecodeError
+            if isinstance(exc, ProtobufDecodeError):
+                self._counters.setdefault("decode_errors", 0)
+                self._counters["decode_errors"] += 1
+                logger.debug("upstox feed %s: decode error - %s",
+                             self._name, exc)
+                return
+            # Unexpected internal bug — surface it.
+            raise
+
+        if result.segment_status is not None:
+            self._segment_status = result.segment_status
+
+        for outcome in result.instruments:
+            if outcome.error is not None:
+                key = "normalization_errors"
+                self._counters[key] = self._counters.get(key, 0) + 1
+                continue
+            if outcome.patch is not None:
+                mo = await self._market_service.apply_quote(outcome.patch)
+                if mo.accepted and mo.changed:
+                    key = "quote_updates"
+                    self._counters[key] = self._counters.get(key, 0) + 1
+                if mo.stale:
+                    key = "quote_stale"
+                    self._counters[key] = self._counters.get(key, 0) + 1
+            if outcome.depth is not None:
+                do = await self._market_service.apply_depth(outcome.depth)
+                if do.accepted:
+                    key = "depth_updates"
+                    self._counters[key] = self._counters.get(key, 0) + 1
 
     # -- public API ------------------------------------------------------------
 
