@@ -83,6 +83,7 @@ _TEST_FILES: dict[str, str] = {
     "nonfinite_rejection": "test_nonfinite_rejection.py",
     "retention": "test_retention.py",
     "market_normalize": "test_market_normalize.py",
+    "market_models": "test_market_models.py",
     "market_service": "test_market_service.py",
     "market_sse": "test_market_sse.py",
 }
@@ -100,6 +101,7 @@ GROUPS: dict[str, list[str]] = {
         "nonfinite_rejection",
         "retention",
         "market_normalize",
+        "market_models",
         "market_service",
         "market_sse",
     ],

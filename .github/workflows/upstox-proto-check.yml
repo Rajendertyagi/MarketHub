@@ -1,0 +1,78 @@
+name: upstox-proto-check
+
+# Provenance enforcement for the vendored Upstox market-data feed binding:
+#
+#   official Upstox MarketDataFeed.proto  (vendored, SHA256-pinned)
+#         -> standard grpc_tools.protoc (PINNED version below)
+#         -> generated MarketDataFeed_pb2.py
+#
+# CHECK-ONLY: this workflow generates into RUNNER_TEMP, uploads the
+# generated file as a provenance artifact, and byte-compares it against
+# the committed binding. It NEVER modifies repository source, never
+# commits, never pushes. To adopt new generator output:
+#   1. download the artifact from a failed/passed run
+#   2. replace brokers/upstox/proto/MarketDataFeed_pb2.py locally
+#   3. commit through normal reviewed process
+#
+# Generation happens ONLY here (or in a dev environment with the same
+# pinned tool). grpcio-tools is NOT a runtime dependency; runtime needs
+# protobuf only (requirements.txt).
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  proto:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install pinned development-only generator
+        run: pip install "grpcio-tools==1.80.0"
+
+      - name: Show generator versions
+        run: |
+          python -m grpc_tools.protoc --version
+          pip show grpcio-tools | head -n 2
+
+      - name: Generate binding into temp directory (never over the repo copy)
+        run: |
+          GEN_DIR="$RUNNER_TEMP/gen/brokers/upstox/proto"
+          mkdir -p "$GEN_DIR"
+          python -m grpc_tools.protoc \
+            -I. \
+            --python_out="$GEN_DIR" \
+            brokers/upstox/proto/MarketDataFeed.proto
+          echo "GEN_FILE=$GEN_DIR/MarketDataFeed_pb2.py" >> "$GITHUB_ENV"
+
+      - name: Upload generated binding (provenance artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: MarketDataFeed_pb2_py-grpcio-tools-1-80-0
+          path: ${{ env.GEN_FILE }}
+          if-no-files-found: error
+
+      - name: Byte-compare against committed binding
+        run: |
+          COMMITTED=brokers/upstox/proto/MarketDataFeed_pb2.py
+          if cmp -s "$GEN_FILE" "$COMMITTED"; then
+            echo "OK: committed binding is byte-identical to pinned-generator output"
+          else
+            echo "::error::Committed binding differs from pinned-generator output."
+            echo "--- diff (committed vs generated) ---"
+            diff -u "$COMMITTED" "$GEN_FILE" | head -n 60 || true
+            echo "To adopt: download the uploaded artifact, replace"
+            echo "brokers/upstox/proto/MarketDataFeed_pb2.py, and commit through"
+            echo "the normal reviewed process."
+            exit 1
+          fi

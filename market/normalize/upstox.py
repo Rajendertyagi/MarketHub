@@ -14,10 +14,14 @@ Upstox-specific semantics implemented:
     canonical ``close`` — never to change-percent.
   * REST quote timestamps: prefer ISO-8601, fall back to epoch-ms
     (locked policy #4). WS ``ltt`` is epoch-ms.
-  * proto3 scalar absence decodes as 0: in WS full feeds the scalars
-    atp/vtt/oi/tbq/tsq use a documented 0-means-not-reported rule; prices
-    are protected separately by the zero-price depth rule. Verify against
-    a live feed in Phase D and adjust if the provider behaves differently.
+  * P-ZERO (locked): proto3 scalars have no presence — decoded
+    default-zero equals unset on the wire, so WS field maps treat zero as
+    NOT REPORTED (full policy: brokers/upstox/feed_protocol.py). REST JSON
+    keeps literal-zero semantics (e.g. equity ``oi: 0`` is preserved).
+    Verified against the official V3 schema; no live-feed adjustment
+    required.
+  * V3 depth rows are Quote{bidQ, bidP, askQ, askP}: order counts do not
+    exist in the V3 schema, so WS-sourced DepthLevel.orders is None.
 """
 
 from __future__ import annotations
@@ -280,7 +284,7 @@ def quote_fields_from_ws_full(
         fields[dst] = to_int(raw, field=src)
 
     bid_ask = (ff.get("marketLevel") or {}).get("bidAskQuote") or []
-    for side, src_key, dst_key in (("bid", "bp", "best_bid"), ("ask", "ap", "best_ask")):
+    for src_key, dst_key in (("bidP", "best_bid"), ("askP", "best_ask")):
         for level in bid_ask:
             raw = level.get(src_key) if isinstance(level, dict) else None
             if raw is None:
@@ -320,34 +324,29 @@ def depth_from_ws(
     for i, level in enumerate(bid_ask):
         if not isinstance(level, dict):
             raise NormalizationError(f"upstox ws bidAskQuote[{i}]: expected object")
-        bp = level.get("bp")
-        ap = level.get("ap")
-        if bp is not None:
-            price = to_float(bp, field="bidAskQuote.bp")
+        # V3 wire shape: Quote{bidQ, bidP, askQ, askP} — one combined row
+        # per level. Order counts do not exist in the V3 schema, so
+        # WS-sourced DepthLevel.orders is always None.
+        bid_q = level.get("bidQ")
+        ask_q = level.get("askQ")
+        if bid_q is not None:
+            price = to_float(level.get("bidP"), field="bidAskQuote.bidP")
             if price:
                 bids.append(
                     DepthLevel(
                         price=price,
-                        quantity=to_float(level.get("bq"), field="bidAskQuote.bq") or 0.0,
-                        orders=(
-                            to_int(level["bno"], field="bidAskQuote.bno")
-                            if level.get("bno") is not None
-                            else None
-                        ),
+                        quantity=to_float(bid_q, field="bidAskQuote.bidQ") or 0.0,
+                        orders=None,
                     )
                 )
-        if ap is not None:
-            price = to_float(ap, field="bidAskQuote.ap")
+        if ask_q is not None:
+            price = to_float(level.get("askP"), field="bidAskQuote.askP")
             if price:
                 asks.append(
                     DepthLevel(
                         price=price,
-                        quantity=to_float(level.get("aq"), field="bidAskQuote.aq") or 0.0,
-                        orders=(
-                            to_int(level["ano"], field="bidAskQuote.ano")
-                            if level.get("ano") is not None
-                            else None
-                        ),
+                        quantity=to_float(ask_q, field="bidAskQuote.askQ") or 0.0,
+                        orders=None,
                     )
                 )
     return Depth(

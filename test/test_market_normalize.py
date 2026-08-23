@@ -403,7 +403,7 @@ def test_upstox_ws_patches(runner: R) -> None:
         "ltpc": {"ltp": 141.0, "ltt": "1740729552723", "cp": 233.95},
         "atp": 0, "vtt": 0, "oi": 0, "tbq": 0, "tsq": 0,
         "marketLevel": {"bidAskQuote": [
-            {"bq": 600, "bp": 141, "bno": 3, "aq": 50, "ap": 141.35, "ano": 1},
+            {"bidQ": 600, "bidP": 141, "askQ": 50, "askP": 141.35},
         ]},
     }
     fields = upstox_quote_fields_from_ws_full(
@@ -434,17 +434,17 @@ def test_upstox_ws_depth_and_master(runner: R) -> None:
     from market.normalize import NormalizationError, upstox_depth_from_ws
 
     ml = {"bidAskQuote": [
-        {"bq": 600, "bp": 141, "bno": 3, "aq": 50, "ap": 141.35, "ano": 1},
-        {"bq": 625, "bp": 0, "bno": 0, "aq": 25, "ap": 141.45, "ano": 1},  # placeholder bp
+        {"bidQ": 600, "bidP": 141, "askQ": 50, "askP": 141.35},
+        {"bidQ": 625, "bidP": 0, "askQ": 25, "askP": 141.45},  # placeholder bidP
     ]}
     d = upstox_depth_from_ws(ml, instrument_key="NSE_FO|45450",
                              tradingsymbol="BANKNIFTY", received_ts=AWARE_UTC)
     runner.assert_eq(name + "-bids",
                      [(l.price, l.quantity, l.orders) for l in d.bids],
-                     [(141.0, 600.0, 3)])
+                     [(141.0, 600.0, None)])
     runner.assert_eq(name + "-asks",
                      [(l.price, l.quantity, l.orders) for l in d.asks],
-                     [(141.35, 50.0, 1), (141.45, 25.0, 1)])
+                     [(141.35, 50.0, None), (141.45, 25.0, None)])
     _expect_raises(runner, name + "-symbol-required", NormalizationError,
                    lambda: upstox_depth_from_ws(ml, instrument_key="NSE_FO|45450",
                                                 tradingsymbol="", received_ts=AWARE_UTC))
@@ -471,6 +471,126 @@ def test_upstox_ws_depth_and_master(runner: R) -> None:
                      datetime(2024, 1, 25, tzinfo=UTC))
     runner.assert_eq(name + "-deriv-strike", deriv.strike, 1840.0)
     runner.assert_eq(name + "-deriv-exchange-prefix", deriv.exchange, "NSE")
+
+
+# ---------------------------------------------------------------------------
+# MN-P — Upstox V3 protobuf protocol layer (vendored bindings + P-ZERO)
+# ---------------------------------------------------------------------------
+
+
+def test_protobuf_layer(runner: R) -> None:
+    """MN-P1..P6: vendored bindings, presence-exact decode, P-ZERO policy."""
+    from brokers.upstox.feed_protocol import (
+        ProtobufDecodeError,
+        decode_feed_response,
+        feed_type,
+        iter_instrument_feeds,
+        which_feed_union,
+    )
+    from brokers.upstox.proto import MarketDataFeed_pb2 as pb
+    from market.normalize import upstox_quote_fields_from_ws_full
+
+    name = "MN-P1-market-info"
+    r = pb.FeedResponse()
+    r.type = pb.Type.Value("market_info")
+    r.currentTs = 1732775008661
+    r.marketInfo.segmentStatus["NSE_EQ"] = pb.MarketStatus.Value("NORMAL_OPEN")
+    r.marketInfo.segmentStatus["NSE_FO"] = pb.MarketStatus.Value("NORMAL_CLOSE")
+    resp = decode_feed_response(r.SerializeToString())
+    runner.assert_eq(name + "-type", feed_type(resp), "market_info")
+    runner.assert_eq(name + "-currentts", resp.currentTs, 1732775008661)
+    runner.assert_eq(name + "-segment-status",
+                     dict(resp.marketInfo.segmentStatus),
+                     {"NSE_EQ": 2, "NSE_FO": 3})  # NORMAL_OPEN / NORMAL_CLOSE
+    runner.assert_eq(name + "-no-feeds", len(list(iter_instrument_feeds(resp))), 0)
+
+    name = "MN-P2-snapshot"
+    r = pb.FeedResponse()
+    r.type = pb.Type.Value("initial_feed")
+    r.currentTs = 1740729566039
+    f = r.feeds["NSE_FO|45450"].fullFeed.marketFF
+    f.ltpc.ltp = 219.3; f.ltpc.ltt = 1740729552723; f.ltpc.ltq = 75; f.ltpc.cp = 494.05
+    lvl = f.marketLevel.bidAskQuote.add()
+    lvl.bidQ = 600; lvl.bidP = 141.0; lvl.askQ = 50; lvl.askP = 141.35
+    f.vtt = 1234; f.oi = 15000.0; f.tbq = 600; f.tsq = 50
+    resp = decode_feed_response(r.SerializeToString())
+    runner.assert_eq(name + "-type", feed_type(resp), "initial_feed")
+    pairs = list(iter_instrument_feeds(resp))
+    runner.assert_eq(name + "-one-feed", len(pairs), 1)
+    key, fd = pairs[0]
+    runner.assert_eq(name + "-key", key, "NSE_FO|45450")
+    runner.assert_eq(name + "-union", which_feed_union(resp.feeds[key]), "fullFeed")
+    mff = fd["fullFeed"]["marketFF"]
+    fields = upstox_quote_fields_from_ws_full(
+        mff, instrument_key=key, received_ts=AWARE_UTC
+    )
+    runner.assert_eq(name + "-ltp", fields["ltp"], 219.3)
+    runner.assert_eq(name + "-close-is-prev-close", fields["close"], 494.05)
+    runner.assert_eq(name + "-volume", fields["volume"], 1234)
+    runner.assert_eq(name + "-oi", fields["open_interest"], 15000.0)
+    runner.assert_eq(name + "-totals",
+                     (fields["total_buy_qty"], fields["total_sell_qty"]), (600, 50))
+    runner.assert_eq(name + "-best", (fields["best_bid"], fields["best_ask"]),
+                     (141.0, 141.35))
+    runner.assert_eq(name + "-exchange-ts", fields["exchange_ts"],
+                     datetime(2025, 2, 28, 7, 59, 12, 723000, tzinfo=UTC))
+
+    name = "MN-P3-pzero"
+    rz = pb.FeedResponse()
+    fz = rz.feeds["NSE_FO|45450"].fullFeed.marketFF
+    fz.atp = 52.5; fz.vtt = 1234; fz.oi = 0.0          # explicit zero
+    rn = pb.FeedResponse()
+    fn = rn.feeds["NSE_FO|45450"].fullFeed.marketFF
+    fn.atp = 52.5; fn.vtt = 1234                        # oi unset
+    runner.assert_eq(name + "-wire-identical",
+                     rz.SerializeToString() == rn.SerializeToString(), True)
+    _, fdz = list(iter_instrument_feeds(decode_feed_response(rz.SerializeToString())))[0]
+    fields_z = upstox_quote_fields_from_ws_full(
+        fdz["fullFeed"]["marketFF"], instrument_key="NSE_FO|45450",
+        received_ts=AWARE_UTC,
+    )
+    runner.assert_true(name + "-zero-not-reported",
+                       "open_interest" not in fields_z,
+                       "decoded-zero oi must be absent from the field map (P-ZERO)")
+
+    name = "MN-P4-ltpc-live"
+    r = pb.FeedResponse()
+    r.type = pb.Type.Value("live_feed")
+    t = r.feeds["NSE_EQ|INE002A01018"].ltpc
+    t.ltp = 101.25; t.ltt = 1740729552723; t.ltq = 10; t.cp = 100.0
+    resp = decode_feed_response(r.SerializeToString())
+    key, fd = list(iter_instrument_feeds(resp))[0]
+    runner.assert_eq(name + "-union", which_feed_union(resp.feeds[key]), "ltpc")
+    from market.normalize import upstox_quote_fields_from_ws_ltpc
+    fields = upstox_quote_fields_from_ws_ltpc(
+        fd["ltpc"], instrument_key=key, received_ts=AWARE_UTC
+    )
+    runner.assert_eq(name + "-ltp", fields["ltp"], 101.25)
+    runner.assert_eq(name + "-derived-change", round(fields["change"], 6), 1.25)
+
+    name = "MN-P5-index"
+    r = pb.FeedResponse()
+    r.type = pb.Type.Value("live_feed")
+    idx = r.feeds["NSE_INDEX|Nifty 50"].fullFeed.indexFF
+    idx.ltpc.ltp = 22000.5; idx.ltpc.cp = 21900.0
+    key, fd = list(iter_instrument_feeds(decode_feed_response(r.SerializeToString())))[0]
+    ff_branches = fd.get("fullFeed") or {}
+    runner.assert_true(name + "-index-branch",
+                       "indexFF" in ff_branches and "marketFF" not in ff_branches,
+                       "index instruments arrive on the indexFF branch")
+    fields = upstox_quote_fields_from_ws_full(
+        ff_branches["indexFF"], instrument_key=key, received_ts=AWARE_UTC
+    )
+    runner.assert_eq(name + "-index-ltp", fields["ltp"], 22000.5)
+    runner.assert_true(name + "-index-no-depth",
+                       "best_bid" not in fields and "best_ask" not in fields,
+                       "index feeds carry no depth")
+
+    name = "MN-P6-malformed"
+    _expect_raises(runner, name + "-empty", ProtobufDecodeError,
+                   lambda: decode_feed_response(b""))
+    _expect_raises(runner, name + "-truncated", ProtobufDecodeError,
+                   lambda: decode_feed_response(b"\x0a\x05ab"))
 
 
 # ---------------------------------------------------------------------------
@@ -681,6 +801,7 @@ def main() -> bool:
     test_upstox_depth(runner)
     test_upstox_ws_patches(runner)
     test_upstox_ws_depth_and_master(runner)
+    test_protobuf_layer(runner)
 
     # FYERS
     test_fyers_quotes_rest(runner)

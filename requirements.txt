@@ -9,3 +9,6 @@ mcp>=2.0.0,<3.0.0
 starlette>=0.48.0,<2.0.0
 uvicorn>=0.31.1,<1.0.0
 sse-starlette>=3.0.0,<4.0.0
+# Phase D1: Upstox V3 market-data feed — runtime for the vendored generated
+# bindings in brokers/upstox/proto/ (websockets follows in Phase D3).
+protobuf~=6.2
