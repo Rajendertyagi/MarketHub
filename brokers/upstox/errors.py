@@ -15,7 +15,13 @@ when a concrete consumer needs to distinguish them.
 
 from __future__ import annotations
 
-__all__ = ["UpstoxError", "UpstoxAuthError", "UpstoxRestError", "UpstoxRateLimitError"]
+__all__ = [
+    "UpstoxError",
+    "UpstoxAuthError",
+    "UpstoxRestError",
+    "UpstoxRateLimitError",
+    "UpstoxConfigError",
+]
 
 
 class UpstoxError(Exception):
@@ -72,3 +78,12 @@ class UpstoxRateLimitError(UpstoxRestError):
             message, status_code=429, upstox_codes=upstox_codes, retryable=True
         )
         self.retry_after_seconds = retry_after_seconds
+
+class UpstoxConfigError(UpstoxError):
+    """Invalid feed/adapter configuration (constructor validation).
+
+    Raised before any network activity; always terminal for the affected
+    source instance.
+    """
+
+

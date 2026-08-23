@@ -24,17 +24,21 @@ from brokers.upstox.auth import (
 )
 from brokers.upstox.errors import (
     UpstoxAuthError,
+    UpstoxConfigError,
     UpstoxError,
     UpstoxRateLimitError,
     UpstoxRestError,
 )
+from brokers.upstox.feed import UpstoxFeed
 from brokers.upstox.rest import UpstoxRest
 
 __all__ = [
     "IST",
     "UpstoxAuthError",
+    "UpstoxConfigError",
     "UpstoxCredentials",
     "UpstoxError",
+    "UpstoxFeed",
     "UpstoxOAuth",
     "UpstoxRateLimitError",
     "UpstoxRest",
