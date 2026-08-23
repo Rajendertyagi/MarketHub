@@ -87,6 +87,7 @@ _TEST_FILES: dict[str, str] = {
     "market_service": "test_market_service.py",
     "market_sse": "test_market_sse.py",
     "upstox_auth": "test_upstox_auth.py",
+    "upstox_rest": "test_upstox_rest.py",
 }
 
 # Group -> ordered list of module keys. Order matters (fast/stable first).
@@ -106,12 +107,14 @@ GROUPS: dict[str, list[str]] = {
         "market_service",
         "market_sse",
         "upstox_auth",
+        "upstox_rest",
     ],
     "source": ["source_lifecycle", "source_dedup"],
     "consumer": ["consumers", "acknowledgement"],
     "mcp": ["subscriptions", "sdk_alignment", "lifespan", "multi_client", "errors", "timeouts", "sse_stream"],
     "lifecycle": ["source_lifecycle", "reconnect"],
-    "unit": ["unit_sources", "market_normalize", "market_service", "upstox_auth"],
+    "unit": ["unit_sources", "market_normalize", "market_service", "upstox_auth",
+             "upstox_rest"],
     "performance": ["performance"],
 }
 
