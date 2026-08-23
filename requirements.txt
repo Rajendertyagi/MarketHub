@@ -11,4 +11,5 @@ uvicorn>=0.31.1,<1.0.0
 sse-starlette>=3.0.0,<4.0.0
 # Phase D1: Upstox V3 market-data feed — runtime for the vendored generated
 # bindings in brokers/upstox/proto/ (websockets follows in Phase D3).
-protobuf~=6.2
+# Lower bound matches the binding's ValidateProtobufRuntimeVersion(6, 31, 1).
+protobuf>=6.31.1,<7
