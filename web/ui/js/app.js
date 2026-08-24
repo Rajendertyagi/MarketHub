@@ -169,12 +169,15 @@
     if (!row) {
       row = document.createElement("tr");
       row.dataset.key = key;
+      row.style.cursor = "pointer";
       row.innerHTML = `
         <td class="sym"></td><td class="ltp"></td><td class="chg"></td>
         <td class="pct"></td><td class="open"></td><td class="high"></td>
-        <td class="low"></td><td class="close"></td><td class="vol"></td>
-        <td class="oi"></td><td class="bid"></td><td class="ask"></td>
-        <td class="atp"></td><td class="upd"></td>`;
+        <td class="low"></td><td class="close"></td><td class="atp"></td>
+        <td class="vol"></td><td class="oi"></td><td class="oichg"></td>
+        <td class="oipct"></td><td class="bid"></td><td class="ask"></td>
+        <td class="uckt"></td><td class="lckt"></td>
+        <td class="ltt"></td><td class="upd"></td>`;
       const body = $("markets-body");
       if (body.querySelector(".empty-row")) body.innerHTML = "";
       body.appendChild(row);
@@ -182,25 +185,31 @@
     }
     const chg = q.change ?? 0;
     const cls = chgClass(chg);
-    row.querySelector(".sym").textContent = q.tradingsymbol || key;
-    row.querySelector(".ltp").textContent = fmt(q.ltp);
-    const chgEl = row.querySelector(".chg");
-    chgEl.textContent = fmt(chg);
-    chgEl.className = "chg " + cls;
-    const pctEl = row.querySelector(".pct");
-    pctEl.textContent = q.change_percent != null ? fmt(q.change_percent) + "%" : "—";
-    pctEl.className = "pct " + cls;
-    row.querySelector(".open").textContent = fmt(q.open);
-    row.querySelector(".high").textContent = fmt(q.high);
-    row.querySelector(".low").textContent = fmt(q.low);
-    row.querySelector(".close").textContent = fmt(q.close);
-    row.querySelector(".vol").textContent = fmtVol(q.volume);
-    row.querySelector(".oi").textContent = fmtVol(q.open_interest);
-    row.querySelector(".bid").textContent = fmt(q.best_bid);
-    row.querySelector(".ask").textContent = fmt(q.best_ask);
-    row.querySelector(".atp").textContent = fmt(q.avg_trade_price);
-    row.querySelector(".upd").textContent =
-      q.received_ts ? new Date(q.received_ts).toLocaleTimeString() : "—";
+    const set = (sel, text, extraCls) => {
+      const el = row.querySelector(sel);
+      if (!el) return;
+      el.textContent = text;
+      if (extraCls !== undefined) el.className = sel.slice(1) + (extraCls ? " " + extraCls : "");
+    };
+    set(".sym", q.tradingsymbol || key);
+    set(".ltp", fmt(q.ltp));
+    set(".chg", fmt(chg), cls);
+    set(".pct", q.change_percent != null ? fmt(q.change_percent) + "%" : "—", cls);
+    set(".open", q.open != null ? fmt(q.open) : "—");
+    set(".high", q.high != null ? fmt(q.high) : "—");
+    set(".low", q.low != null ? fmt(q.low) : "—");
+    set(".close", q.close != null ? fmt(q.close) : "—");
+    set(".atp", q.avg_trade_price != null ? fmt(q.avg_trade_price) : "—");
+    set(".vol", fmtVol(q.volume));
+    set(".oi", fmtVol(q.open_interest));
+    set(".oichg", fmtNum(q.oi_change));
+    set(".oipct", q.oi_change_percent != null ? fmt(q.oi_change_percent) + "%" : "—");
+    set(".bid", q.best_bid != null ? fmt(q.best_bid) : "—");
+    set(".ask", q.best_ask != null ? fmt(q.best_ask) : "—");
+    set(".uckt", q.upper_circuit != null ? fmt(q.upper_circuit) : "—");
+    set(".lckt", q.lower_circuit != null ? fmt(q.lower_circuit) : "—");
+    set(".ltt", fmtTs(q.last_trade_time));
+    set(".upd", q.received_ts ? new Date(q.received_ts).toLocaleTimeString() : "—");
   }
 
   // ── Ticker strip ────────────────────────────────────────────────────────
@@ -521,6 +530,122 @@
     });
   }
 
+  // ── Quote details drawer ────────────────────────────────────────────────
+
+  const fmtTs = (iso) => {
+    if (!iso) return "—";
+    try { return new Date(iso).toLocaleTimeString(); } catch { return "—"; }
+  };
+  const fmtNum = (v) => v != null ? Number(v).toLocaleString("en-IN") : "—";
+  const kvRow = (label, value) =>
+    `<tr><td>${label}</td><td>${value ?? "—"}</td></tr>`;
+
+  function renderDrawer(key) {
+    const q = quotes.get(key);
+    if (!q) return;
+    $("drawer-title").textContent =
+      (q.tradingsymbol || key.split(":").pop()) + "  ·  " + (q.exchange || "");
+
+    $("drawer-price").innerHTML =
+      kvRow("LTP", q.ltp != null ? fmt(q.ltp) : "—") +
+      kvRow("Prev Close", q.close != null ? fmt(q.close) : "—") +
+      kvRow("Change", q.change != null ? fmt(q.change) : "—") +
+      kvRow("Change %", q.change_percent != null ? fmt(q.change_percent) + "%" : "—") +
+      kvRow("Open", q.open != null ? fmt(q.open) : "—") +
+      kvRow("High", q.high != null ? fmt(q.high) : "—") +
+      kvRow("Low", q.low != null ? fmt(q.low) : "—") +
+      kvRow("ATP", q.avg_trade_price != null ? fmt(q.avg_trade_price) : "—");
+
+    $("drawer-trade").innerHTML =
+      kvRow("Last Trade Qty", fmtNum(q.last_traded_qty)) +
+      kvRow("Last Trade Time", fmtTs(q.last_trade_time)) +
+      kvRow("Volume", fmtNum(q.volume)) +
+      kvRow("Total Buy Qty", fmtNum(q.total_buy_qty)) +
+      kvRow("Total Sell Qty", fmtNum(q.total_sell_qty));
+
+    $("drawer-oi").innerHTML =
+      kvRow("OI", fmtNum(q.open_interest)) +
+      kvRow("Previous OI", fmtNum(q.previous_oi)) +
+      kvRow("OI Change", fmtNum(q.oi_change)) +
+      kvRow("OI Change %",
+            q.oi_change_percent != null ? fmt(q.oi_change_percent) + "%" : "—");
+
+    $("drawer-markets-section").innerHTML =
+      kvRow("Bid", q.best_bid != null ? fmt(q.best_bid) : "—") +
+      kvRow("Ask", q.best_ask != null ? fmt(q.best_ask) : "—") +
+      kvRow("Upper Circuit", q.upper_circuit != null ? fmt(q.upper_circuit) : "—") +
+      kvRow("Lower Circuit", q.lower_circuit != null ? fmt(q.lower_circuit) : "—") +
+      kvRow("Exchange Time", fmtTs(q.exchange_ts)) +
+      kvRow("Received", fmtTs(q.received_ts));
+
+    const gk = q.greeks;
+    if (gk && Object.values(gk).some((v) => v != null)) {
+      $("drawer-greeks").innerHTML =
+        `<table class="data-table kv-table">` +
+        kvRow("Delta", gk.delta != null ? gk.delta.toFixed(4) : "—") +
+        kvRow("Gamma", gk.gamma != null ? gk.gamma.toFixed(6) : "—") +
+        kvRow("Theta", gk.theta != null ? gk.theta.toFixed(4) : "—") +
+        kvRow("Vega", gk.vega != null ? gk.vega.toFixed(4) : "—") +
+        kvRow("Rho", gk.rho != null ? gk.rho.toFixed(4) : "—") +
+        kvRow("IV", gk.iv != null ? fmt(gk.iv) + "%" : "—") +
+        `</table>`;
+    } else {
+      $("drawer-greeks").innerHTML = "<em>Greeks not available</em>";
+    }
+
+    // Depth fetched on demand — no continuous polling.
+    $("drawer-depth").innerHTML = "<em>Loading…</em>";
+    fetch(`/api/market/depth/${q.exchange}/${q.instrument_token}`)
+      .then((r) => r.json())
+      .then((d) => {
+        const lvlRows = (levels) => levels.map((l) =>
+          `<tr><td>${fmt(l.price)}</td><td>${fmtNum(l.quantity)}</td>` +
+          `<td>${l.orders != null ? l.orders : "—"}</td></tr>`).join("");
+        $("drawer-depth").innerHTML =
+          `<table class="data-table"><thead><tr>` +
+          `<th>Bid Px</th><th>Qty</th><th>Ord</th>` +
+          `<th>Ask Px</th><th>Qty</th><th>Ord</th></tr></thead><tbody>` +
+          lvlRows(d.bids || []) + lvlRows(d.asks || []) +
+          `</tbody></table>`;
+      })
+      .catch(() => { $("drawer-depth").innerHTML = "<em>Depth unavailable</em>"; });
+  }
+
+  function openDrawer(key) {
+    renderDrawer(key);
+    $("quote-drawer").classList.remove("hidden");
+  }
+  function closeDrawer() {
+    $("quote-drawer").classList.add("hidden");
+  }
+
+  function initDrawer() {
+    $("drawer-close").addEventListener("click", closeDrawer);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeDrawer();
+    });
+    for (const bodyId of ["dash-body", "markets-body"]) {
+      const body = $(bodyId);
+      if (body) {
+        body.addEventListener("click", (e) => {
+          const row = e.target.closest("tr[data-key]");
+          if (row) openDrawer(row.dataset.key);
+        });
+      }
+    }
+    // Refresh drawer content on live ticks while open.
+    setInterval(() => {
+      const title = $("drawer-title").textContent;
+      if ($("quote-drawer").classList.contains("hidden") || title === "—") return;
+      for (const [key] of quotes) {
+        if (title.startsWith(key.split("|").pop().split(":").pop())) {
+          renderDrawer(key);
+          break;
+        }
+      }
+    }, 5000);
+  }
+
   // ── Market filter (Markets page) ────────────────────────────────────────
 
   function initFilter() {
@@ -552,6 +677,7 @@
     initAuth();
     initCredentialSettings();
     initCredentialDelete();
+    initDrawer();
     loadInitialQuotes();
     connectSSE();
     pollSources();                     // immediate status render (no 10s wait)

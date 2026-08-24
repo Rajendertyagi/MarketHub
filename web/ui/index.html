@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="/ui/vendor/webawesome/dist/styles/webawesome.css">
 <link rel="stylesheet" href="/ui/vendor/webawesome/dist/styles/themes/default.css">
 <link rel="stylesheet" href="/ui/vendor/webawesome/dist/styles/utilities.css">
-<link rel="stylesheet" href="/ui/css/style.css?v=12">
+<link rel="stylesheet" href="/ui/css/style.css?v=13">
 <script type="module" src="/ui/vendor/webawesome/dist/webawesome.loader.js"></script>
 </head>
 <body>
@@ -71,10 +71,12 @@
       <table class="data-table" id="markets-table">
         <thead><tr>
           <th>Symbol</th><th>LTP</th><th>Chg</th><th>Chg%</th>
-          <th>Open</th><th>High</th><th>Low</th><th>Close</th>
-          <th>Volume</th><th>OI</th><th>Bid</th><th>Ask</th><th>ATP</th><th>Updated</th>
+          <th>Open</th><th>High</th><th>Low</th><th>Prev Close</th>
+          <th>ATP</th><th>Volume</th><th>OI</th><th>OI Chg</th><th>OI Chg%</th>
+          <th>Bid</th><th>Ask</th><th>Upper Ckt</th><th>Lower Ckt</th>
+          <th>Last Trade</th><th>Updated</th>
         </tr></thead>
-        <tbody id="markets-body"><tr><td colspan="14" class="empty-row">No data</td></tr></tbody>
+        <tbody id="markets-body"><tr><td colspan="19" class="empty-row">No data</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -86,8 +88,8 @@
       <select id="oc-expiry" class="wa-select" disabled><option>Expiry</option></select>
     </div>
     <div class="empty-state">
-      <p class="empty-title">Option-chain data source not configured yet</p>
-      <p class="empty-desc">Connect a broker source with option-chain support to view live option chains.</p>
+      <p class="empty-title">Option chain not available yet</p>
+      <p class="empty-desc">Normalized option data (greeks, IV, OI) exists in the canonical layer, but a canonical option-chain aggregation endpoint is not yet configured. This page will light up once that backend lands.</p>
     </div>
   </section>
 
@@ -195,11 +197,33 @@
 
 </main>
 
+<!-- ══ QUOTE DETAILS DRAWER ══ -->
+<div id="quote-drawer" class="drawer hidden">
+  <div class="drawer-header">
+    <span id="drawer-title" class="mono">—</span>
+    <button id="drawer-close" class="icon-btn" title="Close">✕</button>
+  </div>
+  <div class="drawer-body">
+    <h3>Price</h3>
+    <table class="data-table kv-table" id="drawer-price"></table>
+    <h3>Trade / Volume</h3>
+    <table class="data-table kv-table" id="drawer-trade"></table>
+    <h3>Open Interest</h3>
+    <table class="data-table kv-table" id="drawer-oi"></table>
+    <h3>Market</h3>
+    <table class="data-table kv-table" id="drawer-markets-section"></table>
+    <h3>Option Greeks</h3>
+    <div id="drawer-greeks"><em>Greeks not available</em></div>
+    <h3>Depth</h3>
+    <div id="drawer-depth"><em>Loading…</em></div>
+  </div>
+</div>
+
 <footer class="app-footer">
   <span>MarketHub</span>
   <span id="footer-tick"></span>
 </footer>
 
-<script src="/ui/js/app.js?v=12"></script>
+<script src="/ui/js/app.js?v=13"></script>
 </body>
 </html>
