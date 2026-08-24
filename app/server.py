@@ -76,7 +76,7 @@ from mcp_server.tools import (
     register_market_tools,
 )
 from sources import SourceManager, build_source_manager, SourceConfigError
-from api.routes import build_market_routes
+from api.routes import build_market_routes, build_auth_routes
 from market.models import Quote
 from market.serialization import quote_to_dict
 from market.service import MarketService
@@ -232,6 +232,52 @@ try:
 except SourceConfigError as exc:
     _app_logger.error("source configuration error: %s", exc)
     _source_manager = SourceManager()
+
+# Hold a reference to the Upstox feed for runtime auth management.
+_feed_ref: dict[str, Any] = {"feed": None}
+_upstox_source_name: str | None = None
+for _src_name, _src in _source_manager.enabled_sources.items():
+    if hasattr(_src, "update_credentials"):
+        _feed_ref["feed"] = _src
+        _upstox_source_name = _src_name
+        break
+
+# ── OAuth login configuration (backend-only secrets) ─────────────────────────
+# API key/secret arrive via environment variables; the secret NEVER reaches
+# the browser, API responses, logs, or disk. Redirect URI defaults to this
+# server's own callback and may be overridden via UPSTOX_REDIRECT_URI.
+_OAUTH_CFG: dict[str, str] | None = None
+_UPSTOX_API_KEY = os.environ.get("UPSTOX_API_KEY", "").strip()
+_UPSTOX_API_SECRET = os.environ.get("UPSTOX_API_SECRET", "").strip()
+_UPSTOX_REDIRECT_URI = os.environ.get(
+    "UPSTOX_REDIRECT_URI", f"http://localhost:{LISTEN_PORT}/auth/upstox/callback"
+).strip()
+if _UPSTOX_API_KEY and _UPSTOX_API_SECRET:
+    _OAUTH_CFG = {
+        "api_key": _UPSTOX_API_KEY,
+        "api_secret": _UPSTOX_API_SECRET,
+        "redirect_uri": _UPSTOX_REDIRECT_URI,
+    }
+    _app_logger.info(
+        "upstox oauth login configured (redirect=%s)", _UPSTOX_REDIRECT_URI
+    )
+else:
+    _app_logger.info(
+        "upstox oauth not configured - manual token entry remains available"
+    )
+
+
+async def _restart_upstox_source() -> None:
+    """Restart the Upstox source through SourceManager (lifecycle owner)."""
+    if _upstox_source_name is not None:
+        await _source_manager.restart_source(_upstox_source_name)
+
+
+# Stateless REST transport for the OAuth code exchange. Stores no secrets.
+_oauth_rest: Any = None
+if _OAUTH_CFG is not None:
+    from brokers.upstox.rest import UpstoxRest as _UpstoxRest
+    _oauth_rest = _UpstoxRest()
 
 # ── Lifespan ─────────────────────────────────────────────────────────────────
 _lifespan = runtime.make_lifespan(
@@ -396,6 +442,12 @@ app = Starlette(
         source_status_fn=lambda: [
             s.status() for s in _source_manager.enabled_sources.values()
         ],
+    )
+    + build_auth_routes(
+        _feed_ref,
+        restart_fn=_restart_upstox_source,
+        oauth=_OAUTH_CFG,
+        rest=_oauth_rest,
     )
     + [Mount("/ui", app=StaticFiles(directory=str(PROJECT_ROOT / "web" / "ui"), html=True),
             name="ui")],

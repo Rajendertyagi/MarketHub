@@ -523,6 +523,17 @@ class UpstoxFeed:
 
     # -- public API ------------------------------------------------------------
 
+    def update_credentials(self, credentials: UpstoxCredentials) -> None:
+        """Replace credentials for the next authorization attempt.
+
+        Safe to call while the feed is running: the next authorize cycle
+        picks up the new credentials atomically. Also clears the terminal
+        failure state so the feed can retry.
+        """
+        self._credentials = credentials
+        if self._state == "failed":
+            self._set_state("stopped")
+
     @property
     def name(self) -> str:  # kept as attribute+property read-only pair
         return self._name

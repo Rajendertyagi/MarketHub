@@ -91,6 +91,8 @@ _TEST_FILES: dict[str, str] = {
     "upstox_rest": "test_upstox_rest.py",
     "upstox_feed": "test_upstox_feed.py",
     "upstox_wiring": "test_upstox_wiring.py",
+    "web_auth": "test_web_auth.py",
+    "oauth_login": "test_oauth_login.py",
 }
 
 # Group -> ordered list of module keys. Order matters (fast/stable first).
@@ -113,6 +115,8 @@ GROUPS: dict[str, list[str]] = {
         "upstox_auth",
         "upstox_rest",
         "upstox_feed",
+        "web_auth",
+        "oauth_login",
     ],
     "source": ["source_lifecycle", "source_dedup"],
     "consumer": ["consumers", "acknowledgement"],

@@ -11,14 +11,14 @@ app.state.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Callable
 
 from sse_starlette import EventSourceResponse
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-__all__ = ["build_market_routes"]
+__all__ = ["build_market_routes", "build_auth_routes"]
 
 
 def _json(data: Any, status: int = 200) -> JSONResponse:
@@ -99,4 +99,169 @@ def build_market_routes(
         Route("/api/market/depth/{exchange}/{instrument_token}",
               endpoint=_market_depth, methods=["GET"]),
         Route("/api/sources/status", endpoint=_source_status, methods=["GET"]),
+    ]
+
+
+def build_auth_routes(
+    feed_ref: dict[str, Any],
+    restart_fn: Callable[[], Any] | None = None,
+    oauth: dict[str, Any] | None = None,
+    rest: Any = None,
+) -> list[Route]:
+    """Build auth routes for runtime token management.
+
+    ``feed_ref`` is a mutable dict holding {"feed": UpstoxFeed | None}.
+    ``restart_fn`` is an async callable that stops and restarts the source.
+    ``oauth`` is an optional dict {api_key, api_secret, redirect_uri} enabling
+    the OAuth login/callback flow. ``rest`` is an UpstoxRest instance used for
+    the code exchange (stateless transport; stores no secrets).
+
+    OAuth state lives ONLY in this closure: memory-only, single-use,
+    10-minute TTL. Never persisted, never logged, never returned.
+    """
+    import hmac
+    import secrets
+    import time
+
+    _STATE_TTL_S = 600  # 10 minutes
+    _pending_states: dict[str, float] = {}  # state -> monotonic expiry
+
+    def _oauth_ready() -> bool:
+        if not isinstance(oauth, dict):
+            return False
+        return all(
+            isinstance(oauth.get(k), str) and oauth.get(k).strip()
+            for k in ("api_key", "api_secret", "redirect_uri")
+        )
+
+    async def _auth_status(request: Request) -> Response:  # noqa: ARG001
+        feed = feed_ref.get("feed")
+        base = {
+            "configured": feed is not None,
+            "oauth_available": _oauth_ready(),
+        }
+        if feed is None:
+            base.update({"source": "upstox", "auth_mode": "none",
+                         "token_configured": False})
+            return _json(base)
+        creds = feed._credentials
+        status = creds.status()
+        base.update({
+            "source": feed.name,
+            "auth_mode": status.get("auth_mode", "unknown"),
+            "token_configured": status.get("token_present", False),
+            "expiry_known": status.get("expiry_known", False),
+            "expires_at": status.get("expires_at"),
+            "expired": status.get("expired"),
+            "state": feed.status().get("state", "unknown"),
+        })
+        return _json(base)
+
+    async def _oauth_login(request: Request) -> Response:  # noqa: ARG001
+        if not _oauth_ready():
+            return _json({"error": "oauth not configured"}, 503)
+        from brokers.upstox.auth import UpstoxOAuth
+
+        # Prune expired states (memory hygiene).
+        now = time.monotonic()
+        expired = [s for s, exp in _pending_states.items() if exp <= now]
+        for s in expired:
+            del _pending_states[s]
+
+        state = secrets.token_urlsafe(32)
+        _pending_states[state] = now + _STATE_TTL_S
+        try:
+            url = UpstoxOAuth(
+                api_key=oauth["api_key"],
+                redirect_uri=oauth["redirect_uri"],
+            ).authorization_url(state=state)
+        except Exception:
+            _pending_states.pop(state, None)
+            return _json({"error": "failed to build authorization URL"}, 500)
+        from starlette.responses import RedirectResponse
+        return RedirectResponse(url, status_code=302)
+
+    async def _oauth_callback(request: Request) -> Response:
+        from starlette.responses import RedirectResponse
+
+        def _fail() -> Response:
+            return RedirectResponse("/ui/?auth=failed", status_code=302)
+
+        state = request.query_params.get("state")
+        code = request.query_params.get("code")
+        if not state or not code or not _oauth_ready():
+            return _fail()
+
+        # Single-use + TTL + constant-time match: consume BEFORE exchange so a
+        # replayed callback can never trigger a second exchange.
+        matched: str | None = None
+        expiry = -1.0
+        for pending, exp in _pending_states.items():
+            if hmac.compare_digest(pending, state):
+                matched, expiry = pending, exp
+                break
+        if matched is None or expiry < time.monotonic():
+            return _fail()
+        del _pending_states[matched]
+
+        feed = feed_ref.get("feed")
+        if feed is None or rest is None:
+            return _fail()
+
+        try:
+            creds = await rest.exchange_authorization_code(
+                code=code.strip(),
+                client_id=oauth["api_key"].strip(),
+                client_secret=oauth["api_secret"].strip(),
+                redirect_uri=oauth["redirect_uri"].strip(),
+            )
+        except Exception:
+            # Safe failure — never surface raw broker bodies/secrets/URIs.
+            return _fail()
+
+        try:
+            feed.update_credentials(creds)
+            if restart_fn is not None:
+                await restart_fn()
+        except Exception:
+            return _fail()
+
+        return RedirectResponse("/ui/?auth=ok", status_code=302)
+
+    async def _submit_token(request: Request) -> Response:
+        try:
+            body = await request.json()
+        except Exception:
+            return _json({"error": "invalid JSON body"}, 400)
+        token = body.get("access_token", "")
+        if not isinstance(token, str) or not token.strip():
+            return _json({"error": "access_token is required"}, 400)
+        if len(token) > 4096:
+            return _json({"error": "access_token too long"}, 400)
+
+        from brokers.upstox.auth import UpstoxCredentials
+        try:
+            creds = UpstoxCredentials(access_token=token.strip())
+        except Exception as exc:
+            return _json({"error": f"invalid credentials: {exc}"}, 400)
+
+        feed = feed_ref.get("feed")
+        if feed is None:
+            return _json({"error": "no upstox feed registered"}, 503)
+
+        feed.update_credentials(creds)
+
+        if restart_fn is not None:
+            try:
+                await restart_fn()
+            except Exception:
+                pass  # restart failure logged elsewhere; don't leak
+
+        return _json({"configured": True})
+
+    return [
+        Route("/api/auth/upstox/status", endpoint=_auth_status, methods=["GET"]),
+        Route("/api/auth/upstox/login", endpoint=_oauth_login, methods=["GET"]),
+        Route("/auth/upstox/callback", endpoint=_oauth_callback, methods=["GET"]),
+        Route("/api/auth/upstox/token", endpoint=_submit_token, methods=["POST"]),
     ]
