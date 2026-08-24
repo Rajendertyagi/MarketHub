@@ -313,6 +313,38 @@
     </div>
 
     <div class="panel" style="margin-top:10px">
+      <div class="panel-header"><h2>Fyers Credentials</h2></div>
+      <div class="auth-form">
+        <p class="hint" style="padding:0 0 10px 0">
+          One-time setup. Saved encrypted on this computer only.
+        </p>
+        <div class="auth-row">
+          <label>Status</label>
+          <span id="fyers-status" class="chip chip-off">Not configured</span>
+        </div>
+        <div class="auth-row">
+          <label for="fyers-app-id">App ID</label>
+          <input type="text" id="fyers-app-id" class="filter-input"
+                 placeholder="Paste Fyers app id…" autocomplete="off">
+        </div>
+        <div class="auth-row">
+          <label for="fyers-secret">Secret Key</label>
+          <input type="password" id="fyers-secret" class="filter-input"
+                 placeholder="Paste secret key…" autocomplete="new-password">
+        </div>
+        <div class="auth-row">
+          <label></label>
+          <button id="fyers-save" class="btn">Save Fyers Credentials</button>
+        </div>
+        <div class="auth-row">
+          <label></label>
+          <button id="fyers-login-btn" class="btn" style="display:none">Login with Fyers</button>
+        </div>
+        <div id="fyers-message" class="hint"></div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:10px">
       <div class="panel-header"><h2>Upstox Login</h2></div>
       <div class="auth-form">
         <div class="auth-row">
