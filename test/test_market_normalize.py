@@ -644,7 +644,8 @@ def test_fyers_symbol_update(runner: R) -> None:
     fields = fyers_quote_fields_from_symbol_update(msg, received_ts=AWARE_UTC)
     runner.assert_eq(name + "-exact-keys", sorted(fields.keys()),
                      sorted(["instrument_token", "exchange", "tradingsymbol",
-                             "received_ts", "ltp", "exchange_ts"]))
+                             "received_ts", "ltp", "exchange_ts",
+                             "last_trade_time"]))
     runner.assert_eq(name + "-ltp", fields["ltp"], 501.0)
     runner.assert_eq(name + "-ts", fields["exchange_ts"],
                      datetime(2025, 8, 23, 8, 0, 1, tzinfo=UTC))
@@ -817,3 +818,4 @@ def main() -> bool:
 if __name__ == "__main__":
     success = main()
     sys.exit(0 if success else 1)
+
