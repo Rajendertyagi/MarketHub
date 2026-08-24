@@ -24,7 +24,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from market.models import Depth, DepthLevel, Instrument, Quote
+from market.models import Depth, DepthLevel, Instrument, OptionGreeks, Quote
 from market.normalize.common import (
     NormalizationError,
     apply_derived_change,
@@ -41,6 +41,8 @@ __all__ = [
     "quote_from_quotes_rest",
     "quote_fields_from_symbol_update",
     "depth_from_rest",
+    "depth_from_ws_depth",
+    "greeks_from_options_chain",
 ]
 
 # Canonical fields carried as integers.
@@ -81,6 +83,9 @@ _WS_SYMBOL_ALIASES = {
     "last_traded_qty": "last_traded_qty",
     "tot_buy_qty": "total_buy_qty",
     "tot_sell_qty": "total_sell_qty",
+    # extended coverage
+    "upper_ckt": "upper_circuit",
+    "lower_ckt": "lower_circuit",
 }
 
 
@@ -142,6 +147,8 @@ def quote_from_quotes_rest(
     set_reported(fields, v, "volume", "volume", to_int)
     if v.get("tt") is not None:
         fields["exchange_ts"] = parse_timestamp(v["tt"], unit="s", field="quotes.tt")
+        fields["last_trade_time"] = parse_timestamp(
+            v["tt"], unit="s", field="quotes.tt")
     apply_derived_change(fields)
     check_quote_fields(fields)
     return Quote(**fields)
@@ -169,6 +176,9 @@ def quote_fields_from_symbol_update(
     fields.update(_fields_from_aliases(msg, _WS_SYMBOL_ALIASES))
     if msg.get("last_traded_time") is not None:
         fields["exchange_ts"] = parse_timestamp(
+            msg["last_traded_time"], unit="s", field="last_traded_time"
+        )
+        fields["last_trade_time"] = parse_timestamp(
             msg["last_traded_time"], unit="s", field="last_traded_time"
         )
     apply_derived_change(fields)
@@ -237,9 +247,114 @@ def depth_from_rest(
         ("v", "volume", to_int),
         ("atp", "avg_trade_price", to_float),
         ("oi", "open_interest", to_float),
+        # extended coverage
+        ("ltq", "last_traded_qty", to_int),
+        ("upper_ckt", "upper_circuit", to_float),
+        ("lower_ckt", "lower_circuit", to_float),
+        ("oipercent", "oi_change_percent", to_float),
+        # pdoi = previous-DAY open interest (not a change value).
+        ("pdoi", "previous_oi", to_float),
     ):
         set_reported(supplemental, payload, src, dst, converter)
+    if payload.get("ltt") is not None:
+        supplemental["last_trade_time"] = parse_timestamp(
+            payload["ltt"], unit="s", field="depth.ltt")
+    # Derived-field policy: oi_change = oi - previous_oi is unambiguous
+    # arithmetic; derive ONLY when both inputs are reported and the
+    # provider did not supply an explicit change value.
+    if ("open_interest" in supplemental
+            and "previous_oi" in supplemental
+            and "oi_change" not in supplemental):
+        supplemental["oi_change"] = (
+            supplemental["open_interest"] - supplemental["previous_oi"]
+        )
     return depth, supplemental
+
+
+# ---------------------------------------------------------------------------
+# Data-socket DepthUpdate (`type:"dp"`, flattened 5-level message)
+# ---------------------------------------------------------------------------
+
+
+def depth_from_ws_depth(
+    msg: dict[str, Any],
+    *,
+    received_ts: datetime,
+) -> tuple[Depth, dict[str, Any]]:
+    """Normalize a FYERS ``dp`` socket message into (Depth, identity-fields).
+
+    The dp message carries flattened levels (bid_price1..5 / ask_price1..5
+    with matching size/order counts) plus the symbol — no totals, no LTP.
+    Zero-price levels are dropped (locked policy #1); zero quantities and
+    zero order counts are kept (rule #7).
+    """
+    if not isinstance(msg, dict):
+        raise NormalizationError("fyers ws depth: expected object")
+    identity = _identity(msg.get("symbol"), received_ts)
+
+    def _side(prefix: str, side: str) -> list[DepthLevel]:
+        levels: list[DepthLevel] = []
+        for i in range(1, 6):
+            raw_price = msg.get(f"{prefix}{i}")
+            if raw_price is None:
+                continue
+            price = to_float(raw_price, field=f"dp.{prefix}{i}")
+            if price == 0:
+                continue
+            qty_raw = msg.get(f"{prefix.replace('price', 'size')}{i}")
+            quantity = (
+                to_float(qty_raw, field=f"dp.{prefix}size{i}")
+                if qty_raw is not None else 0.0
+            )
+            ord_raw = msg.get(f"{prefix.replace('price', 'order')}{i}")
+            orders = (
+                to_int(ord_raw, field=f"dp.{prefix}order{i}")
+                if ord_raw is not None else None
+            )
+            levels.append(DepthLevel(price=price, quantity=quantity,
+                                     orders=orders))
+        return levels
+
+    depth = Depth(
+        bids=_side("bid_price", "bids"),
+        asks=_side("ask_price", "asks"),
+        **identity,
+    )
+    return depth, {}
+
+
+# ---------------------------------------------------------------------------
+# Options-chain greeks (GET /data/options-chain-v3 with greeks="1")
+# ---------------------------------------------------------------------------
+
+
+def greeks_from_options_chain(leg: dict[str, Any]) -> OptionGreeks | None:
+    """Normalize one options-chain leg's greeks into an OptionGreeks.
+
+    Fyers exposes delta/gamma/theta/vega/iv per leg; rho is NOT provided
+    by Fyers and stays None. Returns None when the leg carries no greeks
+    at all. Null values are preserved as None (REST null semantics).
+    """
+    if not isinstance(leg, dict):
+        raise NormalizationError("fyers options chain: expected object")
+    g = leg.get("greeks")
+    if not isinstance(g, dict) or not g:
+        return None
+    fields: dict[str, float | None] = {}
+    for name in ("delta", "gamma", "theta", "vega"):
+        raw = g.get(name)
+        fields[name] = (
+            to_float(raw, field=f"greeks.{name}")
+            if raw is not None else None
+        )
+    iv_raw = g.get("iv")
+    fields["iv"] = (
+        to_float(iv_raw, field="greeks.iv") if iv_raw is not None else None
+    )
+    fields["rho"] = None  # not exposed by Fyers
+    if all(v is None for v in fields.values()):
+        return None
+    return OptionGreeks(**fields)
 
 
 # ---------------------------------------------------------------------------

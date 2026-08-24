@@ -260,7 +260,10 @@ def quote_fields_from_ws_full(
 ) -> dict[str, Any]:
     """Normalize a full-mode MarketFullFeed tick into a canonical field map.
 
-    optionGreeks / marketOHLC / iv are intentionally ignored (deferred).
+    Extended coverage: optionGreeks, iv, and the day candle from
+    marketOHLC (interval "1d") are extracted when wire-present. All other
+    OHLC intervals are ignored (intraday candles are charting data, not
+    quote state).
     """
     if not isinstance(ff, dict):
         raise NormalizationError("upstox ws full feed: expected object")
@@ -282,6 +285,66 @@ def quote_fields_from_ws_full(
         if raw is None or raw == 0:
             continue
         fields[dst] = to_int(raw, field=src)
+
+    # Implied volatility (P-ZERO: wire-absent decodes as 0).
+    # GREEKS WIRE-FORCED NOTE: OptionGreeks children are plain proto3
+    # scalars (no `optional`), so an exact 0.0 value is NEVER serialized —
+    # ListFields cannot distinguish "unset" from "truly 0.0". Dropping
+    # zeros here is therefore forced by the wire format, not a heuristic.
+    # A deep-OTM delta of exactly 0.0 is unrepresentable over Upstox WS;
+    # near-zero values (0.05, 0.001) pass through correctly.
+    iv_raw = ff.get("iv")
+    if iv_raw is not None and iv_raw != 0:
+        from market.models import OptionGreeks
+
+        iv_val = to_float(iv_raw, field="iv")
+        existing = fields.get("greeks")
+        if existing is not None:
+            fields["greeks"] = OptionGreeks(
+                delta=existing.delta, gamma=existing.gamma,
+                theta=existing.theta, vega=existing.vega,
+                rho=existing.rho, iv=iv_val,
+            )
+        else:
+            fields["greeks"] = OptionGreeks(iv=iv_val)
+
+    # Option greeks message.
+    og = ff.get("optionGreeks")
+    if isinstance(og, dict) and og:
+        from market.models import OptionGreeks
+
+        greek_values: dict[str, float] = {}
+        for name in ("delta", "gamma", "theta", "vega", "rho"):
+            raw = og.get(name)
+            if raw is None or raw == 0:
+                continue
+            greek_values[name] = to_float(raw, field=f"optionGreeks.{name}")
+        if greek_values:
+            existing = fields.get("greeks")
+            if existing is not None:
+                merged = {
+                    "delta": existing.delta, "gamma": existing.gamma,
+                    "theta": existing.theta, "vega": existing.vega,
+                    "rho": existing.rho, "iv": existing.iv,
+                }
+                merged.update(greek_values)
+                fields["greeks"] = OptionGreeks(**merged)
+            else:
+                fields["greeks"] = OptionGreeks(**greek_values)
+
+    # Day candle from marketOHLC: fills open/high/low when wire-present.
+    market_ohlc = (ff.get("marketOHLC") or {}).get("ohlc") or []
+    for candle in market_ohlc:
+        if not isinstance(candle, dict):
+            continue
+        if candle.get("interval") != "1d":
+            continue
+        for src, dst in (("open", "open"), ("high", "high"), ("low", "low")):
+            raw = candle.get(src)
+            if raw is None or raw == 0:
+                continue
+            fields[dst] = to_float(raw, field=f"marketOHLC.1d.{src}")
+        break
 
     bid_ask = (ff.get("marketLevel") or {}).get("bidAskQuote") or []
     for src_key, dst_key in (("bidP", "best_bid"), ("askP", "best_ask")):
