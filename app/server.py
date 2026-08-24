@@ -284,6 +284,23 @@ def _upstox_auth_context():
 
 _provider_market_data = _ProviderMarketData(_upstox_auth_context)
 
+
+class _FeedSubscription:
+    """Watchlist→feed adapter: desired-set updates on the live Upstox feed."""
+
+    async def add(self, exchange: str, token: str) -> None:
+        feed = _feed_ref.get("feed")
+        if feed is not None and hasattr(feed, "add_instruments"):
+            await feed.add_instruments([token])
+
+    async def remove(self, exchange: str, token: str) -> None:
+        feed = _feed_ref.get("feed")
+        if feed is not None and hasattr(feed, "remove_instruments"):
+            await feed.remove_instruments([token])
+
+
+_feed_subscription = _FeedSubscription()
+
 # ── OAuth login configuration (backend-only secrets) ─────────────────────────
 # Credential precedence (documented + tested):
 #   1. Credentials saved via WebUI  (encrypted in the app SQLite DB,
@@ -526,7 +543,7 @@ app = Starlette(
     )
     + build_settings_routes(_oauth_cfg_ref)
     + _build_instrument_routes(_instrument_catalog)
-    + _build_watchlist_routes(_store)
+    + _build_watchlist_routes(_store, subscription=_feed_subscription)
     + _build_alert_routes(_store, _alert_engine)
     + _build_market_data_routes(_provider_market_data)
     + [Mount("/ui", app=StaticFiles(directory=str(PROJECT_ROOT / "web" / "ui"), html=True),

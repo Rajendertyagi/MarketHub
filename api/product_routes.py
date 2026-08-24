@@ -69,8 +69,27 @@ def build_instrument_routes(catalog: Any) -> list[Route]:
     ]
 
 
-def build_watchlist_routes(store: Any) -> list[Route]:
-    """CRUD routes over persistent watchlists."""
+def build_watchlist_routes(store: Any,
+                           subscription: Any = None) -> list[Route]:
+    """CRUD routes over persistent watchlists.
+
+    ``subscription`` is an optional adapter exposing
+    ``add(exchange, token)`` / ``remove(exchange, token)`` coroutines.
+    Removal is reference-counted across ALL watchlists: the feed only
+    unsubscribes when the last watchlist reference disappears.
+    """
+
+    async def _refs(store: Any, exchange: str, token: str) -> int:
+        """Count references to this instrument across every watchlist."""
+        total = 0
+        for wl in await asyncio.to_thread(store.list_watchlists):
+            items = await asyncio.to_thread(store.list_watchlist_items,
+                                            wl["id"])
+            total += sum(
+                1 for it in items
+                if it["exchange"] == exchange
+                and it["instrument_token"] == token)
+        return total
 
     async def _list(request: Request) -> Response:  # noqa: ARG001
         wls = await asyncio.to_thread(store.list_watchlists)
@@ -135,11 +154,32 @@ def build_watchlist_routes(store: Any) -> list[Route]:
             instrument_token=token.strip(), tradingsymbol=symbol.strip())
         if item is None:
             return _json({"error": "already in watchlist"}, 409)
+        if subscription is not None:
+            try:
+                await subscription.add(exchange.strip(), token.strip())
+            except Exception:
+                pass  # subscription failure never breaks persistence
         return _json({"status": "ok", "item": item})
 
     async def _remove_item(request: Request) -> Response:
         item_id = int(request.path_params["item_id"])
+        # Capture identity before deletion for reference-counted unsub.
+        removed_identity = None
+        for wl in await asyncio.to_thread(store.list_watchlists):
+            for it in await asyncio.to_thread(store.list_watchlist_items,
+                                              wl["id"]):
+                if it["id"] == item_id:
+                    removed_identity = (it["exchange"],
+                                        it["instrument_token"])
         ok = await asyncio.to_thread(store.remove_watchlist_item, item_id)
+        if ok and removed_identity and subscription is not None:
+            exchange, token = removed_identity
+            refs = await _refs(store, exchange, token)
+            if refs == 0:
+                try:
+                    await subscription.remove(exchange, token)
+                except Exception:
+                    pass
         return _json({"status": "ok"} if ok else {"error": "not found"},
                      200 if ok else 404)
 

@@ -232,6 +232,9 @@ class UpstoxFeed:
                 "rest must provide authorize_market_feed()"
             )
         self._rest = rest
+        # Runtime subscription management (desired-set model).
+        self._sub_lock = asyncio.Lock()
+        self._live_ws: Any = None
         # MarketService is accepted now (stable constructor) but is
         # intentionally UNUSED until D3.2 wires market-data processing.
         self._market_service = market_service
@@ -338,6 +341,81 @@ class UpstoxFeed:
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"),
                           allow_nan=False).encode("utf-8")
 
+    # -- runtime subscription management (desired-set model) -------------------
+
+    def _mutation_frame(self, method: str, keys: list[str]) -> bytes:
+        """Build a sub/unsub frame for a subset of keys."""
+        payload = {
+            "guid": uuid.uuid4().hex,
+            "method": method,
+            "data": {
+                "mode": self._mode,
+                "instrumentKeys": keys,
+            },
+        }
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"),
+                          allow_nan=False).encode("utf-8")
+
+    async def _send_mutation(self, frame: bytes) -> bool:
+        """Send one frame on the live socket under the mutation lock.
+
+        Returns True when sent; False when no live socket exists (the
+        desired set is already updated, so the next reconnect picks it up).
+        """
+        async with self._sub_lock:
+            ws = self._live_ws
+            if ws is None:
+                return False
+            try:
+                await ws.send(frame)
+                return True
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.debug("upstox feed %s: sub-mutation send failed: %s",
+                             self._name, type(exc).__name__)
+                return False
+
+    async def add_instruments(self, keys: list[str]) -> int:
+        """Add instrument keys to the desired subscription set.
+
+        When the feed is streaming, a subscribe frame for ONLY the new
+        keys is sent on the live socket. Otherwise the desired set simply
+        grows and the next authorize/resubscribe cycle picks it up.
+        Returns the number of genuinely new keys.
+        """
+        async with self._sub_lock:
+            existing = set(self._instrument_keys)
+            fresh = [k for k in keys if k and k not in existing]
+            if fresh:
+                self._instrument_keys = tuple(
+                    sorted(existing | set(fresh)))
+        if fresh and self._state == "streaming":
+            await self._send_mutation(self._mutation_frame("sub", fresh))
+        return len(fresh)
+
+    async def remove_instruments(self, keys: list[str]) -> int:
+        """Remove keys from the desired set; unsub on the live socket.
+
+        Never removes the last key (an empty subscription is invalid for
+        the feed loop). Returns the number of removed keys.
+        """
+        async with self._sub_lock:
+            existing = set(self._instrument_keys)
+            gone = [k for k in keys if k in existing]
+            remaining = existing - set(gone)
+            if not remaining:
+                return 0   # keep at least one key subscribed
+            self._instrument_keys = tuple(sorted(remaining))
+        if gone and self._state == "streaming":
+            await self._send_mutation(
+                self._mutation_frame("unsub", gone))
+        return len(gone)
+
+    @property
+    def desired_instrument_count(self) -> int:
+        return len(self._instrument_keys)
+
     def _safe_ws_summary(self, exc: BaseException) -> str:
         return _safe_ws_summary(exc)
 
@@ -397,6 +475,7 @@ class UpstoxFeed:
             return self._next_backoff()
 
         self._connected_at = self._utc_now_iso()
+        self._live_ws = ws
         connection_started_mono = self._monotonic()
         try:
             await ws.send(self._subscription_frame())
@@ -412,6 +491,8 @@ class UpstoxFeed:
 
         self._set_state("streaming")
         reason = await self._recv_loop(ws, stop_event)
+        async with self._sub_lock:
+            self._live_ws = None
         lifetime = self._monotonic() - connection_started_mono
         self._reset_backoff_if_stable(lifetime)
         await self._close_quietly(ws)
@@ -533,18 +614,6 @@ class UpstoxFeed:
         self._credentials = credentials
         if self._state == "failed":
             self._set_state("stopped")
-
-    def add_instruments(self, keys: list[str]) -> int:
-        """Add instrument keys to the subscription set (deduplicated).
-
-        Takes effect on the NEXT authorize/resubscribe cycle — pair with
-        SourceManager.restart_source() for immediate effect through the
-        normal lifecycle. Returns the number of genuinely new keys.
-        """
-        existing = set(self._instrument_keys)
-        fresh = [k for k in keys if k and k not in existing]
-        if fresh:
-            self._instrument_keys = tuple(sorted(existing | set(fresh)))
         return len(fresh)
 
     @property
@@ -614,3 +683,7 @@ class UpstoxFeed:
     def credentials_snapshot(self) -> UpstoxCredentials | None:
         """Current credentials reference (redaction-safe object)."""
         return self._credentials
+
+
+
+
