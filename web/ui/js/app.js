@@ -300,8 +300,10 @@
       const chip = $("auth-token-status");
       const loginBtn = $("oauth-login-btn");
       if (loginBtn) {
-        loginBtn.style.display = d.oauth_available ? "" : "none";
-        if (d.oauth_available) {
+        // Only offer login when BOTH credentials and a live feed exist.
+        const ready = d.oauth_available && d.configured !== false;
+        loginBtn.style.display = ready ? "" : "none";
+        if (ready) {
           loginBtn.disabled = d.auth_state === "authorizing";
           loginBtn.textContent = d.token_configured
             ? "Login with Upstox (renew)" : "Login with Upstox";
@@ -334,11 +336,29 @@
       msg.textContent = "Upstox authentication successful. Connecting market feed…";
       msg.className = "hint ok";
     } else if (auth === "failed") {
-      msg.textContent = "Upstox authentication failed.";
+      const reason = params.get("reason");
+      let text;
+      if (reason === "rejected") {
+        text = "Upstox rejected the login. Check in Settings that your API Key and Secret are correct, and that the Redirect URL in your Upstox developer app is EXACTLY: " + window.location.origin + "/auth/upstox/callback";
+      } else if (reason === "expired") {
+        text = "The login session expired (10 minutes). Click Login with Upstox again.";
+      } else if (reason === "retry") {
+        text = "Login session invalid — possibly an old tab or double-click. Click Login with Upstox again.";
+      } else if (reason === "network") {
+        text = "Could not reach Upstox during login. Check your internet connection and try again.";
+      } else if (reason === "restart") {
+        text = "Login succeeded but the market feed could not restart. Try toggling Login again, or restart MarketHub.";
+      } else if (reason === "error") {
+        text = "No Upstox feed is configured in MarketHub. Check that config.json contains an enabled 'upstox_feed' source, then restart MarketHub.";
+      } else {
+        text = "Upstox authentication failed. Please try again.";
+      }
+      msg.textContent = text;
       msg.className = "hint err";
     }
-    // Strip the auth parameter from browser history (no code/state retained).
+    // Strip auth parameters from browser history (no code/state retained).
     params.delete("auth");
+    params.delete("reason");
     const qs = params.toString();
     history.replaceState(null, "", window.location.pathname + (qs ? "?" + qs : ""));
   }
@@ -386,7 +406,7 @@
         msg.classList.add("err");
       } finally {
         btn.disabled = false;
-        btn.textContent = "Save for Session";
+        btn.textContent = "Save Token";
       }
     });
     // Enter key submits too.
@@ -472,6 +492,35 @@
     pollCredStatus();
   }
 
+  function initCredentialDelete() {
+    const delBtn = $("cred-delete");
+    if (!delBtn) return;
+    const msg = $("cred-message");
+    delBtn.addEventListener("click", async () => {
+      if (!confirm("Delete stored Upstox API credentials?")) return;
+      delBtn.disabled = true;
+      try {
+        const res = await fetch("/api/settings/upstox", { method: "DELETE" });
+        if (res.ok) {
+          $("cred-api-key").value = "";
+          $("cred-api-secret").value = "";
+          msg.textContent = "Credentials deleted.";
+          msg.className = "hint ok";
+          pollCredStatus();
+          pollAuthStatus();
+        } else {
+          msg.textContent = "Failed to delete credentials.";
+          msg.className = "hint err";
+        }
+      } catch {
+        msg.textContent = "Network error while deleting credentials.";
+        msg.className = "hint err";
+      } finally {
+        delBtn.disabled = false;
+      }
+    });
+  }
+
   // ── Market filter (Markets page) ────────────────────────────────────────
 
   function initFilter() {
@@ -502,10 +551,11 @@
     initFilter();
     initAuth();
     initCredentialSettings();
+    initCredentialDelete();
     loadInitialQuotes();
-    loadSources();
     connectSSE();
-    setInterval(pollSources, 10000);   // poll source status every 10 s
+    pollSources();                     // immediate status render (no 10s wait)
+    setInterval(pollSources, 10000);   // then poll source status every 10 s
   }
 
   document.addEventListener("DOMContentLoaded", init);

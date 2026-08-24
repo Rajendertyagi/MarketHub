@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="/ui/vendor/webawesome/dist/styles/webawesome.css">
 <link rel="stylesheet" href="/ui/vendor/webawesome/dist/styles/themes/default.css">
 <link rel="stylesheet" href="/ui/vendor/webawesome/dist/styles/utilities.css">
-<link rel="stylesheet" href="/ui/css/style.css">
+<link rel="stylesheet" href="/ui/css/style.css?v=12">
 <script type="module" src="/ui/vendor/webawesome/dist/webawesome.loader.js"></script>
 </head>
 <body>
@@ -21,6 +21,7 @@
     <button class="nav-link" data-view="options">Option Chain</button>
     <button class="nav-link" data-view="sources">Sources</button>
     <button class="nav-link" data-view="mcp">MCP</button>
+    <button class="nav-link" data-view="settings">Settings</button>
   </div>
   <div class="topnav-right">
     <span id="sse-indicator" class="indicator indicator-off" title="SSE connection">● SSE</span>
@@ -96,42 +97,7 @@
       <div class="panel-header"><h2>Source Status</h2></div>
       <div id="sources-detail"><em>Loading…</em></div>
     </div>
-    <div class="panel" style="margin-top:10px">
-      <div class="panel-header"><h2>Upstox Authentication</h2></div>
-      <div class="auth-form">
-        <div class="auth-row">
-          <label>Credentials</label>
-          <span id="auth-cred-status" class="chip chip-off">Missing</span>
-        </div>
-        <div class="auth-row">
-          <label>Authentication</label>
-          <span id="auth-token-status" class="chip chip-off">Not configured</span>
-        </div>
-        <div class="auth-row">
-          <label>Feed State</label>
-          <span id="auth-feed-state" class="setting-val">—</span>
-        </div>
-        <div class="auth-row">
-          <label></label>
-          <button id="oauth-login-btn" class="btn" style="display:none">Login with Upstox</button>
-        </div>
-        <div id="auth-message" class="hint"></div>
-        <details>
-          <summary style="cursor:pointer;font-size:12px;color:var(--text-muted);margin-top:6px">
-            Paste token manually (emergency fallback)
-          </summary>
-          <div class="auth-row" style="margin-top:10px">
-            <label for="auth-token-input">Access Token</label>
-            <input type="password" id="auth-token-input" class="filter-input"
-                   placeholder="Paste Upstox access token…" autocomplete="off">
-          </div>
-          <div class="auth-row">
-            <label></label>
-            <button id="auth-submit" class="btn">Save for Session</button>
-          </div>
-        </details>
-      </div>
-    </div>
+    <p class="hint">To log in or manage Upstox credentials, go to <button class="nav-link" data-view="settings" style="padding:0;font-size:12px;text-decoration:underline">Settings</button>.</p>
   </section>
 
   <!-- ── MCP VIEW ── -->
@@ -192,8 +158,37 @@
         <div class="auth-row">
           <label></label>
           <button id="cred-save" class="btn">Save Credentials</button>
+          <button id="cred-delete" class="btn" style="border-color:var(--red);color:var(--red)">Delete Credentials</button>
         </div>
         <div id="cred-message" class="hint"></div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:10px">
+      <div class="panel-header"><h2>Upstox Login</h2></div>
+      <div class="auth-form">
+        <div class="auth-row">
+          <label>Authentication</label>
+          <span id="auth-token-status" class="chip chip-off">Not configured</span>
+        </div>
+        <div class="auth-row">
+          <label>Feed State</label>
+          <span id="auth-feed-state" class="setting-val">—</span>
+        </div>
+        <div class="auth-row">
+          <label></label>
+          <button id="oauth-login-btn" class="btn" style="display:none">Login with Upstox</button>
+        </div>
+        <div id="auth-message" class="hint"></div>
+        <div class="auth-row" style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+          <label for="auth-token-input">Manual Token</label>
+          <input type="password" id="auth-token-input" class="filter-input"
+                 placeholder="Paste Upstox access token (emergency fallback)…" autocomplete="off">
+        </div>
+        <div class="auth-row">
+          <label></label>
+          <button id="auth-submit" class="btn">Save Token</button>
+        </div>
       </div>
     </div>
   </section>
@@ -205,6 +200,6 @@
   <span id="footer-tick"></span>
 </footer>
 
-<script src="/ui/js/app.js"></script>
+<script src="/ui/js/app.js?v=12"></script>
 </body>
 </html>
