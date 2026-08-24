@@ -309,9 +309,13 @@ class SourceManager:
 from sources.registry import SOURCE_TYPES  # noqa: E402  (bottom import avoids cycles)
 
 
-def build_source_manager(sources_cfg: dict[str, Any] | None) -> SourceManager:
+def build_source_manager(
+    sources_cfg: dict[str, Any] | None,
+    *,
+    market_service: Any = None,
+) -> SourceManager:
     """
-    Build a SourceManager from the ``sources`` section of config.json.
+    Build a SourceManager from the ``"sources"`` section of config.json.
 
     This is the ONLY place that maps a config ``"type"`` string to a concrete
     source class.  server.py calls this and knows nothing about individual
@@ -320,6 +324,8 @@ def build_source_manager(sources_cfg: dict[str, Any] | None) -> SourceManager:
     Args:
         sources_cfg: the "sources" dict, e.g.
             {"market_feed": {"type": "http_poller", "enabled": true, ...}}
+        market_service: optional shared MarketService injected into each
+            source's config dict for sources that need it (e.g. UpstoxFeed).
 
     Returns:
         A SourceManager with all valid sources registered.  An empty config
@@ -353,6 +359,24 @@ def build_source_manager(sources_cfg: dict[str, Any] | None) -> SourceManager:
         # Bind the runtime instance name (separate from the implementation type).
         instance_cfg = dict(cfg)
         instance_cfg["source_name"] = name
-        manager.register(cls(instance_cfg))
+        try:
+            # Factories whose signature accepts market_service receive the
+            # shared application instance; others get config only.
+            if market_service is not None:
+                import inspect
+                sig = inspect.signature(cls)
+                if "market_service" in sig.parameters:
+                    source = cls(instance_cfg, market_service=market_service)
+                else:
+                    source = cls(instance_cfg)
+            else:
+                source = cls(instance_cfg)
+            manager.register(source)
+        except SourceConfigError:
+            raise
+        except Exception as exc:
+            raise SourceConfigError(
+                f"failed to construct source '{name}' (type={src_type}): {exc}"
+            ) from exc
 
     return manager

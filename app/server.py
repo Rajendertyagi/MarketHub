@@ -188,65 +188,13 @@ _metrics = RuntimeMetrics()
 _subscription_bus = InMemorySubscriptionBus()
 _bg_task_manager = runtime.BackgroundTaskManager()
 
-# ── Source Manager ──────────────────────────────────────────────────────────
-try:
-    _source_manager = build_source_manager(SOURCES_CFG)
-except SourceConfigError as exc:
-    _app_logger.error("source configuration error: %s", exc)
-    _source_manager = SourceManager()
-
-# ── Lifespan (created BEFORE MCPServer so it can be passed as constructor arg) ──
-_lifespan = runtime.make_lifespan(
-    _store,
-    bg_manager=_bg_task_manager,
-    shutdown_timeout=TIMEOUTS["shutdown_seconds"],
-    source_manager=_source_manager,
-    bus=_subscription_bus,
-    source_configs=SOURCES_CFG,
-    metrics=_metrics,
-    retention_cfg=RETENTION_CFG,
-)
-
-# ============================================================
-# MCP SERVER
-# ============================================================
-
-mcp = MCPServer(
-    name=SERVER_NAME,
-    version=__version__,
-    description="Generic self-hosted MCP event server with native event delivery",
-    log_level=LOG_LEVEL,
-    subscriptions=_subscription_bus,
-    lifespan=_lifespan,
-)
-
-# ============================================================
-# SERVICES BUNDLE
-# ============================================================
-
-_services = Services(
-    store=_store,
-    subscription_bus=_subscription_bus,
-    bg_task_manager=_bg_task_manager,
-    source_manager=_source_manager,
-    timeouts=TIMEOUTS,
-    replay_cfg=REPLAY_CFG,
-    metrics=_metrics,
-)
-
-# ── Alert engine (generic, Context-free) ──────────────────────────────────────
-# Single-process MVP: the evaluator is wired to the canonical publish path via
-# events.configure_alert_evaluator(). It depends only on the store and the
-# subscription bus — no MCP Context, ClientSession, or request state.
-_alert_evaluator = AlertEvaluator(store=_store, subscription_bus=_subscription_bus, metrics=_metrics)
-events.configure_alert_evaluator(_alert_evaluator.evaluate)
-events.configure_metrics(_metrics)
 
 # ── SSE broadcast broker ──────────────────────────────────────────────────────
 # Wired to the canonical publish path so every published event fans out to
 # connected GET /events/stream subscribers automatically.
 _event_broker = EventBroker()
 events.configure_sse_broker(_event_broker)
+
 
 # ── Dedicated MARKET SSE broker + shared market service ──────────────────────
 # Second EventBroker INSTANCE (same class as the generic stream above):
@@ -274,6 +222,63 @@ def _on_market_quote_update(quote: Quote) -> None:
 
 _market_service = MarketService(on_quote_update=_on_market_quote_update)
 
+# ── Source Manager (needs _market_service for UpstoxFeed injection) ─────────
+try:
+    _source_manager = build_source_manager(
+        SOURCES_CFG, market_service=_market_service,
+    )
+except SourceConfigError as exc:
+    _app_logger.error("source configuration error: %s", exc)
+    _source_manager = SourceManager()
+
+# ── Lifespan ─────────────────────────────────────────────────────────────────
+_lifespan = runtime.make_lifespan(
+    _store,
+    bg_manager=_bg_task_manager,
+    shutdown_timeout=TIMEOUTS["shutdown_seconds"],
+    source_manager=_source_manager,
+    bus=_subscription_bus,
+    source_configs=SOURCES_CFG,
+    metrics=_metrics,
+    retention_cfg=RETENTION_CFG,
+)
+
+
+# ============================================================
+# MCP SERVER
+# ============================================================
+
+mcp = MCPServer(
+    name=SERVER_NAME,
+    version=__version__,
+    description="Generic self-hosted MCP event server with native event delivery",
+    log_level=LOG_LEVEL,
+    subscriptions=_subscription_bus,
+    lifespan=_lifespan,
+)
+
+# ============================================================
+# SERVICES BUNDLE
+# ============================================================
+
+
+_services = Services(
+    store=_store,
+    subscription_bus=_subscription_bus,
+    bg_task_manager=_bg_task_manager,
+    source_manager=_source_manager,
+    timeouts=TIMEOUTS,
+    replay_cfg=REPLAY_CFG,
+    metrics=_metrics,
+)
+
+# ── Alert engine (generic, Context-free) ──────────────────────────────────────
+# Single-process MVP: the evaluator is wired to the canonical publish path via
+# events.configure_alert_evaluator(). It depends only on the store and the
+# subscription bus — no MCP Context, ClientSession, or request state.
+_alert_evaluator = AlertEvaluator(store=_store, subscription_bus=_subscription_bus, metrics=_metrics)
+events.configure_alert_evaluator(_alert_evaluator.evaluate)
+events.configure_metrics(_metrics)
 # ============================================================
 # REGISTER RESOURCES
 # ============================================================
