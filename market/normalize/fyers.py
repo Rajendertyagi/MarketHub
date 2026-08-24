@@ -406,3 +406,147 @@ def instrument_from_master(record: dict[str, Any]) -> Instrument:
         expiry=expiry,
         strike=strike,
     )
+
+
+# ---------------------------------------------------------------------------
+# History candles (POST /v3/history) — epoch-SECOND timestamps
+# ---------------------------------------------------------------------------
+
+_FYERS_RESOLUTIONS = {
+    ("minutes", 1): "1", ("minutes", 2): "2", ("minutes", 3): "3",
+    ("minutes", 5): "5", ("minutes", 10): "10", ("minutes", 15): "15",
+    ("minutes", 20): "20", ("minutes", 30): "30", ("minutes", 45): "45",
+    ("minutes", 60): "60", ("hours", 1): "60", ("hours", 2): "120",
+    ("days", 1): "1D",
+}
+
+
+def fyers_resolution(unit: str, interval: int) -> str | None:
+    """Map canonical (unit, interval) to a Fyers resolution string."""
+    return _FYERS_RESOLUTIONS.get((unit, int(interval)))
+
+
+def candles_from_history(payload: dict[str, Any]):
+    """Normalize a Fyers /v3/history response into canonical Candles.
+
+    Response shape: {"s":"ok","candles":[[epoch_s, o, h, l, c, v], ...]}.
+    Malformed rows are skipped.
+    """
+    if not isinstance(payload, dict) or payload.get("s") != "ok":
+        raise NormalizationError("fyers history: unexpected response")
+    rows = payload.get("candles") or []
+    from market.models import Candle
+
+    out = []
+    for row in rows:
+        if not isinstance(row, list) or len(row) < 5:
+            continue
+        try:
+            ts = parse_timestamp(row[0], unit="s", field="history.ts")
+            o, h, l, c = (to_float(row[1], field="h.o"),
+                          to_float(row[2], field="h.h"),
+                          to_float(row[3], field="h.l"),
+                          to_float(row[4], field="h.c"))
+        except NormalizationError:
+            continue
+        vol = to_int(row[5], field="h.v") \
+            if len(row) > 5 and row[5] is not None else None
+        out.append(Candle(timestamp=ts, open=o, high=h, low=l, close=c,
+                          volume=vol))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Option chain (POST /v3/options-chain-v3 with greeks="1")
+# ---------------------------------------------------------------------------
+
+
+def _leg_contract(leg: dict[str, Any]) -> "OptionContractData | None":
+    from market.models import OptionContractData
+
+
+    def num(key: str, src=None) -> float | None:
+        raw = (src or leg).get(key)
+        try:
+            f = float(raw)
+            return f
+        except (TypeError, ValueError):
+            return None
+
+    def integer(key: str) -> int | None:
+        f = num(key)
+        return int(f) if f is not None else None
+
+    greeks = leg.get("greeks") if isinstance(leg.get("greeks"), dict) else {}
+    iv_raw = greeks.get("iv")
+    return OptionContractData(
+        ltp=num("ltp"), volume=integer("volume"),
+        bid=num("bid"), ask=num("ask"),
+        oi=num("oi"), previous_oi=num("prev_oi"),
+        oi_change=num("oich"),
+        close=None,
+        iv=num("iv", greeks),
+        delta=num("delta", greeks), gamma=num("gamma", greeks),
+        theta=num("theta", greeks), vega=num("vega", greeks),
+        pop=None,
+    )
+
+
+def option_chain_from_rest(payload: dict[str, Any], *,
+                           instrument_token: str, exchange: str,
+                           tradingsymbol: str = "", expiry: str):
+    """Normalize a Fyers options-chain-v3 response into the SAME canonical
+    OptionChainSnapshot used for Upstox (cross-provider equivalence).
+
+    Spot price comes from the underlying leg (option_type == "").
+    ATM is the strike nearest to spot (deterministic).
+    """
+    if not isinstance(payload, dict):
+        raise NormalizationError("fyers option chain: expected object")
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise NormalizationError("fyers option chain: missing data")
+
+    by_strike: dict[float, dict[str, OptionContractData | None]] = {}
+    spot: float | None = None
+    for leg in data.get("options") or []:
+        if not isinstance(leg, dict):
+            continue
+        opt_type = leg.get("option_type")
+        try:
+            strike = float(leg.get("strike_price"))
+        except (TypeError, ValueError):
+            continue
+        if opt_type == "":
+            spot = num_or_none(leg.get("ltp"))
+            continue
+        slot = by_strike.setdefault(strike, {})
+        if opt_type == "CE":
+            slot["call"] = _leg_contract(leg)
+        elif opt_type == "PE":
+            slot["put"] = _leg_contract(leg)
+
+    from market.models import OptionChainSnapshot, OptionStrikeRow
+
+    strikes = sorted(by_strike.keys())
+    atm_strike = None
+    if spot is not None and strikes:
+        atm_strike = min(strikes, key=lambda s: abs(s - spot))
+    rows = tuple(
+        OptionStrikeRow(strike=s,
+                        call=by_strike[s].get("call"),
+                        put=by_strike[s].get("put"),
+                        atm=(s == atm_strike))
+        for s in strikes)
+    return OptionChainSnapshot(
+        instrument_token=instrument_token, exchange=exchange,
+        tradingsymbol=tradingsymbol, expiry=expiry,
+        spot_price=spot, atm_strike=atm_strike, strikes=rows)
+
+
+def num_or_none(v: Any) -> float | None:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+

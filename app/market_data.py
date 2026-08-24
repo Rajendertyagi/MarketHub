@@ -25,13 +25,32 @@ class ProviderMarketDataError(RuntimeError):
 
 
 class ProviderMarketData:
-    """History + option-chain access over the canonical REST boundary."""
+    """History + option-chain access over canonical provider adapters.
 
-    def __init__(self, auth_context_fn: Callable[[], Any]) -> None:
-        self._auth_context_fn = auth_context_fn
+    Provider resolution is deterministic: explicit ``provider`` argument
+    wins; default is "upstox". Unknown providers are rejected loudly —
+    never a silent random fallback.
+    """
+
+    _PROVIDERS = ("upstox", "fyers")
+
+    def __init__(self, upstox_auth_context_fn: Callable[[], Any],
+                 fyers_adapter: Any = None) -> None:
+        self._upstox_auth_context_fn = upstox_auth_context_fn
+        self._fyers = fyers_adapter   # optional; None until configured
+
+    def _resolve(self, provider: str):
+        if provider == "upstox":
+            return "upstox", self._upstox_auth_context_fn
+        if provider == "fyers":
+            if self._fyers is None:
+                raise ProviderMarketDataError(
+                    "fyers market data not configured")
+            return "fyers", self._fyers
+        raise ProviderMarketDataError(f"unknown provider: {provider}")
 
     def _auth(self):
-        ctx = self._auth_context_fn()
+        ctx = self._upstox_auth_context_fn()
         if ctx is None:
             raise ProviderMarketDataError(
                 "upstox feed is not authenticated; log in first")
@@ -41,8 +60,18 @@ class ProviderMarketData:
 
     async def history(
         self, *, instrument_key: str, unit: str, interval: int,
-        from_date: str, to_date: str,
+        from_date: str, to_date: str, provider: str = "upstox",
     ) -> list[Any]:
+        provider, _auth_src = self._resolve(provider)
+        if provider == "fyers":
+            from market.normalize.fyers import fyers_resolution
+            resolution = fyers_resolution(unit, interval)
+            if resolution is None:
+                raise ProviderMarketDataError(
+                    f"fyers does not support {unit}/{interval}")
+            return await self._fyers.history(
+                instrument_key=instrument_key, resolution=resolution,
+                from_date=from_date, to_date=to_date)
         if unit not in _VALID_UNITS:
             raise ProviderMarketDataError(f"unsupported unit: {unit}")
         interval = int(interval)
@@ -72,8 +101,13 @@ class ProviderMarketData:
 
     async def option_chain(
         self, *, instrument_key: str, exchange: str,
-        tradingsymbol: str = "", expiry: str,
+        tradingsymbol: str = "", expiry: str, provider: str = "upstox",
     ) -> Any:
+        provider, _auth_src = self._resolve(provider)
+        if provider == "fyers":
+            return await self._fyers.option_chain(
+                instrument_key=instrument_key, exchange=exchange,
+                tradingsymbol=tradingsymbol, expiry=expiry)
         if not expiry or len(expiry) != 10:
             raise ProviderMarketDataError("expiry must be YYYY-MM-DD")
         rest, creds = self._auth()
@@ -87,3 +121,4 @@ class ProviderMarketData:
         return option_chain_from_rest(
             payload, instrument_token=instrument_key, exchange=exchange,
             tradingsymbol=tradingsymbol, expiry=expiry)
+

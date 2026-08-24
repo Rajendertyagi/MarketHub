@@ -98,6 +98,7 @@ _TEST_FILES: dict[str, str] = {
     "consumer_completeness": "test_consumer_completeness.py",
     "product_foundations": "test_product_foundations.py",
     "option_chain_history": "test_option_chain_history.py",
+    "fyers_integration": "test_fyers_integration.py",
 }
 
 # Group -> ordered list of module keys. Order matters (fast/stable first).
@@ -127,6 +128,7 @@ GROUPS: dict[str, list[str]] = {
         "consumer_completeness",
         "product_foundations",
         "option_chain_history",
+        "fyers_integration",
     ],
     "source": ["source_lifecycle", "source_dedup"],
     "consumer": ["consumers", "acknowledgement"],
@@ -395,6 +397,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
