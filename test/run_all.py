@@ -99,6 +99,8 @@ _TEST_FILES: dict[str, str] = {
     "product_foundations": "test_product_foundations.py",
     "option_chain_history": "test_option_chain_history.py",
     "fyers_integration": "test_fyers_integration.py",
+    "fyers_feed": "test_fyers_feed.py",
+    "market_load": "test_market_load.py",
 }
 
 # Group -> ordered list of module keys. Order matters (fast/stable first).
@@ -129,6 +131,8 @@ GROUPS: dict[str, list[str]] = {
         "product_foundations",
         "option_chain_history",
         "fyers_integration",
+        "fyers_feed",
+        "market_load",
     ],
     "source": ["source_lifecycle", "source_dedup"],
     "consumer": ["consumers", "acknowledgement"],
