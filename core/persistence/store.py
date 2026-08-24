@@ -819,4 +819,17 @@ class EventStore:
         finally:
             conn.close()
 
+    def option_underlyings(self, q: str | None = None,
+                           limit: int = 25) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.option_underlyings(conn, q=q, limit=limit)
+        finally:
+            conn.close()
 
+    def option_expiries(self, underlying: str) -> list[str]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.option_expiries(conn, underlying)
+        finally:
+            conn.close()

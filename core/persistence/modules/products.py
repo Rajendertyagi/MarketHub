@@ -384,3 +384,37 @@ def migrate_v10_to_v11(conn: sqlite3.Connection) -> None:
     conn.commit()
     logger.info("migrated v10→v11: added instruments/watchlists/alerts")
 
+
+def option_underlyings(
+    conn: sqlite3.Connection, q: str | None = None,
+    limit: int = 25,
+) -> list[dict[str, Any]]:
+    """Distinct option underlyings, optionally filtered by name/symbol."""
+    sql = ("SELECT DISTINCT underlying FROM instruments "
+           "WHERE underlying IS NOT NULL")
+    args: list[Any] = []
+    if q:
+        sql += " AND (underlying LIKE ? OR tradingsymbol LIKE ?)"
+        args += [f"%{q}%", f"%{q}%"]
+    sql += " ORDER BY underlying LIMIT ?"
+    args.append(max(1, min(int(limit), 100)))
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(sql, args)]
+    finally:
+        conn.row_factory = None
+
+
+def option_expiries(
+    conn: sqlite3.Connection, underlying: str,
+) -> list[str]:
+    """Distinct expiries for one underlying, ascending."""
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT expiry FROM instruments "
+            "WHERE underlying = ? AND expiry IS NOT NULL "
+            "ORDER BY expiry", (underlying,))
+        return [r["expiry"] for r in rows]
+    finally:
+        conn.row_factory = None

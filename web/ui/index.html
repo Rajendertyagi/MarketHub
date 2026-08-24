@@ -154,8 +154,14 @@
   <!-- ── OPTION CHAIN VIEW ── -->
   <section id="view-options" class="view">
     <div class="toolbar">
-      <input type="text" id="oc-underlying-key" placeholder="Underlying key (e.g. NSE_INDEX|NIFTY 50)…" class="filter-input" style="width:280px">
-      <input type="date" id="oc-expiry-date" class="filter-input">
+      <input type="text" id="oc-underlying-search" placeholder="Search underlying (e.g. NIFTY)…" class="filter-input" style="width:240px">
+      <select id="oc-underlying-select" class="wa-select"><option value="">Underlying…</option></select>
+      <select id="oc-expiry-select" class="wa-select" disabled><option value="">Expiry…</option></select>
+      <select id="oc-window" class="wa-select">
+        <option value="5">±5 strikes</option>
+        <option value="10">±10 strikes</option>
+        <option value="0" selected>All</option>
+      </select>
       <button id="oc-load" class="btn">Load Chain</button>
     </div>
     <div class="status-strip">
@@ -173,7 +179,7 @@
           <th>OI</th><th>OI Chg</th><th>Vol</th><th>IV</th><th>LTP</th><th>Chg</th>
           <th>OI</th><th>OI Chg</th><th>Vol</th><th>IV</th><th>LTP</th><th>Chg</th>
         </tr></thead>
-        <tbody id="oc-body"><tr><td colspan="13" class="empty-row">Enter an underlying and expiry, then Load Chain. Requires an active Upstox login.</td></tr></tbody>
+        <tbody id="oc-body"><tr><td colspan="13" class="empty-row">Search an underlying (sync the instrument master first), pick an expiry, then Load Chain.</td></tr></tbody>
       </table>
       </div>
     </div>

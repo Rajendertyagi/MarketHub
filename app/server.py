@@ -542,7 +542,7 @@ app = Starlette(
         rest=_oauth_rest,
     )
     + build_settings_routes(_oauth_cfg_ref)
-    + _build_instrument_routes(_instrument_catalog)
+    + _build_instrument_routes(_instrument_catalog, store=_store)
     + _build_watchlist_routes(_store, subscription=_feed_subscription)
     + _build_alert_routes(_store, _alert_engine)
     + _build_market_data_routes(_provider_market_data)

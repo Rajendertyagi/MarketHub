@@ -24,8 +24,26 @@ def _json(data: Any, status: int = 200) -> JSONResponse:
     return JSONResponse(data, status_code=status)
 
 
-def build_instrument_routes(catalog: Any) -> list[Route]:
+def build_instrument_routes(catalog: Any, store: Any = None) -> list[Route]:
     """Routes over the canonical instrument catalog."""
+
+    async def _underlyings(request: Request) -> Response:
+        if store is None:
+            return _json({"error": "catalog store unavailable"}, 503)
+        qp = request.query_params
+        rows = await asyncio.to_thread(
+            store.option_underlyings, qp.get("q") or None,
+            min(int(qp.get("limit", 25)), 100))
+        return _json({"underlyings": [r["underlying"] for r in rows]})
+
+    async def _expiries(request: Request) -> Response:
+        if store is None:
+            return _json({"error": "catalog store unavailable"}, 503)
+        underlying = request.query_params.get("underlying", "")
+        if not underlying:
+            return _json({"error": "underlying is required"}, 400)
+        expiries = await asyncio.to_thread(store.option_expiries, underlying)
+        return _json({"underlying": underlying, "expiries": expiries})
 
     async def _search(request: Request) -> Response:
         qp = request.query_params
@@ -66,6 +84,9 @@ def build_instrument_routes(catalog: Any) -> list[Route]:
         Route("/api/instruments/sync", endpoint=_sync, methods=["POST"]),
         Route("/api/instruments/sync-state", endpoint=_sync_state,
               methods=["GET"]),
+        Route("/api/options/underlyings", endpoint=_underlyings,
+              methods=["GET"]),
+        Route("/api/options/expiries", endpoint=_expiries, methods=["GET"]),
     ]
 
 
