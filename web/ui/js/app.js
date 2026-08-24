@@ -308,7 +308,9 @@
         }
       }
       let label, cls;
-      if (!d.token_configured) {
+      if (!d.oauth_available) {
+        label = "Credentials Missing"; cls = "chip chip-off";
+      } else if (!d.token_configured) {
         label = "Authentication Required"; cls = "chip chip-off";
       } else if (d.expired === true) {
         label = "Token Expired"; cls = "chip chip-off";
@@ -395,6 +397,81 @@
     pollAuthStatus();
   }
 
+  // ── Upstox app credentials (Settings page) ──────────────────────────────
+
+  async function pollCredStatus() {
+    try {
+      const res = await fetch("/api/settings/upstox");
+      const d = await res.json();
+      const keyChip = $("cred-key-status");
+      const secretChip = $("cred-secret-status");
+      if (keyChip) {
+        keyChip.textContent = d.api_key_configured
+          ? "API Key: Configured" : "API Key: Missing";
+        keyChip.className = "chip " + (d.api_key_configured ? "chip-on" : "chip-off");
+      }
+      if (secretChip) {
+        secretChip.textContent = d.api_secret_configured
+          ? "API Secret: Configured" : "API Secret: Missing";
+        secretChip.className = "chip " + (d.api_secret_configured ? "chip-on" : "chip-off");
+      }
+      // Sources page summary chip.
+      const srcCred = $("auth-cred-status");
+      if (srcCred) {
+        const ok = d.api_key_configured && d.api_secret_configured;
+        srcCred.textContent = ok ? "Configured" : "Missing";
+        srcCred.className = "chip " + (ok ? "chip-on" : "chip-off");
+      }
+    } catch { /* silent */ }
+  }
+
+  function initCredentialSettings() {
+    const saveBtn = $("cred-save");
+    if (!saveBtn) return;
+    const keyInput = $("cred-api-key");
+    const secretInput = $("cred-api-secret");
+    const msg = $("cred-message");
+    saveBtn.addEventListener("click", async () => {
+      msg.textContent = "";
+      msg.className = "hint";
+      const apiKey = keyInput.value.trim();
+      const apiSecret = secretInput.value.trim();
+      if (!apiKey || !apiSecret) {
+        msg.textContent = "Both API key and API secret are required.";
+        msg.classList.add("err");
+        return;
+      }
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Saving…";
+      try {
+        const res = await fetch("/api/settings/upstox", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret }),
+        });
+        const data = await res.json();
+        if (res.ok && data.configured) {
+          keyInput.value = "";
+          secretInput.value = "";   // never retain the secret in the field
+          msg.textContent = "Credentials saved. You can now use Login with Upstox on the Sources page.";
+          msg.classList.add("ok");
+          pollCredStatus();
+          pollAuthStatus();
+        } else {
+          msg.textContent = data.error || "Failed to save credentials.";
+          msg.classList.add("err");
+        }
+      } catch {
+        msg.textContent = "Network error while saving credentials.";
+        msg.classList.add("err");
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Save Credentials";
+      }
+    });
+    pollCredStatus();
+  }
+
   // ── Market filter (Markets page) ────────────────────────────────────────
 
   function initFilter() {
@@ -424,6 +501,7 @@
     initNav();
     initFilter();
     initAuth();
+    initCredentialSettings();
     loadInitialQuotes();
     loadSources();
     connectSSE();

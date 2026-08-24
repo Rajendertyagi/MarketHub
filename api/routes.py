@@ -18,7 +18,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-__all__ = ["build_market_routes", "build_auth_routes"]
+__all__ = ["build_market_routes", "build_auth_routes", "build_settings_routes"]
 
 
 def _json(data: Any, status: int = 200) -> JSONResponse:
@@ -99,6 +99,64 @@ def build_market_routes(
         Route("/api/market/depth/{exchange}/{instrument_token}",
               endpoint=_market_depth, methods=["GET"]),
         Route("/api/sources/status", endpoint=_source_status, methods=["GET"]),
+    ]
+
+
+def build_settings_routes(
+    oauth_ref: dict[str, Any],
+    cred_store: Any = None,
+) -> list[Route]:
+    """Build settings routes for persistent Upstox app-credential management.
+
+    ``oauth_ref`` is the SAME mutable dict given to build_auth_routes —
+    saving here updates OAuth availability at runtime (no restart).
+    ``cred_store`` is a module exposing load/save functions (app.secrets_store);
+    injected so tests can point at a temporary directory.
+    """
+    if cred_store is None:
+        from app import secrets_store as cred_store  # noqa: N813
+
+    async def _settings_status(request: Request) -> Response:  # noqa: ARG001
+        # Reflect ACTIVE runtime configuration (saved OR env fallback),
+        # as booleans only — never credential values.
+        return _json({
+            "api_key_configured": bool(
+                isinstance(oauth_ref.get("api_key"), str)
+                and oauth_ref["api_key"].strip()),
+            "api_secret_configured": bool(
+                isinstance(oauth_ref.get("api_secret"), str)
+                and oauth_ref["api_secret"].strip()),
+        })
+
+    async def _save_credentials(request: Request) -> Response:
+        try:
+            body = await request.json()
+        except Exception:
+            return _json({"error": "invalid JSON body"}, 400)
+        api_key = body.get("api_key")
+        api_secret = body.get("api_secret")
+        for label, value in (("api_key", api_key), ("api_secret", api_secret)):
+            if not isinstance(value, str) or not value.strip():
+                return _json({"error": f"{label} is required"}, 400)
+            if len(value) > 512:
+                return _json({"error": f"{label} too long"}, 400)
+        try:
+            cred_store.save_upstox_app_credentials(api_key.strip(),
+                                                   api_secret.strip())
+        except Exception:
+            return _json({"error": "failed to save credentials"}, 500)
+
+        # Runtime reload: same dict object the auth routes hold, updated in
+        # place so Login-with-Upstox becomes available without restart.
+        oauth_ref["api_key"] = api_key.strip()
+        oauth_ref["api_secret"] = api_secret.strip()
+        return _json({"configured": True})
+
+    return [
+        Route("/api/settings/upstox", endpoint=_settings_status,
+              methods=["GET"]),
+        Route("/api/settings/upstox", endpoint=_save_credentials,
+              methods=["POST"]),
     ]
 
 

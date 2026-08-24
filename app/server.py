@@ -76,7 +76,10 @@ from mcp_server.tools import (
     register_market_tools,
 )
 from sources import SourceManager, build_source_manager, SourceConfigError
-from api.routes import build_market_routes, build_auth_routes
+from api.routes import (  # noqa: F401  (build_settings_routes wired below)
+    build_market_routes,
+    build_auth_routes,
+)
 from market.models import Quote
 from market.serialization import quote_to_dict
 from market.service import MarketService
@@ -243,28 +246,45 @@ for _src_name, _src in _source_manager.enabled_sources.items():
         break
 
 # ── OAuth login configuration (backend-only secrets) ─────────────────────────
-# API key/secret arrive via environment variables; the secret NEVER reaches
-# the browser, API responses, logs, or disk. Redirect URI defaults to this
-# server's own callback and may be overridden via UPSTOX_REDIRECT_URI.
-_OAUTH_CFG: dict[str, str] | None = None
-_UPSTOX_API_KEY = os.environ.get("UPSTOX_API_KEY", "").strip()
-_UPSTOX_API_SECRET = os.environ.get("UPSTOX_API_SECRET", "").strip()
-_UPSTOX_REDIRECT_URI = os.environ.get(
-    "UPSTOX_REDIRECT_URI", f"http://localhost:{LISTEN_PORT}/auth/upstox/callback"
-).strip()
-if _UPSTOX_API_KEY and _UPSTOX_API_SECRET:
-    _OAUTH_CFG = {
-        "api_key": _UPSTOX_API_KEY,
-        "api_secret": _UPSTOX_API_SECRET,
-        "redirect_uri": _UPSTOX_REDIRECT_URI,
-    }
-    _app_logger.info(
-        "upstox oauth login configured (redirect=%s)", _UPSTOX_REDIRECT_URI
-    )
+# Credential precedence (documented + tested):
+#   1. Credentials saved via WebUI  (data/secrets/upstox_app_credentials.json)
+#   2. Environment variables        (UPSTOX_API_KEY / UPSTOX_API_SECRET)
+#   3. Not configured               (manual token entry remains available)
+# The secret NEVER reaches the browser, API responses, or logs. The mutable
+# _oauth_cfg_ref dict is shared with the settings routes so saving new
+# credentials in the WebUI enables OAuth at runtime — no restart needed.
+from app import secrets_store as _secrets_store
+from api.routes import build_settings_routes
+
+_oauth_cfg_ref: dict[str, str] = {
+    "api_key": "",
+    "api_secret": "",
+    "redirect_uri": os.environ.get(
+        "UPSTOX_REDIRECT_URI",
+        f"http://localhost:{LISTEN_PORT}/auth/upstox/callback",
+    ).strip(),
+}
+
+_saved_creds = _secrets_store.load_upstox_app_credentials()
+if _saved_creds is not None:
+    # Precedence 1: WebUI-saved credentials win over env fallback.
+    _oauth_cfg_ref["api_key"] = _saved_creds["api_key"]
+    _oauth_cfg_ref["api_secret"] = _saved_creds["api_secret"]
+    _app_logger.info("upstox oauth configured from saved credentials")
 else:
-    _app_logger.info(
-        "upstox oauth not configured - manual token entry remains available"
-    )
+    # Precedence 2: environment-variable fallback.
+    _env_key = os.environ.get("UPSTOX_API_KEY", "").strip()
+    _env_secret = os.environ.get("UPSTOX_API_SECRET", "").strip()
+    if _env_key and _env_secret:
+        _oauth_cfg_ref["api_key"] = _env_key
+        _oauth_cfg_ref["api_secret"] = _env_secret
+        _app_logger.info(
+            "upstox oauth configured from environment fallback"
+        )
+    else:
+        _app_logger.info(
+            "upstox oauth not configured - set credentials in Settings"
+        )
 
 
 async def _restart_upstox_source() -> None:
@@ -274,10 +294,10 @@ async def _restart_upstox_source() -> None:
 
 
 # Stateless REST transport for the OAuth code exchange. Stores no secrets.
-_oauth_rest: Any = None
-if _OAUTH_CFG is not None:
-    from brokers.upstox.rest import UpstoxRest as _UpstoxRest
-    _oauth_rest = _UpstoxRest()
+# Created unconditionally: OAuth may become available at runtime when the
+# operator saves credentials in Settings.
+from brokers.upstox.rest import UpstoxRest as _UpstoxRest
+_oauth_rest: Any = _UpstoxRest()
 
 # ── Lifespan ─────────────────────────────────────────────────────────────────
 _lifespan = runtime.make_lifespan(
@@ -446,9 +466,10 @@ app = Starlette(
     + build_auth_routes(
         _feed_ref,
         restart_fn=_restart_upstox_source,
-        oauth=_OAUTH_CFG,
+        oauth=_oauth_cfg_ref,
         rest=_oauth_rest,
     )
+    + build_settings_routes(_oauth_cfg_ref)
     + [Mount("/ui", app=StaticFiles(directory=str(PROJECT_ROOT / "web" / "ui"), html=True),
             name="ui")],
     middleware=list(mcp_asgi_app.user_middleware),

@@ -100,6 +100,10 @@
       <div class="panel-header"><h2>Upstox Authentication</h2></div>
       <div class="auth-form">
         <div class="auth-row">
+          <label>Credentials</label>
+          <span id="auth-cred-status" class="chip chip-off">Missing</span>
+        </div>
+        <div class="auth-row">
           <label>Authentication</label>
           <span id="auth-token-status" class="chip chip-off">Not configured</span>
         </div>
@@ -161,6 +165,35 @@
       <div class="setting-row">
         <label>SSE Endpoint</label>
         <span class="setting-val mono">/api/market/stream</span>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:10px">
+      <div class="panel-header"><h2>Upstox API Credentials</h2></div>
+      <div class="auth-form">
+        <p class="hint" style="padding:0 0 10px 0">
+          One-time setup. Saved on this computer only — never shown again.
+        </p>
+        <div class="auth-row">
+          <label>Status</label>
+          <span id="cred-key-status" class="chip chip-off">API Key: —</span>
+          <span id="cred-secret-status" class="chip chip-off">API Secret: —</span>
+        </div>
+        <div class="auth-row">
+          <label for="cred-api-key">API Key</label>
+          <input type="text" id="cred-api-key" class="filter-input"
+                 placeholder="Paste API key…" autocomplete="off">
+        </div>
+        <div class="auth-row">
+          <label for="cred-api-secret">API Secret</label>
+          <input type="password" id="cred-api-secret" class="filter-input"
+                 placeholder="Paste API secret…" autocomplete="new-password">
+        </div>
+        <div class="auth-row">
+          <label></label>
+          <button id="cred-save" class="btn">Save Credentials</button>
+        </div>
+        <div id="cred-message" class="hint"></div>
       </div>
     </div>
   </section>
