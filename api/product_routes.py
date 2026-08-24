@@ -389,3 +389,59 @@ def build_admin_routes(store: Any, data_dir: Any) -> list[Route]:
     return [
         Route("/api/admin/backup", endpoint=_backup, methods=["POST"]),
     ]
+
+
+def build_api_meta_routes() -> list[Route]:
+    """GET /api — safe, self-describing capability metadata."""
+
+    async def _meta(request: Request) -> Response:  # noqa: ARG001
+        return _json({
+            "service": "MarketHub",
+            "capabilities": {
+                "market": [
+                    "GET /api/market/quotes",
+                    "GET /api/market/depths",
+                    "GET /api/market/quote/{exchange}/{instrument_token}",
+                    "GET /api/market/depth/{exchange}/{instrument_token}",
+                    "GET /api/market/stream (SSE)",
+                    "GET /api/market/history"
+                    "?instrument_key&unit&interval&from&to",
+                ],
+                "instruments": [
+                    "GET /api/instruments/search?q&exchange&type&provider&limit",
+                    "POST /api/instruments/sync {provider}",
+                    "GET /api/instruments/sync-state",
+                ],
+                "watchlists": [
+                    "GET|POST /api/watchlists",
+                    "PATCH|DELETE /api/watchlists/{id}",
+                    "POST /api/watchlists/{id}/items",
+                    "DELETE /api/watchlists/items/{item_id}",
+                    "POST /api/watchlists/{id}/reorder",
+                ],
+                "options": [
+                    "GET /api/options/underlyings?q",
+                    "GET /api/options/expiries?underlying",
+                    "GET /api/options/chain"
+                    "?instrument_key&exchange&expiry",
+                ],
+                "alerts": [
+                    "GET|POST /api/alerts",
+                    "DELETE /api/alerts/{id}",
+                    "POST /api/alerts/{id}/rearm",
+                    "POST /api/alerts/{id}/enabled",
+                ],
+                "auth": [
+                    "GET /api/auth/upstox/status",
+                    "GET /api/auth/upstox/login",
+                    "GET /auth/upstox/callback",
+                    "POST /api/auth/upstox/token",
+                    "GET|POST|DELETE /api/settings/upstox",
+                ],
+                "admin": ["POST /api/admin/backup"],
+            },
+        })
+
+    return [
+        Route("/api", endpoint=_meta, methods=["GET"]),
+    ]

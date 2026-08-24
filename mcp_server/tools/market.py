@@ -13,9 +13,12 @@ from __future__ import annotations
 from typing import Any
 
 from mcp_server.contract import (
+    TOOL_INSTRUMENT_SEARCH,
     TOOL_MARKET_DEPTH,
+    TOOL_MARKET_HISTORY,
     TOOL_MARKET_QUOTE,
     TOOL_MARKET_STATUS,
+    TOOL_WATCHLISTS,
 )
 
 
@@ -61,3 +64,55 @@ def register_market_tools(mcp, services, **kwargs) -> None:
         if svc is None:
             return {"error": "market service not available"}
         return {"status": "ok", "service": await svc.status()}
+
+    @mcp.tool(name=TOOL_INSTRUMENT_SEARCH)
+    async def instrument_search(
+        q: str,
+        exchange: str | None = None,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        """Search the canonical instrument catalog by symbol or name."""
+        catalog = getattr(services, "instrument_catalog", None)
+        if catalog is None:
+            return {"error": "instrument catalog not available"}
+        results = await asyncio.to_thread(
+            catalog.search, q=q, exchange=exchange,
+            limit=min(max(limit, 1), 50))
+        return {"status": "ok", "count": len(results), "results": results}
+
+    @mcp.tool(name=TOOL_WATCHLISTS)
+    async def watchlists() -> dict[str, Any]:
+        """List persistent watchlists and their instruments."""
+        store = getattr(services, "store", None)
+        if store is None:
+            return {"error": "watchlist store not available"}
+        out = []
+        for wl in await asyncio.to_thread(store.list_watchlists):
+            items = await asyncio.to_thread(store.list_watchlist_items,
+                                            wl["id"])
+            out.append({"id": wl["id"], "name": wl["name"], "items": items})
+        return {"status": "ok", "watchlists": out}
+
+    @mcp.tool(name=TOOL_MARKET_HISTORY)
+    async def market_history(
+        provider: str,
+        instrument_key: str,
+        unit: str,
+        interval: int,
+        from_date: str,
+        to_date: str,
+    ) -> dict[str, Any]:
+        """Get canonical OHLCV candles for an instrument (provider-backed)."""
+        md = getattr(services, "provider_market_data", None)
+        if md is None:
+            return {"error": "market history service not available"}
+        try:
+            candles = await md.history(
+                instrument_key=instrument_key, unit=unit,
+                interval=interval, from_date=from_date, to_date=to_date,
+                provider=provider)
+        except Exception as exc:
+            return {"error": f"history failed: {type(exc).__name__}"}
+        from market.serialization import _to_json_value
+        return {"status": "ok",
+                "candles": [_to_json_value(c) for c in candles]}

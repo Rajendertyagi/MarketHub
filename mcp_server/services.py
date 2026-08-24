@@ -23,3 +23,6 @@ class Services:
     replay_cfg: dict[str, Any]
     metrics: Any
     market_service: Any = None          # RuntimeMetrics
+    instrument_catalog: Any = None      # canonical instrument catalog
+    provider_market_data: Any = None    # history/option-chain services
+

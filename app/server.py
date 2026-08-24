@@ -255,6 +255,7 @@ from app.instruments import InstrumentCatalog as _InstrumentCatalog
 from app.alerts import AlertEngine as _AlertEngine
 from api.product_routes import (
     build_admin_routes as _build_admin_routes,
+    build_api_meta_routes as _build_api_meta_routes,
     build_instrument_routes as _build_instrument_routes,
     build_watchlist_routes as _build_watchlist_routes,
     build_alert_routes as _build_alert_routes,
@@ -412,6 +413,8 @@ _services = Services(
     replay_cfg=REPLAY_CFG,
     metrics=_metrics,
     market_service=_market_service,
+    instrument_catalog=_instrument_catalog,
+    provider_market_data=_provider_market_data,
 )
 
 # ── Alert engine (generic, Context-free) ──────────────────────────────────────
@@ -548,6 +551,7 @@ app = Starlette(
     + _build_alert_routes(_store, _alert_engine)
     + _build_market_data_routes(_provider_market_data)
     + _build_admin_routes(_store, PROJECT_ROOT / DATA_DIR)
+    + _build_api_meta_routes()
     + [Mount("/ui", app=StaticFiles(directory=str(PROJECT_ROOT / "web" / "ui"), html=True),
             name="ui")],
     middleware=list(mcp_asgi_app.user_middleware),
@@ -600,4 +604,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
 

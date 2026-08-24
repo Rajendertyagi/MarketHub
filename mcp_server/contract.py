@@ -64,3 +64,7 @@ TOOL_DEV_SOURCE_STOP = "dev_source_stop"
 TOOL_MARKET_QUOTE = "market_quote"
 TOOL_MARKET_DEPTH = "market_depth"
 TOOL_MARKET_STATUS = "market_status"
+TOOL_INSTRUMENT_SEARCH = "instrument_search"
+TOOL_WATCHLISTS = "watchlists"
+TOOL_MARKET_HISTORY = "market_history"
+
