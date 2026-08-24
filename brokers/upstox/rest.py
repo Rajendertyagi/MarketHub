@@ -98,10 +98,17 @@ def _default_sync_transport(
 ) -> HttpResponse:
     """stdlib transport. Converts every HTTP status (including surfaced
     3xx and 4xx/5xx via HTTPError) into an HttpResponse; network-level
-    failures (URLError/TimeoutError/OSError) propagate to the caller."""
+    failures (URLError/TimeoutError/OSError) propagate to the caller.
+
+    Sends a descriptive User-Agent: api.upstox.com sits behind Cloudflare,
+    which bans default library signatures (Python-urllib) with error 1010
+    before the request ever reaches Upstox.
+    """
     request = urllib.request.Request(url, data=body, method=method)
     for key, value in headers.items():
         request.add_header(key, value)
+    if not request.has_header("User-agent"):
+        request.add_header("User-Agent", "MarketHub/1.0 (trading-terminal)")
     opener = urllib.request.build_opener(_NoRedirect)
     try:
         response = opener.open(request, timeout=timeout)
