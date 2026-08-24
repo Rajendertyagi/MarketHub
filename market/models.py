@@ -36,7 +36,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-__all__ = ["Instrument", "Quote", "DepthLevel", "Depth"]
+__all__ = [
+    "Instrument", "Quote", "DepthLevel", "Depth", "OptionGreeks",
+    "merge_greeks",
+]
 
 # Identity field names shared by every instrument-bearing model.
 _IDENTITY_FIELDS = ("instrument_token", "exchange", "tradingsymbol")
@@ -143,6 +146,26 @@ class Instrument:
 
 
 @dataclass(frozen=True, slots=True)
+class OptionGreeks:
+    """Provider-neutral option risk metrics for one instrument.
+
+    All fields optional (None = not reported by the provider). Values are
+    stored exactly as normalized — no unit conversion happens here:
+        delta/gamma/theta/vega/rho   provider-reported sensitivities
+        iv                           implied volatility in provider units
+                                     (Upstox: percent, e.g. 18.5; Fyers
+                                     options-chain: percent)
+    """
+
+    delta: float | None = None
+    gamma: float | None = None
+    theta: float | None = None
+    vega: float | None = None
+    rho: float | None = None
+    iv: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Quote:
     """Latest normalized quote/snapshot for one instrument.
 
@@ -176,11 +199,39 @@ class Quote:
     total_buy_qty: float | int | None = None      # aggregate bid quantity (all levels)
     total_sell_qty: float | int | None = None     # aggregate ask quantity (all levels)
     exchange_ts: datetime | None = None   # provider-reported, when available
+    # ── Extended coverage (provider-reported where available) ──────────────
+    upper_circuit: float | None = None    # upper price band (None = n/a)
+    lower_circuit: float | None = None    # lower price band (None = n/a)
+    oi_change: float | None = None        # OI change vs previous session
+    oi_change_percent: float | None = None
+    previous_oi: float | None = None      # previous-session OI, when the
+    #                                       provider reports it explicitly
+    last_trade_time: datetime | None = None  # time of the last trade, when
+    #                                           reported separately from the
+    #                                           provider feed timestamp
+    greeks: OptionGreeks | None = None    # option risk metrics (options only)
 
     def __post_init__(self) -> None:
         _require_identity("Quote", self)
         _require_tz_aware("Quote", "received_ts", self.received_ts)
         _require_tz_aware("Quote", "exchange_ts", self.exchange_ts)
+        _require_tz_aware("Quote", "last_trade_time", self.last_trade_time)
+        if self.greeks is not None and not isinstance(self.greeks, OptionGreeks):
+            if isinstance(self.greeks, dict):
+                # Ergonomic coercion: patch maps may carry a plain dict of
+                # greek values; normalize into the frozen model.
+                object.__setattr__(
+                    self, "greeks",
+                    OptionGreeks(**{
+                        k: v for k, v in self.greeks.items()
+                        if k in OptionGreeks.__dataclass_fields__
+                    }),
+                )
+            else:
+                raise TypeError(
+                    "Quote.greeks must be an OptionGreeks instance when present; "
+                    f"got {type(self.greeks).__name__}"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,3 +270,32 @@ class Depth:
         # is the documented way to finalize derived values in __post_init__.
         object.__setattr__(self, "bids", _coerce_level_tuple("Depth", "bids", self.bids))
         object.__setattr__(self, "asks", _coerce_level_tuple("Depth", "asks", self.asks))
+
+
+def merge_greeks(
+    old: "OptionGreeks | None", new: "OptionGreeks | None"
+) -> "OptionGreeks | None":
+    """Field-wise merge of an incoming Greeks snapshot over prior state.
+
+    Providers report greeks as snapshots; a snapshot may legitimately
+    carry only SOME fields (e.g. Upstox wire-absent scalars are dropped
+    by the P-ZERO rule). Whole-object replacement would silently discard
+    previously reported values, so each field merges independently:
+      * new field not-None  -> take the new value
+      * new field None      -> preserve the old value
+      * both models None    -> result None
+    An explicit full clear is expressed at the patch layer by reporting
+    ``greeks: None`` (whole-object clear), which bypasses this helper.
+    """
+    if new is None:
+        return old
+    if old is None:
+        return new
+    return OptionGreeks(
+        delta=new.delta if new.delta is not None else old.delta,
+        gamma=new.gamma if new.gamma is not None else old.gamma,
+        theta=new.theta if new.theta is not None else old.theta,
+        vega=new.vega if new.vega is not None else old.vega,
+        rho=new.rho if new.rho is not None else old.rho,
+        iv=new.iv if new.iv is not None else old.iv,
+    )
