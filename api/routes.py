@@ -110,23 +110,24 @@ def build_settings_routes(
 
     ``oauth_ref`` is the SAME mutable dict given to build_auth_routes —
     saving here updates OAuth availability at runtime (no restart).
-    ``cred_store`` is a module exposing load/save functions (app.secrets_store);
-    injected so tests can point at a temporary directory.
+    ``cred_store`` is an app.secrets_store.CredentialStore (encrypted
+    SQLite-backed); injected so tests can use isolated instances.
+
+    Responses NEVER contain credential values, ciphertext, or master key.
     """
     if cred_store is None:
-        from app import secrets_store as cred_store  # noqa: N813
+        from app import secrets_store as _ss
+        cred_store = _ss.build_default_store()
 
     async def _settings_status(request: Request) -> Response:  # noqa: ARG001
-        # Reflect ACTIVE runtime configuration (saved OR env fallback),
-        # as booleans only — never credential values.
-        return _json({
-            "api_key_configured": bool(
-                isinstance(oauth_ref.get("api_key"), str)
-                and oauth_ref["api_key"].strip()),
-            "api_secret_configured": bool(
-                isinstance(oauth_ref.get("api_secret"), str)
-                and oauth_ref["api_secret"].strip()),
-        })
+        status = cred_store.status()
+        status["oauth_available"] = bool(
+            isinstance(oauth_ref.get("api_key"), str)
+            and oauth_ref["api_key"].strip()
+            and isinstance(oauth_ref.get("api_secret"), str)
+            and oauth_ref["api_secret"].strip()
+        )
+        return _json(status)
 
     async def _save_credentials(request: Request) -> Response:
         try:
@@ -144,6 +145,7 @@ def build_settings_routes(
             cred_store.save_upstox_app_credentials(api_key.strip(),
                                                    api_secret.strip())
         except Exception:
+            # Safe failure: no crypto/DB internals leaked to the client.
             return _json({"error": "failed to save credentials"}, 500)
 
         # Runtime reload: same dict object the auth routes hold, updated in
@@ -152,11 +154,22 @@ def build_settings_routes(
         oauth_ref["api_secret"] = api_secret.strip()
         return _json({"configured": True})
 
+    async def _delete_credentials(request: Request) -> Response:  # noqa: ARG001
+        try:
+            removed = cred_store.delete_upstox_app_credentials()
+        except Exception:
+            return _json({"error": "failed to delete credentials"}, 500)
+        oauth_ref["api_key"] = ""
+        oauth_ref["api_secret"] = ""
+        return _json({"configured": False, "removed": bool(removed)})
+
     return [
         Route("/api/settings/upstox", endpoint=_settings_status,
               methods=["GET"]),
         Route("/api/settings/upstox", endpoint=_save_credentials,
               methods=["POST"]),
+        Route("/api/settings/upstox", endpoint=_delete_credentials,
+              methods=["DELETE"]),
     ]
 
 
@@ -242,13 +255,15 @@ def build_auth_routes(
     async def _oauth_callback(request: Request) -> Response:
         from starlette.responses import RedirectResponse
 
-        def _fail() -> Response:
-            return RedirectResponse("/ui/?auth=failed", status_code=302)
+        def _fail(reason: str) -> Response:
+            # Reason codes only — never provider bodies, secrets, or URIs.
+            return RedirectResponse(f"/ui/?auth=failed&reason={reason}",
+                                    status_code=302)
 
         state = request.query_params.get("state")
         code = request.query_params.get("code")
         if not state or not code or not _oauth_ready():
-            return _fail()
+            return _fail("retry")
 
         # Single-use + TTL + constant-time match: consume BEFORE exchange so a
         # replayed callback can never trigger a second exchange.
@@ -258,13 +273,16 @@ def build_auth_routes(
             if hmac.compare_digest(pending, state):
                 matched, expiry = pending, exp
                 break
-        if matched is None or expiry < time.monotonic():
-            return _fail()
+        if matched is None:
+            return _fail("retry")   # invalid or replayed state
+        if expiry < time.monotonic():
+            del _pending_states[matched]
+            return _fail("expired")  # sat on the login page too long
         del _pending_states[matched]
 
         feed = feed_ref.get("feed")
         if feed is None or rest is None:
-            return _fail()
+            return _fail("error")
 
         try:
             creds = await rest.exchange_authorization_code(
@@ -273,16 +291,20 @@ def build_auth_routes(
                 client_secret=oauth["api_secret"].strip(),
                 redirect_uri=oauth["redirect_uri"].strip(),
             )
-        except Exception:
-            # Safe failure — never surface raw broker bodies/secrets/URIs.
-            return _fail()
+        except Exception as exc:
+            # Classify safely: 4xx from Upstox almost always means bad
+            # credentials or a redirect-URL mismatch in the developer app.
+            status = getattr(exc, "status_code", None)
+            if isinstance(status, int) and 400 <= status < 500:
+                return _fail("rejected")
+            return _fail("network")
 
         try:
             feed.update_credentials(creds)
             if restart_fn is not None:
                 await restart_fn()
         except Exception:
-            return _fail()
+            return _fail("restart")
 
         return RedirectResponse("/ui/?auth=ok", status_code=302)
 

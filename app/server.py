@@ -247,14 +247,20 @@ for _src_name, _src in _source_manager.enabled_sources.items():
 
 # ── OAuth login configuration (backend-only secrets) ─────────────────────────
 # Credential precedence (documented + tested):
-#   1. Credentials saved via WebUI  (data/secrets/upstox_app_credentials.json)
+#   1. Credentials saved via WebUI  (encrypted in the app SQLite DB,
+#      table `secrets`; master key at data/master.key, outside the DB)
 #   2. Environment variables        (UPSTOX_API_KEY / UPSTOX_API_SECRET)
 #   3. Not configured               (manual token entry remains available)
 # The secret NEVER reaches the browser, API responses, or logs. The mutable
 # _oauth_cfg_ref dict is shared with the settings routes so saving new
 # credentials in the WebUI enables OAuth at runtime — no restart needed.
-from app import secrets_store as _secrets_store
+from app.secrets_store import (
+    CredentialStore as _CredentialStore,
+    CredentialDecryptError as _CredentialDecryptError,
+)
 from api.routes import build_settings_routes
+
+_credential_store = _CredentialStore(_store)
 
 _oauth_cfg_ref: dict[str, str] = {
     "api_key": "",
@@ -265,7 +271,17 @@ _oauth_cfg_ref: dict[str, str] = {
     ).strip(),
 }
 
-_saved_creds = _secrets_store.load_upstox_app_credentials()
+try:
+    _saved_creds = _credential_store.load_upstox_app_credentials()
+except _CredentialDecryptError:
+    # Lost/corrupt master key: do NOT fail startup and do NOT regenerate
+    # silently. Operator sees "cannot decrypt" in Settings and re-enters.
+    _saved_creds = None
+    _app_logger.error(
+        "stored upstox credentials cannot be decrypted - "
+        "re-enter credentials in Settings"
+    )
+
 if _saved_creds is not None:
     # Precedence 1: WebUI-saved credentials win over env fallback.
     _oauth_cfg_ref["api_key"] = _saved_creds["api_key"]
