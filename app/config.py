@@ -17,7 +17,7 @@ logger = logging.getLogger("event_server")
 DEFAULTS: dict[str, Any] = {
     "server_name": "MCP Event Server",
     "host": "127.0.0.1",
-    "port": 8000,
+    "port": 7070,
     "log_level": "INFO",
     "max_request_body_size_mb": 4,
     "data_dir": "data",

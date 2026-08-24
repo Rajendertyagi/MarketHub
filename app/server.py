@@ -26,7 +26,7 @@ import uvicorn
 from sse_starlette import EventSourceResponse, ServerSentEvent
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.staticfiles import StaticFiles
 from starlette.routing import Route, Mount
 
@@ -334,6 +334,9 @@ mcp_asgi_app = mcp.streamable_http_app(
 )
 
 
+async def _root_redirect(request: Request) -> Response:
+    return RedirectResponse(url="/ui/", status_code=302)
+
 async def _health_check(request: Request) -> JSONResponse:  # noqa: ARG001
     """Minimal liveness probe — returns 200 without requiring MCP init."""
     return JSONResponse({"status": "ok"})
@@ -383,6 +386,7 @@ async def _lifespan(app: Starlette) -> None:  # noqa: ARG001
 app = Starlette(
     routes=list(mcp_asgi_app.routes)
     + [
+        Route("/", endpoint=_root_redirect, methods=["GET"]),
         Route("/health", endpoint=_health_check, methods=["GET"]),
         Route("/events/stream", endpoint=_event_stream, methods=["GET"]),
     ]
