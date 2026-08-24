@@ -106,11 +106,45 @@ def _create_upstox_feed(config: dict, *, market_service: Any = None) -> Any:
 
 
 # type key -> source class or factory callable
+
+
+def _create_fyers_feed(config: dict, *, market_service: Any = None) -> Any:
+    """Construct a FyersFeed from pure config data.
+
+    Requires an access-token getter (from the encrypted credential store /
+    runtime login) and app_id. Raises SourceConfigError-shaped ValueError
+    on missing pieces so startup stays honest.
+    """
+    from brokers.fyers.auth import FyersAuth
+    from brokers.fyers.feed import FyersFeed
+
+    getter = config.get("access_token_getter")
+    if not callable(getter):
+        raise ValueError(
+            "fyers feed requires an access_token_getter callable "
+            "(wired by the composition root)")
+    app_id = config.get("app_id")
+    if not isinstance(app_id, str) or not app_id.strip():
+        raise ValueError("fyers feed requires app_id")
+
+    auth = FyersAuth(app_id=app_id,
+                     secret_id=config.get("app_secret", "-"),
+                     redirect_uri=config.get(
+                         "redirect_uri", "http://localhost:7070/auth/fyers/callback"))
+    keys = [i["key"] for i in config.get("instruments", [])
+            if isinstance(i, dict) and i.get("key")]
+    cfg = dict(config)
+    cfg["instrument_keys"] = keys or ["NSE:NIFTY50-INDEX"]
+    return FyersFeed(config=cfg, auth=auth, market_service=market_service)
+
+
 SOURCE_TYPES: dict[str, Callable[..., Any]] = {
     "http_poller": HttpJsonPoller,
     "test_source": TestSource,
     "upstox_feed": _create_upstox_feed,
+    "fyers_feed": _create_fyers_feed,
 }
 
 # Re-export for convenience / typing clarity.
 SourceFactory = Callable[[dict[str, Any]], Any]
+

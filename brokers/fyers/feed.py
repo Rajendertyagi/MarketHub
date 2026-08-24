@@ -1,0 +1,405 @@
+"""Fyers live market-data websocket feed (source adapter).
+
+Protocol notes (official v3 data socket):
+  * URL:    wss://socket.fyers.in/hsm/v1-5/prod
+  * Auth:   ``Authorization: <app_id>:<access_token>`` header at connect
+  * Join:   first outbound frame {"type": 1} opens the channel
+  * Sub:    {"type": 2, "data": {"symbols": [...], "subType": "SymbolUpdate"}}
+            depth variant uses subType "DepthUpdate"
+  * Unsub:  same shape with subType "unsub"
+  * Ping:   {"type": 3} periodically keeps the channel alive
+  * Msgs:   text JSON carrying type "sf"/"dp"/"if" payloads which are
+            normalized by market.normalize.fyers (canonical names only)
+
+Desired-set subscription model mirrors UpstoxFeed: mutations update the
+authoritative set under a lock; when streaming, delta frames go out on the
+live socket; reconnects resubscribe the full desired set.
+
+Malformed frames are isolated per-symbol: one bad payload never kills the
+recv loop or sibling updates (errors counted, loop continues).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import uuid
+from typing import Any
+
+from market.normalize.fyers import (
+    NormalizationError,
+    quote_fields_from_symbol_update,
+)
+
+logger = logging.getLogger("event_server")
+
+_FYERS_WS_URL = "wss://socket.fyers.in/hsm/v1-5/prod"
+
+_STATE_TERMINAL = "failed"
+
+
+class _Terminal:
+    """Sentinel returned by _run_session on terminal failure."""
+
+
+_TERMINAL = _Terminal()
+
+
+def _safe_ws_summary(exc: BaseException) -> str:
+    return f"{type(exc).__name__}"
+
+
+class FyersFeed:
+    """Live Fyers market-data source following the shared lifecycle model."""
+
+    def __init__(self, *, config: dict[str, Any], auth: Any,
+                 market_service: Any = None) -> None:
+        keys_raw = config.get("instrument_keys")
+        if not isinstance(keys_raw, list) or not keys_raw:
+            raise ValueError("fyers feed requires non-empty instrument_keys")
+        if not all(isinstance(k, str) and k.strip() for k in keys_raw):
+            raise ValueError("fyers instrument_keys entries must be strings")
+        self._name = config.get("source_name", "fyers")
+        self._app_id = str(config.get("app_id", ""))
+        self._auth = auth                      # FyersAuth (for token refresh)
+        self._access_token_getter = config.get("access_token_getter")
+        self._market_service = market_service
+        self._ws_connect = config.get("ws_connect")
+        self._utc_now_iso = config.get("utc_now_iso")
+
+        self._desired: tuple[str, ...] = tuple(
+            k.strip() for k in keys_raw)
+        self._sub_lock = asyncio.Lock()
+        self._live_ws: Any = None
+
+        self._state = "stopped"
+        self._connect_attempts = 0
+        self._reconnect_count = 0
+        self._frames_received = 0
+        self._malformed_frames = 0
+        self._last_message_at: str | None = None
+        self._last_error: str | None = None
+        self._connected_at: str | None = None
+
+    # -- identity / status ------------------------------------------------------
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def _set_state(self, state: str) -> None:
+        self._state = state
+
+    def _now(self) -> str:
+        return (self._utc_now_iso or (lambda: ""))()
+
+    def _mono(self) -> float:
+        import time
+        return time.monotonic()
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "name": self._name,
+            "state": self._state,
+            "provider": "fyers",
+            "configured_instruments": len(self._desired),
+            "frames_received": self._frames_received,
+            "malformed_frames": self._malformed_frames,
+            "reconnect_count": self._reconnect_count,
+            "connected_at": self._connected_at,
+            "last_message_at": self._last_message_at,
+            "last_error": self._last_error,
+        }
+
+    @property
+    def desired_instrument_count(self) -> int:
+        return len(self._desired)
+
+    def _note_error(self, summary: str) -> None:
+        self._last_error = summary
+
+    def _next_backoff(self, hint: float | None = None) -> float:
+        base = min(30.0, 0.5 * (2 ** min(self._reconnect_count, 6)))
+        import random
+        return hint if hint else base * (0.5 + random.random())
+
+    # -- frames -------------------------------------------------------------------
+
+    def _join_frame(self) -> bytes:
+        return json.dumps({"type": 1}, separators=(",", ":")).encode()
+
+    def _ping_frame(self) -> bytes:
+        return json.dumps({"type": 3}, separators=(",", ":")).encode()
+
+    def _mutation_frame(self, sub_type: str, symbols: list[str]) -> bytes:
+        return json.dumps({
+            "type": 2,
+            "data": {"symbols": symbols, "subType": sub_type},
+        }, separators=(",", ":")).encode()
+
+    def _full_subscribe_frame(self) -> bytes:
+        return self._mutation_frame("SymbolUpdate", list(self._desired))
+
+    async def _send_mutation(self, frame: bytes) -> bool:
+        async with self._sub_lock:
+            ws = self._live_ws
+            if ws is None:
+                return False
+            try:
+                await ws.send(frame)
+                return True
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.debug("fyers feed %s: mutation send failed: %s",
+                             self._name, type(exc).__name__)
+                return False
+
+    async def add_instruments(self, symbols: list[str]) -> int:
+        async with self._sub_lock:
+            existing = set(self._desired)
+            fresh = [s for s in symbols if s and s not in existing]
+            if fresh:
+                self._desired = tuple(sorted(existing | set(fresh)))
+        if fresh and self._state == "streaming":
+            await self._send_mutation(
+                self._mutation_frame("SymbolUpdate", fresh))
+        return len(fresh)
+
+    async def remove_instruments(self, symbols: list[str]) -> int:
+        async with self._sub_lock:
+            existing = set(self._desired)
+            gone = [s for s in symbols if s in existing]
+            remaining = existing - set(gone)
+            if not remaining:
+                return 0
+            self._desired = tuple(sorted(remaining))
+        if gone and self._state == "streaming":
+            await self._send_mutation(self._mutation_frame("unsub", gone))
+        return len(gone)
+
+    # -- session ------------------------------------------------------------------
+
+    async def run(self, publisher: Any, stop_event: asyncio.Event) -> None:
+        """Shared lifecycle loop: authorize->connect->subscribe->recv."""
+        while not stop_event.is_set():
+            reason = await self._run_session(stop_event)
+            if reason is None:
+                self._set_state("stopped")
+                return
+            if isinstance(reason, _TERMINAL):
+                self._set_state(_STATE_TERMINAL)
+                return
+            delay = float(reason)
+            stop_task = asyncio.create_task(stop_event.wait())
+            sleep_task = asyncio.create_task(asyncio.sleep(delay))
+            done, _pending = await asyncio.wait(
+                {stop_task, sleep_task}, return_when=asyncio.FIRST_COMPLETED)
+            for t in (stop_task, sleep_task):
+                if not t.done():
+                    t.cancel()
+            await asyncio.gather(stop_task, sleep_task,
+                                 return_exceptions=True)
+            if stop_event.is_set():
+                self._set_state("stopped")
+                return
+            self._reconnect_count += 1
+
+    async def _run_session(self, stop_event: asyncio.Event):
+        """One connect->join->subscribe->recv cycle.
+
+        Returns None (clean stop), _TERMINAL (auth/config), or retry delay.
+        """
+        self._set_state("connecting")
+        self._connect_attempts += 1
+        token = await self._current_token()
+        if token is None:
+            self._fail("no valid fyers access token; log in first")
+            return _TERMINAL
+
+        try:
+            ws = await self._connect(token)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._note_error(_safe_ws_summary(exc))
+            self._set_state("reconnecting")
+            return self._next_backoff()
+        if stop_event.is_set():
+            await self._close_quietly(ws)
+            return None
+
+        self._live_ws = ws
+        self._connected_at = self._now()
+        try:
+            await ws.send(self._join_frame())
+            await ws.send(self._full_subscribe_frame())
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._note_error(_safe_ws_summary(exc))
+            await self._close_quietly(ws)
+            self._clear_live(ws)
+            self._set_state("reconnecting")
+            return self._next_backoff()
+
+        self._set_state("streaming")
+        started = self._mono()
+        reason = await self._recv_loop(ws, stop_event)
+        async with self._sub_lock:
+            self._live_ws = None
+        await self._close_quietly(ws)
+        if reason == "stopped" or stop_event.is_set():
+            self._set_state("stopped")
+            return None
+        del started
+        self._reconnect_count += 1
+        self._set_state("reconnecting")
+        return self._next_backoff()
+
+    def _clear_live(self, ws) -> None:
+        pass  # replaced below; kept for symmetry
+
+    async def _current_token(self) -> str | None:
+        getter = self._access_token_getter
+        if getter is None:
+            return None
+        try:
+            token = getter()
+            if asyncio.iscoroutine(token):
+                token = await token
+        except Exception as exc:
+            self._fail(f"token lookup failed: {type(exc).__name__}")
+            return None
+        return token.strip() if isinstance(token, str) and token.strip() \
+            else None
+
+    async def _connect(self, token: str):
+        import websockets
+
+        if self._ws_connect is not None:
+            return await self._ws_connect(token)
+        return await websockets.connect(
+            _FYERS_WS_URL,
+            extra_headers={"Authorization":
+                           f"{self._app_id}:{token}"},
+            close_timeout=2,
+        )
+
+    async def _close_quietly(self, ws: Any) -> None:
+        try:
+            await ws.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.debug("fyers feed %s: close ignored error: %s",
+                         self._name, type(exc).__name__)
+
+    async def _recv_loop(self, ws: Any, stop_event: asyncio.Event) -> str:
+        """Receive loop with per-message fault isolation.
+
+        A malformed frame increments the malformed counter and continues;
+        only transport-level failures end the session.
+        """
+        stop_task = asyncio.create_task(stop_event.wait())
+
+        async def _ping_loop():
+            while True:
+                await asyncio.sleep(10)
+                try:
+                    await ws.send(self._ping_frame())
+                except Exception:
+                    return
+
+        ping_task = asyncio.create_task(_ping_loop())
+        try:
+            while True:
+                get_msg = asyncio.create_task(ws.recv())
+                wait = asyncio.wait({get_msg, stop_task},
+                                    return_when=asyncio.FIRST_COMPLETED)
+                done, _pending = await wait
+                if stop_task in done:
+                    get_msg.cancel()
+                    await asyncio.gather(get_msg, return_exceptions=True)
+                    return "stopped"
+                if get_msg in done:
+                    raw = get_msg.result()  # transport errors propagate
+                    self._frames_received += 1
+                    self._last_message_at = self._now()
+                    try:
+                        self._handle_message(raw)
+                    except NormalizationError as exc:
+                        self._malformed_frames += 1
+                        logger.debug("fyers feed %s: malformed frame: %s",
+                                     self._name, exc)
+                    except Exception as exc:
+                        # Unexpected internal bug: count + log, keep loop.
+                        self._malformed_frames += 1
+                        logger.warning(
+                            "fyers feed %s: frame handling error: %s",
+                            self._name, exc)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._note_error(_safe_ws_summary(exc))
+            return "transport"
+        finally:
+            stop_task.cancel()
+            ping_task.cancel()
+            await asyncio.gather(stop_task, ping_task,
+                                 return_exceptions=True)
+
+    def _handle_message(self, raw: Any) -> None:
+        """Decode one text frame into canonical patches (isolated)."""
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", "replace")
+        msg = json.loads(raw)
+        if not isinstance(msg, dict):
+            raise NormalizationError("frame is not a JSON object")
+        msgs = msg.get("data") if isinstance(msg.get("data"), list) \
+            else [msg]
+        for m in msgs:
+            if not isinstance(m, dict):
+                continue
+            mtype = m.get("type", "sf")
+            received = self._received_ts()
+            if mtype == "dp":
+                self._apply_depth(m, received)
+            elif mtype in ("sf", "if"):
+                self._apply_quote(m, received)
+            # unknown types are ignored silently (protocol tolerance)
+
+    def _apply_quote(self, m: dict, received) -> None:
+        from market.service import QuotePatch
+        fields = quote_fields_from_symbol_update(m, received_ts=received)
+        token = fields.pop("instrument_token")
+        exchange = fields.pop("exchange")
+        tradingsymbol = fields.pop("tradingsymbol", "")
+        fields.pop("received_ts", None)   # patch-level, not a reported field
+        patch = QuotePatch(exchange=exchange, instrument_token=token,
+                           tradingsymbol=tradingsymbol,
+                           received_ts=received, reported_fields=fields)
+        if self._market_service is not None:
+            asyncio.ensure_future(self._deliver(patch))
+
+    def _apply_depth(self, m: dict, received) -> None:
+        from market.normalize.fyers import depth_from_ws_depth
+
+        if self._market_service is None:
+            return
+        depth, _extra = depth_from_ws_depth(m, received_ts=received)
+        asyncio.ensure_future(self._market_service.apply_depth(depth))
+
+    def _deliver(self, patch) -> None:
+        return self._market_service.apply_quote(patch)
+
+    def _received_ts(self):
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc)
+
+    def _fail(self, message: str) -> None:
+        self._last_error = message
+        logger.error("fyers feed %s: terminal failure - %s",
+                     self._name, message)
+
