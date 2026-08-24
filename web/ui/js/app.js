@@ -1087,6 +1087,7 @@
     initCharts();
     initAlerts();
     if (typeof initBackup === "function") initBackup();
+    if (typeof initFyers === "function") initFyers();
     loadInitialQuotes();
     connectSSE();
     pollSources();                     // immediate status render (no 10s wait)

@@ -15,6 +15,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+
+
 try:
     from app.market_data import ProviderMarketDataError
 except ImportError:  # pragma: no cover
@@ -445,3 +447,140 @@ def build_api_meta_routes() -> list[Route]:
     return [
         Route("/api", endpoint=_meta, methods=["GET"]),
     ]
+
+
+def build_fyers_auth_routes(cred_store: Any,
+                            redirect_uri: str = (
+        "http://localhost:7070/auth/fyers/callback")) -> list[Route]:
+    """Fyers credential storage + OAuth login/callback (encrypted store).
+
+    Fyers semantics (official v3): callback carries ``auth_code`` (not
+    ``code``); refresh tokens ARE supported and are stored ENCRYPTED.
+    Access tokens remain runtime-memory-only after decryption.
+    """
+    import hmac as _hmac
+    import secrets as _secrets
+    import time as _time
+
+    _pending: dict[str, float] = {}
+    _TTL = 600
+
+    async def _status(request: Request) -> Response:  # noqa: ARG001
+        try:
+            creds = cred_store.load_app_credentials("fyers")
+        except Exception:
+            creds = None
+        return _json({
+            "app_id_configured": bool(creds and creds.get("api_key")),
+            "secret_configured": bool(creds and creds.get("api_secret")),
+            "login_available": bool(creds),
+        })
+
+    async def _save(request: Request) -> Response:
+        try:
+            body = await request.json()
+        except Exception:
+            return _json({"error": "invalid JSON body"}, 400)
+        app_id = (body or {}).get("app_id", "")
+        secret_id = (body or {}).get("secret_id", "")
+        for label, value in (("app_id", app_id), ("secret_id", secret_id)):
+            if not isinstance(value, str) or not value.strip():
+                return _json({"error": f"{label} is required"}, 400)
+            if len(value) > 512:
+                return _json({"error": f"{label} too long"}, 400)
+        try:
+            cred_store.save_app_credentials("fyers", app_id.strip(),
+                                            secret_id.strip())
+        except Exception:
+            return _json({"error": "failed to save fyers credentials"}, 500)
+        return _json({"configured": True})
+
+    async def _delete(request: Request) -> Response:  # noqa: ARG001
+        try:
+            removed = await asyncio.to_thread(
+                cred_store.delete_app_credentials, "fyers")
+        except Exception:
+            return _json({"error": "failed to delete"}, 500)
+        return _json({"removed": bool(removed)})
+
+    async def _login(request: Request) -> Response:  # noqa: ARG001
+        try:
+            creds = await asyncio.to_thread(
+                cred_store.load_app_credentials, "fyers")
+        except Exception:
+            creds = None
+        if not creds:
+            return _json({"error": "fyers credentials not configured"}, 503)
+        from brokers.fyers.auth import FyersAuth
+
+        now = _time.monotonic()
+        for s in [s for s, e in _pending.items() if e <= now]:
+            del _pending[s]
+        state = _secrets.token_urlsafe(32)
+        _pending[state] = now + _TTL
+        url = FyersAuth(app_id=creds["api_key"],
+                        secret_id=creds["api_secret"],
+                        redirect_uri=redirect_uri).login_url(state=state)
+        from starlette.responses import RedirectResponse
+        return RedirectResponse(url, status_code=302)
+
+    async def _callback(request: Request) -> Response:
+        from starlette.responses import RedirectResponse
+
+        def _fail(reason):
+            return RedirectResponse(f"/ui/?fyers_auth={reason}",
+                                    status_code=302)
+
+        code = request.query_params.get("auth_code") \
+            or request.query_params.get("code")
+        state = request.query_params.get("state")
+        if not code or not state:
+            return _fail("retry")
+        matched = None
+        expiry = -1.0
+        for pending, exp in _pending.items():
+            if _hmac.compare_digest(pending, state):
+                matched, expiry = pending, exp
+                break
+        if matched is None:
+            return _fail("retry")
+        if expiry < _time.monotonic():
+            del _pending[matched]
+            return _fail("expired")
+        del _pending[matched]
+
+        try:
+            creds = await asyncio.to_thread(
+                cred_store.load_app_credentials, "fyers")
+        except Exception:
+            creds = None
+        if not creds:
+            return _fail("retry")
+
+        from brokers.fyers.auth import FyersAuth
+        auth = FyersAuth(app_id=creds["api_key"],
+                         secret_id=creds["api_secret"],
+                         redirect_uri=redirect_uri)
+        try:
+            bundle = await auth.validate_auth_code(code.strip())
+        except Exception:
+            return _fail("rejected")
+
+        # Persist BOTH tokens encrypted (refresh token is long-lived and
+        # officially supported by Fyers; access token daily).
+        try:
+            await asyncio.to_thread(
+                cred_store.save_app_credentials, "fyers_tokens",
+                bundle["access_token"], bundle["refresh_token"])
+        except Exception:
+            return _fail("error")
+        return RedirectResponse("/ui/?fyers_auth=ok", status_code=302)
+
+    return [
+        Route("/api/settings/fyers", endpoint=_status, methods=["GET"]),
+        Route("/api/settings/fyers", endpoint=_save, methods=["POST"]),
+        Route("/api/settings/fyers", endpoint=_delete, methods=["DELETE"]),
+        Route("/api/auth/fyers/login", endpoint=_login, methods=["GET"]),
+        Route("/auth/fyers/callback", endpoint=_callback, methods=["GET"]),
+    ]
+

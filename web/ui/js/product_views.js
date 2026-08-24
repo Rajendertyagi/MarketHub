@@ -455,3 +455,61 @@
       } finally { btn.disabled = false; }
     });
   }
+
+  // ── Fyers credentials + login (Settings) ────────────────────────────────
+
+  function initFyers() {
+    const saveBtn = $("fyers-save");
+    if (!saveBtn) return;
+    const msg = $("fyers-message");
+    const loginBtn = $("fyers-login-btn");
+
+    async function refresh() {
+      try {
+        const res = await fetch("/api/settings/fyers");
+        const d = await res.json();
+        const chip = $("fyers-status");
+        chip.textContent = d.login_available ? "Configured" : "Not configured";
+        chip.className = "chip " + (d.login_available ? "chip-on" : "chip-off");
+        loginBtn.style.display = d.login_available ? "" : "none";
+      } catch { /* silent */ }
+    }
+
+    saveBtn.addEventListener("click", async () => {
+      const appId = $("fyers-app-id").value.trim();
+      const secret = $("fyers-secret").value.trim();
+      msg.textContent = "";
+      msg.className = "hint";
+      if (!appId || !secret) {
+        msg.textContent = "Both App ID and Secret Key are required.";
+        msg.className = "hint err";
+        return;
+      }
+      saveBtn.disabled = true;
+      try {
+        const res = await fetch("/api/settings/fyers", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ app_id: appId, secret_id: secret }) });
+        const d = await res.json();
+        if (res.ok && d.configured) {
+          $("fyers-app-id").value = "";
+          $("fyers-secret").value = "";
+          msg.textContent = "Fyers credentials saved.";
+          msg.className = "hint ok";
+          refresh();
+        } else {
+          msg.textContent = d.error || "Failed to save Fyers credentials.";
+          msg.className = "hint err";
+        }
+      } catch {
+        msg.textContent = "Network error saving Fyers credentials.";
+        msg.className = "hint err";
+      } finally { saveBtn.disabled = false; }
+    });
+
+    loginBtn.addEventListener("click", () => {
+      window.location.href = "/api/auth/fyers/login";
+    });
+
+    refresh();
+  }

@@ -273,6 +273,41 @@ class CredentialStore:
         n = self._store.delete_provider_secrets(_UPSTOX_PROVIDER)
         return n > 0
 
+    # -- generic multi-provider support ---------------------------------------
+
+    def save_app_credentials(self, provider: str, api_key: str,
+                             api_secret: str) -> None:
+        """Encrypt and persist credentials for ANY provider."""
+        enc = self._get_encryption(allow_generate=True)
+        if enc is None:
+            raise CredentialDecryptError(
+                "master key unavailable; cannot encrypt credentials")
+        self._store.upsert_secrets(provider, {
+            "api_key": (enc.encrypt(api_key.strip()), ENCRYPTION_SCHEME),
+            "api_secret": (enc.encrypt(api_secret.strip()),
+                           ENCRYPTION_SCHEME),
+        })
+        logger.info("%s app credentials saved (encrypted)", provider)
+
+    def load_app_credentials(self, provider: str) -> dict[str, str] | None:
+        """Decrypt and return credentials for a provider, or None."""
+        enc = self._get_encryption(allow_generate=False)
+        if enc is None:
+            return None
+        key_row = self._store.get_secret(provider, "api_key")
+        secret_row = self._store.get_secret(provider, "api_secret")
+        if key_row is None or secret_row is None:
+            return None
+        if key_row[1] != ENCRYPTION_SCHEME or secret_row[1] != ENCRYPTION_SCHEME:
+            raise CredentialDecryptError("unsupported encryption scheme")
+        return {
+            "api_key": enc.decrypt(key_row[0]),
+            "api_secret": enc.decrypt(secret_row[0]),
+        }
+
+    def delete_app_credentials(self, provider: str) -> bool:
+        return self._store.delete_provider_secrets(provider) > 0
+
 
 def build_default_store() -> "CredentialStore":
     """Build a CredentialStore over the application's existing SQLite DB."""
@@ -288,3 +323,46 @@ def redacted_status(active: dict[str, str] | None) -> dict[str, Any]:
         "api_key_configured": bool(active and active.get("api_key")),
         "api_secret_configured": bool(active and active.get("api_secret")),
     }
+
+# Backwards-compat shim for the pre-SQLite JSON store API used in earlier
+# tests/routes: redacted_status(dict) helper retained.
+def redacted_status(active: dict[str, str] | None) -> dict[str, Any]:
+    return {
+        "api_key_configured": bool(active and active.get("api_key")),
+        "api_secret_configured": bool(active and active.get("api_secret")),
+    }
+
+    # -- generic multi-provider support ---------------------------------------
+
+    def save_provider_credentials(
+        self, provider: str, api_key: str, api_secret: str,
+    ) -> None:
+        """Encrypt and persist credentials for ANY provider (generic)."""
+        self.save_upstox_app_credentials.__wrapped__ if False else None
+        enc = self._get_encryption(allow_generate=True)
+        if enc is None:
+            raise CredentialDecryptError(
+                "master key unavailable; cannot encrypt credentials")
+        self._store.upsert_secrets(provider, {
+            "api_key": (enc.encrypt(api_key.strip()), ENCRYPTION_SCHEME),
+            "api_secret": (enc.encrypt(api_secret.strip()), ENCRYPTION_SCHEME),
+        })
+        logger.info("%s app credentials saved (encrypted)", provider)
+
+    def load_provider_credentials(
+        self, provider: str,
+    ) -> dict[str, str] | None:
+        enc = self._get_encryption(allow_generate=False)
+        if enc is None:
+            return None
+        key_row = self._store.get_secret(provider, "api_key")
+        secret_row = self._store.get_secret(provider, "api_secret")
+        if key_row is None or secret_row is None:
+            return None
+        return {
+            "api_key": enc.decrypt(key_row[0]),
+            "api_secret": enc.decrypt(secret_row[0]),
+        }
+
+    def delete_provider_credential_rows(self, provider: str) -> bool:
+        return self._store.delete_provider_secrets(provider) > 0
