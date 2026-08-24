@@ -27,7 +27,8 @@ from sse_starlette import EventSourceResponse, ServerSentEvent
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.routing import Route
+from starlette.staticfiles import StaticFiles
+from starlette.routing import Route, Mount
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.subscriptions import InMemorySubscriptionBus
@@ -382,7 +383,15 @@ app = Starlette(
         Route("/health", endpoint=_health_check, methods=["GET"]),
         Route("/events/stream", endpoint=_event_stream, methods=["GET"]),
     ]
-    + build_market_routes(_market_event_broker),
+    + build_market_routes(
+        _market_event_broker,
+        market_service=_market_service,
+        source_status_fn=lambda: [
+            s.status() for s in _source_manager.enabled_sources.values()
+        ],
+    )
+    + [Mount("/ui", app=StaticFiles(directory=str(PROJECT_ROOT / "web" / "ui"), html=True),
+            name="ui")],
     middleware=list(mcp_asgi_app.user_middleware),
     lifespan=_lifespan,
 )

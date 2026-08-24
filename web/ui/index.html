@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MarketHub</title>
+<link rel="stylesheet" href="/ui/css/style.css">
+</head>
+<body>
+<header>
+  <h1>MarketHub</h1>
+  <div id="conn-status" class="status-dot disconnected" title="SSE connection"></div>
+  <span id="conn-text">connecting…</span>
+</header>
+<main>
+  <section id="sources-panel">
+    <h2>Sources</h2>
+    <div id="sources-list"><em>loading…</em></div>
+  </section>
+  <section id="quotes-panel">
+    <h2>Live Quotes</h2>
+    <table id="quotes-table">
+      <thead><tr>
+        <th>Symbol</th><th>LTP</th><th>Chg</th><th>Chg%</th>
+        <th>Open</th><th>High</th><th>Low</th><th>Close</th>
+        <th>Volume</th><th>Bid</th><th>Ask</th><th>Updated</th>
+      </tr></thead>
+      <tbody id="quotes-body"><tr><td colspan="12"><em>waiting for data…</em></td></tr></tbody>
+    </table>
+  </section>
+  <section id="depth-panel" style="display:none">
+    <h2>Market Depth</h2>
+    <div id="depth-content"></div>
+  </section>
+</main>
+<footer><span id="last-update"></span></footer>
+<script src="/ui/js/app.js"></script>
+</body>
+</html>
