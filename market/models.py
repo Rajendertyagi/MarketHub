@@ -38,7 +38,8 @@ from typing import Any
 
 __all__ = [
     "Instrument", "Quote", "DepthLevel", "Depth", "OptionGreeks",
-    "merge_greeks",
+    "merge_greeks", "Candle",
+    "OptionContractData", "OptionStrikeRow", "OptionChainSnapshot",
 ]
 
 # Identity field names shared by every instrument-bearing model.
@@ -299,3 +300,88 @@ def merge_greeks(
         rho=new.rho if new.rho is not None else old.rho,
         iv=new.iv if new.iv is not None else old.iv,
     )
+
+
+# ---------------------------------------------------------------------------
+# Market history + option chain (canonical, provider-neutral)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class Candle:
+    """One canonical OHLCV candle (timezone-aware timestamp required)."""
+
+    timestamp: datetime
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int | None = None
+    open_interest: float | None = None
+
+    def __post_init__(self) -> None:
+        _require_tz_aware("Candle", "timestamp", self.timestamp)
+
+
+@dataclass(frozen=True, slots=True)
+class OptionContractData:
+    """Market data + greeks for one option contract (CE or PE)."""
+
+    ltp: float | None = None
+    volume: int | None = None
+    bid: float | None = None
+    ask: float | None = None
+    oi: float | None = None
+    previous_oi: float | None = None
+    oi_change: float | None = None
+    close: float | None = None
+    iv: float | None = None
+    delta: float | None = None
+    theta: float | None = None
+    gamma: float | None = None
+    vega: float | None = None
+    pop: float | None = None   # probability of profit, when provider supplies
+
+
+@dataclass(frozen=True, slots=True)
+class OptionStrikeRow:
+    strike: float
+    call: OptionContractData | None = None
+    put: OptionContractData | None = None
+    atm: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class OptionChainSnapshot:
+    instrument_token: str      # underlying instrument key
+    exchange: str
+    tradingsymbol: str         # underlying trading symbol ("" when unknown)
+    expiry: str
+    spot_price: float | None = None
+    atm_strike: float | None = None
+    strikes: tuple[OptionStrikeRow, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.tradingsymbol, str):
+            raise TypeError(
+                "OptionChainSnapshot.tradingsymbol must be a str")
+        object.__setattr__(
+            self, "strikes",
+            _coerce_strike_rows(self.strikes))
+
+
+def _coerce_strike_rows(value: Any) -> tuple["OptionStrikeRow", ...]:
+    if value is None:
+        return ()
+    try:
+        items = tuple(value)
+    except TypeError:
+        raise TypeError(
+            "OptionChainSnapshot.strikes must be a sequence of "
+            "OptionStrikeRow") from None
+    for item in items:
+        if not isinstance(item, OptionStrikeRow):
+            raise TypeError(
+                "OptionChainSnapshot.strikes must contain only "
+                "OptionStrikeRow entries")
+    return items

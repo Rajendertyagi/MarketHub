@@ -397,3 +397,40 @@ class UpstoxRest:
             access_token=access_token.strip(),
             expires_at=upstox_token_expiry(acquired_at),
         )
+
+    # -- generic authenticated JSON request (market-data APIs) ----------------
+
+    async def authenticated_request(
+        self,
+        *,
+        method: str,
+        url: str,
+        access_token: str,
+        json_body: dict[str, Any] | None = None,
+        timeout: float = 15.0,
+    ) -> dict[str, Any]:
+        """Perform one Bearer-authenticated JSON API call.
+
+        ``access_token`` is method-local; nothing is retained. Non-200
+        responses raise the standard classified errors (safe wording).
+        """
+        if not isinstance(access_token, str) or not access_token.strip():
+            raise UpstoxAuthError("access_token must be a non-empty string")
+        headers = {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {access_token.strip()}",
+        }
+        body: bytes | None = None
+        if json_body is not None:
+            import json as _json
+            body = _json.dumps(json_body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        operation = f"upstox api call ({method})"
+        try:
+            response = await asyncio.to_thread(
+                self._transport, method, url, headers, body, timeout)
+        except OSError as exc:
+            raise _wrap_network_error(operation, exc) from exc
+        if response.status != 200:
+            _raise_for_status(response, operation)
+        return _require_success_json(response, operation)

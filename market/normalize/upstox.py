@@ -481,3 +481,133 @@ def instrument_from_master(record: dict[str, Any]) -> Instrument:
         expiry=expiry,
         strike=strike,
     )
+
+
+# ---------------------------------------------------------------------------
+# Historical candles (GET /v2/historical-candle/... and intraday)
+# ---------------------------------------------------------------------------
+
+
+def candles_from_rest(payload: dict[str, Any]):
+    """Normalize an Upstox historical/intraday candle response.
+
+    Response shape: {"status":"ok","data":{"candles":[[ts,o,h,l,c,v,oi?]...]}}
+    with ISO-8601 timestamps (IST-offset aware). Malformed rows are skipped.
+    """
+    if not isinstance(payload, dict):
+        raise NormalizationError("upstox candles: expected object")
+    rows = ((payload.get("data") or {}).get("candles")) or []
+    from market.models import Candle
+
+    out: list[Candle] = []
+    for row in rows:
+        if not isinstance(row, list) or len(row) < 5:
+            continue
+        try:
+            ts = parse_timestamp(row[0], unit="iso", field="candle.ts")
+        except Exception:
+            continue
+        try:
+            o, h, l, c = (to_float(row[1], field="candle.open"),
+                          to_float(row[2], field="candle.high"),
+                          to_float(row[3], field="candle.low"),
+                          to_float(row[4], field="candle.close"))
+        except NormalizationError:
+            continue
+        vol = to_int(row[5], field="candle.volume") \
+            if len(row) > 5 and row[5] is not None else None
+        oi = to_float(row[6], field="candle.oi") \
+            if len(row) > 6 and row[6] is not None else None
+        out.append(Candle(timestamp=ts, open=o, high=h, low=l, close=c,
+                          volume=vol, open_interest=oi))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Option chain (PUT /v2/option/chain)
+# ---------------------------------------------------------------------------
+
+
+def _contract_data(md: Any, og: Any) -> "OptionContractData | None":
+    from market.models import OptionContractData
+
+    if not isinstance(md, dict):
+        return None
+    greeks = og if isinstance(og, dict) else {}
+
+    def num(key: str, src=None) -> float | None:
+        raw = (src or md).get(key)
+        try:
+            f = float(raw)
+            return f
+        except (TypeError, ValueError):
+            return None
+
+    def integer(key: str) -> int | None:
+        f = num(key)
+        return int(f) if f is not None else None
+
+    return OptionContractData(
+        ltp=num("ltp"), volume=integer("volume"),
+        bid=num("bid_price"), ask=num("ask_price"),
+        oi=num("oi"), previous_oi=num("prev_oi"),
+        oi_change=(num("oi") - num("prev_oi"))
+        if num("oi") is not None and num("prev_oi") is not None else None,
+        close=num("close_price"),
+        iv=num("iv", greeks), delta=num("delta", greeks),
+        theta=num("theta", greeks), gamma=num("gamma", greeks),
+        vega=num("vega", greeks), pop=num("pop", greeks),
+    )
+
+
+def option_chain_from_rest(payload: dict[str, Any], *,
+                           instrument_token: str, exchange: str,
+                           tradingsymbol: str = "", expiry: str):
+    """Normalize an Upstox option-chain response into a canonical snapshot."""
+    if not isinstance(payload, dict):
+        raise NormalizationError("upstox option chain: expected object")
+    data = payload.get("data")
+    if not isinstance(data, list):
+        raise NormalizationError("upstox option chain: missing data array")
+
+    from market.models import OptionChainSnapshot, OptionStrikeRow
+
+    strikes: list[OptionStrikeRow] = []
+    spot: float | None = None
+    atm_strike: float | None = None
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        strike_raw = entry.get("strike_price")
+        try:
+            strike = float(strike_raw)
+        except (TypeError, ValueError):
+            continue
+        call = _contract_data((entry.get("call_options") or {})
+                              .get("market_data"),
+                              (entry.get("call_options") or {})
+                              .get("option_greeks"))
+        put = _contract_data((entry.get("put_options") or {})
+                             .get("market_data"),
+                             (entry.get("put_options") or {})
+                             .get("option_greeks"))
+        is_atm = bool(entry.get("atm"))
+        if is_atm:
+            atm_strike = strike
+        sp = entry.get("spot_price")
+        try:
+            spot = float(sp) if sp is not None else spot
+        except (TypeError, ValueError):
+            pass
+        strikes.append(OptionStrikeRow(strike=strike, call=call, put=put,
+                                       atm=is_atm))
+    strikes.sort(key=lambda s: s.strike)
+    return OptionChainSnapshot(
+        instrument_token=instrument_token, exchange=exchange,
+        tradingsymbol=tradingsymbol, expiry=expiry,
+        spot_price=spot, atm_strike=atm_strike, strikes=tuple(strikes))
+
+
+
+
+

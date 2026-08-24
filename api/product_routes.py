@@ -14,6 +14,11 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+try:
+    from app.market_data import ProviderMarketDataError
+except ImportError:  # pragma: no cover
+    ProviderMarketDataError = RuntimeError
+
 
 def _json(data: Any, status: int = 200) -> JSONResponse:
     return JSONResponse(data, status_code=status)
@@ -236,4 +241,66 @@ def build_alert_routes(store: Any, engine: Any = None) -> list[Route]:
               methods=["POST"]),
         Route("/api/alerts/{alert_id}/enabled", endpoint=_enabled,
               methods=["POST"]),
+    ]
+
+
+
+def build_market_data_routes(provider_md: Any) -> list[Route]:
+    """History + option-chain routes over the provider market-data service."""
+
+    async def _history(request: Request) -> Response:
+        qp = request.query_params
+        instrument_key = qp.get("instrument_key", "")
+        if not instrument_key:
+            return _json({"error": "instrument_key is required"}, 400)
+        try:
+            candles = await provider_md.history(
+                instrument_key=instrument_key,
+                unit=qp.get("unit", "days"),
+                interval=qp.get("interval", 1),
+                from_date=qp.get("from", ""),
+                to_date=qp.get("to", ""))
+        except ProviderMarketDataError as exc:
+            return _json({"error": str(exc)}, 400)
+        except Exception:
+            return _json({"error": "history fetch failed"}, 502)
+        from market.serialization import _to_json_value
+        return _json({"candles": [_to_json_value(c) for c in candles]})
+
+    async def _chain(request: Request) -> Response:
+        qp = request.query_params
+        required = ("instrument_key", "exchange", "expiry")
+        if not all(qp.get(k) for k in required):
+            return _json({"error": f"params required: {required}"}, 400)
+        try:
+            snap = await provider_md.option_chain(
+                instrument_key=qp["instrument_key"],
+                exchange=qp["exchange"],
+                tradingsymbol=qp.get("tradingsymbol", ""),
+                expiry=qp["expiry"])
+        except ProviderMarketDataError as exc:
+            return _json({"error": str(exc)}, 400)
+        except Exception:
+            return _json({"error": "option chain fetch failed"}, 502)
+        from market.serialization import quote_to_dict as _q2d
+        strikes = []
+        for s in snap.strikes:
+            strikes.append({
+                "strike": s.strike, "atm": s.atm,
+                "call": s.call.__dict__ if s.call else None,
+                "put": s.put.__dict__ if s.put else None,
+            })
+        return _json({
+            "instrument_token": snap.instrument_token,
+            "exchange": snap.exchange,
+            "tradingsymbol": snap.tradingsymbol,
+            "expiry": snap.expiry,
+            "spot_price": snap.spot_price,
+            "atm_strike": snap.atm_strike,
+            "strikes": strikes,
+        })
+
+    return [
+        Route("/api/market/history", endpoint=_history, methods=["GET"]),
+        Route("/api/options/chain", endpoint=_chain, methods=["GET"]),
     ]

@@ -604,3 +604,13 @@ class UpstoxFeed:
             "started_at": self._started_at,
         })
         return status
+
+    @property
+    def rest(self) -> UpstoxRest:
+        """Public read access to the REST transport (composition-root use)."""
+        return self._rest
+
+    @property
+    def credentials_snapshot(self) -> UpstoxCredentials | None:
+        """Current credentials reference (redaction-safe object)."""
+        return self._credentials
