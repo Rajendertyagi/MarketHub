@@ -52,13 +52,13 @@ def w1_index_html(runner: R, c) -> None:
     runner.assert_in(name + "-html", "text/html", res.headers.get("content-type", ""))
     html = res.text
     for marker in (
-        'id="main-nav"',
+        'class="topnav"',                # top navigation bar
         'data-view="dashboard"',
         'data-view="markets"',
-        'data-view="optionchain"',
+        'data-view="options"',
         'data-view="sources"',
         'data-view="mcp"',
-        'data-view="settings"',
+        'id="view-settings"',            # settings view section
         'id="theme-toggle"',
         ">Dashboard<",
         ">Markets<",
@@ -66,7 +66,6 @@ def w1_index_html(runner: R, c) -> None:
         ">Sources<",
         ">MCP<",
         ">Settings<",
-        "mh-theme",                      # localStorage persistence key
     ):
         runner.assert_in(name + "-has:" + marker.strip("<>/"), marker, html)
     runner.assert_false(name + "-no-sidebar", "sidebar" in html.lower(),
@@ -79,7 +78,8 @@ def w2_static_css(runner: R, c) -> None:
     res = c.get("/ui/css/style.css")
     runner.assert_eq(name + "-status", res.status_code, 200)
     runner.assert_in(name + "-ctype", "text/css", res.headers.get("content-type", ""))
-    for token in ("--bg", "--panel", '[data-theme="light"]', ".wa-dark"):
+    for token in ("--bg", "--bg-panel", "html.wa-theme-light",
+                  "html.wa-theme-dark"):
         runner.assert_in(name + "-has:" + token, token, res.text)
 
 
@@ -91,7 +91,12 @@ def w3_static_js(runner: R, c) -> None:
     body = res.text
     runner.assert_eq(name + "-one-eventsource", body.count("new EventSource"), 1)
     runner.assert_in(name + "-stream-url", '/api/market/stream"', body)
-    runner.assert_not_in(name + "-no-poll-loop", "setInterval", body)
+    # setInterval is allowed ONLY for the 10 s source-status poll — never
+    # for market data (market data must arrive via the single EventSource).
+    runner.assert_eq(name + "-poll-only-source-status",
+                     body.count("setInterval"), 1)
+    runner.assert_in(name + "-poll-target",
+                     "setInterval(pollSources", body)
 
 
 def w4_webawesome_vendored(runner: R, c) -> None:

@@ -291,6 +291,110 @@
     `).join("<hr>");
   }
 
+  // ── Upstox auth (token submit) ──────────────────────────────────────────
+
+  async function pollAuthStatus() {
+    try {
+      const res = await fetch("/api/auth/upstox/status");
+      const d = await res.json();
+      const chip = $("auth-token-status");
+      const loginBtn = $("oauth-login-btn");
+      if (loginBtn) {
+        loginBtn.style.display = d.oauth_available ? "" : "none";
+        if (d.oauth_available) {
+          loginBtn.disabled = d.auth_state === "authorizing";
+          loginBtn.textContent = d.token_configured
+            ? "Login with Upstox (renew)" : "Login with Upstox";
+        }
+      }
+      let label, cls;
+      if (!d.token_configured) {
+        label = "Authentication Required"; cls = "chip chip-off";
+      } else if (d.expired === true) {
+        label = "Token Expired"; cls = "chip chip-off";
+      } else if (d.expiry_known) {
+        label = "Active"; cls = "chip chip-on";
+      } else {
+        label = "Configured"; cls = "chip chip-on";
+      }
+      chip.textContent = label;
+      chip.className = cls;
+      $("auth-feed-state").textContent = d.state || "—";
+    } catch { /* silent */ }
+  }
+
+  function handleAuthCallbackParam() {
+    const params = new URLSearchParams(window.location.search);
+    const auth = params.get("auth");
+    if (!auth) return;
+    const msg = $("auth-message");
+    if (auth === "ok") {
+      msg.textContent = "Upstox authentication successful. Connecting market feed…";
+      msg.className = "hint ok";
+    } else if (auth === "failed") {
+      msg.textContent = "Upstox authentication failed.";
+      msg.className = "hint err";
+    }
+    // Strip the auth parameter from browser history (no code/state retained).
+    params.delete("auth");
+    const qs = params.toString();
+    history.replaceState(null, "", window.location.pathname + (qs ? "?" + qs : ""));
+  }
+
+  function initAuth() {
+    const btn = $("auth-submit");
+    const input = $("auth-token-input");
+    const msg = $("auth-message");
+    const loginBtn = $("oauth-login-btn");
+    if (loginBtn) {
+      loginBtn.addEventListener("click", () => {
+        window.location.href = "/api/auth/upstox/login";
+      });
+    }
+    btn.addEventListener("click", async () => {
+      const token = input.value.trim();
+      msg.textContent = "";
+      msg.className = "hint";
+      if (!token) {
+        msg.textContent = "Please paste an access token first.";
+        msg.classList.add("err");
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = "Saving…";
+      try {
+        const res = await fetch("/api/auth/upstox/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ access_token: token }),
+        });
+        const data = await res.json();
+        if (res.ok && data.configured) {
+          input.value = "";           // clear immediately — never retain
+          msg.textContent = "Token saved for this session.";
+          msg.classList.add("ok");
+          pollAuthStatus();
+          pollSources();
+        } else {
+          msg.textContent = data.error || "Authentication failed. Access token may be invalid or expired.";
+          msg.classList.add("err");
+        }
+      } catch {
+        msg.textContent = "Network error while submitting token.";
+        msg.classList.add("err");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Save for Session";
+      }
+    });
+    // Enter key submits too.
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") btn.click();
+    });
+    handleAuthCallbackParam();
+    pollAuthStatus();
+  }
+
   // ── Market filter (Markets page) ────────────────────────────────────────
 
   function initFilter() {
@@ -319,6 +423,7 @@
     initTheme();
     initNav();
     initFilter();
+    initAuth();
     loadInitialQuotes();
     loadSources();
     connectSSE();
