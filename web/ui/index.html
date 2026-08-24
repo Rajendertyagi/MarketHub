@@ -55,6 +55,14 @@
     </div>
     <div class="market-cards" id="market-cards"></div>
     <div class="panel">
+      <div class="panel-header"><h2>Subscribed Universe Movers</h2></div>
+      <table class="data-table" id="movers-table">
+        <thead><tr><th>Category</th><th>Symbol</th><th>LTP</th><th>Chg%</th><th>Volume</th></tr></thead>
+        <tbody id="movers-body"><tr><td colspan="5" class="empty-row">Waiting for market data…</td></tr></tbody>
+      </table>
+    </div>
+    <p class="hint" id="market-status-hint"></p>
+    <div class="panel">
       <div class="panel-header"><h2>Live Market</h2></div>
       <table class="data-table" id="dash-table">
         <thead><tr>
@@ -267,6 +275,11 @@
         <label>SSE Endpoint</label>
         <span class="setting-val mono">/api/market/stream</span>
       </div>
+      <div class="setting-row">
+        <label>Database Backup</label>
+        <button id="db-backup" class="btn">Backup Database</button>
+      </div>
+      <div id="backup-message" class="hint"></div>
     </div>
 
     <div class="panel" style="margin-top:10px">

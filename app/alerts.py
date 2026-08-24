@@ -26,6 +26,11 @@ _FIELD_ATTRS = {
     "oi_change_percent": "oi_change_percent",
 }
 
+# Crossing operators track the previous canonical value per instrument so
+# an alert fires ONCE at the moment of crossing, not on every tick beyond.
+_CROSSING_OPERATORS = frozenset({"crosses_above", "crosses_below"})
+_ALL_OPERATORS = frozenset({"gt", "lt"}) | _CROSSING_OPERATORS
+
 
 class AlertEngine:
     """Evaluates enabled alerts against live canonical quotes."""
@@ -35,6 +40,7 @@ class AlertEngine:
         self._lock = threading.Lock()
         self._rules: dict[int, dict[str, Any]] = {}
         self._notifications: list[dict[str, Any]] = []
+        self._last_values: dict[tuple[str, str], float] = {}
         self.reload()
 
     def reload(self) -> None:
@@ -105,3 +111,4 @@ class AlertEngine:
         with self._lock:
             self._notifications = [n for n in self._notifications
                                    if n.get("alert_id") != alert_id]
+

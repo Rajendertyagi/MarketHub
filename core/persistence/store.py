@@ -833,3 +833,24 @@ class EventStore:
             return _products.option_expiries(conn, underlying)
         finally:
             conn.close()
+
+    def backup_to(self, dest_path: str) -> None:
+        """Consistent online backup via the SQLite backup API.
+
+        The backup contains encrypted secrets (ciphertext) only; the
+        master key (data/master.key) is required to decrypt them and is
+        NOT included.
+        """
+        import os
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        src = self._open(self._db_path)
+        try:
+            dst = sqlite3.connect(dest_path)
+            try:
+                src.backup(dst)
+            finally:
+                dst.close()
+        finally:
+            conn_close = getattr(src, "close", None)
+            if conn_close:
+                conn_close()

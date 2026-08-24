@@ -8,6 +8,7 @@ secrets, no trading.
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any, Callable
 
 from starlette.requests import Request
@@ -364,4 +365,27 @@ def build_market_data_routes(provider_md: Any) -> list[Route]:
     return [
         Route("/api/market/history", endpoint=_history, methods=["GET"]),
         Route("/api/options/chain", endpoint=_chain, methods=["GET"]),
+    ]
+
+
+def build_admin_routes(store: Any, data_dir: Any) -> list[Route]:
+    """Operational routes: database backup (contains ciphertext only)."""
+
+    async def _backup(request: Request) -> Response:  # noqa: ARG001
+        import datetime as _dt
+        stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        dest = data_dir / "backups" / f"events-{stamp}.db"
+
+        def _do():
+            store.backup_to(str(dest))
+            return str(dest)
+
+        try:
+            path = await asyncio.to_thread(_do)
+        except Exception:
+            return _json({"error": "backup failed"}, 500)
+        return _json({"status": "ok", "file": os.path.basename(path)})
+
+    return [
+        Route("/api/admin/backup", endpoint=_backup, methods=["POST"]),
     ]

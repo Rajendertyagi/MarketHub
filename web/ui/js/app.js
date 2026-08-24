@@ -274,7 +274,7 @@
           (st === "streaming" ? "indicator-on" : "indicator-off");
       }
 
-      // Update sources detail panel (only when visible).
+      renderMovers();`n      renderMarketStatus();`n      // Update sources detail panel (only when visible).
       if (currentView === "sources") {
         renderSourcesDetail(sources);
       }
@@ -530,6 +530,42 @@
     });
   }
 
+
+  // ── Subscribed-universe movers + inferred market status ─────────────────
+
+  function renderMovers() {
+    const body = $("movers-body");
+    if (!body || quotes.size === 0) return;
+    const all = [...quotes.values()].filter((q) => q.change_percent != null);
+    if (!all.length) return;
+    const byPct = [...all].sort((a, b) => b.change_percent - a.change_percent);
+    const byVol = [...all].sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0));
+    const rows = [];
+    const addRow = (cat, q) => rows.push(
+      `<tr><td>${cat}</td><td>${q.tradingsymbol || "—"}</td>` +
+      `<td>${q.ltp != null ? fmt(q.ltp) : "—"}</td>` +
+      `<td class="${chgClass(q.change ?? 0)}">${fmt(q.change_percent)}%</td>` +
+      `<td>${fmtVol(q.volume)}</td></tr>`);
+    byPct.slice(0, 2).forEach((q) => addRow("Top Gainer", q));
+    byPct.slice(-2).reverse().forEach((q) => { if (q.change_percent < 0) addRow("Top Loser", q); });
+    byVol.slice(0, 2).forEach((q) => addRow("Volume Leader", q));
+    body.innerHTML = rows.join("") ||
+      '<tr><td colspan="5" class="empty-row">No data yet</td></tr>';
+  }
+
+  function renderMarketStatus() {
+    const el = $("market-status-hint");
+    if (!el) return;
+    // Inferred from IST clock (NSE equity session Mon-Fri 09:15-15:30).
+    // Clearly labelled as inferred — NOT broker-confirmed.
+    const now = new Date();
+    const ist = new Date(now.getTime() + (330 + now.getTimezoneOffset()) * 60000);
+    const day = ist.getDay();
+    const mins = ist.getHours() * 60 + ist.getMinutes();
+    const open = day >= 1 && day <= 5 && mins >= 555 && mins <= 930;
+    el.textContent = "Market status (inferred from IST time, not broker-confirmed): " +
+      (open ? "Open" : "Closed");
+  }
   // ── Quote details drawer ────────────────────────────────────────────────
 
   const fmtTs = (iso) => {
@@ -1050,6 +1086,7 @@
     initOptionChain();
     initCharts();
     initAlerts();
+    if (typeof initBackup === "function") initBackup();
     loadInitialQuotes();
     connectSSE();
     pollSources();                     // immediate status render (no 10s wait)

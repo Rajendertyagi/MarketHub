@@ -301,7 +301,7 @@ def reorder_watchlist_items(
 _ALERT_FIELDS = frozenset({
     "ltp", "change_percent", "volume", "oi_change_percent",
 })
-_ALERT_OPERATORS = frozenset({"gt", "lt"})
+_ALERT_OPERATORS = frozenset({"gt", "lt", "crosses_above", "crosses_below"})
 
 
 def create_alert(
@@ -418,3 +418,4 @@ def option_expiries(
         return [r["expiry"] for r in rows]
     finally:
         conn.row_factory = None
+

@@ -64,3 +64,37 @@ why you should run focused, not full, during development.
 ## Deleted (do not recreate)
 
 `test/test_phase8.py`, `test/integrate_test.py` — replaced by the per-feature files above.
+
+## MarketHub Product Features (2026-08)
+
+- **Live Upstox feed** — OAuth login from the Web UI (Settings → Login with
+  Upstox), runtime subscription updates, automatic reconnect/resubscribe.
+- **Encrypted credentials** — API key/secret stored Fernet-encrypted in the
+  app SQLite DB (`data/events.db`, table `secrets`); master key at
+  `data/master.key` (outside the DB, gitignored). Daily access token stays
+  memory-only and expires at 03:30 IST.
+- **Canonical data** — all provider payloads normalize into neutral models
+  (`market/models.py`); REST/SSE/MCP/UI consume only canonical state.
+- **Instruments catalog** — manual sync of official Upstox/Fyers masters;
+  search at Instruments page.
+- **Watchlists** — persistent, multi-list; adding an item joins the live
+  desired-subscription set.
+- **Option chain** — Upstox chain via authenticated REST; catalog-driven
+  underlying/expiry selection.
+- **History & charts** — Upstox candles into self-hosted ECharts
+  candlestick+volume view.
+- **Alerts** — threshold + crossing rules over canonical quotes; persisted,
+  re-armable, in-app notifications.
+
+### Data directory
+
+    data/events.db        application SQLite (events, secrets, instruments,
+                          watchlists, market_alerts)
+    data/master.key       Fernet key for credential decryption (NEVER commit)
+    data/backups/         database backups (ciphertext only)
+
+### Limitations
+
+- Fyers live WebSocket feed not yet implemented (auth + normalizers ready).
+- Upstox exact-0.0 greeks unrepresentable over its websocket (wire format).
+- Option-chain underlying picker requires a synced instrument catalog.
