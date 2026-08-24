@@ -223,6 +223,11 @@ def _on_market_quote_update(quote: Quote) -> None:
         _app_logger.warning("market quote failed canonical JSON encoding; dropped")
         return
     _market_event_broker.broadcast(line)
+    # Alert engine consumes the same canonical quote (never polls REST).
+    try:
+        _alert_engine.evaluate(quote)
+    except Exception:
+        _app_logger.warning("alert evaluation failed", exc_info=True)
 
 
 _market_service = MarketService(on_quote_update=_on_market_quote_update)
@@ -244,6 +249,40 @@ for _src_name, _src in _source_manager.enabled_sources.items():
         _feed_ref["feed"] = _src
         _upstox_source_name = _src_name
         break
+
+# ── Product services: instrument catalog, alerts ─────────────────────────────
+from app.instruments import InstrumentCatalog as _InstrumentCatalog
+from app.alerts import AlertEngine as _AlertEngine
+from api.product_routes import (
+    build_instrument_routes as _build_instrument_routes,
+    build_watchlist_routes as _build_watchlist_routes,
+    build_alert_routes as _build_alert_routes,
+)
+
+_instrument_catalog = _InstrumentCatalog(_store)
+_alert_engine = _AlertEngine(_store)
+
+from app.market_data import ProviderMarketData as _ProviderMarketData
+from api.product_routes import (
+    build_market_data_routes as _build_market_data_routes,
+)
+
+
+def _upstox_auth_context():
+    """(rest, credentials) for the live feed, or None when unauthenticated."""
+    feed = _feed_ref.get("feed")
+    if feed is None:
+        return None
+    creds = getattr(feed, "credentials_snapshot", None)
+    rest = getattr(feed, "rest", None)
+    if creds is None or rest is None:
+        return None
+    if not creds.status().get("token_present"):
+        return None
+    return rest, creds
+
+
+_provider_market_data = _ProviderMarketData(_upstox_auth_context)
 
 # ── OAuth login configuration (backend-only secrets) ─────────────────────────
 # Credential precedence (documented + tested):
@@ -486,6 +525,10 @@ app = Starlette(
         rest=_oauth_rest,
     )
     + build_settings_routes(_oauth_cfg_ref)
+    + _build_instrument_routes(_instrument_catalog)
+    + _build_watchlist_routes(_store)
+    + _build_alert_routes(_store, _alert_engine)
+    + _build_market_data_routes(_provider_market_data)
     + [Mount("/ui", app=StaticFiles(directory=str(PROJECT_ROOT / "web" / "ui"), html=True),
             name="ui")],
     middleware=list(mcp_asgi_app.user_middleware),

@@ -1,0 +1,366 @@
+
+  // ── Instruments search + sync ───────────────────────────────────────────
+
+  function initInstruments() {
+    const input = $("instr-search");
+    const msg = $("instr-sync-msg");
+    let debounce = null;
+    const doSearch = async () => {
+      const q = input.value.trim();
+      const exchange = $("instr-exchange").value;
+      const url = "/api/instruments/search?limit=25" +
+        (q ? "&q=" + encodeURIComponent(q) : "") +
+        (exchange ? "&exchange=" + exchange : "");
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+        const body = $("instr-body");
+        if (!data.results || !data.results.length) {
+          body.innerHTML = '<tr><td colspan="9" class="empty-row">No matches. Sync a provider master first if the catalog is empty.</td></tr>';
+          return;
+        }
+        body.innerHTML = data.results.map((r) =>
+          `<tr data-tok="${r.instrument_token}" data-ex="${r.exchange}" data-sym="${r.tradingsymbol}">` +
+          `<td>${r.tradingsymbol}</td><td>${r.name || "—"}</td>` +
+          `<td>${r.exchange}</td><td>${r.instrument_type || "—"}</td>` +
+          `<td>${r.expiry || "—"}</td><td>${r.strike != null ? r.strike : "—"}</td>` +
+          `<td>${r.lot_size != null ? r.lot_size : "—"}</td><td>${r.provider}</td>` +
+          `<td><button class="btn wl-add" style="padding:2px 8px;font-size:11px">+ Watchlist</button></td></tr>`
+        ).join("");
+      } catch { /* silent */ }
+    };
+    input.addEventListener("input", () => {
+      clearTimeout(debounce);
+      debounce = setTimeout(doSearch, 300);
+    });
+    $("instr-exchange").addEventListener("change", doSearch);
+    document.getElementById("instr-table").addEventListener("click", async (e) => {
+      const btn = e.target.closest(".wl-add");
+      if (!btn) return;
+      const tr = btn.closest("tr");
+      try {
+        let wlId = null;
+        const res = await fetch("/api/watchlists");
+        const data = await res.json();
+        if (data.watchlists && data.watchlists.length) {
+          wlId = data.watchlists[0].id;
+        } else {
+          const created = await fetch("/api/watchlists", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: "Default" }) });
+          const cd = await created.json();
+          wlId = cd.watchlist.id;
+        }
+        await fetch(`/api/watchlists/${wlId}/items`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ exchange: tr.dataset.ex,
+            instrument_token: tr.dataset.tok,
+            tradingsymbol: tr.dataset.sym }) });
+        msg.textContent = `Added ${tr.dataset.sym} to watchlist.`;
+        msg.className = "hint ok";
+        loadWatchlists();
+      } catch {
+        msg.textContent = "Failed to add to watchlist.";
+        msg.className = "hint err";
+      }
+    });
+    const doSync = async (provider, btn) => {
+      btn.disabled = true;
+      msg.textContent = `Syncing ${provider} instrument master…`;
+      msg.className = "hint";
+      try {
+        const res = await fetch("/api/instruments/sync", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider }) });
+        const data = await res.json();
+        msg.textContent = res.ok
+          ? `${provider} sync complete: ${data.records} instruments.`
+          : (data.error || "Sync failed.");
+        msg.className = "hint " + (res.ok ? "ok" : "err");
+        doSearch();
+      } catch {
+        msg.textContent = "Network error during sync.";
+        msg.className = "hint err";
+      } finally { btn.disabled = false; }
+    };
+    $("instr-sync-upstox").addEventListener("click",
+      (e) => doSync("upstox", e.target));
+    $("instr-sync-fyers").addEventListener("click",
+      (e) => doSync("fyers", e.target));
+    doSearch();
+  }
+
+  // ── Watchlists ──────────────────────────────────────────────────────────
+
+  let currentWatchlistId = null;
+
+  async function loadWatchlists() {
+    try {
+      const res = await fetch("/api/watchlists");
+      const data = await res.json();
+      const sel = $("wl-select");
+      if (sel) sel.innerHTML = (data.watchlists || []).map((w) =>
+        `<option value="${w.id}">${w.name}</option>`).join("");
+      currentWatchlistId = sel && sel.value ? Number(sel.value) : null;
+      renderWatchlistItems(data.watchlists || []);
+    } catch { /* silent */ }
+  }
+
+  function renderWatchlistItems(watchlists) {
+    const wl = (watchlists || []).find(
+      (w) => String(w.id) === String(currentWatchlistId));
+    const body = $("wl-body");
+    if (!wl || !wl.items.length) {
+      body.innerHTML = '<tr><td colspan="8" class="empty-row">No items. Add instruments from the Instruments page.</td></tr>';
+      return;
+    }
+    body.innerHTML = wl.items.map((it) => {
+      const q = quotes.get(it.instrument_token)
+        || quotes.get(it.exchange + ":" + it.instrument_token);
+      const ltp = q && q.ltp != null ? fmt(q.ltp) : "—";
+      const chg = q && q.change != null ? fmt(q.change) : "—";
+      const pct = q && q.change_percent != null
+        ? fmt(q.change_percent) + "%" : "—";
+      const cls = q ? chgClass(q.change ?? 0) : "";
+      return `<tr data-item-id="${it.id}" data-token="${it.instrument_token}" data-ex="${it.exchange}">` +
+        `<td>${it.tradingsymbol}</td><td>${ltp}</td>` +
+        `<td class="${cls}">${chg}</td><td class="${cls}">${pct}</td>` +
+        `<td>${q ? fmtVol(q.volume) : "—"}</td>` +
+        `<td>${q && q.best_bid != null ? fmt(q.best_bid) : "—"}</td>` +
+        `<td>${q && q.best_ask != null ? fmt(q.best_ask) : "—"}</td>` +
+        `<td><button class="btn wl-remove" style="padding:2px 8px;font-size:11px">✕</button></td></tr>`;
+    }).join("");
+  }
+
+  function initWatchlists() {
+    $("wl-create").addEventListener("click", async () => {
+      const name = $("wl-new-name").value.trim();
+      if (!name) return;
+      await fetch("/api/watchlists", { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }) });
+      $("wl-new-name").value = "";
+      loadWatchlists();
+    });
+    $("wl-rename").addEventListener("click", async () => {
+      const name = $("wl-new-name").value.trim();
+      if (!name || !currentWatchlistId) return;
+      await fetch(`/api/watchlists/${currentWatchlistId}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }) });
+      $("wl-new-name").value = "";
+      loadWatchlists();
+    });
+    $("wl-delete").addEventListener("click", async () => {
+      if (!currentWatchlistId ||
+          !confirm("Delete this watchlist and its items?")) return;
+      await fetch(`/api/watchlists/${currentWatchlistId}`,
+        { method: "DELETE" });
+      loadWatchlists();
+    });
+    $("wl-select").addEventListener("change", loadWatchlists);
+    $("wl-table").addEventListener("click", async (e) => {
+      const btn = e.target.closest(".wl-remove");
+      if (!btn) return;
+      const itemId = btn.closest("tr").dataset.itemId;
+      await fetch(`/api/watchlists/items/${itemId}`, { method: "DELETE" });
+      loadWatchlists();
+    });
+    setInterval(loadWatchlists, 10000);   // refresh live values from SSE state
+    loadWatchlists();
+  }
+
+  // ── Option chain ────────────────────────────────────────────────────────
+
+  function initOptionChain() {
+    $("oc-load").addEventListener("click", async () => {
+      const key = $("oc-underlying-key").value.trim();
+      const expiry = $("oc-expiry-date").value;
+      const msg = $("oc-message");
+      if (!key || !expiry) {
+        msg.textContent = "Underlying key and expiry date are required.";
+        msg.className = "hint err";
+        return;
+      }
+      msg.textContent = "Loading chain…";
+      msg.className = "hint";
+      try {
+        const res = await fetch("/api/options/chain?instrument_key=" +
+          encodeURIComponent(key) + "&exchange=NSE&expiry=" + expiry);
+        const d = await res.json();
+        if (!res.ok) {
+          msg.textContent = d.error || "Chain load failed.";
+          msg.className = "hint err";
+          return;
+        }
+        msg.textContent = "";
+        $("oc-spot").textContent = d.spot_price != null
+          ? fmt(d.spot_price) : "—";
+        $("oc-atm").textContent = d.atm_strike != null
+          ? fmt(d.atm_strike) : "—";
+        const side = (x) => x ? [
+          fmtVol(x.oi), fmtNum(x.oi_change), fmtVol(x.volume),
+          x.iv != null ? fmt(x.iv) : "—",
+          x.ltp != null ? fmt(x.ltp) : "—",
+          (x.close != null && x.ltp != null) ? fmt(x.ltp - x.close) : "—",
+        ].map((v) => `<td>${v}</td>`).join("") : "<td>—</td>".repeat(6);
+        $("oc-body").innerHTML = d.strikes.map((s) => {
+          const rowCls = s.atm ? ' style="background:var(--accent-dim)"' : "";
+          return `<tr${rowCls}>` + side(s.call) +
+            `<td><b>${fmt(s.strike)}</b></td>` + side(s.put) + "</tr>";
+        }).join("");
+      } catch {
+        msg.textContent = "Network error loading chain.";
+        msg.className = "hint err";
+      }
+    });
+  }
+
+  // ── Charts (ECharts candlestick + volume) ───────────────────────────────
+
+  let chartInstance = null;
+
+  function initCharts() {
+    const today = new Date().toISOString().slice(0, 10);
+    const monthAgo = new Date(Date.now() - 30 * 86400000)
+      .toISOString().slice(0, 10);
+    $("chart-from").value = monthAgo;
+    $("chart-to").value = today;
+
+    $("chart-load").addEventListener("click", async () => {
+      const key = $("chart-instrument").value.trim();
+      const unit = $("chart-unit").value;
+      const interval = $("chart-interval").value || 1;
+      const from = $("chart-from").value;
+      const to = $("chart-to").value;
+      const msg = $("chart-message");
+      if (!key || !from || !to) {
+        msg.textContent = "Instrument key, from and to dates are required.";
+        msg.className = "hint err";
+        return;
+      }
+      msg.textContent = "Loading history…";
+      msg.className = "hint";
+      try {
+        const res = await fetch("/api/market/history?instrument_key=" +
+          encodeURIComponent(key) + "&unit=" + unit +
+          "&interval=" + interval + "&from=" + from + "&to=" + to);
+        const d = await res.json();
+        if (!res.ok) {
+          msg.textContent = d.error || "History load failed.";
+          msg.className = "hint err";
+          return;
+        }
+        msg.textContent = `${d.candles.length} candles loaded.`;
+        msg.className = "hint ok";
+        renderChart(d.candles);
+      } catch {
+        msg.textContent = "Network error loading history.";
+        msg.className = "hint err";
+      }
+    });
+  }
+
+  function renderChart(candles) {
+    if (!window.echarts) {
+      $("chart-message").textContent = "Chart library not loaded.";
+      return;
+    }
+    if (!chartInstance) {
+      chartInstance = echarts.init($("chart-container"));
+    }
+    const times = candles.map((c) =>
+      c.timestamp.slice(0, 16).replace("T", " "));
+    const kline = candles.map((c) => [c.open, c.close, c.low, c.high]);
+    const vols = candles.map((c) => c.volume ?? 0);
+    chartInstance.setOption({
+      animation: false,
+      tooltip: { trigger: "axis", axisPointer: { type: "cross" } },
+      axisPointer: { link: [{ xAxisIndex: "all" }] },
+      grid: [{ left: 60, right: 20, top: 20, height: "58%" },
+             { left: 60, right: 20, top: "72%", height: "18%" }],
+      xAxis: [
+        { type: "category", data: times },
+        { type: "category", gridIndex: 1, data: times,
+          axisLabel: { show: false } },
+      ],
+      yAxis: [
+        { scale: true },
+        { gridIndex: 1, axisLabel: { show: false } },
+      ],
+      series: [
+        { type: "candlestick", data: kline,
+          itemStyle: { color: "#3fb950", color0: "#f85149",
+                       borderColor: "#3fb950", borderColor0: "#f85149" } },
+        { type: "bar", xAxisIndex: 1, yAxisIndex: 1, data: vols },
+      ],
+    });
+  }
+
+  // ── Alerts ──────────────────────────────────────────────────────────────
+
+  function initAlerts() {
+    $("alert-create").addEventListener("click", async () => {
+      const token = $("alert-token").value.trim();
+      const symbol = $("alert-symbol").value.trim() || token;
+      const field = $("alert-field").value;
+      const operator = $("alert-operator").value;
+      const threshold = parseFloat($("alert-threshold").value);
+      if (!token || isNaN(threshold)) return;
+      await fetch("/api/alerts", { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ exchange: "NSE",
+          instrument_token: token, tradingsymbol: symbol,
+          field, operator, threshold }) });
+      $("alert-threshold").value = "";
+      loadAlerts();
+    });
+    $("alerts-table").addEventListener("click", async (e) => {
+      const row = e.target.closest("tr[data-alert-id]");
+      if (!row) return;
+      const id = row.dataset.alertId;
+      if (e.target.classList.contains("alert-rearm")) {
+        await fetch(`/api/alerts/${id}/rearm`, { method: "POST" });
+      } else if (e.target.classList.contains("alert-toggle")) {
+        await fetch(`/api/alerts/${id}/enabled`, { method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            enabled: e.target.dataset.enabled !== "true" }) });
+      } else if (e.target.classList.contains("alert-delete")) {
+        await fetch(`/api/alerts/${id}`, { method: "DELETE" });
+      } else { return; }
+      loadAlerts();
+    });
+    loadAlerts();
+    setInterval(loadAlerts, 15000);
+  }
+
+  async function loadAlerts() {
+    try {
+      const res = await fetch("/api/alerts");
+      const data = await res.json();
+      const body = $("alerts-body");
+      const alerts = data.alerts || [];
+      if (!alerts.length) {
+        body.innerHTML = '<tr><td colspan="5" class="empty-row">No alerts configured.</td></tr>';
+      } else {
+        body.innerHTML = alerts.map((a) => {
+          const cond = `${a.field} ${a.operator === "gt" ? ">" : "<"} ${a.threshold}`;
+          const stateCls = a.state === "triggered" ? "chip chip-off" :
+            (a.enabled ? "chip chip-on" : "chip");
+          return `<tr data-alert-id="${a.id}">` +
+            `<td>${a.tradingsymbol}</td><td>${cond}</td>` +
+            `<td><span class="${stateCls}">${a.state}</span></td>` +
+            `<td><button class="btn alert-toggle" data-enabled="${a.enabled ? "true" : "false"}" style="padding:2px 8px;font-size:11px">${a.enabled ? "On" : "Off"}</button></td>` +
+            `<td><button class="btn alert-rearm" style="padding:2px 8px;font-size:11px">Re-arm</button> ` +
+            `<button class="btn alert-delete" style="padding:2px 8px;font-size:11px;border-color:var(--red);color:var(--red)">✕</button></td></tr>`;
+        }).join("");
+      }
+      const notes = data.notifications || [];
+      $("alert-notifications").innerHTML = notes.length
+        ? '<div class="panel"><div class="panel-header"><h2>Triggered</h2></div>' +
+          notes.map((n) => `<div class="hint err">${n.tradingsymbol}: ${n.field} ${n.operator === "gt" ? ">" : "<"} ${n.threshold} (now ${n.value})</div>`).join("") +
+          "</div>"
+        : "";
+    } catch { /* silent */ }
+  }
