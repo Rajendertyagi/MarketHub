@@ -192,6 +192,9 @@ class SourceManager:
     # Per-source stop events so a single source can be stopped independently
     # without affecting the others. shutdown() sets all of them.
     _stop_events: dict[str, asyncio.Event] = field(default_factory=dict)
+    # Config each source was last started with — enables restart_source()
+    # to relaunch the SAME source identity with the SAME configuration.
+    _configs: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     async def initialize(
         self,
@@ -227,6 +230,7 @@ class SourceManager:
             if not src_cfg.get("enabled", False):
                 logger.info("source '%s' disabled — skipping", name)
                 continue
+            self._configs[name] = src_cfg
             await self._start_one(name, source, src_cfg)
 
     async def _start_one(self, name: str, source: Any, cfg: dict[str, Any]) -> None:
@@ -283,6 +287,51 @@ class SourceManager:
                 logger.debug("stop_source: cancel task for '%s' raised: %s", name, exc)
 
         logger.info("source '%s' stop signaled", name)
+        return True
+
+    async def restart_source(self, name: str) -> bool:
+        """
+        Restart a single named source through the normal lifecycle.
+
+        Stops the current background task and AWAITS its completion (via
+        BackgroundTaskManager.cancel_and_wait — websocket close and finally
+        blocks fully run), then starts the SAME source instance with the
+        SAME configuration via _start_one(). The source's next run performs
+        a fresh authorize/connect cycle (e.g. after credential rotation).
+
+        Invariants:
+          * same SourceManager, same source instance, same config identity
+          * exactly one background task per source (old task is awaited gone
+            before the new one starts; manager refuses duplicate names)
+          * no second lifecycle system — reuses existing primitives
+
+        Must not be called from inside the named source's own task.
+
+        Returns True if the source was known and (re)started, False otherwise.
+        """
+        source = self._sources.get(name)
+        cfg = self._configs.get(name)
+        if source is None or cfg is None:
+            logger.warning("restart_source: unknown/unstarted source '%s'", name)
+            return False
+
+        # 1. Signal graceful exit at the run loop's next stop-event check.
+        stop_event = self._stop_events.get(name)
+        if stop_event is not None:
+            stop_event.set()
+
+        # 2. Cancel AND observe completion of the old task — its cleanup
+        #    (websocket close, finally blocks) is guaranteed done after this.
+        if self._bg_manager is not None:
+            await self._bg_manager.cancel_and_wait(f"source:{name}")
+
+        # 3. Fresh stop event — the old one is set and must not leak into
+        #    the new run (a set event would stop the new run immediately).
+        self._stop_events[name] = asyncio.Event()
+
+        # 4. Start the same source with the same config.
+        await self._start_one(name, source, cfg)
+        logger.info("source '%s' restarted", name)
         return True
 
     def get_status(self) -> dict[str, Any]:

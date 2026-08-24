@@ -77,6 +77,34 @@ class BackgroundTaskManager:
             del self._tasks[name]
             logger.info("background task cancelled: %s", name)
 
+    async def cancel_and_wait(self, name: str) -> bool:
+        """Cancel a named background task and AWAIT its completion.
+
+        Unlike cancel(), this observes the task's actual termination, so any
+        cleanup inside the task (websocket close, finally blocks) has fully
+        run before this returns. Returns True if a task existed.
+
+        Must NOT be called from inside the named task itself (awaiting own
+        cancellation would deadlock); callers are HTTP handlers or lifecycle
+        code running on separate tasks.
+        """
+        async with self._lock:
+            task = self._tasks.pop(name, None)
+        if task is None:
+            return False
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass  # expected — cancellation delivered and observed
+        except Exception as exc:
+            # Task-specific errors were already logged by the task wrapper;
+            # restart must not be blocked by them.
+            logger.debug("background task '%s' raised during cancel: %s",
+                         name, exc)
+        logger.info("background task cancelled and awaited: %s", name)
+        return True
+
     async def shutdown_all(self, timeout: float = 10.0) -> None:
         """Cancel all running tasks and wait bounded time for cleanup."""
         async with self._lock:
