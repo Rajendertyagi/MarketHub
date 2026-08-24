@@ -296,23 +296,25 @@ async def p8t2_info_features(runner: R) -> None:
 
 
 async def p8t3_schema_v9(runner: R) -> None:
-    """P8T3: schema v9 — all tables including alerts and recent_events exist (DIRECT, no server)."""
+    """P8T3: schema v10 — all tables including alerts, recent_events and
+    secrets exist (DIRECT, no server)."""
     name = "P8T3-schema-v9"
     tmp = tempfile.mkdtemp(prefix="evt3_")
     db_path = os.path.join(tmp, "events.db")
     try:
-        # EventStore constructor creates the v9 schema on a fresh DB.
+        # EventStore constructor creates the current schema on a fresh DB.
         EventStore(db_path)
         conn = sqlite3.connect(db_path)
         conn.execute("PRAGMA busy_timeout=5000")
-        for tbl in ("source_state", "source_seen_items", "alerts", "recent_events"):
+        for tbl in ("source_state", "source_seen_items", "alerts",
+                    "recent_events", "secrets"):
             row = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tbl,)
             ).fetchone()
             runner.assert_true(name + f"-table-{tbl}", row is not None,
                                f"table {tbl} missing")
         ver = conn.execute("PRAGMA user_version").fetchone()[0]
-        runner.assert_eq(name + "-version", ver, 9)
+        runner.assert_eq(name + "-version", ver, 10)
         conn.close()
     except Exception as exc:
         runner.fail(name, str(exc))

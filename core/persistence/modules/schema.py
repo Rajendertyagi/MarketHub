@@ -13,7 +13,7 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 def get_schema_version(conn: sqlite3.Connection) -> int:
@@ -103,6 +103,10 @@ def create_v7_schema(conn: sqlite3.Connection) -> None:
     """)
     create_alerts_table(conn)
     create_recent_events_table(conn)
+    # v10: generic encrypted-secrets table (created via helper so fresh
+    # databases and the v9→v10 migration share one definition).
+    from core.persistence.modules.secrets import create_secrets_table
+    create_secrets_table(conn)
 
 
 def create_alerts_table(conn: sqlite3.Connection) -> None:

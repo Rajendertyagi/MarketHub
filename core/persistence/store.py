@@ -38,6 +38,7 @@ from core.persistence.modules.schema import (
     migrate_v8_to_v9,
     SCHEMA_VERSION,
 )
+from core.persistence.modules.secrets import migrate_v9_to_v10
 from core.persistence.modules import alerts as _alerts
 from core.persistence.modules import consumers as _consumers
 from core.persistence.modules import delivery as _delivery
@@ -45,6 +46,7 @@ from core.persistence.modules import events as _events
 from core.persistence.modules import recent_events as _recent_events
 from core.persistence.modules import replay as _replay
 from core.persistence.modules import retention as _retention
+from core.persistence.modules import secrets as _secrets
 from core.persistence.modules import source_state as _source_state
 from core.errors import ConsumerNotFoundError
 
@@ -108,6 +110,8 @@ class EventStore:
                         migrate_v7_to_v8(conn)
                     elif current_version == 8:
                         migrate_v8_to_v9(conn)
+                    elif current_version == 9:
+                        migrate_v9_to_v10(conn)
                     else:
                         raise RuntimeError(
                             f"unsupported schema version {current_version}; "
@@ -498,6 +502,44 @@ class EventStore:
     @property
     def db_path(self) -> str:
         return self._db_path
+
+    # ─── Encrypted secrets (v10; values are ciphertext, never plaintext) ──────
+
+    def upsert_secrets(self, provider: str,
+                       items: dict[str, tuple[str, str]]) -> None:
+        """Transactionally upsert secret rows (name -> (ciphertext, scheme)).
+
+        The caller (CredentialStore) encrypts; this layer stores opaque
+        strings and never sees plaintext.
+        """
+        conn = self._open(self._db_path)
+        try:
+            _secrets.upsert_secrets(conn, provider, items)
+        finally:
+            conn.close()
+
+    def get_secret(self, provider: str, name: str) -> tuple[str, str] | None:
+        """Return (encrypted_value, encryption_scheme) or None."""
+        conn = self._open(self._db_path)
+        try:
+            return _secrets.get_secret(conn, provider, name)
+        finally:
+            conn.close()
+
+    def has_secret(self, provider: str, name: str) -> bool:
+        conn = self._open(self._db_path)
+        try:
+            return _secrets.has_secret(conn, provider, name)
+        finally:
+            conn.close()
+
+    def delete_provider_secrets(self, provider: str) -> int:
+        conn = self._open(self._db_path)
+        try:
+            return _secrets.delete_provider_secrets(conn, provider)
+        finally:
+            conn.close()
+
 
     # ─── Source deduplication (durable, restart-safe) ─────────────────────────
 

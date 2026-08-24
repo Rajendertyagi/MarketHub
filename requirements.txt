@@ -15,3 +15,7 @@ sse-starlette>=3.0.0,<4.0.0
 protobuf>=6.31.1,<7
 # Phase D3: Upstox V3 WebSocket feed adapter (asyncio API only).
 websockets>=17.0,<18.0
+# WebUI credential management: Fernet authenticated encryption for long-lived
+# app credentials stored in the SQLite `secrets` table (app/secrets_store.py).
+# Lower bound: stable Fernet API present since 42; upper bound: next major.
+cryptography>=44.0,<51

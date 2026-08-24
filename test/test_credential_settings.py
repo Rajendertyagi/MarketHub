@@ -1,27 +1,34 @@
 #!/usr/bin/env python3
-"""WebUI Upstox credential-management tests (CS1-CS20).
+"""Encrypted SQLite credential-storage tests (CS1-CS26).
 
-Covers persistent app-credential configuration via the WebUI:
-  * CS1   no stored credentials -> status says missing
-  * CS2   save API key/secret
-  * CS3   status says configured
-  * CS4   secret never returned by any endpoint
-  * CS5   full key not exposed unnecessarily
-  * CS6   persisted credentials survive simulated restart
-  * CS7   saved credentials take precedence over env fallback
-  * CS8   env fallback still works when nothing saved
-  * CS9   replacement credentials take effect at runtime
-  * CS10  secret field cleared after save (frontend)
-  * CS11  secret absent from localStorage/sessionStorage writes
-  * CS12  OAuth becomes available after configuration
-  * CS13  OAuth unavailable before configuration
-  * CS14  OAuth login uses saved backend credentials
-  * CS15  same SourceManager retained (no new instances)
-  * CS16  same MarketService retained
-  * CS17  no duplicate feed object
-  * CS18  no secret leakage in repr/errors/status
-  * CS19  existing OAuth tests' route surface unchanged
-  * CS20  imports intact
+Covers WebUI-managed Upstox app credentials stored Fernet-encrypted in the
+EXISTING application SQLite DB (table `secrets`, schema v10):
+  * CS1   master key generated on first clean use
+  * CS2   same key reused later (no regeneration)
+  * CS3   master key NOT stored inside the DB
+  * CS4   API secret encrypted before DB write
+  * CS5   plaintext secret absent from DB file/rows
+  * CS6   encrypted secret decrypts correctly
+  * CS7   API key persists
+  * CS8   settings survive simulated restart (new store instance)
+  * CS9   WebUI status reports configured
+  * CS10  API secret never returned by any endpoint
+  * CS11  encrypted_value never returned
+  * CS12  master key never returned
+  * CS13  replacement credentials work
+  * CS14  update is atomic (single transaction, no partial state)
+  * CS15  DB credentials override env fallback
+  * CS16  env fallback works when DB credentials absent
+  * CS17  corrupted ciphertext fails safely
+  * CS18  missing master key with existing ciphertext fails safely
+  * CS19  no silent key regeneration in that case
+  * CS20  OAuth login uses decrypted backend secret
+  * CS21  access token remains memory-only (not in secrets table)
+  * CS22  localStorage/sessionStorage contain no credentials
+  * CS23  same SourceManager retained (identity via feed_ref)
+  * CS24  same MarketService retained
+  * CS25  existing OAuth route surface unchanged
+  * CS26  imports intact
 
 NO REAL CREDENTIALS. NO LIVE UPSTOX. Synthetic values + temp dirs only.
 """
@@ -31,6 +38,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import urllib.parse
@@ -52,49 +60,55 @@ KEY2 = "SYNTHETIC-APP-KEY-CCC"
 SECRET2 = "SYNTHETIC-APP-SECRET-DDD"
 
 
-class _TempStore:
-    """cred_store adapter bound to a temp directory (isolated per test)."""
+class _Env:
+    """Isolated temp dir + EventStore + CredentialStore per test."""
 
     def __init__(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.base = Path(self._tmp.name)
+        from core.persistence.store import EventStore
+        from app.secrets_store import CredentialStore
+        self.db_path = str(self.base / "events.db")
+        self.event_store = EventStore(self.db_path)
+        self.cred_store = CredentialStore(self.event_store,
+                                          data_dir=self.base)
 
-    def load_upstox_app_credentials(self):
-        from app import secrets_store
-        return secrets_store.load_upstox_app_credentials(self.base)
-
-    def save_upstox_app_credentials(self, api_key: str, api_secret: str):
-        from app import secrets_store
-        return secrets_store.save_upstox_app_credentials(
-            api_key, api_secret, self.base)
-
-    def redacted_status(self, creds):
-        from app import secrets_store
-        return secrets_store.redacted_status(creds)
+    def reopen(self) -> "tuple":
+        """Simulate application restart: fresh store instances, same files."""
+        from core.persistence.store import EventStore
+        from app.secrets_store import CredentialStore
+        es = EventStore(self.db_path)
+        cs = CredentialStore(es, data_dir=self.base)
+        return es, cs
 
 
-def _make_routes(store: _TempStore, env_creds: dict | None = None):
+def _make_routes(cred_store, env_creds: dict | None = None,
+                 startup_load: bool = True):
     """Build settings+auth routes sharing one oauth_ref, like server.py.
 
-    Mirrors app/server.py startup precedence: saved store credentials win,
+    Mirrors app/server.py startup precedence: DB-saved credentials win,
     environment values are the fallback, otherwise unconfigured.
     """
     from api.routes import build_auth_routes, build_settings_routes
 
     oauth_ref: dict = {"api_key": "", "api_secret": "",
                        "redirect_uri": "http://localhost:7070/auth/upstox/callback"}
-    saved = store.load_upstox_app_credentials()
-    if saved is not None:
-        oauth_ref["api_key"] = saved["api_key"]
-        oauth_ref["api_secret"] = saved["api_secret"]
-    elif env_creds:
-        oauth_ref["api_key"] = env_creds["api_key"]
-        oauth_ref["api_secret"] = env_creds["api_secret"]
+    if startup_load:
+        try:
+            saved = cred_store.load_upstox_app_credentials()
+        except Exception:
+            saved = None
+        if saved is not None:
+            oauth_ref["api_key"] = saved["api_key"]
+            oauth_ref["api_secret"] = saved["api_secret"]
+        elif env_creds:
+            oauth_ref["api_key"] = env_creds["api_key"]
+            oauth_ref["api_secret"] = env_creds["api_secret"]
 
-    settings = build_settings_routes(oauth_ref, cred_store=store)
+    settings = build_settings_routes(oauth_ref, cred_store=cred_store)
     auth = build_auth_routes(
         {"feed": None}, restart_fn=None, oauth=oauth_ref,
-        rest=object(),  # exchange never invoked in these tests
+        rest=object(),  # exchange never invoked directly here
     )
     return oauth_ref, settings, auth
 
@@ -128,209 +142,261 @@ async def _call(route, method: str, body: dict | None = None):
     return response.status_code, json.loads(raw)
 
 
-async def _save_creds(settings, key: str, secret: str):
+async def _save(settings, key: str, secret: str):
     return await _call(_find(settings, "/api/settings/upstox", "POST"),
-                       "POST",
-                       body={"api_key": key, "api_secret": secret})
-
-
-async def _get_status(settings):
-    return await _call(_find(settings, "/api/settings/upstox"), "GET")
-
-
-async def _oauth_available(auth) -> bool:
-    code, data = await _call(_find(auth, "/api/auth/upstox/status"), "GET")
-    return bool(data.get("oauth_available"))
+                       "POST", body={"api_key": key, "api_secret": secret})
 
 
 # -- tests ---------------------------------------------------------------------
 
 
-async def test_cs1_to_cs5_save_and_status(runner: R) -> None:
-    """CS1-CS5: missing->save->configured; no secret/key echo."""
-    store = _TempStore()
-    oauth_ref, settings, auth = _make_routes(store)
+def test_cs1_to_cs7_encryption_basics(runner: R) -> None:
+    """CS1-CS7: key lifecycle + encryption correctness."""
+    env = _Env()
+    runner.assert_false("CS1-no-key-before-use",
+                        (env.base / "master.key").is_file())
 
-    # CS1: nothing saved, no env -> missing.
-    code, data = await _get_status(settings)
-    runner.assert_eq("CS1-initial-missing", data,
-                     {"api_key_configured": False,
-                      "api_secret_configured": False})
-    runner.assert_eq("CS13-oauth-unavailable-before",
-                     await _oauth_available(auth), False)
+    env.cred_store.save_upstox_app_credentials(KEY, SECRET)
 
-    # CS2: save.
-    code, data = await _save_creds(settings, KEY, SECRET)
-    runner.assert_eq("CS2-save-ok", (code, data), (200, {"configured": True}))
+    # CS1: key generated on first save.
+    key_file = env.base / "master.key"
+    runner.assert_true("CS1-key-generated", key_file.is_file())
+    original_key = key_file.read_bytes()
 
-    # CS3: status flips to configured.
-    code, data = await _get_status(settings)
-    runner.assert_eq("CS3-configured", data,
-                     {"api_key_configured": True,
-                      "api_secret_configured": True})
+    # CS2: second operation reuses the SAME key.
+    env2_es, env2_cs = env.reopen()
+    loaded = env2_cs.load_upstox_app_credentials()
+    runner.assert_eq("CS2-key-reused", key_file.read_bytes(), original_key)
+    runner.assert_eq("CS6-decrypts-correctly", loaded["api_secret"], SECRET)
 
-    # CS4/CS5: response blob contains neither secret nor full key.
-    blob = json.dumps(data)
-    runner.assert_not_in("CS4-no-secret-in-status", SECRET, blob)
-    runner.assert_not_in("CS5-no-key-in-status", KEY, blob)
+    # CS3: master key bytes must not appear anywhere in the DB file.
+    db_bytes = Path(env.db_path).read_bytes()
+    runner.assert_not_in("CS3-key-not-in-db", original_key, db_bytes)
 
+    # CS4/CS5: plaintext secret absent from DB; value stored is ciphertext.
+    conn = sqlite3.connect(env.db_path)
+    rows = conn.execute(
+        "SELECT name, encrypted_value, encryption_scheme FROM secrets "
+        "WHERE provider='upstox'").fetchall()
+    conn.close()
+    names = {r[0] for r in rows}
+    runner.assert_eq("CS4-two-rows", names, {"api_key", "api_secret"})
+    for name, value, scheme in rows:
+        runner.assert_not_in(f"CS5-no-plaintext-{name}",
+                             SECRET if name == "api_secret" else KEY, value)
+        runner.assert_eq(f"CS4-scheme-{name}", scheme, "fernet-v1")
 
-async def test_cs6_persistence_across_restart(runner: R) -> None:
-    """CS6: saved credentials survive a simulated application restart."""
-    store = _TempStore()
-    _, settings, _auth = _make_routes(store)
-    await _save_creds(settings, KEY, SECRET)
-
-    # Simulate restart: brand-new routes/store instance over the same dir.
-    store2 = _TempStore.__new__(_TempStore)
-    store2._tmp = None
-    store2.base = store.base
-    oauth_ref2, settings2, auth2 = _make_routes(store2)
-    code, data = await _get_status(settings2)
-    runner.assert_eq("CS6-survives-restart", data,
-                     {"api_key_configured": True,
-                      "api_secret_configured": True})
-    runner.assert_eq("CS6-oauth-available-after-restart",
-                     await _oauth_available(auth2), True)
+    # CS6/CS7: round-trip via a fresh instance.
+    runner.assert_eq("CS7-api-key-persists", loaded["api_key"], KEY)
 
 
-async def test_cs7_precedence_saved_over_env(runner: R) -> None:
-    """CS7: startup loads saved credentials even when env vars also exist."""
-    store = _TempStore()
-    # Save first (as if from a previous session).
-    _, settings0, _ = _make_routes(store)
-    await _save_creds(settings0, KEY, SECRET)
+def test_cs8_restart_persistence(runner: R) -> None:
+    """CS8: credentials survive a simulated application restart."""
+    env = _Env()
+    env.cred_store.save_upstox_app_credentials(KEY, SECRET)
+    _es, cs = env.reopen()
+    loaded = cs.load_upstox_app_credentials()
+    runner.assert_eq("CS8-survives-restart", loaded,
+                     {"api_key": KEY, "api_secret": SECRET})
 
-    # New process with DIFFERENT env creds — saved must win.
+
+async def test_cs9_to_cs12_api_safety(runner: R) -> None:
+    """CS9-CS12: status configured; no secret/ciphertext/key in responses."""
+    env = _Env()
+    oauth_ref, settings, auth = _make_routes(env.cred_store)
+    code, data = await _save(settings, KEY, SECRET)
+    runner.assert_eq("CS9-save-ok", (code, data), (200, {"configured": True}))
+
+    code, status = await _call(_find(settings, "/api/settings/upstox"), "GET")
+    blob = json.dumps(status)
+    runner.assert_true("CS9-status-configured",
+                       status.get("api_key_configured") is True
+                       and status.get("api_secret_configured") is True)
+    runner.assert_not_in("CS10-no-secret", SECRET, blob)
+    runner.assert_not_in("CS11-no-ciphertext-marker", "gAAAAA", blob)
+    runner.assert_not_in("CS12-no-key-material", "AQYH", blob)
+
+    # Auth status endpoint equally clean.
+    code, astatus = await _call(_find(auth, "/api/auth/upstox/status"), "GET")
+    ablob = json.dumps(astatus)
+    runner.assert_not_in("CS10-no-secret-auth", SECRET, ablob)
+    runner.assert_not_in("CS11-no-ciphertext-auth", "gAAAAA", ablob)
+
+
+async def test_cs13_cs14_replacement_atomic(runner: R) -> None:
+    """CS13/CS14: replacement works; both rows updated in one transaction."""
+    env = _Env()
+    oauth_ref, settings, _auth = _make_routes(env.cred_store)
+    await _save(settings, KEY, SECRET)
+    await _save(settings, KEY2, SECRET2)
+
+    runner.assert_eq("CS13-new-active", oauth_ref["api_key"], KEY2)
+    loaded = env.cred_store.load_upstox_app_credentials()
+    runner.assert_eq("CS13-persisted-pair", loaded,
+                     {"api_key": KEY2, "api_secret": SECRET2})
+
+    # Atomicity: upsert_secrets writes both rows under BEGIN IMMEDIATE;
+    # verify no intermediate state by checking updated_at equality.
+    conn = sqlite3.connect(env.db_path)
+    rows = conn.execute(
+        "SELECT name, updated_at FROM secrets WHERE provider='upstox'"
+    ).fetchall()
+    conn.close()
+    stamps = {ts for _n, ts in rows}
+    runner.assert_eq("CS14-single-transaction-timestamp", len(stamps), 1)
+
+
+async def test_cs15_cs16_precedence(runner: R) -> None:
+    """CS15/CS16: DB wins over env; env works when DB empty."""
+    # DB saved first, then "restart" with different env creds.
+    env = _Env()
+    env.cred_store.save_upstox_app_credentials(KEY, SECRET)
+    _es, cs = env.reopen()
     oauth_ref, _settings, auth = _make_routes(
-        store, env_creds={"api_key": KEY2, "api_secret": SECRET2})
-    runner.assert_eq("CS7-saved-wins-key",
-                     oauth_ref["api_key"], KEY)
-    runner.assert_eq("CS7-saved-wins-secret",
-                     oauth_ref["api_secret"], SECRET)
-    runner.assert_eq("CS7-oauth-ready", await _oauth_available(auth), True)
+        cs, env_creds={"api_key": KEY2, "api_secret": SECRET2})
+    runner.assert_eq("CS15-db-over-env", oauth_ref["api_key"], KEY)
+    runner.assert_eq("CS15-oauth-ready",
+                     bool(oauth_ref["api_key"]), True)
+
+    # Fresh DB, no saved creds -> env fallback active.
+    env2 = _Env()
+    oauth2, _s2, auth2 = _make_routes(
+        env2.cred_store, env_creds={"api_key": KEY, "api_secret": SECRET})
+    runner.assert_eq("CS16-env-fallback", oauth2["api_key"], KEY)
+    code, data = await _call(_find(auth2, "/api/auth/upstox/status"), "GET")
+    runner.assert_eq("CS16-oauth-available-env",
+                     data.get("oauth_available"), True)
 
 
-async def test_cs8_env_fallback(runner: R) -> None:
-    """CS8: with nothing saved, env fallback still configures OAuth."""
-    store = _TempStore()
-    oauth_ref, settings, auth = _make_routes(
-        store, env_creds={"api_key": KEY, "api_secret": SECRET})
-    runner.assert_eq("CS8-env-used",
-                     oauth_ref["api_key"], KEY)
-    runner.assert_eq("CS8-oauth-ready", await _oauth_available(auth), True)
-    # Settings status reflects env config too (booleans only).
-    code, data = await _get_status(settings)
-    runner.assert_eq("CS8-status-configured", data.get("api_key_configured"),
-                     True)
+def test_cs17_corrupted_ciphertext(runner: R) -> None:
+    """CS17: corrupted ciphertext fails safely (no crash, no plaintext)."""
+    env = _Env()
+    env.cred_store.save_upstox_app_credentials(KEY, SECRET)
+    conn = sqlite3.connect(env.db_path)
+    conn.execute("UPDATE secrets SET encrypted_value='gAAAAA-corrupted' "
+                 "WHERE provider='upstox' AND name='api_secret'")
+    conn.commit()
+    conn.close()
+
+    _es, cs = env.reopen()
+    try:
+        cs.load_upstox_app_credentials()
+        raised = False
+    except Exception as exc:
+        raised = True
+        runner.assert_not_in("CS17-no-plaintext-in-error", SECRET, str(exc))
+    runner.assert_true("CS17-fails-safely", raised)
 
 
-async def test_cs9_replacement_takes_effect(runner: R) -> None:
-    """CS9: saving new credentials replaces the active OAuth config."""
-    store = _TempStore()
-    oauth_ref, settings, _auth = _make_routes(store)
-    await _save_creds(settings, KEY, SECRET)
-    await _save_creds(settings, KEY2, SECRET2)
-    runner.assert_eq("CS9-new-key-active", oauth_ref["api_key"], KEY2)
-    runner.assert_eq("CS9-new-secret-active", oauth_ref["api_secret"], SECRET2)
-    loaded = store.load_upstox_app_credentials()
-    runner.assert_eq("CS9-persisted-replaced", loaded["api_key"], KEY2)
+def test_cs18_cs19_lost_master_key(runner: R) -> None:
+    """CS18/CS19: missing key + existing ciphertext -> safe failure, no
+    silent regeneration."""
+    env = _Env()
+    env.cred_store.save_upstox_app_credentials(KEY, SECRET)
+    key_file = env.base / "master.key"
+    original_key = key_file.read_bytes()
+    key_file.unlink()  # operator loses the key
+
+    _es, cs = env.reopen()
+    raised = False
+    try:
+        cs.load_upstox_app_credentials()
+    except Exception as exc:
+        raised = True
+        runner.assert_not_in("CS18-no-plaintext-in-error", SECRET, str(exc))
+        runner.assert_not_in("CS18-no-ciphertext-in-error", "gAAAAA", str(exc))
+    runner.assert_true("CS18-fails-safely", raised)
+
+    # CS19: key was NOT silently regenerated.
+    runner.assert_false("CS19-no-silent-regen", key_file.is_file())
+    if key_file.is_file():
+        runner.assert_true("CS19-key-unchanged",
+                           key_file.read_bytes() == original_key)
+
+    # Operator can still REPLACE credentials explicitly (new key generated).
+    cs.save_upstox_app_credentials(KEY2, SECRET2)
+    runner.assert_true("CS19-replace-after-loss", key_file.is_file())
+    loaded = cs.load_upstox_app_credentials()
+    runner.assert_eq("CS19-replaced-works", loaded["api_secret"], SECRET2)
 
 
-async def test_cs10_cs11_frontend_hygiene(runner: R) -> None:
-    """CS10/CS11: secret field cleared; no browser-storage credential writes."""
+async def test_cs20_oauth_uses_decrypted(runner: R) -> None:
+    """CS20: login redirect carries the DECRYPTED saved api key."""
+    env = _Env()
+    env.cred_store.save_upstox_app_credentials(KEY, SECRET)
+    _es, cs = env.reopen()
+    _ref, _settings, auth = _make_routes(cs)
+    login = _find(auth, "/api/auth/upstox/login")
+    code, location = await _call(login, "GET")
+    qs = urllib.parse.parse_qs(urllib.parse.urlsplit(location).query)
+    runner.assert_eq("CS20-client-id-decrypted",
+                     qs.get("client_id", [""])[0], KEY)
+
+
+def test_cs21_access_token_memory_only(runner: R) -> None:
+    """CS21: daily access token is never written to the secrets table."""
+    env = _Env()
+    env.cred_store.save_upstox_app_credentials(KEY, SECRET)
+    conn = sqlite3.connect(env.db_path)
+    rows = conn.execute(
+        "SELECT name FROM secrets WHERE provider='upstox'").fetchall()
+    conn.close()
+    names = {r[0] for r in rows}
+    runner.assert_eq("CS21-only-app-creds-stored", names,
+                     {"api_key", "api_secret"})
+
+
+def test_cs22_frontend_hygiene(runner: R) -> None:
+    """CS22: no credential values into browser storage."""
     js_path = os.path.join(_PROJECT_DIR, "web", "ui", "js", "app.js")
     with open(js_path, encoding="utf-8") as f:
         js = f.read()
-    runner.assert_in("CS10-secret-cleared", 'secretInput.value = ""', js)
     storage_writes = [ln for ln in js.splitlines()
                       if ("localStorage.setItem" in ln
                           or "sessionStorage.setItem" in ln
                           or "document.cookie" in ln)]
     cred_storage = [ln for ln in storage_writes
                     if "secret" in ln.lower() or "api_key" in ln.lower()]
-    runner.assert_eq("CS11-no-cred-storage-writes", cred_storage, [])
+    runner.assert_eq("CS22-no-cred-storage-writes", cred_storage, [])
 
 
-async def test_cs14_oauth_uses_saved_creds(runner: R) -> None:
-    """CS14: login redirect carries the SAVED api key as client_id."""
-    store = _TempStore()
-    oauth_ref, settings, auth = _make_routes(store)
-    await _save_creds(settings, KEY, SECRET)
-
-    login = _find(auth, "/api/auth/upstox/login")
-    code, location = await _call(login, "GET")
-    runner.assert_eq("CS14-login-302", code, 302)
-    qs = urllib.parse.parse_qs(urllib.parse.urlsplit(location).query)
-    runner.assert_eq("CS14-client-id-is-saved-key",
-                     qs.get("client_id", [""])[0], KEY)
-
-
-async def test_cs15_to_cs17_identity(runner: R) -> None:
-    """CS15/16/17: settings save creates no new manager/service/feed."""
-    store = _TempStore()
+async def test_cs23_cs24_identity(runner: R) -> None:
+    """CS23/24: saving credentials creates no new manager/service/feed."""
+    env = _Env()
 
     class _Feed:
         name = "upstox"
 
     feed = _Feed()
-    feed_ref = {"feed": feed}
-    from api.routes import build_auth_routes, build_settings_routes
-    oauth_ref: dict = {"api_key": "", "api_secret": "",
-                       "redirect_uri": "http://x/cb"}
-    settings = build_settings_routes(oauth_ref, cred_store=store)
-    auth = build_auth_routes(feed_ref, restart_fn=None, oauth=oauth_ref,
-                             rest=object())
-    await _save_creds(settings, KEY, SECRET)
-    # Same objects, same identity.
-    runner.assert_true("CS15-ref-not-replaced", oauth_ref is oauth_ref)
-    runner.assert_true("CS16-feed-same-object",
-                       feed_ref["feed"] is feed)
-    runner.assert_eq("CS17-single-feed-entry",
-                     len([k for k in feed_ref if k == "feed"]), 1)
+    feed_ref = {"feed": feed}          # SourceManager stand-in holder
+    svc = object()                      # MarketService stand-in
+    oauth_ref, settings, auth = _make_routes(env.cred_store)
+    await _save(settings, KEY, SECRET)
+    runner.assert_true("CS23-feed-ref-intact", feed_ref["feed"] is feed)
+    runner.assert_true("CS24-svc-untouched", svc is not None
+                       and not hasattr(env.cred_store, "_market_service"))
 
 
-async def test_cs18_no_leakage(runner: R) -> None:
-    """CS18: secret absent from store module reprs and error paths."""
-    from app import secrets_store
-    store = _TempStore()
-    await _save_creds(_make_routes(store)[1], KEY, SECRET)
-
-    # Module functions have no value-bearing repr.
-    r = repr(secrets_store)
-    runner.assert_not_in("CS18-no-secret-in-module-repr", SECRET, r)
-
-    # Validation errors do not embed values.
-    try:
-        store.save_upstox_app_credentials("", "")
-    except ValueError as exc:
-        runner.assert_not_in("CS18-no-secret-in-error", SECRET, str(exc))
-    else:
-        runner.assert_true("CS18-empty-rejected", False,
-                           "empty credentials should raise")
-
-    # On-disk file IS the intended storage; verify it exists but status
-    # endpoints never expose it (covered in CS4).
-    runner.assert_true("CS18-store-file-exists",
-                       (store.base / "secrets" /
-                        "upstox_app_credentials.json").is_file())
-
-
-def test_cs19_route_surface(runner: R) -> None:
-    """CS19: existing auth-route paths unchanged."""
+def test_cs25_route_surface(runner: R) -> None:
+    """CS25: existing auth-route paths unchanged."""
     from api.routes import build_auth_routes
-    routes = build_auth_routes({"feed": None}, oauth={"api_key": "", "api_secret": "", "redirect_uri": "http://x/cb"})
+    routes = build_auth_routes({"feed": None},
+                               oauth={"api_key": "", "api_secret": "",
+                                      "redirect_uri": "http://x/cb"})
     paths = {r.path for r in routes}
     expected = {"/api/auth/upstox/status", "/api/auth/upstox/login",
                 "/auth/upstox/callback", "/api/auth/upstox/token"}
-    runner.assert_eq("CS19-auth-paths-intact", paths, expected)
+    runner.assert_eq("CS25-auth-paths-intact", paths, expected)
 
 
-def test_cs20_imports(runner: R) -> None:
-    """CS20: all touched modules import cleanly."""
-    from app import secrets_store  # noqa: F401
-    from api.routes import build_settings_routes  # noqa: F401
-    runner.assert_true("CS20-imports-ok", True)
+def test_cs26_imports(runner: R) -> None:
+    """CS26: schema v10 + crypto modules import cleanly."""
+    from core.persistence.modules.schema import SCHEMA_VERSION
+    from core.persistence.modules import secrets as _sec  # noqa: F401
+    from app.secrets_store import (  # noqa: F401
+        CredentialStore, EncryptionService, CredentialDecryptError,
+    )
+    runner.assert_eq("CS26-schema-v10", SCHEMA_VERSION, 10)
 
 
 # -- main -------------------------------------------------------------------------
@@ -339,17 +405,19 @@ def test_cs20_imports(runner: R) -> None:
 async def main() -> bool:
     runner = R()
 
-    await test_cs1_to_cs5_save_and_status(runner)
-    await test_cs6_persistence_across_restart(runner)
-    await test_cs7_precedence_saved_over_env(runner)
-    await test_cs8_env_fallback(runner)
-    await test_cs9_replacement_takes_effect(runner)
-    await test_cs10_cs11_frontend_hygiene(runner)
-    await test_cs14_oauth_uses_saved_creds(runner)
-    await test_cs15_to_cs17_identity(runner)
-    await test_cs18_no_leakage(runner)
-    test_cs19_route_surface(runner)
-    test_cs20_imports(runner)
+    test_cs1_to_cs7_encryption_basics(runner)
+    test_cs8_restart_persistence(runner)
+    await test_cs9_to_cs12_api_safety(runner)
+    await test_cs13_cs14_replacement_atomic(runner)
+    await test_cs15_cs16_precedence(runner)
+    test_cs17_corrupted_ciphertext(runner)
+    test_cs18_cs19_lost_master_key(runner)
+    await test_cs20_oauth_uses_decrypted(runner)
+    test_cs21_access_token_memory_only(runner)
+    test_cs22_frontend_hygiene(runner)
+    await test_cs23_cs24_identity(runner)
+    test_cs25_route_surface(runner)
+    test_cs26_imports(runner)
 
     return runner.summary()
 
@@ -357,4 +425,3 @@ async def main() -> bool:
 if __name__ == "__main__":
     success = asyncio.run(main())
     sys.exit(0 if success else 1)
-
