@@ -20,6 +20,11 @@
     <button class="nav-link" data-view="markets">Markets</button>
     <button class="nav-link" data-view="options">Option Chain</button>
     <button class="nav-link" data-view="sources">Sources</button>
+    <button class="nav-link" data-view="instruments">Instruments</button>
+    <button class="nav-link" data-view="watchlists">Watchlists</button>
+    <button class="nav-link" data-view="options">Option Chain</button>
+    <button class="nav-link" data-view="charts">Charts</button>
+    <button class="nav-link" data-view="alerts">Alerts</button>
     <button class="nav-link" data-view="mcp">MCP</button>
     <button class="nav-link" data-view="settings">Settings</button>
   </div>
@@ -100,6 +105,128 @@
       <div id="sources-detail"><em>Loading…</em></div>
     </div>
     <p class="hint">To log in or manage Upstox credentials, go to <button class="nav-link" data-view="settings" style="padding:0;font-size:12px;text-decoration:underline">Settings</button>.</p>
+  </section>
+
+  <!-- ── INSTRUMENTS VIEW ── -->
+  <section id="view-instruments" class="view">
+    <div class="toolbar">
+      <input type="text" id="instr-search" placeholder="Search symbol or name (e.g. RELIANCE, NIFTY)…" class="filter-input" style="width:320px">
+      <select id="instr-exchange" class="wa-select">
+        <option value="">All exchanges</option>
+        <option>NSE</option><option>NFO</option><option>BSE</option><option>MCX</option>
+      </select>
+      <button id="instr-sync-upstox" class="btn">Sync Upstox</button>
+      <button id="instr-sync-fyers" class="btn">Sync Fyers</button>
+    </div>
+    <div id="instr-sync-msg" class="hint"></div>
+    <div class="panel">
+      <table class="data-table" id="instr-table">
+        <thead><tr>
+          <th>Symbol</th><th>Name</th><th>Exchange</th><th>Type</th>
+          <th>Expiry</th><th>Strike</th><th>Lot</th><th>Provider</th><th></th>
+        </tr></thead>
+        <tbody id="instr-body"><tr><td colspan="9" class="empty-row">Search to find instruments. Sync a provider master first if no results.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── WATCHLISTS VIEW ── -->
+  <section id="view-watchlists" class="view">
+    <div class="toolbar">
+      <select id="wl-select" class="wa-select"></select>
+      <input type="text" id="wl-new-name" placeholder="New watchlist name…" class="filter-input">
+      <button id="wl-create" class="btn">Create</button>
+      <button id="wl-rename" class="btn">Rename</button>
+      <button id="wl-delete" class="btn" style="border-color:var(--red);color:var(--red)">Delete</button>
+    </div>
+    <div class="panel">
+      <table class="data-table" id="wl-table">
+        <thead><tr>
+          <th>Symbol</th><th>LTP</th><th>Chg</th><th>Chg%</th>
+          <th>Volume</th><th>Bid</th><th>Ask</th><th></th>
+        </tr></thead>
+        <tbody id="wl-body"><tr><td colspan="8" class="empty-row">No items. Add instruments from the Instruments page.</td></tr></tbody>
+      </table>
+    </div>
+    <p class="hint">Live values update via the shared market stream for subscribed instruments only.</p>
+  </section>
+
+  <!-- ── OPTION CHAIN VIEW ── -->
+  <section id="view-options" class="view">
+    <div class="toolbar">
+      <input type="text" id="oc-underlying-key" placeholder="Underlying key (e.g. NSE_INDEX|NIFTY 50)…" class="filter-input" style="width:280px">
+      <input type="date" id="oc-expiry-date" class="filter-input">
+      <button id="oc-load" class="btn">Load Chain</button>
+    </div>
+    <div class="status-strip">
+      <div class="status-chip"><label>Spot</label><span id="oc-spot" class="chip-val">—</span></div>
+      <div class="status-chip"><label>ATM</label><span id="oc-atm" class="chip-val">—</span></div>
+    </div>
+    <div id="oc-message" class="hint"></div>
+    <div class="panel">
+      <div style="overflow-x:auto">
+      <table class="data-table" id="oc-table">
+        <thead><tr>
+          <th colspan="6">CALLS</th><th rowspan="2">Strike</th><th colspan="6">PUTS</th>
+        </tr>
+        <tr>
+          <th>OI</th><th>OI Chg</th><th>Vol</th><th>IV</th><th>LTP</th><th>Chg</th>
+          <th>OI</th><th>OI Chg</th><th>Vol</th><th>IV</th><th>LTP</th><th>Chg</th>
+        </tr></thead>
+        <tbody id="oc-body"><tr><td colspan="13" class="empty-row">Enter an underlying and expiry, then Load Chain. Requires an active Upstox login.</td></tr></tbody>
+      </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── CHARTS VIEW ── -->
+  <section id="view-charts" class="view">
+    <div class="toolbar">
+      <input type="text" id="chart-instrument" placeholder="Instrument key (e.g. NSE_EQ|INE002A01018)…" class="filter-input" style="width:300px">
+      <select id="chart-unit" class="wa-select">
+        <option value="minutes">Minutes</option>
+        <option value="hours" selected>Hours</option>
+        <option value="days">Days</option>
+        <option value="weeks">Weeks</option>
+        <option value="months">Months</option>
+      </select>
+      <input type="number" id="chart-interval" value="1" min="1" class="filter-input" style="width:70px">
+      <input type="date" id="chart-from" class="filter-input">
+      <input type="date" id="chart-to" class="filter-input">
+      <button id="chart-load" class="btn">Load Chart</button>
+    </div>
+    <div id="chart-message" class="hint"></div>
+    <div class="panel"><div id="chart-container" style="height:480px;width:100%"></div></div>
+  </section>
+
+  <!-- ── ALERTS VIEW ── -->
+  <section id="view-alerts" class="view">
+    <div class="toolbar">
+      <input type="text" id="alert-token" placeholder="Instrument token…" class="filter-input" style="width:220px">
+      <input type="text" id="alert-symbol" placeholder="Symbol…" class="filter-input" style="width:120px">
+      <select id="alert-field" class="wa-select">
+        <option value="ltp">LTP</option>
+        <option value="change_percent">Change %</option>
+        <option value="volume">Volume</option>
+        <option value="oi_change_percent">OI Change %</option>
+      </select>
+      <select id="alert-operator" class="wa-select">
+        <option value="gt">&gt;</option>
+        <option value="lt">&lt;</option>
+      </select>
+      <input type="number" id="alert-threshold" placeholder="Value" class="filter-input" style="width:110px">
+      <button id="alert-create" class="btn">Add Alert</button>
+    </div>
+    <div id="alert-notifications"></div>
+    <div class="panel">
+      <table class="data-table" id="alerts-table">
+        <thead><tr>
+          <th>Symbol</th><th>Condition</th><th>Status</th>
+          <th>Enabled</th><th></th>
+        </tr></thead>
+        <tbody id="alerts-body"><tr><td colspan="5" class="empty-row">No alerts configured.</td></tr></tbody>
+      </table>
+    </div>
   </section>
 
   <!-- ── MCP VIEW ── -->
@@ -224,6 +351,7 @@
   <span id="footer-tick"></span>
 </footer>
 
-<script src="/ui/js/app.js?v=13"></script>
+<script src="/ui/vendor/echarts/dist/echarts.min.js"></script>
+<script src="/ui/js/app.js?v=14"></script>
 </body>
 </html>

@@ -91,15 +91,15 @@ def w3_static_js(runner: R, c) -> None:
     body = res.text
     runner.assert_eq(name + "-one-eventsource", body.count("new EventSource"), 1)
     runner.assert_in(name + "-stream-url", '/api/market/stream"', body)
-    # setInterval allowed ONLY for: (1) the 10 s source-status poll and
-    # (2) the 5 s open-drawer content refresh. Market data itself must
-    # always arrive via the single EventSource, never via polling.
-    runner.assert_eq(name + "-poll-only-source-status",
-                     body.count("setInterval"), 2)
-    runner.assert_in(name + "-poll-target",
+    # setInterval is allowed ONLY for UI/status refreshes — market data
+    # itself must always arrive via the single EventSource, never polling.
+    runner.assert_eq(name + "-poll-count", body.count("setInterval"), 4)
+    runner.assert_in(name + "-poll-source-status",
                      "setInterval(pollSources", body)
-    runner.assert_in(name + "-drawer-refresh",
-                     "renderDrawer(key)", body)
+    runner.assert_in(name + "-poll-watchlists",
+                     "setInterval(loadWatchlists", body)
+    runner.assert_in(name + "-poll-alerts",
+                     "setInterval(loadAlerts", body)
 
 
 def w4_webawesome_vendored(runner: R, c) -> None:
