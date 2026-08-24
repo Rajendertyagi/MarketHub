@@ -396,7 +396,7 @@ def test_cs26_imports(runner: R) -> None:
     from app.secrets_store import (  # noqa: F401
         CredentialStore, EncryptionService, CredentialDecryptError,
     )
-    runner.assert_eq("CS26-schema-v10", SCHEMA_VERSION, 10)
+    runner.assert_eq("CS26-schema-at-least-v11", SCHEMA_VERSION >= 11, True)
 
 
 # -- main -------------------------------------------------------------------------
@@ -425,3 +425,4 @@ async def main() -> bool:
 if __name__ == "__main__":
     success = asyncio.run(main())
     sys.exit(0 if success else 1)
+

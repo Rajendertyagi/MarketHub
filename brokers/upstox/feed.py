@@ -534,6 +534,19 @@ class UpstoxFeed:
         if self._state == "failed":
             self._set_state("stopped")
 
+    def add_instruments(self, keys: list[str]) -> int:
+        """Add instrument keys to the subscription set (deduplicated).
+
+        Takes effect on the NEXT authorize/resubscribe cycle — pair with
+        SourceManager.restart_source() for immediate effect through the
+        normal lifecycle. Returns the number of genuinely new keys.
+        """
+        existing = set(self._instrument_keys)
+        fresh = [k for k in keys if k and k not in existing]
+        if fresh:
+            self._instrument_keys = tuple(sorted(existing | set(fresh)))
+        return len(fresh)
+
     @property
     def name(self) -> str:  # kept as attribute+property read-only pair
         return self._name

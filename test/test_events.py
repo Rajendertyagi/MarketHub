@@ -314,7 +314,7 @@ async def p8t3_schema_v9(runner: R) -> None:
             runner.assert_true(name + f"-table-{tbl}", row is not None,
                                f"table {tbl} missing")
         ver = conn.execute("PRAGMA user_version").fetchone()[0]
-        runner.assert_eq(name + "-version", ver, 10)
+        runner.assert_eq(name + "-version", ver, 11)
         conn.close()
     except Exception as exc:
         runner.fail(name, str(exc))
@@ -442,3 +442,4 @@ async def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(asyncio.run(main()))
+

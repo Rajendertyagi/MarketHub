@@ -38,11 +38,13 @@ from core.persistence.modules.schema import (
     migrate_v8_to_v9,
     SCHEMA_VERSION,
 )
+from core.persistence.modules.products import migrate_v10_to_v11
 from core.persistence.modules.secrets import migrate_v9_to_v10
 from core.persistence.modules import alerts as _alerts
 from core.persistence.modules import consumers as _consumers
 from core.persistence.modules import delivery as _delivery
 from core.persistence.modules import events as _events
+from core.persistence.modules import products as _products
 from core.persistence.modules import recent_events as _recent_events
 from core.persistence.modules import replay as _replay
 from core.persistence.modules import retention as _retention
@@ -112,6 +114,8 @@ class EventStore:
                         migrate_v8_to_v9(conn)
                     elif current_version == 9:
                         migrate_v9_to_v10(conn)
+                    elif current_version == 10:
+                        migrate_v10_to_v11(conn)
                     else:
                         raise RuntimeError(
                             f"unsupported schema version {current_version}; "
@@ -540,6 +544,146 @@ class EventStore:
         finally:
             conn.close()
 
+    # ─── Product tables: instruments / watchlists / alerts (v11) ──────────────
+
+    def replace_provider_instruments(self, provider: str,
+                                     records: list[dict[str, Any]]) -> int:
+        conn = self._open(self._db_path)
+        try:
+            return _products.replace_provider_instruments(conn, provider,
+                                                          records)
+        finally:
+            conn.close()
+
+    def search_instruments(self, **kw: Any) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.search_instruments(conn, **kw)
+        finally:
+            conn.close()
+
+    def get_instrument(self, provider: str,
+                       instrument_token: str) -> dict[str, Any] | None:
+        conn = self._open(self._db_path)
+        try:
+            return _products.get_instrument(conn, provider, instrument_token)
+        finally:
+            conn.close()
+
+    def instruments_sync_state(self) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.instruments_sync_state(conn)
+        finally:
+            conn.close()
+
+    def list_watchlists(self) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.list_watchlists(conn)
+        finally:
+            conn.close()
+
+    def create_watchlist(self, name: str) -> dict[str, Any]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.create_watchlist(conn, name)
+        finally:
+            conn.close()
+
+    def rename_watchlist(self, wl_id: int, name: str) -> bool:
+        conn = self._open(self._db_path)
+        try:
+            return _products.rename_watchlist(conn, wl_id, name)
+        finally:
+            conn.close()
+
+    def delete_watchlist(self, wl_id: int) -> bool:
+        conn = self._open(self._db_path)
+        try:
+            return _products.delete_watchlist(conn, wl_id)
+        finally:
+            conn.close()
+
+    def list_watchlist_items(self, wl_id: int) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.list_watchlist_items(conn, wl_id)
+        finally:
+            conn.close()
+
+    def add_watchlist_item(self, wl_id: int, **kw: Any) -> dict | None:
+        conn = self._open(self._db_path)
+        try:
+            return _products.add_watchlist_item(conn, wl_id, **kw)
+        finally:
+            conn.close()
+
+    def remove_watchlist_item(self, item_id: int) -> bool:
+        conn = self._open(self._db_path)
+        try:
+            return _products.remove_watchlist_item(conn, item_id)
+        finally:
+            conn.close()
+
+    def reorder_watchlist_items(self, wl_id: int,
+                                item_ids: list[int]) -> bool:
+        conn = self._open(self._db_path)
+        try:
+            return _products.reorder_watchlist_items(conn, wl_id, item_ids)
+        finally:
+            conn.close()
+
+    def create_alert(self, **kw: Any) -> dict[str, Any]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.create_alert(conn, **kw)
+        finally:
+            conn.close()
+
+    def list_alerts(self) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.list_alerts(conn)
+        finally:
+            conn.close()
+
+    def delete_alert(self, alert_id: int) -> bool:
+        conn = self._open(self._db_path)
+        try:
+            return _products.delete_alert(conn, alert_id)
+        finally:
+            conn.close()
+
+    def set_alert_enabled(self, alert_id: int, enabled: bool) -> bool:
+        conn = self._open(self._db_path)
+        try:
+            return _products.set_alert_enabled(conn, alert_id, enabled)
+        finally:
+            conn.close()
+
+    def rearm_alert(self, alert_id: int) -> bool:
+        conn = self._open(self._db_path)
+        try:
+            return _products.rearm_alert(conn, alert_id)
+        finally:
+            conn.close()
+
+    def record_trigger(self, alert_id: int) -> None:
+        conn = self._open(self._db_path)
+        try:
+            _products.record_trigger(conn, alert_id)
+        finally:
+            conn.close()
+
+    def load_enabled_alerts(self) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.load_enabled_alerts(conn)
+        finally:
+            conn.close()
+
+
 
     # ─── Source deduplication (durable, restart-safe) ─────────────────────────
 
@@ -674,3 +818,5 @@ class EventStore:
             return row[0] if row else 0
         finally:
             conn.close()
+
+
