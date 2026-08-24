@@ -1,39 +1,145 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="wa-theme-dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MarketHub</title>
+<link rel="stylesheet" href="/ui/vendor/webawesome/dist/styles/webawesome.css">
+<link rel="stylesheet" href="/ui/vendor/webawesome/dist/styles/themes/default.css">
+<link rel="stylesheet" href="/ui/vendor/webawesome/dist/styles/utilities.css">
 <link rel="stylesheet" href="/ui/css/style.css">
+<script type="module" src="/ui/vendor/webawesome/dist/webawesome.loader.js"></script>
 </head>
 <body>
-<header>
-  <h1>MarketHub</h1>
-  <div id="conn-status" class="status-dot disconnected" title="SSE connection"></div>
-  <span id="conn-text">connecting…</span>
-</header>
-<main>
-  <section id="sources-panel">
-    <h2>Sources</h2>
-    <div id="sources-list"><em>loading…</em></div>
+
+<!-- ══ TOP NAVIGATION ══ -->
+<nav class="topnav">
+  <div class="topnav-brand">Market<span class="accent">Hub</span></div>
+  <div class="topnav-links">
+    <button class="nav-link active" data-view="dashboard">Dashboard</button>
+    <button class="nav-link" data-view="markets">Markets</button>
+    <button class="nav-link" data-view="options">Option Chain</button>
+    <button class="nav-link" data-view="sources">Sources</button>
+    <button class="nav-link" data-view="mcp">MCP</button>
+  </div>
+  <div class="topnav-right">
+    <span id="sse-indicator" class="indicator indicator-off" title="SSE connection">● SSE</span>
+    <span id="broker-indicator" class="indicator indicator-off" title="Broker feed">● Broker</span>
+    <button id="theme-toggle" class="icon-btn" title="Toggle theme">◐</button>
+  </div>
+</nav>
+
+<!-- ══ TICKER STRIP ══ -->
+<div class="ticker-strip" id="ticker-strip">
+  <span class="ticker-empty">No market data yet</span>
+</div>
+
+<!-- ══ MAIN CONTENT ══ -->
+<main id="main-content">
+
+  <!-- ── DASHBOARD VIEW ── -->
+  <section id="view-dashboard" class="view active">
+    <div class="status-strip">
+      <div class="status-chip"><label>Upstox</label><span id="chip-upstox" class="chip chip-off">—</span></div>
+      <div class="status-chip"><label>SSE</label><span id="chip-sse" class="chip chip-off">—</span></div>
+      <div class="status-chip"><label>Instruments</label><span id="chip-instruments" class="chip-val">0</span></div>
+      <div class="status-chip"><label>Frames</label><span id="chip-frames" class="chip-val">0</span></div>
+      <div class="status-chip"><label>Reconnects</label><span id="chip-reconnects" class="chip-val">0</span></div>
+      <div class="status-chip"><label>Last Update</label><span id="chip-last-update" class="chip-val">—</span></div>
+    </div>
+    <div class="market-cards" id="market-cards"></div>
+    <div class="panel">
+      <div class="panel-header"><h2>Live Market</h2></div>
+      <table class="data-table" id="dash-table">
+        <thead><tr>
+          <th>Symbol</th><th>LTP</th><th>Chg</th><th>Chg%</th>
+          <th>Open</th><th>High</th><th>Low</th><th>Close</th>
+          <th>Vol</th><th>Bid</th><th>Ask</th><th>Updated</th>
+        </tr></thead>
+        <tbody id="dash-body"><tr><td colspan="12" class="empty-row">Waiting for market data…</td></tr></tbody>
+      </table>
+    </div>
   </section>
-  <section id="quotes-panel">
-    <h2>Live Quotes</h2>
-    <table id="quotes-table">
-      <thead><tr>
-        <th>Symbol</th><th>LTP</th><th>Chg</th><th>Chg%</th>
-        <th>Open</th><th>High</th><th>Low</th><th>Close</th>
-        <th>Volume</th><th>Bid</th><th>Ask</th><th>Updated</th>
-      </tr></thead>
-      <tbody id="quotes-body"><tr><td colspan="12"><em>waiting for data…</em></td></tr></tbody>
-    </table>
+
+  <!-- ── MARKETS VIEW ── -->
+  <section id="view-markets" class="view">
+    <div class="toolbar">
+      <input type="text" id="market-filter" placeholder="Filter symbols…" class="filter-input">
+    </div>
+    <div class="panel">
+      <table class="data-table" id="markets-table">
+        <thead><tr>
+          <th>Symbol</th><th>LTP</th><th>Chg</th><th>Chg%</th>
+          <th>Open</th><th>High</th><th>Low</th><th>Close</th>
+          <th>Volume</th><th>OI</th><th>Bid</th><th>Ask</th><th>ATP</th><th>Updated</th>
+        </tr></thead>
+        <tbody id="markets-body"><tr><td colspan="14" class="empty-row">No data</td></tr></tbody>
+      </table>
+    </div>
   </section>
-  <section id="depth-panel" style="display:none">
-    <h2>Market Depth</h2>
-    <div id="depth-content"></div>
+
+  <!-- ── OPTION CHAIN VIEW ── -->
+  <section id="view-options" class="view">
+    <div class="toolbar">
+      <select id="oc-underlying" class="wa-select"><option>Select underlying…</option></select>
+      <select id="oc-expiry" class="wa-select" disabled><option>Expiry</option></select>
+    </div>
+    <div class="empty-state">
+      <p class="empty-title">Option-chain data source not configured yet</p>
+      <p class="empty-desc">Connect a broker source with option-chain support to view live option chains.</p>
+    </div>
   </section>
+
+  <!-- ── SOURCES VIEW ── -->
+  <section id="view-sources" class="view">
+    <div class="panel">
+      <div class="panel-header"><h2>Source Status</h2></div>
+      <div id="sources-detail"><em>Loading…</em></div>
+    </div>
+  </section>
+
+  <!-- ── MCP VIEW ── -->
+  <section id="view-mcp" class="view">
+    <div class="panel">
+      <div class="panel-header"><h2>MCP Market Tools</h2></div>
+      <table class="data-table mcp-table">
+        <thead><tr><th>Tool</th><th>Description</th><th>Type</th></tr></thead>
+        <tbody>
+          <tr><td><code>market_quote</code></td><td>Latest normalized quote for an instrument</td><td>Read-only</td></tr>
+          <tr><td><code>market_depth</code></td><td>Market depth (bid/ask levels)</td><td>Read-only</td></tr>
+          <tr><td><code>market_status</code></td><td>Service counters and state</td><td>Read-only</td></tr>
+        </tbody>
+      </table>
+      <p class="hint">Tools read from the shared MarketService. No broker connections are created by MCP callers.</p>
+    </div>
+  </section>
+
+  <!-- ── SETTINGS VIEW ── -->
+  <section id="view-settings" class="view">
+    <div class="panel">
+      <div class="panel-header"><h2>Settings</h2></div>
+      <div class="setting-row">
+        <label>Theme</label>
+        <button id="settings-theme-toggle" class="btn">Toggle Dark / Light</button>
+      </div>
+      <div class="setting-row">
+        <label>Data Source</label>
+        <span class="setting-val">Upstox V3 WebSocket Feed</span>
+      </div>
+      <div class="setting-row">
+        <label>SSE Endpoint</label>
+        <span class="setting-val mono">/api/market/stream</span>
+      </div>
+    </div>
+  </section>
+
 </main>
-<footer><span id="last-update"></span></footer>
+
+<footer class="app-footer">
+  <span>MarketHub</span>
+  <span id="footer-tick"></span>
+</footer>
+
 <script src="/ui/js/app.js"></script>
 </body>
 </html>
