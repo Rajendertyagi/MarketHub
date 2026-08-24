@@ -59,3 +59,8 @@ TOOL_DEV_TASK_LIST = "dev_task_list"
 TOOL_DEV_SOURCE_START = "dev_source_start"
 TOOL_DEV_SOURCE_FAIL = "dev_source_fail"
 TOOL_DEV_SOURCE_STOP = "dev_source_stop"
+
+# ─── Market data tools (read-only) ─────────────────────────────────────────
+TOOL_MARKET_QUOTE = "market_quote"
+TOOL_MARKET_DEPTH = "market_depth"
+TOOL_MARKET_STATUS = "market_status"

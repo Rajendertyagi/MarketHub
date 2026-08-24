@@ -73,6 +73,7 @@ from mcp_server.tools import (
     register_replay_tools,
     register_source_tools,
     register_system_tools,
+    register_market_tools,
 )
 from sources import SourceManager, build_source_manager, SourceConfigError
 from api.routes import build_market_routes
@@ -271,6 +272,7 @@ _services = Services(
     timeouts=TIMEOUTS,
     replay_cfg=REPLAY_CFG,
     metrics=_metrics,
+    market_service=_market_service,
 )
 
 # ── Alert engine (generic, Context-free) ──────────────────────────────────────
@@ -306,6 +308,7 @@ register_resources(mcp, _services, _constants)
 # ============================================================
 
 register_system_tools(mcp)
+register_market_tools(mcp, _services)
 register_event_tools(mcp, _services)
 register_consumer_tools(mcp, _services)
 register_replay_tools(mcp, _services)

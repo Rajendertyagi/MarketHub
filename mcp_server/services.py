@@ -21,4 +21,5 @@ class Services:
     source_manager: Any   # SourceManager
     timeouts: dict[str, Any]
     replay_cfg: dict[str, Any]
-    metrics: Any          # RuntimeMetrics
+    metrics: Any
+    market_service: Any = None          # RuntimeMetrics
