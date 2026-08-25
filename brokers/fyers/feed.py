@@ -24,8 +24,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import uuid
-from typing import Any
+import random
+import time
+from collections import deque
+from typing import Any, Callable
 
 from market.normalize.fyers import (
     NormalizationError,
@@ -74,6 +76,14 @@ class FyersFeed:
         self._live_ws: Any = None
 
         self._state = "stopped"
+        self._state_updated_at: str | None = None
+        self._last_exit_reason: str | None = None
+        self._last_exit_at: str | None = None
+        self._transitions: deque[dict[str, Any]] = deque(maxlen=20)
+        self.on_state_change: Callable[[str, str, str, str, str | None], None] | None = (
+            None
+        )
+        self._provider = "fyers"
         self._connect_attempts = 0
         self._reconnect_count = 0
         self._frames_received = 0
@@ -81,6 +91,7 @@ class FyersFeed:
         self._last_message_at: str | None = None
         self._last_error: str | None = None
         self._connected_at: str | None = None
+        self._started_at: str | None = None
 
     # -- identity / status ------------------------------------------------------
 
@@ -88,14 +99,62 @@ class FyersFeed:
     def name(self) -> str:
         return self._name
 
-    def _set_state(self, state: str) -> None:
-        self._state = state
+    def _set_state(self, state: str, reason: str | None = None) -> None:
+        if state != self._state:
+            old = self._state
+            self._state = state
+            self._state_updated_at = self._now()
+            logger.info("fyers feed %s: state -> %s (reason=%s)",
+                        self._name, state, reason)
+            self._transitions.append({
+                "at": self._state_updated_at,
+                "from": old,
+                "to": state,
+                "reason": reason,
+            })
+            listener = self.on_state_change
+            if listener is not None:
+                try:
+                    listener(self._name, self._provider, old, state, reason)
+                except Exception:  # pragma: no cover - listener must never break feed
+                    logger.debug("fyers feed %s: on_state_change raised",
+                                 self._name, exc_info=True)
+
+    def _note_exit(self, reason: str) -> None:
+        self._last_exit_reason = reason
+        self._last_exit_at = self._now()
+        logger.info("fyers feed %s: run ended (%s)", self._name, reason)
+
+    async def _close_live_ws(self) -> None:
+        """Close and clear the live socket if one is held (cancellation path)."""
+        async with self._sub_lock:
+            ws = self._live_ws
+            self._live_ws = None
+        if ws is not None:
+            await self._close_quietly(ws)
+
+    async def _wait_or_stop(self, stop_event: asyncio.Event,
+                            delay: float) -> bool:
+        """Wait ``delay`` seconds, or return True early if stop fires."""
+        stop_task = asyncio.create_task(stop_event.wait())
+        sleep_task = asyncio.create_task(asyncio.sleep(delay))
+        try:
+            done, _pending = await asyncio.wait(
+                {stop_task, sleep_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            return stop_task in done
+        finally:
+            for t in (stop_task, sleep_task):
+                if not t.done():
+                    t.cancel()
+            await asyncio.gather(stop_task, sleep_task,
+                                 return_exceptions=True)
 
     def _now(self) -> str:
         return (self._utc_now_iso or (lambda: ""))()
 
     def _mono(self) -> float:
-        import time
         return time.monotonic()
 
     def status(self) -> dict[str, Any]:
@@ -103,14 +162,49 @@ class FyersFeed:
             "name": self._name,
             "state": self._state,
             "provider": "fyers",
+            "state_updated_at": self._state_updated_at,
             "configured_instruments": len(self._desired),
+            "subscribed_instruments": (
+                len(self._desired) if self._state == "streaming" else None
+            ),
             "frames_received": self._frames_received,
             "malformed_frames": self._malformed_frames,
             "reconnect_count": self._reconnect_count,
+            "connect_attempts": self._connect_attempts,
             "connected_at": self._connected_at,
             "last_message_at": self._last_message_at,
             "last_error": self._last_error,
+            "last_error_at": None,
+            "last_exit_reason": self._last_exit_reason,
+            "last_exit_at": self._last_exit_at,
+            "started_at": self._started_at,
+            "auth_required": self._state == "auth_required",
+            "not_ready_reason": self.readiness_reason(),
+            "recent_transitions": list(self._transitions),
         }
+
+    def readiness_reason(self) -> str | None:
+        """Why this feed cannot start right now, or None if ready (WP2).
+
+        The daily-login dimension is surfaced by ``auth_required`` in status();
+        this reports the token-getter dimension.
+        """
+        getter = self._access_token_getter
+        if getter is None:
+            return "no_token_getter"
+        try:
+            token = getter()
+        except Exception:
+            return "token_lookup_failed"
+        if asyncio.iscoroutine(token):
+            return None  # async getter validated at session time
+        if not isinstance(token, str) or not token.strip():
+            return "missing_token"
+        return None
+
+    def is_ready_to_start(self) -> bool:
+        """Synchronous readiness gate (WP37)."""
+        return self.readiness_reason() is None
 
     @property
     def desired_instrument_count(self) -> int:
@@ -121,7 +215,6 @@ class FyersFeed:
 
     def _next_backoff(self, hint: float | None = None) -> float:
         base = min(30.0, 0.5 * (2 ** min(self._reconnect_count, 6)))
-        import random
         return hint if hint else base * (0.5 + random.random())
 
     # -- frames -------------------------------------------------------------------
@@ -183,40 +276,50 @@ class FyersFeed:
 
     async def run(self, publisher: Any, stop_event: asyncio.Event) -> None:
         """Shared lifecycle loop: authorize->connect->subscribe->recv."""
-        while not stop_event.is_set():
-            reason = await self._run_session(stop_event)
-            if reason is None:
-                self._set_state("stopped")
-                return
-            if isinstance(reason, _TERMINAL):
-                self._set_state(_STATE_TERMINAL)
-                return
-            delay = float(reason)
-            stop_task = asyncio.create_task(stop_event.wait())
-            sleep_task = asyncio.create_task(asyncio.sleep(delay))
-            done, _pending = await asyncio.wait(
-                {stop_task, sleep_task}, return_when=asyncio.FIRST_COMPLETED)
-            for t in (stop_task, sleep_task):
-                if not t.done():
-                    t.cancel()
-            await asyncio.gather(stop_task, sleep_task,
-                                 return_exceptions=True)
-            if stop_event.is_set():
-                self._set_state("stopped")
-                return
-            self._reconnect_count += 1
+        del publisher
+        self._started_at = self._now()
+        try:
+            while not stop_event.is_set():
+                outcome = await self._run_session(stop_event)
+                if outcome is None or stop_event.is_set():
+                    if self._state != "auth_required":
+                        self._note_exit("stop_requested")
+                        self._set_state("stopped", reason="stop_requested")
+                    else:
+                        self._note_exit("auth_required")
+                    return
+                if isinstance(outcome, _TERMINAL):
+                    self._note_exit(
+                        f"terminal: {self._last_error or 'unknown failure'}")
+                    return  # state already failed
+                stopped = await self._wait_or_stop(stop_event, float(outcome))
+                if stopped:
+                    self._note_exit("stop_requested")
+                    self._set_state("stopped", reason="stop_requested")
+                    return
+        except asyncio.CancelledError:
+            # Parity with UpstoxFeed: a cancelled task must never leave a
+            # stale "streaming"/"connecting" label behind; close the live ws.
+            await self._close_live_ws()
+            self._note_exit("cancelled")
+            self._set_state("stopped", reason="cancelled")
+            raise
 
     async def _run_session(self, stop_event: asyncio.Event):
         """One connect->join->subscribe->recv cycle.
 
-        Returns None (clean stop), _TERMINAL (auth/config), or retry delay.
+        Returns None (clean stop / auth required), _TERMINAL (config),
+        or retry delay (float).
         """
-        self._set_state("connecting")
+        self._set_state("connecting", reason="ws_connect")
         self._connect_attempts += 1
         token = await self._current_token()
         if token is None:
-            self._fail("no valid fyers access token; log in first")
-            return _TERMINAL
+            # Daily login required — not a broken feed. Stop cleanly and
+            # wait for the token to be supplied (no retry storm).
+            self._set_state("auth_required", reason="missing_token")
+            self._note_exit("auth_required")
+            return None
 
         try:
             ws = await self._connect(token)
@@ -224,7 +327,7 @@ class FyersFeed:
             raise
         except Exception as exc:
             self._note_error(_safe_ws_summary(exc))
-            self._set_state("reconnecting")
+            self._set_state("reconnecting", reason="connect_failed")
             return self._next_backoff()
         if stop_event.is_set():
             await self._close_quietly(ws)
@@ -233,33 +336,37 @@ class FyersFeed:
         self._live_ws = ws
         self._connected_at = self._now()
         try:
-            await ws.send(self._join_frame())
-            await ws.send(self._full_subscribe_frame())
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            self._note_error(_safe_ws_summary(exc))
-            await self._close_quietly(ws)
-            self._clear_live(ws)
-            self._set_state("reconnecting")
-            return self._next_backoff()
+            try:
+                await ws.send(self._join_frame())
+                await ws.send(self._full_subscribe_frame())
+            except Exception as exc:
+                self._note_error(_safe_ws_summary(exc))
+                await self._close_quietly(ws)
+                self._set_state("reconnecting", reason="subscribe_send_failed")
+                return self._next_backoff()
 
-        self._set_state("streaming")
-        started = self._mono()
-        reason = await self._recv_loop(ws, stop_event)
-        async with self._sub_lock:
-            self._live_ws = None
+            self._set_state("streaming", reason="connected")
+            reason = await self._recv_loop(ws, stop_event)
+        except asyncio.CancelledError:
+            # Parity with UpstoxFeed: close the LOCAL socket — the finally
+            # below clears ``_live_ws`` during unwinding.
+            await self._close_quietly(ws)
+            raise
+        except Exception:
+            # Unexpected internal error escaping the session: still close.
+            await self._close_quietly(ws)
+            raise
+        finally:
+            async with self._sub_lock:
+                self._live_ws = None
+
         await self._close_quietly(ws)
         if reason == "stopped" or stop_event.is_set():
-            self._set_state("stopped")
+            self._set_state("stopped", reason=self._last_exit_reason)
             return None
-        del started
         self._reconnect_count += 1
-        self._set_state("reconnecting")
+        self._set_state("reconnecting", reason="websocket_closed")
         return self._next_backoff()
-
-    def _clear_live(self, ws) -> None:
-        pass  # replaced below; kept for symmetry
 
     async def _current_token(self) -> str | None:
         getter = self._access_token_getter

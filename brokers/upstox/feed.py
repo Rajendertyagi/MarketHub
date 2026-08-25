@@ -34,9 +34,10 @@ import logging
 import random
 import time
 import uuid
+from collections import deque
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from websockets.asyncio.client import connect as _websockets_connect
 
@@ -48,6 +49,9 @@ from brokers.upstox.errors import (
     UpstoxRateLimitError,
     UpstoxRestError,
 )
+
+if TYPE_CHECKING:
+    from brokers.upstox.rest import UpstoxRest
 
 logger = logging.getLogger(__name__)
 
@@ -254,7 +258,20 @@ class UpstoxFeed:
 
         # -- state --------------------------------------------------------------
         self._state = "stopped"
-        self._ws: Any = None
+        self._state_updated_at: str | None = None
+        # Last terminal-ish exit reason for forensics (set by run()); one of:
+        # "stop_requested" | "cancelled" | "auth_required" | "terminal: <safe>"
+        self._last_exit_reason: str | None = None
+        self._last_exit_at: str | None = None
+        # Bounded, safe-only transition history (WP14). Each entry:
+        # {"at": iso, "from": str, "to": str, "reason": str|None}
+        self._transitions: deque[dict[str, Any]] = deque(maxlen=20)
+        # Optional external listener for state changes (WP22). Composition root
+        # wires this to the generic EventBroker. Never raised into the feed.
+        self.on_state_change: Callable[[str, str, str, str, str | None], None] | None = (
+            None
+        )
+        self._provider = "upstox"
         self._backoff_s = _BACKOFF_BASE_S
         self._connection_started_mono: float | None = None
         self._counters: dict[str, int] = {
@@ -276,10 +293,54 @@ class UpstoxFeed:
 
     # -- helpers --------------------------------------------------------------
 
-    def _set_state(self, state: str) -> None:
+    def _set_state(self, state: str, reason: str | None = None) -> None:
         if state != self._state:
+            old = self._state
             self._state = state
-            logger.info("upstox feed %s: state -> %s", self._name, state)
+            self._state_updated_at = self._utc_now_iso()
+            logger.info(
+                "upstox feed %s: state -> %s (reason=%s)",
+                self._name,
+                state,
+                reason,
+            )
+            self._transitions.append(
+                {
+                    "at": self._state_updated_at,
+                    "from": old,
+                    "to": state,
+                    "reason": reason,
+                }
+            )
+            listener = self.on_state_change
+            if listener is not None:
+                try:
+                    listener(self._name, self._provider, old, state, reason)
+                except Exception:  # pragma: no cover - listener must never break feed
+                    logger.debug(
+                        "upstox feed %s: on_state_change listener raised",
+                        self._name,
+                        exc_info=True,
+                    )
+
+    def _note_exit(self, reason: str) -> None:
+        """Record WHY the run() loop ended (forensics; surfaced via status)."""
+        self._last_exit_reason = reason
+        self._last_exit_at = self._utc_now_iso()
+        # The last-stop reason must survive the console window too.
+        logger.info("upstox feed %s: run ended (%s)", self._name, reason)
+
+    async def _close_live_ws(self) -> None:
+        """Close and clear the live socket if one is held.
+
+        Used on the cancellation path: cancelling the recv wait does NOT close
+        the websocket, so Stop/Restart must do it explicitly and deterministically.
+        """
+        async with self._sub_lock:
+            ws = self._live_ws
+            self._live_ws = None
+        if ws is not None:
+            await self._close_quietly(ws)
 
     def _utc_now_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -291,7 +352,7 @@ class UpstoxFeed:
 
     def _fail(self, summary: str) -> None:
         self._note_error(summary)
-        self._set_state("failed")
+        self._set_state("failed", reason="non_retryable_failure")
         logger.error("upstox feed %s: terminal failure - %s",
                      self._name, summary)
 
@@ -465,7 +526,7 @@ class UpstoxFeed:
             _TERMINAL     terminal failure (state already failed)
             float         retryable failure; suggested delay in seconds
         """
-        self._set_state("authorizing")
+        self._set_state("authorizing", reason="session_start")
         self._connect_attempts += 1
         try:
             uri = await self._rest.authorize_market_feed(self._credentials)
@@ -473,14 +534,14 @@ class UpstoxFeed:
             # Broker rejected the current access token (e.g. expired or
             # revoked). This is an AUTHENTICATION-REQUIRED state, not a
             # broken feed: stop cleanly, no retry loop, wait for OAuth.
-            self._set_state("auth_required")
+            self._set_state("auth_required", reason="broker_rejected_token")
             logger.warning(
                 "upstox feed %s: authentication required - broker rejected "
                 "current access token (%s)", self._name,
                 type(exc).__name__)
             return None
         except UpstoxRateLimitError as exc:
-            self._set_state("reconnecting")
+            self._set_state("reconnecting", reason="rate_limited")
             hint = exc.retry_after_seconds
             logger.warning("upstox feed %s: rate limited during authorize "
                            "(retry_after=%s)", self._name, hint)
@@ -489,21 +550,21 @@ class UpstoxFeed:
             if not exc.retryable:
                 self._fail(f"authorization failed: {exc}")
                 return _TERMINAL
-            self._set_state("reconnecting")
+            self._set_state("reconnecting", reason="retryable_authorize_failure")
             logger.warning("upstox feed %s: retryable authorize failure - %s",
                            self._name, exc)
             return self._next_backoff()
         if stop_event.is_set():
             return None
 
-        self._set_state("connecting")
+        self._set_state("connecting", reason="ws_connect")
         try:
             ws = await self._ws_connect(uri, **_WS_SETTINGS)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             self._note_error(_safe_ws_summary(exc))
-            self._set_state("reconnecting")
+            self._set_state("reconnecting", reason="connect_failed")
             logger.warning("upstox feed %s: websocket connect failed - %s",
                            self._name, self._last_error)
             return self._next_backoff()
@@ -512,30 +573,47 @@ class UpstoxFeed:
         self._live_ws = ws
         connection_started_mono = self._monotonic()
         try:
-            await ws.send(self._subscription_frame())
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            self._note_error(_safe_ws_summary(exc))
-            await self._close_quietly(ws)
-            self._set_state("reconnecting")
-            logger.warning("upstox feed %s: subscription send failed - %s",
-                           self._name, self._last_error)
-            return self._next_backoff()
+            try:
+                await ws.send(self._subscription_frame())
+            except Exception as exc:
+                self._note_error(_safe_ws_summary(exc))
+                await self._close_quietly(ws)
+                self._set_state("reconnecting", reason="subscribe_send_failed")
+                logger.warning("upstox feed %s: subscription send failed - %s",
+                               self._name, self._last_error)
+                return self._next_backoff()
 
-        self._set_state("streaming")
-        reason = await self._recv_loop(ws, stop_event)
-        async with self._sub_lock:
-            self._live_ws = None
+            self._set_state("streaming", reason="connected")
+            reason = await self._recv_loop(ws, stop_event)
+        except asyncio.CancelledError:
+            # Close the LOCAL socket here: the finally below clears
+            # ``_live_ws`` while unwinding, BEFORE run()'s cancellation
+            # handler could read it — cancellation must never leak the socket.
+            await self._close_quietly(ws)
+            raise
+        except Exception:
+            # Unexpected internal error escaping the session: still close.
+            await self._close_quietly(ws)
+            raise
+        finally:
+            # The live-socket reference must never outlive the session, even
+            # if an unexpected error escapes the recv loop.
+            async with self._sub_lock:
+                self._live_ws = None
+
         lifetime = self._monotonic() - connection_started_mono
         self._reset_backoff_if_stable(lifetime)
         await self._close_quietly(ws)
         if reason == "stopped" or stop_event.is_set():
             if self._state != "auth_required":
-                self._set_state("stopped")
+                # A clean stop (operator Stop / shutdown) reaches here with
+                # _last_exit_reason still None — record the canonical reason so
+                # the transition history is never empty (WP14/WP7).
+                self._set_state(
+                    "stopped", reason=self._last_exit_reason or "stop_requested")
             return None
         self._reconnect_count += 1
-        self._set_state("reconnecting")
+        self._set_state("reconnecting", reason="websocket_closed")
         logger.info("upstox feed %s: connection dropped (%s) - reconnect #%d",
                     self._name, reason, self._reconnect_count)
         return self._next_backoff()
@@ -623,19 +701,30 @@ class UpstoxFeed:
                 key = "normalization_errors"
                 self._counters[key] = self._counters.get(key, 0) + 1
                 continue
-            if outcome.patch is not None:
-                mo = await self._market_service.apply_quote(outcome.patch)
-                if mo.accepted and mo.changed:
-                    key = "quote_updates"
-                    self._counters[key] = self._counters.get(key, 0) + 1
-                if mo.stale:
-                    key = "quote_stale"
-                    self._counters[key] = self._counters.get(key, 0) + 1
-            if outcome.depth is not None:
-                do = await self._market_service.apply_depth(outcome.depth)
-                if do.accepted:
-                    key = "depth_updates"
-                    self._counters[key] = self._counters.get(key, 0) + 1
+            # Fault isolation: one bad apply (e.g. a MarketService internal
+            # error) must never kill the recv loop — count it and continue.
+            try:
+                if outcome.patch is not None:
+                    mo = await self._market_service.apply_quote(outcome.patch)
+                    if mo.accepted and mo.changed:
+                        key = "quote_updates"
+                        self._counters[key] = self._counters.get(key, 0) + 1
+                    if mo.stale:
+                        key = "quote_stale"
+                        self._counters[key] = self._counters.get(key, 0) + 1
+                if outcome.depth is not None:
+                    do = await self._market_service.apply_depth(outcome.depth)
+                    if do.accepted:
+                        key = "depth_updates"
+                        self._counters[key] = self._counters.get(key, 0) + 1
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                key = "apply_errors"
+                self._counters[key] = self._counters.get(key, 0) + 1
+                logger.warning(
+                    "upstox feed %s: quote/depth application failed (%s) - "
+                    "isolated", self._name, type(exc).__name__)
 
     # -- public API ------------------------------------------------------------
 
@@ -648,7 +737,7 @@ class UpstoxFeed:
         """
         self._credentials = credentials
         if self._state in ("failed", "auth_required"):
-            self._set_state("stopped")
+            self._set_state("stopped", reason="credentials_updated")
 
     @property
     def name(self) -> str:  # kept as attribute+property read-only pair
@@ -666,31 +755,53 @@ class UpstoxFeed:
         try:
             while not stop_event.is_set():
                 outcome = await self._run_session(stop_event)
+                # FORENSICS: every loop exit is logged with its trigger so
+                # an unexpected streaming->stopped can never be silent.
+                logger.info(
+                    "upstox feed %s: session ended (outcome=%s, "
+                    "stop_event=%s, state=%s)", self._name,
+                    "None" if outcome is None else
+                    ("TERMINAL" if outcome is _TERMINAL else
+                     f"retry:{outcome:.1f}s"),
+                    stop_event.is_set(), self._state)
                 if outcome is None or stop_event.is_set():
                     if self._state != "auth_required":
-                        self._set_state("stopped")
+                        self._note_exit("stop_requested")
+                        self._set_state("stopped", reason="stop_requested")
+                    else:
+                        # Stay in auth_required — do NOT flip to stopped. The
+                        # daily-login dimension is distinct from an operator
+                        # stop; the UI keys off this state to show Login.
+                        self._note_exit("auth_required")
                     return
                 if outcome is _TERMINAL:
+                    # Safe summary only — never provider bodies or URIs.
+                    self._note_exit(
+                        f"terminal: {self._last_error or 'unknown failure'}")
                     return  # state already failed
                 stopped = await self._wait_or_stop(stop_event, outcome)
                 if stopped:
-                    self._set_state("stopped")
+                    self._note_exit("stop_requested")
+                    self._set_state("stopped", reason="stop_requested")
                     return
         except asyncio.CancelledError:
-            if self._ws is not None:
-                try:
-                    await self._ws.close()
-                except Exception:
-                    pass
-                self._ws = None
-            self._set_state("stopped")
+            # Cancellation does NOT close a websocket by itself. Close the
+            # REAL live socket here (an earlier revision closed ``self._ws``,
+            # which was always None — a silent leak on Stop/Restart). The
+            # subscription lock cannot deadlock: upstream context managers
+            # released it while the CancelledError unwound.
+            await self._close_live_ws()
+            self._note_exit("cancelled")
+            self._set_state("stopped", reason="cancelled")
             raise
 
     def status(self) -> dict[str, Any]:
         """Compact redacted snapshot (no token/URI/query/frame content)."""
         status: dict[str, Any] = {
             "name": self._name,
+            "provider": "upstox",
             "state": self._state,
+            "state_updated_at": self._state_updated_at,
             "connect_attempts": self._connect_attempts,
             "reconnect_count": self._reconnect_count,
         }
@@ -707,9 +818,27 @@ class UpstoxFeed:
             "last_message_at": self._last_message_at,
             "last_error": self._last_error,
             "last_error_at": self._last_error_at,
+            "last_exit_reason": self._last_exit_reason,
+            "last_exit_at": self._last_exit_at,
             "started_at": self._started_at,
+            "not_ready_reason": self.readiness_reason(),
+            "recent_transitions": list(self._transitions),
         })
         return status
+
+    def readiness_reason(self) -> str | None:
+        """Why this feed cannot start right now, or None if ready (WP2).
+
+        Distinct from ``auth_required`` (daily login): this reports the
+        APP-CREDENTIALS dimension (missing/expired access token). The daily
+        login dimension is surfaced by ``auth_required`` in status().
+        """
+        token = self._credentials.access_token
+        if not token or not str(token).strip():
+            return "missing_token"
+        if str(token).strip().startswith("PENDING"):
+            return "token_pending"
+        return None
 
     @property
     def rest(self) -> UpstoxRest:

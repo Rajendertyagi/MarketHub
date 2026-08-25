@@ -24,6 +24,11 @@ from typing import Any, Protocol, runtime_checkable
 logger = logging.getLogger(__name__)
 
 
+def _utc_now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
+
+
 # ---------------------------------------------------------------------------
 # Publisher — the only way a source publishes events (and records dedup)
 # ---------------------------------------------------------------------------
@@ -195,6 +200,18 @@ class SourceManager:
     # Config each source was last started with — enables restart_source()
     # to relaunch the SAME source identity with the SAME configuration.
     _configs: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Forensics: how each source's last background task ended (reason/at/
+    # runtime). Written by the task wrapper; surfaced through get_status().
+    _exit_info: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Why SourceManager itself signalled a stop (WP4/15): "operator_stop"
+    # (explicit Stop Feed), "restart" (Restart Feed), or "application_shutdown"
+    # (server teardown). Lets get_status() report a precise stop_reason that
+    # the feed's own last_exit_reason cannot know.
+    _stop_intents: dict[str, str] = field(default_factory=dict)
+    # Sources the operator explicitly stopped in this runtime (WP20/CASE E):
+    # start_all() must NOT auto-restart them — they stay stopped until the
+    # operator starts them again. Cleared on start_source/restart_source.
+    _operator_stopped: set[str] = field(default_factory=set)
 
     async def initialize(
         self,
@@ -234,6 +251,15 @@ class SourceManager:
             # later restart_source() can launch it once prerequisites
             # (e.g. daily authentication) are satisfied.
             self._configs[name] = src_cfg
+            # Operator-stopped sources stay stopped until explicitly started
+            # again (WP20/CASE E): an explicit Stop Feed must never be undone
+            # by a later start_all() (e.g. at server restart within the same
+            # runtime, or a re-entrant start_all).
+            if name in self._operator_stopped:
+                logger.info(
+                    "source '%s' was operator-stopped - leaving stopped "
+                    "(start it explicitly to resume)", name)
+                continue
             # Generic readiness gate: a source may declare prerequisites
             # via is_ready_to_start() (e.g. Upstox waiting for the daily
             # access token). Gating is per-source and never blocks others.
@@ -252,14 +278,31 @@ class SourceManager:
 
         async def _wrapper():
             logger.info("source '%s' starting", name)
+            started_mono = time.monotonic()
             try:
                 await source.run(self._publisher, stop_event)
             except asyncio.CancelledError:
+                self._exit_info[name] = {
+                    "reason": "cancelled",
+                    "at": _utc_now_iso(),
+                    "ran_for_s": round(time.monotonic() - started_mono, 1),
+                }
                 logger.info("source '%s' cancelled", name)
                 raise
             except Exception as exc:
+                # Exception TYPE only — str(exc) may carry provider material.
+                self._exit_info[name] = {
+                    "reason": f"error: {type(exc).__name__}",
+                    "at": _utc_now_iso(),
+                    "ran_for_s": round(time.monotonic() - started_mono, 1),
+                }
                 logger.error("source '%s' failed: %s", name, exc)
             else:
+                self._exit_info[name] = {
+                    "reason": "exited",
+                    "at": _utc_now_iso(),
+                    "ran_for_s": round(time.monotonic() - started_mono, 1),
+                }
                 logger.info("source '%s' exited normally", name)
 
         try:
@@ -269,6 +312,8 @@ class SourceManager:
 
     async def shutdown(self) -> None:
         """Signal ALL sources to stop (server teardown)."""
+        for name in self._sources:
+            self._stop_intents[name] = "application_shutdown"
         for ev in self._stop_events.values():
             ev.set()
         logger.info("source manager: stop signal sent to %d source(s)", len(self._sources))
@@ -277,11 +322,15 @@ class SourceManager:
         """
         Stop a single named source cleanly and independently of other sources.
 
-        Signals the source's dedicated stop event (so its run loop exits at the
-        next check) and cancels its background task via the BackgroundTaskManager.
+        Signals the source's dedicated stop event, then CANCELS AND AWAITS its
+        background task via BackgroundTaskManager.cancel_and_wait — when this
+        returns, the task is gone and its cleanup (websocket close, finally
+        blocks) has fully run. Credentials, desired instruments, watchlists
+        and configuration are untouched (they live on the source instance).
+
         Other registered sources are unaffected.
 
-        Returns True if the named source was known (and thus signaled),
+        Returns True if the named source was known (and thus stopped),
         False otherwise.
         """
         if name not in self._sources:
@@ -291,15 +340,100 @@ class SourceManager:
         stop_event = self._stop_events.get(name)
         if stop_event is not None:
             stop_event.set()
+        self._stop_intents[name] = "operator_stop"
+        self._operator_stopped.add(name)
+
+        # Brief cooperative window: let the run loop honor the stop event so
+        # its exit reason reads "stop_requested" (not "cancelled"). Sources
+        # that ignore their event are force-cancelled right after.
+        deadline = time.monotonic() + 0.5
+        while self.task_running(name) and time.monotonic() < deadline:
+            await asyncio.sleep(0.02)
 
         if self._bg_manager is not None:
             try:
-                await self._bg_manager.cancel(f"source:{name}")
+                # Await termination so "Feed State = stopped" is TRUE by the
+                # time the caller observes the result.
+                await self._bg_manager.cancel_and_wait(f"source:{name}")
             except Exception as exc:
                 logger.debug("stop_source: cancel task for '%s' raised: %s", name, exc)
 
-        logger.info("source '%s' stop signaled", name)
+        logger.info("source '%s' stopped", name)
         return True
+
+    def task_running(self, name: str) -> bool:
+        """True when the named source currently has a running background task."""
+        if self._bg_manager is None:
+            return False
+        task_name = f"source:{name}"
+        status = self._bg_manager.status(task_name).get(task_name, {})
+        return status.get("status") == "running"
+
+    def is_ready(self, name: str) -> bool | None:
+        """Source-declared readiness gate (e.g. daily authentication).
+
+        Returns None when the source declares no gate — the ABSENCE of a gate
+        must never be read as "not ready".
+        """
+        source = self._sources.get(name)
+        if source is None:
+            return None
+        ready_check = getattr(source, "is_ready_to_start", None)
+        if not callable(ready_check):
+            return None
+        return bool(ready_check())
+
+    def readiness_reason(self, name: str) -> str | None:
+        """Why a source cannot start right now, or None if ready (WP2).
+
+        Delegates to the source's own ``readiness_reason()`` when present;
+        returns None for sources that declare no gate.
+        """
+        source = self._sources.get(name)
+        if source is None:
+            return None
+        reason_check = getattr(source, "readiness_reason", None)
+        if not callable(reason_check):
+            return None
+        result = reason_check()
+        return result if isinstance(result, str) else None
+
+    async def start_source(self, name: str) -> str:
+        """Start a registered-but-not-running source through the lifecycle.
+
+        Returns one of:
+          "started"          new background task created
+          "already_running"  task exists; no duplicate created
+          "not_ready"        source declares prerequisites unmet
+                             (e.g. daily authentication) via
+                             is_ready_to_start() == False
+          "unknown"          source not registered / never configured
+
+        Readiness is decided by the SOURCE itself, never by SourceManager.
+        """
+        source = self._sources.get(name)
+        cfg = self._configs.get(name)
+        if source is None or cfg is None:
+            return "unknown"
+
+        ready_check = getattr(source, "is_ready_to_start", None)
+        if callable(ready_check) and not ready_check():
+            logger.info(
+                "source '%s' start refused: prerequisites unmet "
+                "(daily authentication required)", name)
+            return "not_ready"
+
+        task_name = f"source:{name}"
+        if self._bg_manager is not None:
+            status = self._bg_manager.status(task_name).get(task_name, {})
+            if status.get("status") == "running":
+                return "already_running"
+
+        # Fresh stop event: a previously-set event must not kill the run.
+        self._stop_events[name] = asyncio.Event()
+        self._operator_stopped.discard(name)
+        await self._start_one(name, source, cfg)
+        return "started"
 
     async def restart_source(self, name: str) -> bool:
         """
@@ -331,6 +465,8 @@ class SourceManager:
         stop_event = self._stop_events.get(name)
         if stop_event is not None:
             stop_event.set()
+        self._stop_intents[name] = "restart"
+        self._operator_stopped.discard(name)
 
         # 2. Cancel AND observe completion of the old task — its cleanup
         #    (websocket close, finally blocks) is guaranteed done after this.
@@ -347,14 +483,50 @@ class SourceManager:
         return True
 
     def get_status(self) -> dict[str, Any]:
-        """Return status of all registered sources (for mcp-event://system/info or mcp-event://sources/status)."""
+        """Status of all registered sources, merged with task liveness.
+
+        Adds the derived fields the control API/UI need to distinguish a
+        genuinely running feed from a DEAD TASK WITH STALE STATE:
+          * task_running  — background task exists and is not done
+          * reconnecting  — source reports reconnecting AND task is alive
+          * last_task_exit — how the previous run ended (reason/at/runtime)
+        """
         result: dict[str, Any] = {}
         for name, source in self._sources.items():
             task_name = f"source:{name}"
             task_info = self._bg_manager.status(task_name) if self._bg_manager else {}
             task_status = task_info.get(task_name, {})
-            src_status = source.status()
+            src_status = dict(source.status())
             src_status["task"] = task_status
+            running = task_status.get("status") == "running"
+            src_status["task_running"] = running
+            src_status["reconnecting"] = (
+                src_status.get("state") == "reconnecting" and running
+            )
+            exit_info = self._exit_info.get(name)
+            if exit_info is not None:
+                src_status["last_task_exit"] = dict(exit_info)
+                # Sources without their own exit tracking still surface why
+                # their last run ended (wrapper-level view).
+                src_status.setdefault("last_exit_reason", exit_info.get("reason"))
+
+            # Precise stop reason (WP4/15): prefer the feed's own terminal
+            # reasons (auth_required / terminal), then the manager's recorded
+            # intent (operator_stop / restart / application_shutdown), else
+            # the feed's generic last_exit_reason.
+            feed_exit = src_status.get("last_exit_reason")
+            state = src_status.get("state")
+            if state == "auth_required":
+                stop_reason = "auth_required"
+            elif isinstance(feed_exit, str) and feed_exit.startswith("terminal"):
+                stop_reason = feed_exit
+            elif isinstance(feed_exit, str) and feed_exit.startswith("error:"):
+                stop_reason = "internal_error"
+            elif not running:
+                stop_reason = self._stop_intents.get(name) or feed_exit
+            else:
+                stop_reason = None
+            src_status["stop_reason"] = stop_reason
             result[name] = src_status
         return result
 
