@@ -796,7 +796,7 @@
     const byVol = [...all].sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0));
     const rows = [];
     const addRow = (cat, q) => rows.push(
-      `<tr><td>${cat}</td><td>${q.tradingsymbol || "—"}</td>` +
+      `<tr><td>${cat}</td><td>${esc(q.tradingsymbol) || "—"}</td>` +
       `<td>${q.ltp != null ? fmt(q.ltp) : "—"}</td>` +
       `<td class="${chgClass(q.change ?? 0)}">${fmt(q.change_percent)}%</td>` +
       `<td>${fmtVol(q.volume)}</td></tr>`);
@@ -885,7 +885,7 @@
 
     // Depth fetched on demand — no continuous polling.
     $("drawer-depth").innerHTML = "<em>Loading…</em>";
-    fetch(`/api/market/depth/${q.exchange}/${q.instrument_token}`)
+    fetch(`/api/market/depth/${encodeURIComponent(q.exchange)}/${encodeURIComponent(q.instrument_token)}`)
       .then((r) => r.json())
       .then((d) => {
         const lvlRows = (levels) => levels.map((l) =>
@@ -982,11 +982,11 @@
           return;
         }
         body.innerHTML = data.results.map((r) =>
-          `<tr data-tok="${r.instrument_token}" data-ex="${r.exchange}" data-sym="${r.tradingsymbol}">` +
-          `<td>${r.tradingsymbol}</td><td>${r.name || "—"}</td>` +
-          `<td>${r.exchange}</td><td>${r.instrument_type || "—"}</td>` +
-          `<td>${r.expiry || "—"}</td><td>${r.strike != null ? r.strike : "—"}</td>` +
-          `<td>${r.lot_size != null ? r.lot_size : "—"}</td><td>${r.provider}</td>` +
+          `<tr data-tok="${r.instrument_token}" data-ex="${esc(r.exchange)}" data-sym="${esc(r.tradingsymbol)}">` +
+          `<td>${esc(r.tradingsymbol)}</td><td>${esc(r.name) || "—"}</td>` +
+          `<td>${esc(r.exchange)}</td><td>${esc(r.instrument_type) || "—"}</td>` +
+          `<td>${esc(r.expiry) || "—"}</td><td>${r.strike != null ? r.strike : "—"}</td>` +
+          `<td>${r.lot_size != null ? r.lot_size : "—"}</td><td>${esc(r.provider)}</td>` +
           `<td><button class="btn wl-add" style="padding:2px 8px;font-size:11px">+ Watchlist</button></td></tr>`
         ).join("");
       } catch { /* silent */ }
@@ -1079,7 +1079,7 @@
       const data = await res.json();
       const sel = $("wl-select");
       if (sel) sel.innerHTML = (data.watchlists || []).map((w) =>
-        `<option value="${w.id}">${w.name}</option>`).join("");
+        `<option value="${w.id}">${esc(w.name)}</option>`).join("");
       currentWatchlistId = sel && sel.value ? Number(sel.value) : null;
       renderWatchlistItems(data.watchlists || []);
     } catch { /* silent */ }
@@ -1101,8 +1101,8 @@
       const pct = q && q.change_percent != null
         ? fmt(q.change_percent) + "%" : "—";
       const cls = q ? chgClass(q.change ?? 0) : "";
-      return `<tr data-item-id="${it.id}" data-token="${it.instrument_token}" data-ex="${it.exchange}">` +
-        `<td>${it.tradingsymbol}</td><td>${ltp}</td>` +
+      return `<tr data-item-id="${it.id}" data-token="${it.instrument_token}" data-ex="${esc(it.exchange)}">` +
+        `<td>${esc(it.tradingsymbol)}</td><td>${ltp}</td>` +
         `<td class="${cls}">${chg}</td><td class="${cls}">${pct}</td>` +
         `<td>${q ? fmtVol(q.volume) : "—"}</td>` +
         `<td>${q && q.best_bid != null ? fmt(q.best_bid) : "—"}</td>` +
@@ -1277,9 +1277,9 @@ function renderOcStrikes() {
           const d = await res.json();
           sel.innerHTML = '<option value="">Instrument…</option>' +
             (d.results || []).map((r) =>
-              `<option value="${r.instrument_token}" data-ex="${r.exchange}"` +
-              ` data-sym="${r.tradingsymbol}">` +
-              `${r.tradingsymbol} (${r.exchange})</option>`).join("");
+              `<option value="${r.instrument_token}" data-ex="${esc(r.exchange)}"` +
+              ` data-sym="${esc(r.tradingsymbol)}">` +
+              `${esc(r.tradingsymbol)} (${esc(r.exchange)})</option>`).join("");
         } catch { /* silent */ }
       }, 300);
     });
@@ -1485,7 +1485,7 @@ function renderOcStrikes() {
           const stateCls = a.state === "triggered" ? "chip chip-off" :
             (a.enabled ? "chip chip-on" : "chip");
           return `<tr data-alert-id="${a.id}">` +
-            `<td>${a.tradingsymbol}</td><td>${cond}</td>` +
+            `<td>${esc(a.tradingsymbol)}</td><td>${cond}</td>` +
             `<td><span class="${stateCls}">${a.state}</span></td>` +
             `<td><button class="btn alert-toggle" data-enabled="${a.enabled ? "true" : "false"}" style="padding:2px 8px;font-size:11px">${a.enabled ? "On" : "Off"}</button></td>` +
             `<td><button class="btn alert-rearm" style="padding:2px 8px;font-size:11px">Re-arm</button> ` +
@@ -1495,7 +1495,7 @@ function renderOcStrikes() {
       const notes = data.notifications || [];
       $("alert-notifications").innerHTML = notes.length
         ? '<div class="panel"><div class="panel-header"><h2>Triggered</h2></div>' +
-          notes.map((n) => `<div class="hint err">${n.tradingsymbol}: ${n.field} ${n.operator === "gt" ? ">" : "<"} ${n.threshold} (now ${n.value})</div>`).join("") +
+          notes.map((n) => `<div class="hint err">${esc(n.tradingsymbol)}: ${n.field} ${n.operator === "gt" ? ">" : "<"} ${n.threshold} (now ${n.value})</div>`).join("") +
           "</div>"
         : "";
     } catch { /* silent */ }
@@ -1525,6 +1525,13 @@ function initAlertPush() {
     } catch { /* silent */ }
   }
 
+// Escape provider/user-controlled strings before innerHTML interpolation.
+function esc(v) {
+  return String(v ?? "").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[ch]));
+}
+
 function pushAlertNotification(d) {
     const notes = $("alert-notifications");
     if (!notes) return;
@@ -1534,7 +1541,7 @@ function pushAlertNotification(d) {
     const div = document.createElement("div");
     div.className = "hint err";
     div.textContent =
-      `${time} — ${d.tradingsymbol}: ${cond} (now ${d.observed_value})`;
+      `${time} — ${esc(d.tradingsymbol)}: ${cond} (now ${d.observed_value})`;
     notes.prepend(div);
     while (notes.children.length > 20) notes.removeChild(notes.lastChild);
   }
