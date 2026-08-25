@@ -93,7 +93,11 @@ why you should run focused, not full, during development.
 - **History & charts** — Upstox candles into self-hosted ECharts
   candlestick+volume view.
 - **Alerts** — threshold + crossing rules over canonical quotes; persisted,
-  re-armable, in-app notifications.
+  re-armable, in-app notifications. Every individual firing is also written to
+  a durable **alert trigger history** (instrument, condition, threshold,
+  observed value, provider, timestamp) — queryable/paginated via the API and
+  shown in the Alerts → Trigger History panel; clearable; survives restart
+  and is included in DB backups automatically.
 
 ### Data directory
 
@@ -104,15 +108,23 @@ why you should run focused, not full, during development.
 
 ### Limitations
 
-- Fyers live WebSocket feed not yet implemented (auth + normalizers ready).
+- **Fyers live feed — READY FOR LIVE LOGIN (not yet run live).** The full
+  operator path is wired: Web UI OAuth login → token getter injected into the
+  Fyers source → feed restart on login → refresh-token restore on startup.
+  Going live requires Fyers app credentials (API key/secret + redirect URI);
+  the protocol constants are implemented per official docs and need one
+  real-session confirmation. Daily access token stays memory-only and expires
+  at 03:30 IST (restart loses it; re-login restores via refresh token).
 - Upstox exact-0.0 greeks unrepresentable over its websocket (wire format).
 - Option-chain underlying picker requires a synced instrument catalog.
+- **Whole-market scanner not built.** Feasibility review (2026-08) found no
+  broker server-side top-gainers/losers/volume/OI APIs; a whole-universe scan
+  is only viable via WS-sub + local ranking or REST snapshot/polling over a
+  curated universe. Deferred pending a curated instrument universe + a
+  documented scan policy (limits, rate, OI mode).
 
 ### More limitations
 
-- Fyers live WebSocket protocol constants are implemented per official docs
-  but need one real-session confirmation (requires Fyers app credentials).
-- Option-chain underlying picker requires a synced instrument catalog.
 - Market status outside session hours is inferred from IST time, clearly
   labelled — not broker-confirmed.
 - Quotes older than 5 minutes are marked [STALE] in the UI.
