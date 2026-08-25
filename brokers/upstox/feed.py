@@ -614,7 +614,6 @@ class UpstoxFeed:
         self._credentials = credentials
         if self._state == "failed":
             self._set_state("stopped")
-        return len(fresh)
 
     @property
     def name(self) -> str:  # kept as attribute+property read-only pair

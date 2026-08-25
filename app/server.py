@@ -387,8 +387,15 @@ else:
 
 async def _restart_upstox_source() -> None:
     """Restart the Upstox source through SourceManager (lifecycle owner)."""
-    if _upstox_source_name is not None:
+    if _upstox_source_name is None:
+        _app_logger.warning(
+            "oauth restart skipped: no upstox source registered")
+        return
+    try:
         await _source_manager.restart_source(_upstox_source_name)
+    except Exception:
+        _app_logger.exception("oauth restart of upstox source failed")
+        raise
 
 
 # Stateless REST transport for the OAuth code exchange. Stores no secrets.

@@ -18,6 +18,9 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+import logging
+logger = logging.getLogger("event_server")
+
 __all__ = ["build_market_routes", "build_auth_routes", "build_settings_routes"]
 
 
@@ -304,6 +307,7 @@ def build_auth_routes(
             if restart_fn is not None:
                 await restart_fn()
         except Exception:
+            logger.exception("oauth callback: feed restart failed")
             return _fail("restart")
 
         return RedirectResponse("/ui/?auth=ok", status_code=302)

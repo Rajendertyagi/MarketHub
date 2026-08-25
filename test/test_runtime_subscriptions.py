@@ -154,6 +154,21 @@ async def test_rs8_status_counts(runner: R) -> None:
 # -- main -------------------------------------------------------------------------
 
 
+def test_rs9_update_credentials_clean(runner: R) -> None:
+    """Regression: update_credentials must not raise (stray fragment bug)."""
+    feed = _mk_feed()
+    from brokers.upstox.auth import UpstoxCredentials
+    creds = UpstoxCredentials(access_token="SYNTHETIC-NEW")
+    try:
+        feed.update_credentials(creds)
+        ok = True
+    except NameError:
+        ok = False
+    runner.assert_true("RS9-update-no-raise", ok)
+    runner.assert_eq("RS9-creds-applied",
+                     feed._credentials.access_token, "SYNTHETIC-NEW")
+
+
 async def main() -> bool:
     runner = R()
 
@@ -163,6 +178,7 @@ async def main() -> bool:
     await test_rs6_duplicate_add(runner)
     await test_rs7_mutation_during_reconnect(runner)
     await test_rs8_status_counts(runner)
+    test_rs9_update_credentials_clean(runner)
 
     return runner.summary()
 
@@ -170,6 +186,3 @@ async def main() -> bool:
 if __name__ == "__main__":
     success = asyncio.run(main())
     sys.exit(0 if success else 1)
-
-
-
