@@ -437,6 +437,50 @@ def test_api_contract_safety(runner: R) -> None:
                          "watchlists/items/{item_id}", _blob)
 
 
+# ---------------------------------------------------------------------------
+# P25: watchlist subscription refcount semantics
+# ---------------------------------------------------------------------------
+
+def test_watchlist_refcount_semantics(runner: R) -> None:
+    """Instrument in two watchlists keeps 2 refs until last one removed."""
+    from core.persistence.store import EventStore
+
+    _tmp = tempfile.mkdtemp()
+    _store = EventStore(os.path.join(_tmp, "events.db"))
+
+    _wl1 = _store.create_watchlist("ref-a")
+    _wl2 = _store.create_watchlist("ref-b")
+    _i1 = _store.add_watchlist_item(_wl1["id"], exchange="NSE",
+                                    instrument_token="T9",
+                                    tradingsymbol="REF9")
+    _i2 = _store.add_watchlist_item(_wl2["id"], exchange="NSE",
+                                    instrument_token="T9",
+                                    tradingsymbol="REF9")
+
+    def _refs():
+        total = 0
+        for wl in _store.list_watchlists():
+            total += sum(1 for it in _store.list_watchlist_items(wl["id"])
+                         if it["exchange"] == "NSE"
+                         and it["instrument_token"] == "T9")
+        return total
+
+    runner.assert_eq("WR-two-lists", _refs(), 2)
+    _store.remove_watchlist_item(_i1["id"])
+    runner.assert_eq("WR-still-subscribed", _refs(), 1)
+    _store.remove_watchlist_item(_i2["id"])
+    runner.assert_eq("WR-unsubscribed", _refs(), 0)
+    # duplicate add within one list is rejected
+    _fresh = _store.add_watchlist_item(_wl1["id"], exchange="NSE",
+                                       instrument_token="T9",
+                                       tradingsymbol="REF9")
+    runner.assert_true("WR-readd-ok", _fresh is not None)
+    _dup = _store.add_watchlist_item(_wl1["id"], exchange="NSE",
+                                     instrument_token="T9",
+                                     tradingsymbol="REF9")
+    runner.assert_true("WR-duplicate-rejected", _dup is None)
+
+
 if __name__ == "__main__":
     _runner = R()
     test_public_base_url_edge_cases(_runner)
@@ -447,5 +491,6 @@ if __name__ == "__main__":
     test_log_redaction(_runner)
     test_diagnostics_endpoint(_runner)
     test_api_contract_safety(_runner)
+    test_watchlist_refcount_semantics(_runner)
     _success = _runner.summary()
     sys.exit(0 if _success else 1)
