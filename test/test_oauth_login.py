@@ -187,12 +187,13 @@ async def test_ol4_single_use(runner: R) -> None:
     q = f"code=SYN-CODE&state={urllib.parse.quote(state)}"
     c1, loc1 = await _call(cb, "GET", q)
     runner.assert_eq("OL4-first-ok", c1, 302)
-    runner.assert_eq("OL19-success-redirect", loc1, "/ui/?auth=ok")
+    runner.assert_eq("OL19-success-redirect", loc1, "/ui/?auth=ok#/settings")
 
     # Replay same state+code.
     c2, loc2 = await _call(cb, "GET", q)
     runner.assert_eq("OL8-replay-rejected", c2, 302)
-    runner.assert_eq("OL8-replay-failed-redirect", loc2, "/ui/?auth=failed&reason=retry")
+    runner.assert_eq("OL8-replay-failed-redirect", loc2,
+                     "/ui/?auth=failed&reason=retry#/settings")
 
 
 async def test_ol5_ol6_ol9_bad_callbacks(runner: R) -> None:
@@ -202,13 +203,16 @@ async def test_ol5_ol6_ol9_bad_callbacks(runner: R) -> None:
     cb = _find_route(routes, "/auth/upstox/callback")
 
     c1, l1 = await _call(cb, "GET", "code=X")           # missing state
-    runner.assert_eq("OL5-missing-state", (c1, l1), (302, "/ui/?auth=failed&reason=retry"))
+    runner.assert_eq("OL5-missing-state", (c1, l1),
+                     (302, "/ui/?auth=failed&reason=retry#/settings"))
     c2, l2 = await _call(cb, "GET", "code=X&state=bogus")  # invalid state
-    runner.assert_eq("OL6-invalid-state", (c2, l2), (302, "/ui/?auth=failed&reason=retry"))
+    runner.assert_eq("OL6-invalid-state", (c2, l2),
+                     (302, "/ui/?auth=failed&reason=retry#/settings"))
     state = await _get_valid_state(routes)
     c3, l3 = await _call(                               # missing code
         cb, "GET", f"state={urllib.parse.quote(state)}")
-    runner.assert_eq("OL9-missing-code", (c3, l3), (302, "/ui/?auth=failed&reason=retry"))
+    runner.assert_eq("OL9-missing-code", (c3, l3),
+                     (302, "/ui/?auth=failed&reason=retry#/settings"))
 
 
 async def test_ol10_ol11_ol12_exchange_success(runner: R) -> None:
@@ -258,7 +262,8 @@ async def test_ol3_ol7_expired_state(runner: R) -> None:
         cb = _find_route(routes, "/auth/upstox/callback")
         q = f"code=SYN&state={urllib.parse.quote(state2)}"
         c, loc = await _call(cb, "GET", q)
-        runner.assert_eq("OL7-expired-state-fails", loc, "/ui/?auth=failed&reason=expired")
+        runner.assert_eq("OL7-expired-state-fails", loc,
+                     "/ui/?auth=failed&reason=expired#/settings")
     finally:
         _time.monotonic = saved
 
@@ -384,7 +389,9 @@ async def test_ol20_safe_failure(runner: R) -> None:
 
     c, fail_loc = await _call(
         cb, "GET", f"code=SYN&state={urllib.parse.quote(state)}")
-    runner.assert_true("OL20-safe-redirect", fail_loc.startswith("/ui/?auth=failed&reason="))
+    runner.assert_true("OL20-safe-redirect",
+                       fail_loc.startswith("/ui/?auth=failed&reason=")
+                       and fail_loc.endswith("#/settings"))
     runner.assert_not_in("OL20-no-error-leak", "UDAPI", fail_loc)
 
 
@@ -406,7 +413,8 @@ async def test_ol20b_restart_failure_safe(runner: R) -> None:
     state = await _get_valid_state(routes)
     c, loc = await _call(cb, "GET",
                          f"code=SYN&state={urllib.parse.quote(state)}")
-    runner.assert_eq("OL20b-safe-redirect", loc, "/ui/?auth=failed&reason=restart")
+    runner.assert_eq("OL20b-safe-redirect", loc,
+                     "/ui/?auth=failed&reason=restart#/settings")
     # Credentials were still applied even though restart failed.
     runner.assert_true("OL20b-creds-applied",
                        feed._credentials.access_token.startswith("OAUTH-TOKEN"))

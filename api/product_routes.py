@@ -535,8 +535,9 @@ def build_fyers_auth_routes(cred_store: Any,
         from starlette.responses import RedirectResponse
 
         def _fail(reason):
-            return RedirectResponse(f"/ui/?fyers_auth={reason}",
-                                    status_code=302)
+            return RedirectResponse(
+                    f"/ui/?fyers_auth={reason}#/settings",
+                    status_code=302)
 
         code = request.query_params.get("auth_code") \
             or request.query_params.get("code")
@@ -587,7 +588,7 @@ def build_fyers_auth_routes(cred_store: Any,
         except Exception:
             return _fail("error")
         _fyers_runtime_token["access_token"] = bundle["access_token"]
-        return RedirectResponse("/ui/?fyers_auth=ok", status_code=302)
+        return RedirectResponse("/ui/?fyers_auth=ok#/settings", status_code=302)
 
     return [
         Route("/api/settings/fyers", endpoint=_status, methods=["GET"]),

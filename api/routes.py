@@ -260,8 +260,9 @@ def build_auth_routes(
 
         def _fail(reason: str) -> Response:
             # Reason codes only — never provider bodies, secrets, or URIs.
-            return RedirectResponse(f"/ui/?auth=failed&reason={reason}",
-                                    status_code=302)
+            return RedirectResponse(
+                    f"/ui/?auth=failed&reason={reason}#/settings",
+                    status_code=302)
 
         state = request.query_params.get("state")
         code = request.query_params.get("code")
@@ -310,7 +311,7 @@ def build_auth_routes(
             logger.exception("oauth callback: feed restart failed")
             return _fail("restart")
 
-        return RedirectResponse("/ui/?auth=ok", status_code=302)
+        return RedirectResponse("/ui/?auth=ok#/settings", status_code=302)
 
     async def _submit_token(request: Request) -> Response:
         try:

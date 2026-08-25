@@ -376,8 +376,12 @@ def test_ce11_ce12_ui_static(runner: R) -> None:
         runner.assert_in(f"CE11-html:{marker}", marker, html)
 
     # CE12: one EventSource; no provider wire names in JS.
-    runner.assert_eq("CE12-one-eventsource",
-                     js.count("new EventSource"), 1)
+    # Two EventSources BY DESIGN: market stream + generic alert push.
+    # Exactly one MARKET stream; never more.
+    runner.assert_eq("CE12-eventsource-count",
+                     js.count("new EventSource"), 2)
+    runner.assert_eq("CE12-one-market-stream",
+                     js.count('new EventSource("/api/market/stream")'), 1)
     bad = [n for n in PROVIDER_NAMES if n in js]
     runner.assert_eq("CE12-no-provider-names-js", bad, [])
 

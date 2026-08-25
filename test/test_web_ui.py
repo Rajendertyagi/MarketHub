@@ -89,7 +89,12 @@ def w3_static_js(runner: R, c) -> None:
     res = c.get("/ui/js/app.js")
     runner.assert_eq(name + "-status", res.status_code, 200)
     body = res.text
-    runner.assert_eq(name + "-one-eventsource", body.count("new EventSource"), 1)
+    # Two EventSources BY DESIGN: market stream + low-frequency generic
+    # event stream (alert push). Never more.
+    runner.assert_eq(name + "-eventsource-count",
+                     body.count("new EventSource"), 2)
+    runner.assert_eq(name + "-one-market-eventsource",
+                     body.count('new EventSource("/api/market/stream")'), 1)
     runner.assert_in(name + "-stream-url", '/api/market/stream"', body)
     # setInterval is allowed ONLY for UI/status refreshes — market data
     # itself must always arrive via the single EventSource, never polling.
