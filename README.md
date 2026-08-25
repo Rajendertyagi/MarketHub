@@ -65,6 +65,15 @@ why you should run focused, not full, during development.
 
 `test/test_phase8.py`, `test/integrate_test.py` — replaced by the per-feature files above.
 
+## Quick Start (daily routine)
+
+1. Double-click `start_market_hub.bat` → open http://localhost:7070/ui/
+2. **First time only:** Settings → save broker App credentials
+   (Upstox and/or Fyers), then click Login and approve on the broker page.
+3. Instruments page → Sync Upstox / Sync Fyers (one-time catalog load).
+4. Every trading day: Settings → **Login with Upstox** → password + OTP.
+   Feed flips to Streaming automatically.
+
 ## MarketHub Product Features (2026-08)
 
 - **Live Upstox feed** — OAuth login from the Web UI (Settings → Login with
@@ -98,3 +107,12 @@ why you should run focused, not full, during development.
 - Fyers live WebSocket feed not yet implemented (auth + normalizers ready).
 - Upstox exact-0.0 greeks unrepresentable over its websocket (wire format).
 - Option-chain underlying picker requires a synced instrument catalog.
+
+### More limitations
+
+- Fyers live WebSocket protocol constants are implemented per official docs
+  but need one real-session confirmation (requires Fyers app credentials).
+- Option-chain underlying picker requires a synced instrument catalog.
+- Market status outside session hours is inferred from IST time, clearly
+  labelled — not broker-confirmed.
+- Quotes older than 5 minutes are marked [STALE] in the UI.
