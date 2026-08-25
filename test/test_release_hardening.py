@@ -361,6 +361,82 @@ def test_log_redaction(runner: R) -> None:
         runner.assert_not_in(_label, _dummy, _blob)
 
 
+# ---------------------------------------------------------------------------
+# P17: diagnostics endpoint (read-only support snapshot, no secrets)
+# ---------------------------------------------------------------------------
+
+def test_diagnostics_endpoint(runner: R) -> None:
+    from starlette.applications import Starlette
+    from starlette.testclient import TestClient
+    from api.product_routes import build_diagnostics_routes
+
+    class _Store:
+        def schema_version(self):
+            return 12
+
+    _status = [{
+        "name": "fyers", "type": "fyers_feed", "state": "auth_required",
+        "task_running": False, "reconnect_count": 2,
+        "configured_instruments": 1,
+        # hostile-looking fields that MUST NOT leak:
+        "access_token": "DUMMY-TOKEN-SHOULD-NOT-APPEAR",
+        "wss_url": "wss://example/DUMMY-QS",
+        "transitions": [{"from": "starting", "to": "auth_required"}],
+        "last_exit_reason": "auth_required",
+    }]
+
+    _app = Starlette(routes=build_diagnostics_routes(
+        "0.0.0-test", _Store(), lambda: _status,
+        lambda: "http://localhost:7070"))
+    _body = TestClient(_app).get("/api/diagnostics").json()
+    runner.assert_eq("DG-version", _body["version"], "0.0.0-test")
+    runner.assert_eq("DG-schema", _body["schema_version"], 12)
+    runner.assert_eq("DG-base",
+                     _body["public_base_url"], "http://localhost:7070")
+    _src = _body["sources"][0]
+    runner.assert_eq("DG-src-state", _src["state"], "auth_required")
+    runner.assert_eq("DG-src-reconnects", _src["reconnect_count"], 2)
+    runner.assert_eq("DG-transition-count", _src["transition_count"], 1)
+    _blob = json.dumps(_body)
+    runner.assert_not_in("DG-no-token-leak",
+                         "DUMMY-TOKEN-SHOULD-NOT-APPEAR", _blob)
+    runner.assert_not_in("DG-no-wss-leak", "wss://example", _blob)
+
+
+# ---------------------------------------------------------------------------
+# P21/P22: API contract — safe errors on malformed ids; GET /api accuracy
+# ---------------------------------------------------------------------------
+
+def test_api_contract_safety(runner: R) -> None:
+    from starlette.testclient import TestClient
+    import app.server as _srv
+
+    _c = TestClient(_srv.app)
+
+    for _label, _method, _url in [
+            ("AC-alert-bad-id", "DELETE", "/api/alerts/notanint"),
+            ("AC-wl-bad-id", "DELETE", "/api/watchlists/abc"),
+            ("AC-wl-bad-id-patch", "PATCH", "/api/watchlists/xyz"),
+            ("AC-item-bad-id", "DELETE", "/api/watchlists/1/items/zzz"),
+            ("AC-rearm-bad-id", "POST", "/api/alerts/QQ/rearm")]:
+        try:
+            _r = _c.request(_method, _url)
+            runner.assert_eq(_label, _r.status_code, 400)
+        except ValueError:
+            runner.assert_true(_label + "-no-crash", False)
+
+    # GET /api self-description must list current capabilities.
+    _caps = _c.get("/api").json()["capabilities"]
+    _blob = json.dumps(_caps)
+    for _needle in ("/api/alerts/history", "/api/sources/status",
+                    "/api/settings/fyers", "/api/settings/app",
+                    "/api/diagnostics", "/api/watchlists/export",
+                    "/api/watchlists/{id}/items/{item_id}"):
+        runner.assert_in("AC-meta:" + _needle, _needle, _blob)
+    runner.assert_not_in("AC-meta-stale-path",
+                         "watchlists/items/{item_id}", _blob)
+
+
 if __name__ == "__main__":
     _runner = R()
     test_public_base_url_edge_cases(_runner)
@@ -369,5 +445,7 @@ if __name__ == "__main__":
     test_backup_from_v12(_runner)
     test_master_key_safety(_runner)
     test_log_redaction(_runner)
+    test_diagnostics_endpoint(_runner)
+    test_api_contract_safety(_runner)
     _success = _runner.summary()
     sys.exit(0 if _success else 1)

@@ -387,6 +387,7 @@ from app.alerts import AlertEngine as _AlertEngine
 from api.product_routes import (
     build_admin_routes as _build_admin_routes,
     build_api_meta_routes as _build_api_meta_routes,
+    build_diagnostics_routes as _build_diagnostics_routes,
     build_instrument_routes as _build_instrument_routes,
     build_watchlist_routes as _build_watchlist_routes,
     build_alert_routes as _build_alert_routes,
@@ -775,6 +776,15 @@ app = Starlette(
         redirect_uri=FYERS_REDIRECT_URI,
     )
     + _build_app_settings_routes(str(CONFIG_PATH))
+    + _build_diagnostics_routes(
+        __version__,
+        _store,
+        lambda: [
+            dict(info, name=name) if isinstance(info, dict) else {"name": name}
+            for name, info in _source_manager.get_status().items()
+        ],
+        lambda: get_public_base_url(_config),
+    )
     + _build_api_meta_routes()
     + [Mount("/ui", app=StaticFiles(directory=str(PROJECT_ROOT / "web" / "ui"), html=True),
             name="ui")],

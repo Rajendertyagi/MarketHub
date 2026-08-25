@@ -548,6 +548,14 @@ class EventStore:
         finally:
             conn.close()
 
+    def schema_version(self) -> int:
+        """Current on-disk schema version (PRAGMA user_version)."""
+        conn = self._open(self._db_path)
+        try:
+            return get_schema_version(conn)
+        finally:
+            conn.close()
+
     def delete_provider_secrets(self, provider: str) -> int:
         conn = self._open(self._db_path)
         try:

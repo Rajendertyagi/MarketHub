@@ -30,6 +30,86 @@ def _json(data: Any, status: int = 200) -> JSONResponse:
     return JSONResponse(data, status_code=status)
 
 
+def _path_int(request: Request, key: str) -> int | None:
+    """Parse an integer path parameter; None when absent or non-numeric."""
+    try:
+        return int(request.path_params[key])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+# Fields safe to expose in the support diagnostics snapshot. Everything else
+# in a source status dict (tokens, URLs, raw errors) is deliberately dropped.
+_DIAGNOSTIC_SOURCE_FIELDS = (
+    "name",
+    "type",
+    "state",
+    "task_running",
+    "reconnecting",
+    "reconnect_count",
+    "configured_instruments",
+    "subscribed_count",
+    "last_frame_at",
+    "last_message_at",
+    "last_exit_reason",
+    "stop_reason",
+)
+
+
+def build_diagnostics_routes(version: str,
+                             store: Any,
+                             source_status_fn: Callable[[], list],
+                             base_url_fn: Callable[[], str]) -> list[Route]:
+    """GET /api/diagnostics — read-only support snapshot with NO secrets.
+
+    Aggregates what an operator needs to report a problem: application and
+    schema versions, per-source lifecycle summary, and the effective public
+    base URL. Tokens, API secrets, refresh tokens, authorized WSS URLs and
+    raw broker error bodies are never included.
+    """
+
+    async def _diagnostics(request: Request) -> Response:  # noqa: ARG001
+        import datetime as _dt
+
+        sources_out: list[dict[str, Any]] = []
+        try:
+            _raw = source_status_fn() or []
+        except Exception:
+            _raw = []
+        for entry in _raw:
+            if not isinstance(entry, dict):
+                continue
+            slim = {k: entry.get(k) for k in _DIAGNOSTIC_SOURCE_FIELDS
+                    if entry.get(k) is not None}
+            transitions = entry.get("transitions")
+            if isinstance(transitions, list):
+                slim["transition_count"] = len(transitions)
+                slim["last_transitions"] = transitions[-3:]
+            task = entry.get("task")
+            if isinstance(task, dict):
+                slim["task_status"] = task.get("status")
+            sources_out.append(slim)
+        try:
+            schema_version = await asyncio.to_thread(store.schema_version)
+        except Exception:
+            schema_version = None
+        try:
+            base_url = base_url_fn()
+        except Exception:
+            base_url = None
+        return _json({
+            "service": "MarketHub",
+            "version": version,
+            "schema_version": schema_version,
+            "public_base_url": base_url,
+            "sources": sources_out,
+            "generated_at": _dt.datetime.now(
+                _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        })
+
+    return [Route("/api/diagnostics", endpoint=_diagnostics, methods=["GET"])]
+
+
 def build_instrument_routes(catalog: Any, store: Any = None) -> list[Route]:
     """Routes over the canonical instrument catalog."""
 
@@ -151,7 +231,9 @@ def build_watchlist_routes(store: Any,
         return _json({"status": "ok", "watchlist": wl})
 
     async def _patch(request: Request) -> Response:
-        wl_id = int(request.path_params["watchlist_id"])
+        wl_id = _path_int(request, "watchlist_id")
+        if wl_id is None:
+            return _json({"error": "invalid watchlist id"}, 400)
         try:
             body = await request.json()
         except Exception:
@@ -165,13 +247,17 @@ def build_watchlist_routes(store: Any,
                      {"error": "not found"}, 200 if ok else 404)
 
     async def _delete(request: Request) -> Response:
-        wl_id = int(request.path_params["watchlist_id"])
+        wl_id = _path_int(request, "watchlist_id")
+        if wl_id is None:
+            return _json({"error": "invalid watchlist id"}, 400)
         ok = await asyncio.to_thread(store.delete_watchlist, wl_id)
         return _json({"status": "ok"} if ok else {"error": "not found"},
                      200 if ok else 404)
 
     async def _add_item(request: Request) -> Response:
-        wl_id = int(request.path_params["watchlist_id"])
+        wl_id = _path_int(request, "watchlist_id")
+        if wl_id is None:
+            return _json({"error": "invalid watchlist id"}, 400)
         try:
             body = await request.json()
         except Exception:
@@ -196,7 +282,9 @@ def build_watchlist_routes(store: Any,
         return _json({"status": "ok", "item": item})
 
     async def _remove_item(request: Request) -> Response:
-        item_id = int(request.path_params["item_id"])
+        item_id = _path_int(request, "item_id")
+        if item_id is None:
+            return _json({"error": "invalid item id"}, 400)
         # Capture identity before deletion for reference-counted unsub.
         removed_identity = None
         for wl in await asyncio.to_thread(store.list_watchlists):
@@ -218,7 +306,9 @@ def build_watchlist_routes(store: Any,
                      200 if ok else 404)
 
     async def _reorder(request: Request) -> Response:
-        wl_id = int(request.path_params["watchlist_id"])
+        wl_id = _path_int(request, "watchlist_id")
+        if wl_id is None:
+            return _json({"error": "invalid watchlist id"}, 400)
         try:
             body = await request.json()
         except Exception:
@@ -278,7 +368,9 @@ def build_alert_routes(store: Any, engine: Any = None) -> list[Route]:
         return _json({"status": "ok", "alert": alert})
 
     async def _delete(request: Request) -> Response:
-        alert_id = int(request.path_params["alert_id"])
+        alert_id = _path_int(request, "alert_id")
+        if alert_id is None:
+            return _json({"error": "invalid alert id"}, 400)
         ok = await asyncio.to_thread(store.delete_alert, alert_id)
         if engine:
             engine.reload()
@@ -286,7 +378,9 @@ def build_alert_routes(store: Any, engine: Any = None) -> list[Route]:
                      200 if ok else 404)
 
     async def _rearm(request: Request) -> Response:
-        alert_id = int(request.path_params["alert_id"])
+        alert_id = _path_int(request, "alert_id")
+        if alert_id is None:
+            return _json({"error": "invalid alert id"}, 400)
         ok = await asyncio.to_thread(store.rearm_alert, alert_id)
         if engine:
             engine.clear_notification(alert_id)
@@ -294,7 +388,9 @@ def build_alert_routes(store: Any, engine: Any = None) -> list[Route]:
                      200 if ok else 404)
 
     async def _enabled(request: Request) -> Response:
-        alert_id = int(request.path_params["alert_id"])
+        alert_id = _path_int(request, "alert_id")
+        if alert_id is None:
+            return _json({"error": "invalid alert id"}, 400)
         try:
             body = await request.json()
         except Exception:
@@ -489,8 +585,10 @@ def build_api_meta_routes() -> list[Route]:
                     "GET|POST /api/watchlists",
                     "PATCH|DELETE /api/watchlists/{id}",
                     "POST /api/watchlists/{id}/items",
-                    "DELETE /api/watchlists/items/{item_id}",
+                    "DELETE /api/watchlists/{id}/items/{item_id}",
                     "POST /api/watchlists/{id}/reorder",
+                    "GET /api/watchlists/export",
+                    "POST /api/watchlists/import",
                 ],
                 "options": [
                     "GET /api/options/underlyings?q",
@@ -503,6 +601,14 @@ def build_api_meta_routes() -> list[Route]:
                     "DELETE /api/alerts/{id}",
                     "POST /api/alerts/{id}/rearm",
                     "POST /api/alerts/{id}/enabled",
+                    "GET /api/alerts/history?limit&offset&provider",
+                    "DELETE /api/alerts/history",
+                ],
+                "sources": [
+                    "GET /api/sources/status",
+                    "POST /api/sources/{name}/start",
+                    "POST /api/sources/{name}/stop",
+                    "POST /api/sources/{name}/restart",
                 ],
                 "auth": [
                     "GET /api/auth/upstox/status",
@@ -510,6 +616,13 @@ def build_api_meta_routes() -> list[Route]:
                     "GET /auth/upstox/callback",
                     "POST /api/auth/upstox/token",
                     "GET|POST|DELETE /api/settings/upstox",
+                    "GET /api/auth/fyers/login",
+                    "GET /auth/fyers/callback",
+                    "GET|POST|DELETE /api/settings/fyers",
+                ],
+                "application": [
+                    "GET|POST /api/settings/app (public_base_url)",
+                    "GET /api/diagnostics (support snapshot, no secrets)",
                 ],
                 "admin": ["POST /api/admin/backup"],
             },
