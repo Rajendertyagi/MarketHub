@@ -40,6 +40,9 @@ _FYERS_WS_URL = "wss://socket.fyers.in/hsm/v1-5/prod"
 
 _STATE_TERMINAL = "failed"
 
+# Fallback only — composition always injects the centralized redirect URI.
+_DEFAULT_FYERS_REDIRECT = "http://localhost:7070/auth/fyers/callback"
+
 
 class _Terminal:
     """Sentinel returned by _run_session on terminal failure."""
@@ -66,6 +69,8 @@ class FyersFeed:
         self._app_id = str(config.get("app_id", ""))
         self._auth = auth                      # FyersAuth (for token refresh)
         self._access_token_getter = config.get("access_token_getter")
+        self._credential_store = config.get("credential_store")
+        self._redirect_uri = config.get("redirect_uri", _DEFAULT_FYERS_REDIRECT)
         self._market_service = market_service
         self._ws_connect = config.get("ws_connect")
         self._utc_now_iso = config.get("utc_now_iso")
@@ -156,6 +161,23 @@ class FyersFeed:
 
     def _mono(self) -> float:
         return time.monotonic()
+
+    def _resolve_app_id(self) -> str:
+        """App ID comes from the encrypted credential store (single source of
+        truth), falling back to the value injected at construction.
+
+        Resolved lazily at connect time so credentials added after startup
+        (first-run WebUI setup) are picked up without rebuilding the feed.
+        """
+        store = self._credential_store
+        if store is not None:
+            try:
+                creds = store.load_fyers_credentials()
+                if creds and creds.get("app_id"):
+                    return creds["app_id"]
+            except Exception:
+                pass
+        return self._app_id
 
     def status(self) -> dict[str, Any]:
         return {
@@ -385,12 +407,13 @@ class FyersFeed:
     async def _connect(self, token: str):
         import websockets
 
+        app_id = self._resolve_app_id()
         if self._ws_connect is not None:
             return await self._ws_connect(token)
         return await websockets.connect(
             _FYERS_WS_URL,
             extra_headers={"Authorization":
-                           f"{self._app_id}:{token}"},
+                           f"{app_id}:{token}"},
             close_timeout=2,
         )
 

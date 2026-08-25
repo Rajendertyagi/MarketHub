@@ -35,7 +35,13 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.subscriptions import InMemorySubscriptionBus
 from mcp.server.transport_security import TransportSecuritySettings
 
-from app.config import ConfigError, load_config, validate_config
+from app.config import (
+    ConfigError,
+    load_config,
+    validate_config,
+    get_public_base_url,
+    oauth_callback_url,
+)
 from app.lifecycle import print_banner, print_shutdown
 from app.paths import CONFIG_PATH, PROJECT_ROOT
 from app import __version__
@@ -243,44 +249,68 @@ def _fyers_token_getter() -> str:
     return _fyers_runtime_token.get("access_token", "")
 
 
-def _inject_fyers_token_getters(sources_cfg: dict[str, Any]) -> None:
-    """Inject the shared access_token_getter into every fyers_feed source.
+def _inject_fyers_source_config(sources_cfg: dict[str, Any]) -> None:
+    """Wire the Fyers source(s) to the single credential source of truth.
 
-    Mutates the config dict in place (startup-only). Without this the
-    Fyers source constructor raises (no callable getter) and the source is
-    never registered - the operator login path would be dead.
+    For every fyers_feed source this injects, in place (startup-only):
+      * ``access_token_getter``  — runtime-memory-only token (composition root)
+      * ``credential_store``     — encrypted credential store (app_id/secret/
+                                    refresh token live ONLY here, never in
+                                    config.json)
+      * ``redirect_uri``         — centralized OAuth callback URL
+
+    Legacy fallback: if a fyers source block in config.json still carries
+    plaintext ``app_id``/``app_secret`` AND the encrypted store has none, the
+    values are migrated into the encrypted store once (deterministic) and a
+    deprecation warning is logged. The store then becomes authoritative; the
+    operator should remove the secrets from config.json. Secrets are never
+    printed or exposed.
     """
     for _name, _cfg in (sources_cfg or {}).items():
         if not isinstance(_cfg, dict):
             continue
-        if _cfg.get("type") == "fyers_feed" or _name == "fyers":
-            _cfg["access_token_getter"] = _fyers_token_getter
+        if _cfg.get("type") != "fyers_feed" and _name != "fyers":
+            continue
+        _cfg["access_token_getter"] = _fyers_token_getter
+        _cfg["credential_store"] = _credential_store
+        _cfg["redirect_uri"] = FYERS_REDIRECT_URI
+
+        _store_creds = None
+        try:
+            _store_creds = _credential_store.load_fyers_credentials()
+        except Exception:
+            _store_creds = None
+        if _store_creds:
+            _cfg["app_id"] = _store_creds["app_id"]
+            _cfg["app_secret"] = _store_creds["app_secret"]
+        elif _cfg.get("app_id") and _cfg.get("app_secret"):
+            # Legacy plaintext config credentials: migrate into the encrypted
+            # store (deterministic, one-time) so the store is authoritative.
+            try:
+                _credential_store.save_fyers_credentials(
+                    str(_cfg["app_id"]), str(_cfg["app_secret"]))
+                _app_logger.warning(
+                    "migrated legacy plaintext Fyers credentials from "
+                    "config.json into the encrypted store; you may now "
+                    "remove app_id/app_secret from the fyers source block")
+                _migrated = _credential_store.load_fyers_credentials()
+                if _migrated:
+                    _cfg["app_id"] = _migrated["app_id"]
+                    _cfg["app_secret"] = _migrated["app_secret"]
+            except Exception as _exc:
+                _app_logger.error(
+                    "failed to migrate legacy Fyers config credentials: %s",
+                    type(_exc).__name__)
 
 
-_inject_fyers_token_getters(SOURCES_CFG)
-try:
-    _source_manager = build_source_manager(
-        SOURCES_CFG, market_service=_market_service,
-    )
-except SourceConfigError as exc:
-    _app_logger.error("source configuration error: %s", exc)
-    _source_manager = SourceManager()
-
-# Hold a reference to the Upstox feed for runtime auth management.
-_feed_ref: dict[str, Any] = {"feed": None}
-_upstox_source_name: str | None = None
-for _src_name, _src in _source_manager.enabled_sources.items():
-    if hasattr(_src, "update_credentials"):
-        _feed_ref["feed"] = _src
-        _upstox_source_name = _src_name
-        break
-
-# Track the Fyers source name so the OAuth callback can (re)start it.
-_fyers_source_name: str | None = None
-for _src_name, _src in _source_manager.enabled_sources.items():
-    if _src_name == "fyers" or getattr(_src, "__class__", None).__name__ == "FyersFeed":
-        _fyers_source_name = _src_name
-        break
+# Source-manager construction is deferred until AFTER the credential store
+# exists (it is needed to wire Fyers sources). See block below line ~464.
+def _build_source_manager() -> SourceManager:
+    try:
+        return build_source_manager(SOURCES_CFG, market_service=_market_service)
+    except SourceConfigError as exc:
+        _app_logger.error("source configuration error: %s", exc)
+        return SourceManager()
 
 
 async def _restart_fyers_source() -> None:
@@ -296,7 +326,7 @@ async def _restart_fyers_source() -> None:
         raise
 
 
-def _try_restore_fyers_token() -> None:
+async def _try_restore_fyers_token() -> None:
     """Best-effort: regain a Fyers access token from the stored refresh token.
 
     Runs at startup (before sources start). If a refresh token is stored,
@@ -304,25 +334,26 @@ def _try_restore_fyers_token() -> None:
     forcing the operator to re-log in after every restart.
     """
     try:
-        refresh_creds = _credential_store.load_app_credentials("fyers_refresh")
-        app_creds = _credential_store.load_app_credentials("fyers")
+        refresh_token = _credential_store.load_fyers_refresh_token()
+        app_creds = _credential_store.load_fyers_credentials()
     except Exception:
         return
-    if not refresh_creds or not app_creds:
+    if not refresh_token or not app_creds:
         return
-    refresh_token = refresh_creds.get("api_secret")
-    app_id = app_creds.get("api_key")
-    secret_id = app_creds.get("api_secret")
+    app_id = app_creds.get("app_id")
+    secret_id = app_creds.get("app_secret")
     if not (refresh_token and app_id and secret_id):
         return
     try:
         from brokers.fyers.auth import FyersAuth
-        bundle = FyersAuth(app_id=app_id, secret_id=secret_id,
-                           redirect_uri="http://localhost:7070/auth/fyers/callback"
-                           ).refresh_access_token(refresh_token)
+        bundle = await FyersAuth(app_id=app_id, secret_id=secret_id,
+                                 redirect_uri=FYERS_REDIRECT_URI
+                                 ).refresh_access_token(refresh_token)
         _fyers_runtime_token["access_token"] = bundle["access_token"]
         _app_logger.info("fyers access token restored from refresh token")
     except Exception as exc:
+        # Refresh failed/revoked: leave the token empty so the feed reports
+        # auth_required ("Daily Login Required") instead of a generic failure.
         _app_logger.warning("fyers token restore failed: %s",
                             type(exc).__name__)
 
@@ -350,24 +381,6 @@ def _on_source_state_change(
         _app_logger.debug("source state change broadcast failed", exc_info=True)
 
 
-for _src in _source_manager.enabled_sources.values():
-    try:
-        _src.on_state_change = _on_source_state_change
-    except Exception:  # non-feed sources may not accept the attribute
-        _app_logger.debug(
-            "source %s does not support on_state_change", getattr(_src, "name", "?"))
-
-# One-time startup diagnostic header (safe values only — no credentials,
-# no config secret values).
-log_startup_diagnostics(
-    _app_logger,
-    version=__version__,
-    source_names=_source_manager.enabled_sources.keys(),
-    listen_host=LISTEN_HOST,
-    listen_port=LISTEN_PORT,
-    log_file=_LOG_FILE,
-)
-
 # ── Product services: instrument catalog, alerts ─────────────────────────────
 from app.instruments import InstrumentCatalog as _InstrumentCatalog
 from app.alerts import AlertEngine as _AlertEngine
@@ -379,6 +392,7 @@ from api.product_routes import (
     build_alert_routes as _build_alert_routes,
     build_alert_history_routes as _build_alert_history_routes,
     build_fyers_auth_routes as _build_fyers_auth_routes,
+    build_app_settings_routes as _build_app_settings_routes,
     build_watchlist_portability_routes as _build_watchlist_portability_routes,
 )
 
@@ -462,6 +476,50 @@ from app.secrets_store import (
 from api.routes import build_settings_routes
 
 _credential_store = _CredentialStore(_store)
+
+# --- Fyers source wiring (requires the credential store above) -------------
+# Centralized OAuth callback URL: ONE source of truth, derived from the
+# explicit operator-configured public_base_url (never from request Host).
+FYERS_REDIRECT_URI = oauth_callback_url(
+    get_public_base_url(_config), "fyers")
+_inject_fyers_source_config(SOURCES_CFG)
+_source_manager = _build_source_manager()
+
+# Hold a reference to the Upstox feed for runtime auth management.
+_feed_ref: dict[str, Any] = {"feed": None}
+_upstox_source_name: str | None = None
+for _src_name, _src in _source_manager.enabled_sources.items():
+    if hasattr(_src, "update_credentials"):
+        _feed_ref["feed"] = _src
+        _upstox_source_name = _src_name
+        break
+
+# Track the Fyers source name so the OAuth callback can (re)start it.
+_fyers_source_name: str | None = None
+for _src_name, _src in _source_manager.enabled_sources.items():
+    if _src_name == "fyers" or getattr(_src, "__class__", None).__name__ == "FyersFeed":
+        _fyers_source_name = _src_name
+        break
+
+# Wire lifecycle state-change broadcasting into every source (requires the
+# source manager constructed just above).
+for _src in _source_manager.enabled_sources.values():
+    try:
+        _src.on_state_change = _on_source_state_change
+    except Exception:  # non-feed sources may not accept the attribute
+        _app_logger.debug(
+            "source %s does not support on_state_change", getattr(_src, "name", "?"))
+
+# One-time startup diagnostic header (safe values only — no credentials,
+# no config secret values).
+log_startup_diagnostics(
+    _app_logger,
+    version=__version__,
+    source_names=_source_manager.enabled_sources.keys(),
+    listen_host=LISTEN_HOST,
+    listen_port=LISTEN_PORT,
+    log_file=_LOG_FILE,
+)
 
 _oauth_cfg_ref: dict[str, str] = {
     "api_key": "",
@@ -671,7 +729,7 @@ async def _lifespan(app: Starlette) -> None:  # noqa: ARG001
     """
     # Restore a Fyers access token from the stored refresh token BEFORE the
     # SDK starts sources, so an enabled Fyers feed is READY without re-login.
-    _try_restore_fyers_token()
+    await _try_restore_fyers_token()
     async with mcp_asgi_app.router.lifespan_context(app):
         yield
 
@@ -714,7 +772,9 @@ app = Starlette(
         _credential_store,
         runtime_token=_fyers_runtime_token,
         restart_fn=_restart_fyers_source,
+        redirect_uri=FYERS_REDIRECT_URI,
     )
+    + _build_app_settings_routes(str(CONFIG_PATH))
     + _build_api_meta_routes()
     + [Mount("/ui", app=StaticFiles(directory=str(PROJECT_ROOT / "web" / "ui"), html=True),
             name="ui")],

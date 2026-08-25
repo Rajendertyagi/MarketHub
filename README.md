@@ -108,13 +108,20 @@ why you should run focused, not full, during development.
 
 ### Limitations
 
-- **Fyers live feed — READY FOR LIVE LOGIN (not yet run live).** The full
-  operator path is wired: Web UI OAuth login → token getter injected into the
-  Fyers source → feed restart on login → refresh-token restore on startup.
-  Going live requires Fyers app credentials (API key/secret + redirect URI);
-  the protocol constants are implemented per official docs and need one
-  real-session confirmation. Daily access token stays memory-only and expires
-  at 03:30 IST (restart loses it; re-login restores via refresh token).
+- **Fyers live feed — READY FOR LIVE LOGIN (not yet run live).** Secure
+  credential architecture: `config.json` describes the SOURCE ONLY (type,
+  mode, instruments) — it contains **no secrets**. Fyers App ID / Secret /
+  refresh token live exclusively in the encrypted credential store
+  (`data/events.db`, Fernet), configured through Web UI Settings. The
+  composition root injects the credential store + a runtime access-token getter
+  + the centralized OAuth callback URL into the Fyers source; the feed resolves
+  the App ID from the store at connect time. OAuth login → feed restart →
+  refresh-token restore on startup. The OAuth callback URL is derived from the
+  explicit `public_base_url` setting (never from request Host headers). Going
+  live requires Fyers app credentials; the protocol constants are implemented
+  per official docs and need one real-session confirmation. Daily access token
+  stays memory-only and expires at 03:30 IST (restart restores via refresh
+  token). See `config.example.json` — it contains no credential fields.
 - Upstox exact-0.0 greeks unrepresentable over its websocket (wire format).
 - Option-chain underlying picker requires a synced instrument catalog.
 - **Whole-market scanner not built.** Feasibility review (2026-08) found no

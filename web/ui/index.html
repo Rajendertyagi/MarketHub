@@ -365,6 +365,34 @@
     </div>
 
     <div class="panel" style="margin-top:10px">
+      <div class="panel-header"><h2>Application</h2></div>
+      <div class="auth-form">
+        <p class="hint" style="padding:0 0 10px 0">
+          Public base URL used to build OAuth callback URLs. Must match the
+          address you open MarketHub from. Changing it requires a restart.
+        </p>
+        <div class="auth-row">
+          <label>Effective Base URL</label>
+          <span id="app-base-url" class="chip chip-off">—</span>
+        </div>
+        <div class="auth-row">
+          <label>Fyers Callback</label>
+          <span id="app-fyers-callback" class="chip chip-off">—</span>
+        </div>
+        <div class="auth-row">
+          <label for="app-base-url-input">Public Base URL</label>
+          <input type="text" id="app-base-url-input" class="filter-input"
+                 placeholder="http://localhost:7070" autocomplete="off">
+        </div>
+        <div class="auth-row">
+          <label></label>
+          <button id="app-save" class="btn">Save Application Settings</button>
+        </div>
+        <div id="app-message" class="hint"></div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:10px">
       <div class="panel-header"><h2>Upstox Login</h2></div>
       <div class="auth-form">
         <div class="auth-row">

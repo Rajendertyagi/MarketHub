@@ -308,6 +308,62 @@ class CredentialStore:
     def delete_app_credentials(self, provider: str) -> bool:
         return self._store.delete_provider_secrets(provider) > 0
 
+    # -- Fyers-specific credential model (single source of truth) ------------
+    #
+    # Fyers secrets live ONLY here, never in config.json. The source factory
+    # and the OAuth routes both read from this store, so there is exactly one
+    # authoritative credential record.
+
+    def save_fyers_credentials(self, app_id: str, app_secret: str) -> None:
+        """Encrypt + persist Fyers App ID + Secret Key under provider 'fyers'."""
+        self.save_app_credentials("fyers", app_id, app_secret)
+
+    def load_fyers_credentials(self) -> dict[str, str] | None:
+        """Return {'app_id', 'app_secret'} or None if not configured."""
+        creds = self.load_app_credentials("fyers")
+        if not creds:
+            return None
+        return {
+            "app_id": creds.get("api_key", ""),
+            "app_secret": creds.get("api_secret", ""),
+        }
+
+    def save_fyers_refresh_token(self, token: str) -> None:
+        """Encrypt + persist the Fyers refresh token (long-lived)."""
+        if not isinstance(token, str) or not token.strip():
+            raise ValueError("refresh token must be a non-empty string")
+        enc = self._get_encryption(allow_generate=True)
+        if enc is None:
+            raise CredentialDecryptError(
+                "master key unavailable; cannot encrypt refresh token")
+        self._store.upsert_secrets("fyers", {
+            "refresh_token": (enc.encrypt(token.strip()), ENCRYPTION_SCHEME),
+        })
+
+    def load_fyers_refresh_token(self) -> str | None:
+        """Return the Fyers refresh token, or None.
+
+        Reads the canonical 'fyers'/'refresh_token' row; falls back to the
+        legacy 'fyers_refresh' provider layout for backward compatibility.
+        """
+        enc = self._get_encryption(allow_generate=False)
+        if enc is None:
+            return None
+        row = self._store.get_secret("fyers", "refresh_token")
+        if row is not None:
+            try:
+                return enc.decrypt(row[0])
+            except Exception:
+                return None
+        # Legacy layout: provider 'fyers_refresh', api_secret = refresh token.
+        legacy = self._store.get_secret("fyers_refresh", "api_secret")
+        if legacy is not None:
+            try:
+                return enc.decrypt(legacy[0])
+            except Exception:
+                return None
+        return None
+
 
 def build_default_store() -> "CredentialStore":
     """Build a CredentialStore over the application's existing SQLite DB."""

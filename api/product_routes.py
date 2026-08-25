@@ -555,14 +555,14 @@ def build_fyers_auth_routes(cred_store: Any,
 
     async def _status(request: Request) -> Response:  # noqa: ARG001
         try:
-            creds = cred_store.load_app_credentials("fyers")
+            creds = cred_store.load_fyers_credentials()
         except Exception:
             creds = None
         has_refresh = bool(await asyncio.to_thread(
-            cred_store.load_app_credentials, "fyers_refresh"))
+            cred_store.load_fyers_refresh_token))
         return _json({
-            "app_id_configured": bool(creds and creds.get("api_key")),
-            "secret_configured": bool(creds and creds.get("api_secret")),
+            "app_id_configured": bool(creds and creds.get("app_id")),
+            "secret_configured": bool(creds and creds.get("app_secret")),
             "login_available": bool(creds),
             "access_token_active": bool(_fyers_runtime_token["access_token"]),
             "refresh_token_stored": has_refresh,
@@ -581,8 +581,8 @@ def build_fyers_auth_routes(cred_store: Any,
             if len(value) > 512:
                 return _json({"error": f"{label} too long"}, 400)
         try:
-            cred_store.save_app_credentials("fyers", app_id.strip(),
-                                            secret_id.strip())
+            cred_store.save_fyers_credentials(app_id.strip(),
+                                             secret_id.strip())
         except Exception:
             return _json({"error": "failed to save fyers credentials"}, 500)
         return _json({"configured": True})
@@ -598,7 +598,7 @@ def build_fyers_auth_routes(cred_store: Any,
     async def _login(request: Request) -> Response:  # noqa: ARG001
         try:
             creds = await asyncio.to_thread(
-                cred_store.load_app_credentials, "fyers")
+                cred_store.load_fyers_credentials)
         except Exception:
             creds = None
         if not creds:
@@ -610,8 +610,8 @@ def build_fyers_auth_routes(cred_store: Any,
             del _pending[s]
         state = _secrets.token_urlsafe(32)
         _pending[state] = now + _TTL
-        url = FyersAuth(app_id=creds["api_key"],
-                        secret_id=creds["api_secret"],
+        url = FyersAuth(app_id=creds["app_id"],
+                        secret_id=creds["app_secret"],
                         redirect_uri=redirect_uri).login_url(state=state)
         from starlette.responses import RedirectResponse
         return RedirectResponse(url, status_code=302)
@@ -644,15 +644,15 @@ def build_fyers_auth_routes(cred_store: Any,
 
         try:
             creds = await asyncio.to_thread(
-                cred_store.load_app_credentials, "fyers")
+                cred_store.load_fyers_credentials)
         except Exception:
             creds = None
         if not creds:
             return _fail("retry")
 
         from brokers.fyers.auth import FyersAuth
-        auth = FyersAuth(app_id=creds["api_key"],
-                         secret_id=creds["api_secret"],
+        auth = FyersAuth(app_id=creds["app_id"],
+                         secret_id=creds["app_secret"],
                          redirect_uri=redirect_uri)
         try:
             bundle = await auth.validate_auth_code(code.strip())
@@ -668,8 +668,7 @@ def build_fyers_auth_routes(cred_store: Any,
         #     validate-authcode refresh grant). Never persisted.
         try:
             await asyncio.to_thread(
-                cred_store.save_app_credentials, "fyers_refresh",
-                "refresh", bundle["refresh_token"])
+                cred_store.save_fyers_refresh_token, bundle["refresh_token"])
         except Exception:
             return _fail("error")
         _fyers_runtime_token["access_token"] = bundle["access_token"]
@@ -754,4 +753,99 @@ def build_watchlist_portability_routes(store: Any) -> list[Route]:
     return [
         Route("/api/watchlists/export", endpoint=_export, methods=["GET"]),
         Route("/api/watchlists/import", endpoint=_import, methods=["POST"]),
+    ]
+
+
+def build_app_settings_routes(config_path: str) -> list[Route]:
+    """Application-level settings (no secrets).
+
+    Exposes the operator-configured ``public_base_url`` used to build OAuth
+    callback URLs. Editing it requires a server restart to take effect (the
+    redirect URI is computed once at startup). No secrets are returned or
+    accepted.
+    """
+    import json as _json_mod
+    import tempfile
+
+    from app.config import (
+        get_public_base_url,
+        load_config,
+        oauth_callback_url,
+        validate_config,
+    )
+
+    def _read_config() -> dict[str, Any]:
+        if not os.path.isfile(config_path):
+            return {}
+        try:
+            with open(config_path, "r", encoding="utf-8") as _f:
+                return _json_mod.load(_f)
+        except Exception:
+            return {}
+
+    def _write_config(cfg: dict[str, Any]) -> None:
+        # Atomic write: temp file + rename so a crash never corrupts config.
+        _dir = os.path.dirname(os.path.abspath(config_path))
+        _fd, _tmp = tempfile.mkstemp(dir=_dir, suffix=".tmp")
+        try:
+            with os.fdopen(_fd, "w", encoding="utf-8") as _f:
+                _json_mod.dump(cfg, _f, indent=2)
+                _f.write("\n")
+            os.replace(_tmp, config_path)
+        finally:
+            if os.path.exists(_tmp):
+                try:
+                    os.remove(_tmp)
+                except OSError:
+                    pass
+
+    async def _get(request: Request) -> Response:  # noqa: ARG001
+        _cfg = _read_config()
+        _base = get_public_base_url(_cfg)
+        return _json({
+            "public_base_url": _base,
+            "fyers_callback_url": oauth_callback_url(_base, "fyers"),
+            "upstox_callback_url": oauth_callback_url(_base, "upstox"),
+            "requires_restart": True,
+        })
+
+    async def _post(request: Request) -> Response:
+        try:
+            _body = await request.json()
+        except Exception:
+            return _json({"error": "invalid JSON body"}, 400)
+        _base = (_body or {}).get("public_base_url")
+        if not isinstance(_base, str) or not _base.strip():
+            return _json({"error": "public_base_url must be a non-empty string"},
+                         400)
+        import urllib.parse as _urlparse
+        _parts = _urlparse.urlsplit(_base.strip())
+        if _parts.scheme not in ("http", "https") or not _parts.netloc:
+            return _json({"error": "public_base_url must be a valid http(s) URL"},
+                         400)
+        # Merge onto the existing (defaulted) config so we never persist a
+        # broken file just because the on-disk config omits defaulted keys.
+        try:
+            _cfg = load_config(config_path)
+        except Exception as _exc:
+            return _json({"error": "cannot read current config: {0}".format(
+                _exc)}, 400)
+        _cfg["public_base_url"] = _base.strip()
+        # Validate the full config so we never persist a broken file.
+        try:
+            validate_config(_cfg)
+        except Exception as _exc:
+            return _json({"error": "invalid configuration: {0}".format(_exc)},
+                          400)
+        try:
+            _write_config(_cfg)
+        except Exception as _exc:
+            return _json({"error": "failed to write config: {0}".format(
+                type(_exc).__name__)}, 500)
+        return _json({"status": "ok", "requires_restart": True,
+                      "public_base_url": _base.strip()})
+
+    return [
+        Route("/api/settings/app", endpoint=_get, methods=["GET"]),
+        Route("/api/settings/app", endpoint=_post, methods=["POST"]),
     ]

@@ -111,9 +111,12 @@ def _create_upstox_feed(config: dict, *, market_service: Any = None) -> Any:
 def _create_fyers_feed(config: dict, *, market_service: Any = None) -> Any:
     """Construct a FyersFeed from pure config data.
 
-    Requires an access-token getter (from the encrypted credential store /
-    runtime login) and app_id. Raises SourceConfigError-shaped ValueError
-    on missing pieces so startup stays honest.
+    The source config describes the SOURCE ONLY (type, mode, instruments).
+    Secrets come exclusively from the encrypted credential store, which the
+    composition root injects (``credential_store`` + ``access_token_getter``
+    + ``redirect_uri``) — never from config.json. The feed resolves the App
+    ID from the store at connect time, so credentials added after startup
+    (first-run WebUI setup) are picked up without rebuilding the feed.
     """
     from brokers.fyers.auth import FyersAuth
     from brokers.fyers.feed import FyersFeed
@@ -123,14 +126,23 @@ def _create_fyers_feed(config: dict, *, market_service: Any = None) -> Any:
         raise ValueError(
             "fyers feed requires an access_token_getter callable "
             "(wired by the composition root)")
-    app_id = config.get("app_id")
-    if not isinstance(app_id, str) or not app_id.strip():
-        raise ValueError("fyers feed requires app_id")
 
-    auth = FyersAuth(app_id=app_id,
-                     secret_id=config.get("app_secret", "-"),
-                     redirect_uri=config.get(
-                         "redirect_uri", "http://localhost:7070/auth/fyers/callback"))
+    app_id = config.get("app_id")
+    app_secret = config.get("app_secret")
+    redirect_uri = config.get(
+        "redirect_uri", "http://localhost:7070/auth/fyers/callback")
+
+    # Build the FyersAuth only when credentials are already available. The
+    # feed also resolves App ID from the store at connect, so a missing
+    # app_id here is NOT fatal — the source simply isn't ready until the
+    # operator configures credentials via Settings.
+    auth = None
+    if (isinstance(app_id, str) and app_id.strip()
+            and isinstance(app_secret, str) and app_secret.strip()):
+        auth = FyersAuth(app_id=app_id.strip(),
+                         secret_id=app_secret.strip(),
+                         redirect_uri=redirect_uri)
+
     keys = [i["key"] for i in config.get("instruments", [])
             if isinstance(i, dict) and i.get("key")]
     cfg = dict(config)
