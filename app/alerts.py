@@ -69,12 +69,24 @@ class AlertEngine:
                 continue
             if rule["state"] != "inactive":
                 continue  # already triggered; manual re-arm required
-            value = getattr(quote, _FIELD_ATTRS.get(rule["field"], ""),
-                            None)
+            attr = _FIELD_ATTRS.get(rule["field"], None)
+            if attr is None:
+                continue
+            value = getattr(quote, attr, None)
             if value is None:
                 continue
-            hit = (value > rule["threshold"] if rule["operator"] == "gt"
-                   else value < rule["threshold"])
+            op = rule["operator"]
+            key = (quote.exchange, quote.instrument_token)
+            prev = self._last_values.get(key)
+            self._last_values[key] = value
+            if op == "crosses_above":
+                hit = prev is not None and prev <= rule["threshold"] < value
+            elif op == "crosses_below":
+                hit = prev is not None and prev >= rule["threshold"] > value
+            elif op == "gt":
+                hit = value > rule["threshold"]
+            else:
+                hit = value < rule["threshold"]
             if not hit:
                 continue
             try:
