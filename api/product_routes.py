@@ -597,3 +597,68 @@ def build_fyers_auth_routes(cred_store: Any,
         Route("/auth/fyers/callback", endpoint=_callback, methods=["GET"]),
     ]
 
+
+def build_watchlist_portability_routes(store: Any) -> list[Route]:
+    """JSON export/import of watchlists (identities only — never secrets)."""
+
+    async def _export(request: Request) -> Response:  # noqa: ARG001
+        out = []
+        for wl in await asyncio.to_thread(store.list_watchlists):
+            items = await asyncio.to_thread(store.list_watchlist_items,
+                                            wl["id"])
+            out.append({
+                "name": wl["name"],
+                "items": [{"exchange": it["exchange"],
+                           "instrument_token": it["instrument_token"],
+                           "tradingsymbol": it["tradingsymbol"]}
+                          for it in items],
+            })
+        return _json({"version": 1, "watchlists": out})
+
+    async def _import(request: Request) -> Response:
+        try:
+            body = await request.json()
+        except Exception:
+            return _json({"error": "invalid JSON body"}, 400)
+        if not isinstance(body, dict) or \
+                not isinstance(body.get("watchlists"), list):
+            return _json({"error": "expected {version, watchlists[]}"}, 400)
+        created = skipped = 0
+        for wl in body["watchlists"]:
+            if not isinstance(wl, dict):
+                skipped += 1
+                continue
+            name = wl.get("name")
+            if not isinstance(name, str) or not name.strip() or len(name) > 64:
+                skipped += 1
+                continue
+            existing = await asyncio.to_thread(store.list_watchlists)
+            match = next((w for w in existing if w["name"] == name.strip()),
+                         None)
+            wl_id = match["id"] if match else (await asyncio.to_thread(
+                store.create_watchlist, name.strip()))["id"]
+            for it in wl.get("items") or []:
+                if not isinstance(it, dict):
+                    skipped += 1
+                    continue
+                ex, tok, sym = (it.get("exchange"), it.get("instrument_token"),
+                                it.get("tradingsymbol"))
+                if not all(isinstance(v, str) and v.strip()
+                           for v in (ex, tok, sym)):
+                    skipped += 1
+                    continue
+                result = await asyncio.to_thread(
+                    store.add_watchlist_item, wl_id, exchange=ex.strip(),
+                    instrument_token=tok.strip(),
+                    tradingsymbol=sym.strip())
+                if result is not None:
+                    created += 1
+                else:
+                    skipped += 1
+        return _json({"status": "ok", "items_added": created,
+                      "entries_skipped": skipped})
+
+    return [
+        Route("/api/watchlists/export", endpoint=_export, methods=["GET"]),
+        Route("/api/watchlists/import", endpoint=_import, methods=["POST"]),
+    ]

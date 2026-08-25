@@ -260,6 +260,7 @@ from api.product_routes import (
     build_watchlist_routes as _build_watchlist_routes,
     build_alert_routes as _build_alert_routes,
     build_fyers_auth_routes as _build_fyers_auth_routes,
+    build_watchlist_portability_routes as _build_watchlist_portability_routes,
 )
 
 _instrument_catalog = _InstrumentCatalog(_store)
@@ -571,6 +572,7 @@ app = Starlette(
     + build_settings_routes(_oauth_cfg_ref)
     + _build_instrument_routes(_instrument_catalog, store=_store)
     + _build_watchlist_routes(_store, subscription=_feed_subscription)
+    + _build_watchlist_portability_routes(_store)
     + _build_alert_routes(_store, _alert_engine)
     + _build_market_data_routes(_provider_market_data)
     + _build_admin_routes(_store, PROJECT_ROOT / DATA_DIR)
@@ -628,6 +630,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
