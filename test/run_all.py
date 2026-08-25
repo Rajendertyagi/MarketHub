@@ -103,6 +103,7 @@ _TEST_FILES: dict[str, str] = {
     "market_load": "test_market_load.py",
     "alert_reliability": "test_alert_reliability.py",
     "auth_startup": "test_auth_startup.py",
+    "source_controls": "test_source_controls.py",
 }
 
 # Group -> ordered list of module keys. Order matters (fast/stable first).
@@ -137,8 +138,9 @@ GROUPS: dict[str, list[str]] = {
         "market_load",
         "alert_reliability",
         "auth_startup",
+        "source_controls",
     ],
-    "source": ["source_lifecycle", "source_dedup"],
+    "source": ["source_lifecycle", "source_dedup", "source_controls"],
     "consumer": ["consumers", "acknowledgement"],
     "mcp": ["subscriptions", "sdk_alignment", "lifespan", "multi_client", "errors", "timeouts", "sse_stream"],
     "lifecycle": ["source_lifecycle", "reconnect"],

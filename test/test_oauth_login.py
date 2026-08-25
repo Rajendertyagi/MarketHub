@@ -102,6 +102,9 @@ def _build_routes(feed_ref, restart_counter=None):
     async def _restart():
         if restart_counter is not None:
             restart_counter.append(1)
+        # Simulate a successful restart: the real feed authorizes with the
+        # fresh token and reaches streaming. The stub models only the state.
+        feed_ref["feed"]._state = "streaming"
 
     return build_auth_routes(
         feed_ref,

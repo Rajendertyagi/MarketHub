@@ -98,9 +98,11 @@ def w3_static_js(runner: R, c) -> None:
     runner.assert_in(name + "-stream-url", '/api/market/stream"', body)
     # setInterval is allowed ONLY for UI/status refreshes — market data
     # itself must always arrive via the single EventSource, never polling.
-    runner.assert_eq(name + "-poll-count", body.count("setInterval"), 4)
+    runner.assert_eq(name + "-poll-count", body.count("setInterval"), 5)
     runner.assert_in(name + "-poll-source-status",
                      "setInterval(pollSources", body)
+    runner.assert_in(name + "-poll-auth-status",
+                     "setInterval(pollAuthStatus", body)
     runner.assert_in(name + "-poll-watchlists",
                      "setInterval(loadWatchlists", body)
     runner.assert_in(name + "-poll-alerts",
