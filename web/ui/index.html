@@ -84,7 +84,7 @@
   <!-- ── MARKETS VIEW ── -->
   <section id="view-markets" class="view">
     <div class="toolbar">
-      <input type="text" id="market-filter" placeholder="Filter symbols…" class="filter-input">
+      <input type="text" id="market-filter" aria-label="Filter markets by symbol" placeholder="Filter symbols…" class="filter-input">
     </div>
     <div class="panel">
       <table class="data-table" id="markets-table">
@@ -113,7 +113,7 @@
   <!-- ── INSTRUMENTS VIEW ── -->
   <section id="view-instruments" class="view">
     <div class="toolbar">
-      <input type="text" id="instr-search" placeholder="Search symbol or name (e.g. RELIANCE, NIFTY)…" class="filter-input" style="width:320px">
+      <input type="text" id="instr-search" aria-label="Search instrument catalog" placeholder="Search symbol or name (e.g. RELIANCE, NIFTY)…" class="filter-input" style="width:320px">
       <select id="instr-exchange" class="wa-select">
         <option value="">All exchanges</option>
         <option>NSE</option><option>NFO</option><option>BSE</option><option>MCX</option>
@@ -138,7 +138,7 @@
   <section id="view-watchlists" class="view">
     <div class="toolbar">
       <select id="wl-select" class="wa-select"></select>
-      <input type="text" id="wl-new-name" placeholder="New watchlist name…" class="filter-input">
+      <input type="text" id="wl-new-name" aria-label="New watchlist name" placeholder="New watchlist name…" class="filter-input">
       <button id="wl-create" class="btn">Create</button>
       <button id="wl-rename" class="btn">Rename</button>
       <button id="wl-delete" class="btn" style="border-color:var(--red);color:var(--red)">Delete</button>
@@ -158,7 +158,7 @@
   <!-- ── OPTION CHAIN VIEW ── -->
   <section id="view-options" class="view">
     <div class="toolbar">
-      <input type="text" id="oc-underlying-search" placeholder="Search underlying (e.g. NIFTY)…" class="filter-input" style="width:240px">
+      <input type="text" id="oc-underlying-search" aria-label="Search option underlying" placeholder="Search underlying (e.g. NIFTY)…" class="filter-input" style="width:240px">
       <select id="oc-underlying-select" class="wa-select"><option value="">Underlying…</option></select>
       <select id="oc-expiry-select" class="wa-select" disabled><option value="">Expiry…</option></select>
       <select id="oc-window" class="wa-select">
@@ -192,7 +192,7 @@
   <!-- ── CHARTS VIEW ── -->
   <section id="view-charts" class="view">
     <div class="toolbar">
-      <input type="text" id="chart-search" placeholder="Search instrument (e.g. RELIANCE)…" class="filter-input" style="width:240px">
+      <input type="text" id="chart-search" aria-label="Search chart instrument" placeholder="Search instrument (e.g. RELIANCE)…" class="filter-input" style="width:240px">
       <select id="chart-instrument-select" class="wa-select"><option value="">Instrument…</option></select>
       <select id="chart-provider" class="wa-select">
         <option value="upstox" selected>Upstox</option>
@@ -205,7 +205,7 @@
         <option value="weeks">Weeks</option>
         <option value="months">Months</option>
       </select>
-      <input type="number" id="chart-interval" value="1" min="1" class="filter-input" style="width:70px">
+      <input type="number" id="chart-interval" aria-label="Chart interval" value="1" min="1" class="filter-input" style="width:70px">
       <select id="chart-range" class="wa-select">
         <option value="1">1D</option>
         <option value="5">5D</option>
@@ -223,8 +223,8 @@
   <!-- ── ALERTS VIEW ── -->
   <section id="view-alerts" class="view">
     <div class="toolbar">
-      <input type="text" id="alert-token" placeholder="Instrument token…" class="filter-input" style="width:220px">
-      <input type="text" id="alert-symbol" placeholder="Symbol…" class="filter-input" style="width:120px">
+      <input type="text" id="alert-token" aria-label="Alert instrument token" placeholder="Instrument token…" class="filter-input" style="width:220px">
+      <input type="text" id="alert-symbol" aria-label="Alert trading symbol" placeholder="Symbol…" class="filter-input" style="width:120px">
       <select id="alert-field" class="wa-select">
         <option value="ltp">LTP</option>
         <option value="change_percent">Change %</option>
@@ -235,7 +235,7 @@
         <option value="gt">&gt;</option>
         <option value="lt">&lt;</option>
       </select>
-      <input type="number" id="alert-threshold" placeholder="Value" class="filter-input" style="width:110px">
+      <input type="number" id="alert-threshold" aria-label="Alert threshold value" placeholder="Value" class="filter-input" style="width:110px">
       <button id="alert-create" class="btn">Add Alert</button>
     </div>
     <div id="alert-notifications"></div>
