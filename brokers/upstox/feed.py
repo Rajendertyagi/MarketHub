@@ -416,6 +416,32 @@ class UpstoxFeed:
     def desired_instrument_count(self) -> int:
         return len(self._instrument_keys)
 
+    # -- daily-auth readiness (startup gate) ----------------------------------
+
+    _PLACEHOLDER_TOKENS = frozenset({"PENDING-OAUTH-LOGIN"})
+
+    def is_ready_to_start(self) -> bool:
+        """True when a USABLE daily access token exists.
+
+        Reuses frozen D2 credential semantics:
+          * placeholder/missing token            -> not ready
+          * known-expired token                  -> not ready
+          * unknown-expiry token                 -> ready until broker
+                                                   proves otherwise
+        """
+        token = self._credentials.access_token
+        if not token or token in self._PLACEHOLDER_TOKENS:
+            return False
+        expires_at = self._credentials.expires_at
+        if expires_at is not None:
+            from datetime import datetime, timezone
+            if expires_at <= datetime.now(timezone.utc):
+                return False
+        return True
+
+    def requires_daily_auth(self) -> bool:
+        return not self.is_ready_to_start()
+
     def _safe_ws_summary(self, exc: BaseException) -> str:
         return _safe_ws_summary(exc)
 
@@ -443,8 +469,15 @@ class UpstoxFeed:
         try:
             uri = await self._rest.authorize_market_feed(self._credentials)
         except UpstoxAuthError as exc:
-            self._fail(f"authorization rejected: {exc}")
-            return _TERMINAL
+            # Broker rejected the current access token (e.g. expired or
+            # revoked). This is an AUTHENTICATION-REQUIRED state, not a
+            # broken feed: stop cleanly, no retry loop, wait for OAuth.
+            self._set_state("auth_required")
+            logger.warning(
+                "upstox feed %s: authentication required - broker rejected "
+                "current access token (%s)", self._name,
+                type(exc).__name__)
+            return None
         except UpstoxRateLimitError as exc:
             self._set_state("reconnecting")
             hint = exc.retry_after_seconds
@@ -497,7 +530,8 @@ class UpstoxFeed:
         self._reset_backoff_if_stable(lifetime)
         await self._close_quietly(ws)
         if reason == "stopped" or stop_event.is_set():
-            self._set_state("stopped")
+            if self._state != "auth_required":
+                self._set_state("stopped")
             return None
         self._reconnect_count += 1
         self._set_state("reconnecting")
@@ -612,7 +646,7 @@ class UpstoxFeed:
         failure state so the feed can retry.
         """
         self._credentials = credentials
-        if self._state == "failed":
+        if self._state in ("failed", "auth_required"):
             self._set_state("stopped")
 
     @property
@@ -632,7 +666,8 @@ class UpstoxFeed:
             while not stop_event.is_set():
                 outcome = await self._run_session(stop_event)
                 if outcome is None or stop_event.is_set():
-                    self._set_state("stopped")
+                    if self._state != "auth_required":
+                        self._set_state("stopped")
                     return
                 if outcome is _TERMINAL:
                     return  # state already failed

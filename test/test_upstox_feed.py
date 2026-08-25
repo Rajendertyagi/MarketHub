@@ -540,7 +540,9 @@ async def test_rest_error_classification(runner: R) -> None:
         UpstoxFeed,
     )
 
-    # Auth -> terminal failed, no retry, returns normally.
+    # Auth rejection -> auth_required (login-required state), no retry,
+    # returns normally. (Semantics updated: an invalid DAILY token is an
+    # authentication-required state, not a generic terminal feed failure.)
     feed = UpstoxFeed(
         config={"source_name": "upstox", "mode": "full",
                 "instrument_keys": KEYS},
@@ -552,7 +554,8 @@ async def test_rest_error_classification(runner: R) -> None:
     )
     stop = asyncio.Event()
     await feed.run(None, stop)
-    runner.assert_eq(name + "-auth-failed", feed.status()["state"], "failed")
+    runner.assert_eq(name + "-auth-failed",
+                     feed.status()["state"], "auth_required")
     runner.assert_eq(name + "-auth-connect-attempts",
                      feed.status()["connect_attempts"], 1)
 

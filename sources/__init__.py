@@ -230,7 +230,19 @@ class SourceManager:
             if not src_cfg.get("enabled", False):
                 logger.info("source '%s' disabled — skipping", name)
                 continue
+            # Config is ALWAYS recorded (even when start is gated) so a
+            # later restart_source() can launch it once prerequisites
+            # (e.g. daily authentication) are satisfied.
             self._configs[name] = src_cfg
+            # Generic readiness gate: a source may declare prerequisites
+            # via is_ready_to_start() (e.g. Upstox waiting for the daily
+            # access token). Gating is per-source and never blocks others.
+            ready_check = getattr(source, "is_ready_to_start", None)
+            if callable(ready_check) and not ready_check():
+                logger.info(
+                    "source '%s' waiting for prerequisites - not starting "
+                    "(will start via restart when ready)", name)
+                continue
             await self._start_one(name, source, src_cfg)
 
     async def _start_one(self, name: str, source: Any, cfg: dict[str, Any]) -> None:

@@ -323,10 +323,9 @@
       let label, cls;
       if (!d.oauth_available) {
         label = "Credentials Missing"; cls = "chip chip-off";
-      } else if (!d.token_configured) {
-        label = "Authentication Required"; cls = "chip chip-off";
-      } else if (d.expired === true) {
-        label = "Token Expired"; cls = "chip chip-off";
+      } else if (!d.token_configured || d.expired === true
+                 || d.state === "auth_required") {
+        label = "Daily Login Required"; cls = "chip chip-off";
       } else if (d.expiry_known) {
         label = "Active"; cls = "chip chip-on";
       } else {
@@ -334,7 +333,10 @@
       }
       chip.textContent = label;
       chip.className = cls;
-      $("auth-feed-state").textContent = d.state || "—";
+      // Feed runtime state is a SEPARATE concept from daily auth.
+      let feedLabel = d.state || "—";
+      if (feedLabel === "auth_required") feedLabel = "Stopped (login required)";
+      $("auth-feed-state").textContent = feedLabel;
     } catch { /* silent */ }
   }
 
