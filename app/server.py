@@ -476,7 +476,8 @@ from app.secrets_store import (
 )
 from api.routes import build_settings_routes
 
-_credential_store = _CredentialStore(_store)
+_credential_store = _CredentialStore(
+    _store, data_dir=PROJECT_ROOT / DATA_DIR)
 
 # --- Fyers source wiring (requires the credential store above) -------------
 # Centralized OAuth callback URL: ONE source of truth, derived from the
