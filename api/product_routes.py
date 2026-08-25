@@ -8,8 +8,11 @@ secrets, no trading.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -315,6 +318,67 @@ def build_alert_routes(store: Any, engine: Any = None) -> list[Route]:
     ]
 
 
+def _int_param(request: Request, name: str, default: int,
+               lo: int, hi: int) -> int | None:
+    """Parse a bounded int query param; return None if missing/invalid/out-of-range."""
+    raw = request.query_params.get(name)
+    if raw is None:
+        return default
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if val < lo or val > hi:
+        return None
+    return val
+
+
+def build_alert_history_routes(store: Any) -> list[Route]:
+    """Bounded, paginated alert trigger-history API (P2)."""
+
+    async def _list(request: Request) -> Response:  # noqa: ARG001
+        limit = _int_param(request, "limit", 50, 1, 500)
+        if limit is None:
+            return _json({"error": "limit must be an integer in [1, 500]"}, 400)
+        offset = _int_param(request, "offset", 0, 0, 1_000_000)
+        if offset is None:
+            return _json({"error": "offset must be a non-negative integer"}, 400)
+        alert_id_raw = request.query_params.get("alert_id")
+        alert_id = None
+        if alert_id_raw is not None:
+            try:
+                alert_id = int(alert_id_raw)
+            except (TypeError, ValueError):
+                return _json({"error": "alert_id must be an integer"}, 400)
+        provider = request.query_params.get("provider")
+        history = await asyncio.to_thread(
+            store.list_alert_trigger_history, alert_id, limit, offset, provider)
+        total = await asyncio.to_thread(
+            store.count_alert_trigger_history, alert_id, provider)
+        return _json({"history": history, "total": total,
+                      "limit": limit, "offset": offset})
+
+    async def _clear(request: Request) -> Response:  # noqa: ARG001
+        alert_id_raw = request.query_params.get("alert_id")
+        alert_id = None
+        if alert_id_raw is not None:
+            try:
+                alert_id = int(alert_id_raw)
+            except (TypeError, ValueError):
+                return _json({"error": "alert_id must be an integer"}, 400)
+        deleted = await asyncio.to_thread(
+            store.clear_alert_trigger_history, alert_id)
+        return _json({"status": "ok", "deleted": deleted})
+
+    return [
+        Route("/api/alerts/history", endpoint=_list, methods=["GET"]),
+        Route("/api/alerts/history", endpoint=_clear, methods=["DELETE"]),
+    ]
+
+
+
+
+
 
 def build_market_data_routes(provider_md: Any) -> list[Route]:
     """History + option-chain routes over the provider market-data service."""
@@ -458,12 +522,23 @@ def build_api_meta_routes() -> list[Route]:
 
 def build_fyers_auth_routes(cred_store: Any,
                             redirect_uri: str = (
-        "http://localhost:7070/auth/fyers/callback")) -> list[Route]:
+        "http://localhost:7070/auth/fyers/callback"),
+                            runtime_token: dict[str, str] | None = None,
+                            restart_fn: Any = None) -> list[Route]:
     """Fyers credential storage + OAuth login/callback (encrypted store).
 
     Fyers semantics (official v3): callback carries ``auth_code`` (not
     ``code``); refresh tokens ARE supported and are stored ENCRYPTED.
     Access tokens remain runtime-memory-only after decryption.
+
+    Args:
+        cred_store: encrypted credential store.
+        redirect_uri: OAuth redirect target.
+        runtime_token: optional dict shared with the Fyers feed's
+            ``access_token_getter`` so a successful login immediately
+            unblocks the feed. When None, an internal dict is used.
+        restart_fn: optional coroutine called after a successful login to
+            (re)start the Fyers source through SourceManager.
     """
     import hmac as _hmac
     import secrets as _secrets
@@ -471,7 +546,10 @@ def build_fyers_auth_routes(cred_store: Any,
 
     # Runtime-only access token (never persisted). Refresh token lives
     # encrypted in the credential store under provider "fyers_refresh".
-    _fyers_runtime_token: dict[str, str] = {"access_token": ""}
+    # When ``runtime_token`` is supplied it is the SAME object the feed's
+    # getter closes over, so login here unblocks the running feed.
+    _fyers_runtime_token: dict[str, str] = (
+        runtime_token if runtime_token is not None else {"access_token": ""})
     _pending: dict[str, float] = {}
     _TTL = 600
 
@@ -595,6 +673,13 @@ def build_fyers_auth_routes(cred_store: Any,
         except Exception:
             return _fail("error")
         _fyers_runtime_token["access_token"] = bundle["access_token"]
+        # Operator login path complete: (re)start the Fyers feed so it picks
+        # up the freshly-available token via its access_token_getter gate.
+        if restart_fn is not None:
+            try:
+                await restart_fn()
+            except Exception:
+                logger.warning("fyers feed restart after login failed")
         return RedirectResponse("/ui/?fyers_auth=ok#/settings", status_code=302)
 
     return [

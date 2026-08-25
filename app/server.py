@@ -232,6 +232,32 @@ def _on_market_quote_update(quote: Quote) -> None:
 _market_service = MarketService(on_quote_update=_on_market_quote_update)
 
 # ── Source Manager (needs _market_service for UpstoxFeed injection) ─────────
+# Fyers feed requires a runtime access_token_getter (it cannot be expressed
+# in static JSON config). Share ONE mutable dict between the getter and the
+# Fyers OAuth callback so a successful login immediately unblocks the feed.
+_fyers_runtime_token: dict[str, str] = {"access_token": ""}
+
+
+def _fyers_token_getter() -> str:
+    """Return the current Fyers access token (runtime-memory-only)."""
+    return _fyers_runtime_token.get("access_token", "")
+
+
+def _inject_fyers_token_getters(sources_cfg: dict[str, Any]) -> None:
+    """Inject the shared access_token_getter into every fyers_feed source.
+
+    Mutates the config dict in place (startup-only). Without this the
+    Fyers source constructor raises (no callable getter) and the source is
+    never registered - the operator login path would be dead.
+    """
+    for _name, _cfg in (sources_cfg or {}).items():
+        if not isinstance(_cfg, dict):
+            continue
+        if _cfg.get("type") == "fyers_feed" or _name == "fyers":
+            _cfg["access_token_getter"] = _fyers_token_getter
+
+
+_inject_fyers_token_getters(SOURCES_CFG)
 try:
     _source_manager = build_source_manager(
         SOURCES_CFG, market_service=_market_service,
@@ -248,6 +274,57 @@ for _src_name, _src in _source_manager.enabled_sources.items():
         _feed_ref["feed"] = _src
         _upstox_source_name = _src_name
         break
+
+# Track the Fyers source name so the OAuth callback can (re)start it.
+_fyers_source_name: str | None = None
+for _src_name, _src in _source_manager.enabled_sources.items():
+    if _src_name == "fyers" or getattr(_src, "__class__", None).__name__ == "FyersFeed":
+        _fyers_source_name = _src_name
+        break
+
+
+async def _restart_fyers_source() -> None:
+    """Restart the Fyers source through SourceManager (lifecycle owner)."""
+    if _fyers_source_name is None:
+        _app_logger.warning(
+            "oauth restart skipped: no fyers source registered")
+        return
+    try:
+        await _source_manager.restart_source(_fyers_source_name)
+    except Exception:
+        _app_logger.exception("oauth restart of fyers source failed")
+        raise
+
+
+def _try_restore_fyers_token() -> None:
+    """Best-effort: regain a Fyers access token from the stored refresh token.
+
+    Runs at startup (before sources start). If a refresh token is stored,
+    exchange it for a fresh access token so the Fyers feed is READY without
+    forcing the operator to re-log in after every restart.
+    """
+    try:
+        refresh_creds = _credential_store.load_app_credentials("fyers_refresh")
+        app_creds = _credential_store.load_app_credentials("fyers")
+    except Exception:
+        return
+    if not refresh_creds or not app_creds:
+        return
+    refresh_token = refresh_creds.get("api_secret")
+    app_id = app_creds.get("api_key")
+    secret_id = app_creds.get("api_secret")
+    if not (refresh_token and app_id and secret_id):
+        return
+    try:
+        from brokers.fyers.auth import FyersAuth
+        bundle = FyersAuth(app_id=app_id, secret_id=secret_id,
+                           redirect_uri="http://localhost:7070/auth/fyers/callback"
+                           ).refresh_access_token(refresh_token)
+        _fyers_runtime_token["access_token"] = bundle["access_token"]
+        _app_logger.info("fyers access token restored from refresh token")
+    except Exception as exc:
+        _app_logger.warning("fyers token restore failed: %s",
+                            type(exc).__name__)
 
 # Wire low-frequency source lifecycle events into the generic EventBroker
 # (WP22). Feeds call their optional on_state_change listener; we broadcast a
@@ -300,6 +377,7 @@ from api.product_routes import (
     build_instrument_routes as _build_instrument_routes,
     build_watchlist_routes as _build_watchlist_routes,
     build_alert_routes as _build_alert_routes,
+    build_alert_history_routes as _build_alert_history_routes,
     build_fyers_auth_routes as _build_fyers_auth_routes,
     build_watchlist_portability_routes as _build_watchlist_portability_routes,
 )
@@ -591,6 +669,9 @@ async def _lifespan(app: Starlette) -> None:  # noqa: ARG001
     application lifespan (_lifespan passed to MCPServer) so source managers
     and background tasks start/stop correctly.
     """
+    # Restore a Fyers access token from the stored refresh token BEFORE the
+    # SDK starts sources, so an enabled Fyers feed is READY without re-login.
+    _try_restore_fyers_token()
     async with mcp_asgi_app.router.lifespan_context(app):
         yield
 
@@ -626,9 +707,14 @@ app = Starlette(
     + _build_watchlist_routes(_store, subscription=_feed_subscription)
     + _build_watchlist_portability_routes(_store)
     + _build_alert_routes(_store, _alert_engine)
+    + _build_alert_history_routes(_store)
     + _build_market_data_routes(_provider_market_data)
     + _build_admin_routes(_store, PROJECT_ROOT / DATA_DIR)
-    + _build_fyers_auth_routes(_credential_store)
+    + _build_fyers_auth_routes(
+        _credential_store,
+        runtime_token=_fyers_runtime_token,
+        restart_fn=_restart_fyers_source,
+    )
     + _build_api_meta_routes()
     + [Mount("/ui", app=StaticFiles(directory=str(PROJECT_ROOT / "web" / "ui"), html=True),
             name="ui")],
