@@ -268,6 +268,7 @@ class UpstoxFeed:
         self._connected_at: str | None = None
         self._connect_attempts: int = 0
         self._reconnect_count: int = 0
+        self._malformed_frames: int = 0
         self._subscribed_instruments: int | None = None
         self._last_error: str | None = None
         self._last_error_at: str | None = None
@@ -696,6 +697,8 @@ class UpstoxFeed:
         status.update(self._counters)
         status.update({
             "mode": self._mode,
+            "auth_required": self._state == "auth_required",
+            "malformed_frames": self._malformed_frames,
             "configured_instruments": len(self._instrument_keys),
             "subscribed_instruments": (
                 len(self._instrument_keys) if self._state == "streaming" else None
@@ -717,6 +720,7 @@ class UpstoxFeed:
     def credentials_snapshot(self) -> UpstoxCredentials | None:
         """Current credentials reference (redaction-safe object)."""
         return self._credentials
+
 
 
 

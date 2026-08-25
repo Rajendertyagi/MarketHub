@@ -132,7 +132,12 @@
     // Update market cards (dashboard top).
     updateCards(key, data);
 
-    $("chip-last-update").textContent = nowStr();
+    // Stale-data indicator: quote timestamps older than 5 minutes are
+    // marked explicitly so old prices never read as live ticks.
+    const lastMs = Date.parse(q.received_ts || "") || 0;
+    const ageMin = lastMs ? (Date.now() - lastMs) / 60000 : 999;
+    $("chip-last-update").textContent =
+      (ageMin > 5 ? "[STALE] " : "") + nowStr();
     $("footer-tick").textContent =
       `${quotes.size} instruments · ${nowStr()}`;
   }
@@ -296,23 +301,50 @@
     } catch { /* silent */ }
   }
 
+  function friendlyState(state) {
+    const map = {
+      auth_required: "Stopped — daily login required",
+      failed: "Failed",
+      stopped: "Stopped",
+      streaming: "Streaming",
+      connecting: "Connecting",
+      authorizing: "Authorizing",
+      reconnecting: "Reconnecting",
+    };
+    return map[state] || state || "—";
+  }
+
   function renderSourcesDetail(sources) {
     const el = $("sources-detail");
-    if (!sources.length) { el.innerHTML = "<em>No sources configured</em>"; return; }
-    el.innerHTML = sources.map((s) => `
+    if (!sources.length) {
+      el.innerHTML = "<em>No sources configured</em>";
+      return;
+    }
+    el.innerHTML = sources.map((s) => {
+      const state = s.state || "—";
+      const stateFriendly = friendlyState(state);
+      const stateCls = state === "streaming" ? "chip chip-on"
+        : state === "auth_required" ? "chip" : "chip chip-off";
+      const authHint = state === "auth_required"
+        ? '<tr><td style="color:var(--text-muted)"></td>' +
+          '<td>Daily login required — use Settings → Login with Upstox</td></tr>'
+        : "";
+      return `
       <table class="data-table">
         <tr><td style="width:180px;color:var(--text-muted)">Name</td><td>${s.name || "—"}</td></tr>
-        <tr><td style="color:var(--text-muted)">State</td><td><span class="src-state">${s.state || "—"}</span></td></tr>
+        <tr><td style="color:var(--text-muted)">State</td><td><span class="${stateCls}">${stateFriendly}</span></td></tr>
+        ${authHint}
         <tr><td style="color:var(--text-muted)">Mode</td><td>${s.mode || "—"}</td></tr>
         <tr><td style="color:var(--text-muted)">Instruments</td><td>${s.configured_instruments ?? 0}</td></tr>
         <tr><td style="color:var(--text-muted)">Connect Attempts</td><td>${s.connect_attempts ?? 0}</td></tr>
         <tr><td style="color:var(--text-muted)">Reconnects</td><td>${s.reconnect_count ?? 0}</td></tr>
         <tr><td style="color:var(--text-muted)">Frames Received</td><td>${s.frames_received ?? 0}</td></tr>
+        <tr><td style="color:var(--text-muted)">Malformed Frames</td><td>${s.malformed_frames ?? 0}</td></tr>
         <tr><td style="color:var(--text-muted)">Last Connected</td><td>${s.last_connected_at || "—"}</td></tr>
         <tr><td style="color:var(--text-muted)">Last Message</td><td>${s.last_message_at || "—"}</td></tr>
         <tr><td style="color:var(--text-muted)">Last Error</td><td>${s.last_error || "—"}</td></tr>
-      </table>
-    `).join("<hr>");
+      </table>`;
+    }).join("<hr>");
   }
 
   // ── Upstox auth (token submit) ──────────────────────────────────────────
@@ -823,6 +855,7 @@
           : (data.error || "Sync failed.");
         msg.className = "hint " + (res.ok ? "ok" : "err");
         doSearch();
+        if (typeof loadSyncState === "function") loadSyncState();
       } catch {
         msg.textContent = "Network error during sync.";
         msg.className = "hint err";
@@ -832,6 +865,22 @@
       (e) => doSync("upstox", e.target));
     $("instr-sync-fyers").addEventListener("click",
       (e) => doSync("fyers", e.target));
+
+    async function loadSyncState() {
+      try {
+        const res = await fetch("/api/instruments/sync-state");
+        const d = await res.json();
+        const parts = (d.providers || []).map((p) =>
+          `${p.provider}: ${p.instruments} instruments` +
+          (p.last_sync ? ` (synced ${new Date(p.last_sync).toLocaleString()})`
+                       : " (never synced)"));
+        $("instr-sync-state").textContent = parts.length
+          ? "Catalog — " + parts.join(" | ")
+          : "Catalog empty — sync a provider master to enable search.";
+      } catch { /* silent */ }
+    }
+    loadSyncState();
+
     doSearch();
   }
 
@@ -1097,6 +1146,18 @@ function renderOcStrikes() {
     });
   }
 
+  function sma(values, period) {
+    // Simple presentation-derived moving average over canonical closes.
+    const out = [];
+    let sum = 0;
+    for (let i = 0; i < values.length; i++) {
+      sum += values[i];
+      if (i >= period) sum -= values[i - period];
+      out.push(i >= period - 1 ? +(sum / period).toFixed(4) : null);
+    }
+    return out;
+  }
+
   function renderChart(candles) {
     if (!window.echarts) {
       $("chart-message").textContent = "Chart library not loaded.";
@@ -1107,13 +1168,15 @@ function renderOcStrikes() {
     }
     const times = candles.map((c) =>
       c.timestamp.slice(0, 16).replace("T", " "));
+    const closes = candles.map((c) => c.close);
     const kline = candles.map((c) => [c.open, c.close, c.low, c.high]);
     const vols = candles.map((c) => c.volume ?? 0);
     chartInstance.setOption({
       animation: false,
       tooltip: { trigger: "axis", axisPointer: { type: "cross" } },
+      legend: { data: ["SMA20", "SMA50"], top: 0 },
       axisPointer: { link: [{ xAxisIndex: "all" }] },
-      grid: [{ left: 60, right: 20, top: 20, height: "58%" },
+      grid: [{ left: 60, right: 20, top: 24, height: "56%" },
              { left: 60, right: 20, top: "72%", height: "18%" }],
       xAxis: [
         { type: "category", data: times },
@@ -1124,10 +1187,18 @@ function renderOcStrikes() {
         { scale: true },
         { gridIndex: 1, axisLabel: { show: false } },
       ],
+      dataZoom: [
+        { type: "inside", xAxisIndex: [0, 1] },
+        { type: "slider", xAxisIndex: [0, 1], top: "92%" },
+      ],
       series: [
-        { type: "candlestick", data: kline,
+        { type: "candlestick", name: "Price", data: kline,
           itemStyle: { color: "#3fb950", color0: "#f85149",
                        borderColor: "#3fb950", borderColor0: "#f85149" } },
+        { type: "line", name: "SMA20", data: sma(closes, 20),
+          showSymbol: false, lineStyle: { width: 1 } },
+        { type: "line", name: "SMA50", data: sma(closes, 50),
+          showSymbol: false, lineStyle: { width: 1 } },
         { type: "bar", xAxisIndex: 1, yAxisIndex: 1, data: vols },
       ],
     });

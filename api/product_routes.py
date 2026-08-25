@@ -50,13 +50,20 @@ def build_instrument_routes(catalog: Any, store: Any = None) -> list[Route]:
 
     async def _search(request: Request) -> Response:
         qp = request.query_params
+        q = qp.get("q") or None
+        if q and len(q) > 64:
+            return _json({"error": "q too long (max 64)"}, 400)
+        try:
+            limit = min(int(qp.get("limit", 25)), 100)
+        except ValueError:
+            return _json({"error": "limit must be an integer"}, 400)
         results = await asyncio.to_thread(
             catalog.search,
-            q=qp.get("q") or None,
+            q=q,
             exchange=qp.get("exchange") or None,
             instrument_type=qp.get("type") or None,
             provider=qp.get("provider") or None,
-            limit=min(int(qp.get("limit", 25)), 100),
+            limit=limit,
         )
         return _json({"results": results, "count": len(results)})
 
