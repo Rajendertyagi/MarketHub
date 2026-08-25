@@ -33,6 +33,7 @@ Thumbs.db
 
 # Test artifacts
 data/
+data/logs/
 data_test/
 .test_logs/
 config.json
