@@ -11,15 +11,16 @@ This module owns ONLY application composition:
 Generic event/alert/runtime/SSE/persistence logic lives under core/.
 MCP contract/tools/resources live under mcp_server/.
 """
-
 from __future__ import annotations
 
 import asyncio
+
 import json
 import logging
 import os
 import sys
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any
 
 import uvicorn
@@ -79,6 +80,7 @@ from sources import SourceManager, build_source_manager, SourceConfigError
 from api.routes import (  # noqa: F401  (build_settings_routes wired below)
     build_market_routes,
     build_auth_routes,
+    build_source_control_routes,
 )
 from market.models import Quote
 from market.serialization import quote_to_dict
@@ -102,21 +104,18 @@ from market.service import MarketService
 # ---------------------------------------------------------------------------
 
 # ============================================================
-# LOGGER
+# LOGGING (centralized: console preserved + rotating file)
 # ============================================================
+# Single owner of handler configuration: app.logging_setup. Console output
+# is preserved; everything INFO+ is also persisted to data/logs/markethub.log
+# so an incident's final event survives the console window closing.
+
+from app.logging_setup import setup_logging, log_startup_diagnostics
+
+_LOG_FILE = setup_logging(PROJECT_ROOT)  # never raises; may degrade console-only
 
 _app_logger = logging.getLogger("event_server")
 _app_logger.setLevel(logging.DEBUG)
-
-_handler = logging.StreamHandler(sys.stdout)
-_handler.setLevel(logging.INFO)
-_handler.setFormatter(logging.Formatter("%(message)s"))
-_app_logger.addHandler(_handler)
-
-_debug_handler = logging.StreamHandler(sys.stdout)
-_debug_handler.setLevel(logging.DEBUG)
-_debug_handler.setFormatter(logging.Formatter("[DEBUG] %(name)s - %(message)s"))
-_app_logger.addHandler(_debug_handler)
 
 # Suppress the SDK's rich-format debug/info output to the console.
 # SDK errors (WARNING / ERROR) still propagate through uvicorn / standard error.
@@ -249,6 +248,48 @@ for _src_name, _src in _source_manager.enabled_sources.items():
         _feed_ref["feed"] = _src
         _upstox_source_name = _src_name
         break
+
+# Wire low-frequency source lifecycle events into the generic EventBroker
+# (WP22). Feeds call their optional on_state_change listener; we broadcast a
+# redacted envelope so the WebUI can refresh immediately on state changes.
+def _on_source_state_change(
+    source: str, provider: str, old_state: str, new_state: str,
+    reason: str | None,
+) -> None:
+    envelope = {
+        "type": "source.state_changed",
+        "data": {
+            "source": source,
+            "provider": provider,
+            "old_state": old_state,
+            "new_state": new_state,
+            "reason": reason,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        },
+    }
+    try:
+        _event_broker.broadcast(json.dumps(envelope, ensure_ascii=False))
+    except Exception:  # pragma: no cover - broadcast must never break a feed
+        _app_logger.debug("source state change broadcast failed", exc_info=True)
+
+
+for _src in _source_manager.enabled_sources.values():
+    try:
+        _src.on_state_change = _on_source_state_change
+    except Exception:  # non-feed sources may not accept the attribute
+        _app_logger.debug(
+            "source %s does not support on_state_change", getattr(_src, "name", "?"))
+
+# One-time startup diagnostic header (safe values only — no credentials,
+# no config secret values).
+log_startup_diagnostics(
+    _app_logger,
+    version=__version__,
+    source_names=_source_manager.enabled_sources.keys(),
+    listen_host=LISTEN_HOST,
+    listen_port=LISTEN_PORT,
+    log_file=_LOG_FILE,
+)
 
 # ── Product services: instrument catalog, alerts ─────────────────────────────
 from app.instruments import InstrumentCatalog as _InstrumentCatalog
@@ -566,10 +607,14 @@ app = Starlette(
     + build_market_routes(
         _market_event_broker,
         market_service=_market_service,
+        # Merged view: source status + task liveness + exit forensics, so the
+        # UI can distinguish "streaming" from "dead task with stale state".
         source_status_fn=lambda: [
-            s.status() for s in _source_manager.enabled_sources.values()
+            dict(info, name=name) if isinstance(info, dict) else {"name": name}
+            for name, info in _source_manager.get_status().items()
         ],
     )
+    + build_source_control_routes(_source_manager)
     + build_auth_routes(
         _feed_ref,
         restart_fn=_restart_upstox_source,

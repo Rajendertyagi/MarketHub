@@ -10,7 +10,7 @@ app.state.
 
 from __future__ import annotations
 
-import json
+import asyncio
 from typing import Any, Callable
 
 from sse_starlette import EventSourceResponse
@@ -21,7 +21,12 @@ from starlette.routing import Route
 import logging
 logger = logging.getLogger("event_server")
 
-__all__ = ["build_market_routes", "build_auth_routes", "build_settings_routes"]
+__all__ = [
+    "build_market_routes",
+    "build_auth_routes",
+    "build_settings_routes",
+    "build_source_control_routes",
+]
 
 
 def _json(data: Any, status: int = 200) -> JSONResponse:
@@ -102,6 +107,77 @@ def build_market_routes(
         Route("/api/market/depth/{exchange}/{instrument_token}",
               endpoint=_market_depth, methods=["GET"]),
         Route("/api/sources/status", endpoint=_source_status, methods=["GET"]),
+    ]
+
+
+def build_source_control_routes(source_manager: Any) -> list[Route]:
+    """Generic source lifecycle control routes (start / stop / restart).
+
+    Routes receive the SourceManager via composition-root injection and call
+    ONLY its public lifecycle operations. They never construct feeds, never
+    create a MarketService or SourceManager, and never touch sockets.
+
+    Response contract (safe reason codes only — no provider material):
+        started          new background task created
+        already_running  duplicate start refused; existing task untouched
+        authentication_required  source declared prerequisites unmet
+                                 (daily login); OAuth is NEVER auto-triggered
+        unknown_source   no such registered/configured source
+    """
+    if source_manager is None:
+        return []
+
+    async def _source_start(request: Request) -> Response:
+        name = request.path_params.get("name", "")
+        result = await source_manager.start_source(name)
+        if result == "started":
+            return _json({"ok": True, "result": "started"})
+        if result == "already_running":
+            return _json({"ok": True, "result": "already_running"})
+        if result == "not_ready":
+            detail = source_manager.readiness_reason(name)
+            return _json(
+                {"ok": False, "reason": "authentication_required",
+                 "detail": detail}, 409)
+        return _json({"ok": False, "reason": "unknown_source"}, 404)
+
+    async def _source_stop(request: Request) -> Response:
+        name = request.path_params.get("name", "")
+        was_running = source_manager.task_running(name)
+        known = await source_manager.stop_source(name)
+        if not known:
+            return _json({"ok": False, "reason": "unknown_source"}, 404)
+        # Idempotent: stopping an already-stopped source succeeds.
+        # Surface the precise stop reason so the UI can distinguish an
+        # operator stop from a shutdown/restart.
+        status = source_manager.get_status().get(name, {})
+        return _json({
+            "ok": True,
+            "was_running": was_running,
+            "stop_reason": status.get("stop_reason"),
+        })
+
+    async def _source_restart(request: Request) -> Response:
+        name = request.path_params.get("name", "")
+        # Restarting a LIVE feed is always allowed. Restarting a stopped feed
+        # behaves like Start and therefore honors the same readiness gate
+        # (e.g. daily authentication) instead of authorizing into a 401.
+        running = source_manager.task_running(name)
+        if not running and source_manager.is_ready(name) is False:
+            return _json(
+                {"ok": False, "reason": "authentication_required"}, 409)
+        ok = await source_manager.restart_source(name)
+        if not ok:
+            return _json({"ok": False, "reason": "unknown_source"}, 404)
+        return _json({"ok": True, "result": "restarted"})
+
+    return [
+        Route("/api/sources/{name}/start", endpoint=_source_start,
+              methods=["POST"]),
+        Route("/api/sources/{name}/stop", endpoint=_source_stop,
+              methods=["POST"]),
+        Route("/api/sources/{name}/restart", endpoint=_source_restart,
+              methods=["POST"]),
     ]
 
 
@@ -200,6 +276,27 @@ def build_auth_routes(
     _STATE_TTL_S = 600  # 10 minutes
     _pending_states: dict[str, float] = {}  # state -> monotonic expiry
 
+    async def _classify_post_restart(feed: Any) -> str:
+        """Classify the feed's state shortly after a credential-driven restart.
+
+        Returns one of: "ok" (streaming/connecting/authorizing/reconnecting,
+        or still transitioning after the observation window), "rejected"
+        (broker rejected the token -> auth_required), "protocol" (terminal
+        failure), or "stopped" (restart did not bring the feed up).
+        """
+        for _ in range(25):  # ~5s at 0.2s cadence
+            st = feed.status().get("state")
+            if st in ("streaming", "connecting", "authorizing", "reconnecting"):
+                return "ok"
+            if st == "auth_required":
+                return "rejected"
+            if st == "failed":
+                return "protocol"
+            await asyncio.sleep(0.2)
+        if feed.status().get("state") == "stopped":
+            return "stopped"
+        return "ok"
+
     def _oauth_ready() -> bool:
         if not isinstance(oauth, dict):
             return False
@@ -229,6 +326,10 @@ def build_auth_routes(
             "expired": status.get("expired"),
             "state": feed.status().get("state", "unknown"),
         })
+        # Ground truth for "is today's token USABLE": placeholders/known-expired
+        # tokens report False so the UI never shows Active on a fresh boot.
+        ready = getattr(feed, "is_ready_to_start", None)
+        base["ready_to_start"] = bool(ready()) if callable(ready) else None
         return _json(base)
 
     async def _oauth_login(request: Request) -> Response:  # noqa: ARG001
@@ -307,6 +408,13 @@ def build_auth_routes(
             feed.update_credentials(creds)
             if restart_fn is not None:
                 await restart_fn()
+                outcome = await _classify_post_restart(feed)
+                if outcome == "rejected":
+                    return _fail("rejected")
+                if outcome == "protocol":
+                    return _fail("protocol")
+                if outcome == "stopped":
+                    return _fail("stopped")
         except Exception:
             logger.exception("oauth callback: feed restart failed")
             return _fail("restart")
@@ -336,13 +444,16 @@ def build_auth_routes(
 
         feed.update_credentials(creds)
 
+        outcome = "unknown"
         if restart_fn is not None:
             try:
                 await restart_fn()
+                outcome = await _classify_post_restart(feed)
             except Exception:
-                pass  # restart failure logged elsewhere; don't leak
+                logger.exception("submit_token: feed restart failed")
+                outcome = "restart_failed"
 
-        return _json({"configured": True})
+        return _json({"configured": True, "outcome": outcome})
 
     return [
         Route("/api/auth/upstox/status", endpoint=_auth_status, methods=["GET"]),
