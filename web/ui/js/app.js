@@ -1573,10 +1573,37 @@ function initBackup() {
       try {
         const res = await fetch("/api/settings/fyers");
         const d = await res.json();
-        const chip = $("fyers-status");
-        chip.textContent = d.login_available ? "Configured" : "Not configured";
-        chip.className = "chip " + (d.login_available ? "chip-on" : "chip-off");
+        // App Credentials: are App ID + Secret saved (encrypted)?
+        const credChip = $("fyers-status");
+        if (d.app_id_configured && d.secret_configured) {
+          credChip.textContent = "Configured";
+          credChip.className = "chip chip-on";
+        } else {
+          credChip.textContent = "Not configured";
+          credChip.className = "chip chip-off";
+        }
+        // Daily Login: distinct from credentials — is a session usable now?
+        const loginChip = $("fyers-login-status");
+        if (!d.login_available) {
+          loginChip.textContent = "Credentials Required";
+          loginChip.className = "chip chip-off";
+        } else if (d.access_token_active) {
+          loginChip.textContent = "Daily Login Active";
+          loginChip.className = "chip chip-on";
+        } else {
+          loginChip.textContent = "Login Required";
+          loginChip.className = "chip chip-off";
+        }
         loginBtn.style.display = d.login_available ? "" : "none";
+        // Feed runtime state comes from the source manager, not auth.
+        try {
+          const sres = await fetch("/api/sources/status");
+          const sd = await sres.json();
+          const src = (sd.sources || []).find(
+            (s) => s.name === "fyers" || (s.type || "").indexOf("fyers") >= 0);
+          $("fyers-feed-state").textContent =
+            src ? friendlyState(src.state || "unknown") : "source not configured";
+        } catch { /* keep placeholder */ }
       } catch { /* silent */ }
     }
 

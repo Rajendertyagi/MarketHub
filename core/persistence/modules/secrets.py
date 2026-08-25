@@ -89,6 +89,16 @@ def has_secret(conn: sqlite3.Connection, provider: str, name: str) -> bool:
     return row is not None
 
 
+def has_any_secret(conn: sqlite3.Connection) -> bool:
+    """True when ANY encrypted secret exists for ANY provider.
+
+    Used by master-key safety checks: a lost key must never be silently
+    regenerated while any ciphertext (Upstox OR Fyers OR legacy) depends on it.
+    """
+    row = conn.execute("SELECT 1 FROM secrets LIMIT 1").fetchone()
+    return row is not None
+
+
 def delete_provider_secrets(
     conn: sqlite3.Connection,
     provider: str,

@@ -188,12 +188,40 @@ def validate_config(config: dict[str, Any]) -> None:
 # OAuth redirect / callback URL construction (single source of truth)
 # ---------------------------------------------------------------------------
 
+_DEFAULT_BASE_URL = "http://localhost:7070"
+
+
+def _normalize_base_url(raw: Any) -> str:
+    """Normalize an operator-supplied base URL to a bare origin.
+
+    Returns ``scheme://host[:port]`` (lowercased), dropping any path, query,
+    or fragment accidentally supplied. Returns "" when the value cannot be
+    interpreted as an http(s) origin (callers fall back to the default).
+    """
+    import urllib.parse as _urlparse
+
+    if not isinstance(raw, str):
+        return ""
+    try:
+        _parts = _urlparse.urlsplit(raw.strip())
+    except ValueError:
+        return ""
+    _scheme = _parts.scheme.lower()
+    _netloc = _parts.netloc.lower()
+    if _scheme not in ("http", "https") or not _netloc:
+        return ""
+    return "{0}://{1}".format(_scheme, _netloc)
+
+
 def get_public_base_url(config: dict[str, Any]) -> str:
-    """Return the operator-configured public base URL (never from Host header)."""
-    base = config.get("public_base_url", "http://localhost:7070")
-    if not isinstance(base, str) or not base.strip():
-        return "http://localhost:7070"
-    return base.strip()
+    """Return the operator-configured public base URL (never from Host header).
+
+    The value is normalized to a bare origin so stray paths/query strings can
+    never leak into OAuth callback URLs.
+    """
+    normalized = _normalize_base_url(
+        config.get("public_base_url", _DEFAULT_BASE_URL))
+    return normalized or _DEFAULT_BASE_URL
 
 
 def oauth_callback_url(base_url: str, provider: str) -> str:
@@ -201,7 +229,8 @@ def oauth_callback_url(base_url: str, provider: str) -> str:
 
     One source of truth: both authorization-URL generation and token-exchange
     validation must call this with the SAME ``base_url``. No duplicated string
-    constants across modules.
+    constants across modules. The base is normalized to a bare origin first,
+    so trailing slashes / stray paths cannot produce mismatched redirects.
     """
-    base = (base_url or "http://localhost:7070").rstrip("/")
+    base = _normalize_base_url(base_url) or _DEFAULT_BASE_URL
     return "{0}/auth/{1}/callback".format(base, provider)

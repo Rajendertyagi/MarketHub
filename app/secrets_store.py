@@ -145,8 +145,10 @@ class CredentialStore:
     # -- master key lifecycle -------------------------------------------------
 
     def _ciphertext_exists(self) -> bool:
-        return self._store.has_secret(_UPSTOX_PROVIDER, "api_key") or \
-            self._store.has_secret(_UPSTOX_PROVIDER, "api_secret")
+        # ANY encrypted row (Upstox, Fyers, or legacy) counts: a lost master
+        # key must never be silently regenerated while any ciphertext —
+        # regardless of provider — depends on it.
+        return self._store.has_any_secret()
 
     def _get_encryption(self, *, allow_generate: bool) -> EncryptionService | None:
         """Return a usable EncryptionService, or None if the key is unusable.

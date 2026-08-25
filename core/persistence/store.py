@@ -540,6 +540,14 @@ class EventStore:
         finally:
             conn.close()
 
+    def has_any_secret(self) -> bool:
+        """True when any encrypted secret exists for any provider."""
+        conn = self._open(self._db_path)
+        try:
+            return _secrets.has_any_secret(conn)
+        finally:
+            conn.close()
+
     def delete_provider_secrets(self, provider: str) -> int:
         conn = self._open(self._db_path)
         try:

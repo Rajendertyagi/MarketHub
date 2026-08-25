@@ -339,8 +339,16 @@
           One-time setup. Saved encrypted on this computer only.
         </p>
         <div class="auth-row">
-          <label>Status</label>
+          <label>App Credentials</label>
           <span id="fyers-status" class="chip chip-off">Not configured</span>
+        </div>
+        <div class="auth-row">
+          <label>Daily Login</label>
+          <span id="fyers-login-status" class="chip chip-off">Credentials Required</span>
+        </div>
+        <div class="auth-row">
+          <label>Feed State</label>
+          <span id="fyers-feed-state" class="setting-val">—</span>
         </div>
         <div class="auth-row">
           <label for="fyers-app-id">App ID</label>
@@ -451,6 +459,6 @@
 </footer>
 
 <script src="/ui/vendor/echarts/dist/echarts.min.js"></script>
-<script src="/ui/js/app.js?v=19"></script>
+<script src="/ui/js/app.js?v=20"></script>
 </body>
 </html>
