@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger("event_server")
@@ -95,6 +96,27 @@ class AlertEngine:
                 logger.warning("alert trigger persist failed: %s",
                                type(exc).__name__)
                 continue
+            # Durable, restart-safe per-trigger audit record (P2). Failure
+            # here must NEVER break the trigger notification itself.
+            try:
+                _provider = getattr(quote, "provider", None)
+                if _provider is None:
+                    _provider = getattr(quote, "source", None)
+                self._store.record_alert_trigger_history(
+                    alert_id=rule["id"],
+                    exchange=rule.get("exchange"),
+                    instrument_token=rule.get("instrument_token"),
+                    tradingsymbol=rule.get("tradingsymbol"),
+                    field=rule.get("field"),
+                    operator=rule.get("operator"),
+                    threshold=rule.get("threshold"),
+                    observed_value=value,
+                    provider=_provider,
+                    triggered_at=datetime.now(timezone.utc).isoformat(),
+                )
+            except Exception as exc:
+                logger.warning("alert trigger history persist failed: %s",
+                               type(exc).__name__)
             with self._lock:
                 if rule["id"] in self._rules:
                     self._rules[rule["id"]]["state"] = "triggered"

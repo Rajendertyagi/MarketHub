@@ -385,6 +385,116 @@ def migrate_v10_to_v11(conn: sqlite3.Connection) -> None:
     logger.info("migrated v10→v11: added instruments/watchlists/alerts")
 
 
+# ---------------------------------------------------------------------------
+# Alert trigger history (schema v12) — durable, restart-safe record of every
+# individual alert firing (distinct from market_alerts.trigger_count which is
+# only an aggregate). Never duplicates live evaluation state.
+# ---------------------------------------------------------------------------
+
+def create_alert_trigger_history_table(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS alert_trigger_history (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            alert_id        INTEGER NOT NULL,
+            exchange        TEXT,
+            instrument_token TEXT,
+            tradingsymbol   TEXT,
+            field           TEXT,
+            operator        TEXT,
+            threshold       REAL,
+            observed_value  REAL,
+            provider        TEXT,
+            triggered_at    TEXT NOT NULL,
+            created_at      TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_ath_alert
+        ON alert_trigger_history(alert_id)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_ath_triggered
+        ON alert_trigger_history(triggered_at)
+    """)
+
+
+def insert_alert_trigger_history(
+    conn: sqlite3.Connection, *, alert_id: int, exchange: str | None,
+    instrument_token: str | None, tradingsymbol: str | None, field: str | None,
+    operator: str | None, threshold: float | None, observed_value: float | None,
+    provider: str | None, triggered_at: str,
+) -> int:
+    cur = conn.execute(
+        "INSERT INTO alert_trigger_history "
+        "(alert_id, exchange, instrument_token, tradingsymbol, field, "
+        " operator, threshold, observed_value, provider, triggered_at, "
+        " created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (alert_id, exchange, instrument_token, tradingsymbol, field,
+         operator, threshold if threshold is None else float(threshold),
+         observed_value if observed_value is None else float(observed_value),
+         provider, triggered_at, _now()))
+    conn.commit()
+    return cur.lastrowid
+
+
+def list_alert_trigger_history(
+    conn: sqlite3.Connection, alert_id: int | None = None,
+    limit: int = 50, offset: int = 0, provider: str | None = None,
+) -> list[dict[str, Any]]:
+    sql = "SELECT * FROM alert_trigger_history WHERE 1=1"
+    args: list[Any] = []
+    if alert_id is not None:
+        sql += " AND alert_id = ?"
+        args.append(alert_id)
+    if provider is not None:
+        sql += " AND provider = ?"
+        args.append(provider)
+    sql += " ORDER BY id DESC LIMIT ? OFFSET ?"
+    args.extend([int(limit), int(offset)])
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(sql, args)]
+    finally:
+        conn.row_factory = None
+
+
+def count_alert_trigger_history(
+    conn: sqlite3.Connection, alert_id: int | None = None,
+    provider: str | None = None,
+) -> int:
+    sql = "SELECT COUNT(*) FROM alert_trigger_history WHERE 1=1"
+    args: list[Any] = []
+    if alert_id is not None:
+        sql += " AND alert_id = ?"
+        args.append(alert_id)
+    if provider is not None:
+        sql += " AND provider = ?"
+        args.append(provider)
+    return conn.execute(sql, args).fetchone()[0]
+
+
+def clear_alert_trigger_history(
+    conn: sqlite3.Connection, alert_id: int | None = None,
+) -> int:
+    if alert_id is not None:
+        cur = conn.execute(
+            "DELETE FROM alert_trigger_history WHERE alert_id = ?",
+            (alert_id,))
+    else:
+        cur = conn.execute("DELETE FROM alert_trigger_history")
+    conn.commit()
+    return cur.rowcount
+
+
+def migrate_v11_to_v12(conn: sqlite3.Connection) -> None:
+    """Add alert_trigger_history table (durable per-trigger audit log)."""
+    create_alert_trigger_history_table(conn)
+    conn.execute("PRAGMA user_version = 12")
+    conn.commit()
+    logger.info("migrated v11→v12: added alert_trigger_history")
+
+
 def option_underlyings(
     conn: sqlite3.Connection, q: str | None = None,
     limit: int = 25,

@@ -39,6 +39,7 @@ from core.persistence.modules.schema import (
     SCHEMA_VERSION,
 )
 from core.persistence.modules.products import migrate_v10_to_v11
+from core.persistence.modules.products import migrate_v11_to_v12
 from core.persistence.modules.secrets import migrate_v9_to_v10
 from core.persistence.modules import alerts as _alerts
 from core.persistence.modules import consumers as _consumers
@@ -116,6 +117,8 @@ class EventStore:
                         migrate_v9_to_v10(conn)
                     elif current_version == 10:
                         migrate_v10_to_v11(conn)
+                    elif current_version == 11:
+                        migrate_v11_to_v12(conn)
                     else:
                         raise RuntimeError(
                             f"unsupported schema version {current_version}; "
@@ -680,6 +683,81 @@ class EventStore:
         conn = self._open(self._db_path)
         try:
             return _products.load_enabled_alerts(conn)
+        finally:
+            conn.close()
+
+    # ─── Alert trigger history (durable, restart-safe audit log) ────────────
+
+    def record_alert_trigger_history(
+        self, alert_id: int, exchange: str | None,
+        instrument_token: str | None, tradingsymbol: str | None,
+        field: str | None, operator: str | None, threshold: float | None,
+        observed_value: float | None, provider: str | None,
+        triggered_at: str | None = None,
+    ) -> int:
+        """Persist one alert firing with full context. Opens/commits own txn."""
+        if triggered_at is None:
+            triggered_at = datetime.now(timezone.utc).isoformat()
+        conn = self._open(self._db_path)
+        try:
+            return _products.insert_alert_trigger_history(
+                conn, alert_id=alert_id, exchange=exchange,
+                instrument_token=instrument_token,
+                tradingsymbol=tradingsymbol, field=field, operator=operator,
+                threshold=threshold, observed_value=observed_value,
+                provider=provider, triggered_at=triggered_at)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def list_alert_trigger_history(
+        self, alert_id: int | None = None, limit: int = 50,
+        offset: int = 0, provider: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Bounded, paginated history query (newest first).
+
+        limit is clamped to [1, 500]; offset must be >= 0. Invalid values
+        fall back to safe defaults rather than raising (the API layer does
+        strict validation and returns 400 before calling this).
+        """
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = 50
+        limit = max(1, min(500, limit))
+        try:
+            offset = max(0, int(offset))
+        except (TypeError, ValueError):
+            offset = 0
+        conn = self._open(self._db_path)
+        try:
+            return _products.list_alert_trigger_history(
+                conn, alert_id=alert_id, limit=limit, offset=offset,
+                provider=provider)
+        finally:
+            conn.close()
+
+    def count_alert_trigger_history(
+        self, alert_id: int | None = None, provider: str | None = None,
+    ) -> int:
+        conn = self._open(self._db_path)
+        try:
+            return _products.count_alert_trigger_history(
+                conn, alert_id=alert_id, provider=provider)
+        finally:
+            conn.close()
+
+    def clear_alert_trigger_history(self, alert_id: int | None = None) -> int:
+        """Delete history. If alert_id given, only that alert's rows;
+        otherwise ALL history. Returns number of rows deleted."""
+        conn = self._open(self._db_path)
+        try:
+            return _products.clear_alert_trigger_history(conn, alert_id)
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 

@@ -88,6 +88,9 @@
     document.querySelectorAll(".nav-link").forEach((b) => {
       b.classList.toggle("active", b.dataset.view === view);
     });
+    // Source status is only re-rendered while on the Sources view. Trigger an
+    // immediate poll so the panel isn't stuck on its initial "Loading…" state.
+    if (view === "sources") pollSources();
     try {
       sessionStorage.setItem("mh-last-view", view);
       if (location.hash !== "#/" + view) {
@@ -138,7 +141,7 @@
 
     // Stale-data indicator: quote timestamps older than 5 minutes are
     // marked explicitly so old prices never read as live ticks.
-    const lastMs = Date.parse(q.received_ts || "") || 0;
+    const lastMs = Date.parse(data.received_ts || "") || 0;
     const ageMin = lastMs ? (Date.now() - lastMs) / 60000 : 999;
     $("chip-last-update").textContent =
       (ageMin > 5 ? "[STALE] " : "") + nowStr();
@@ -295,6 +298,11 @@
         $("chip-instruments").textContent = upstox.configured_instruments ?? 0;
         $("chip-reconnects").textContent = upstox.reconnect_count ?? 0;
       }
+      // Aggregate across all sources (not just the first match above).
+      $("chip-instruments").textContent =
+        sources.reduce((a, s) => a + (s.configured_instruments || 0), 0);
+      $("chip-frames").textContent =
+        sources.reduce((a, s) => a + (s.frames_received || 0), 0);
       const labels = sources.map((s) => `${s.name}: ${friendlyShort(s.state || "unknown")}`);
       const anyStreaming = sources.some((s) => s.state === "streaming");
       $("broker-indicator").textContent = "● " + (labels.join("  |  ") || "no sources");
@@ -1313,6 +1321,11 @@ function renderOcStrikes() {
           msg.className = "hint err";
           return;
         }
+        if (!d.candles || !d.candles.length) {
+          msg.textContent = "No history data returned for this range.";
+          msg.className = "hint err";
+          return;
+        }
         msg.textContent = `${d.candles.length} candles loaded.`;
         msg.className = "hint ok";
         renderChart(d.candles);
@@ -1417,6 +1430,45 @@ function renderOcStrikes() {
     });
     loadAlerts();
     setInterval(loadAlerts, 15000);
+    const clearBtn = $("alert-history-clear");
+    if (clearBtn) {
+      clearBtn.addEventListener("click", async () => {
+        if (!confirm("Clear all alert trigger history? This cannot be undone."))
+          return;
+        await fetch("/api/alerts/history", { method: "DELETE" });
+        loadAlertHistory();
+      });
+    }
+    loadAlertHistory();
+    setInterval(loadAlertHistory, 15000);
+  }
+
+  async function loadAlertHistory() {
+    const body = $("alert-history-body");
+    if (!body) return;
+    try {
+      const res = await fetch("/api/alerts/history?limit=50");
+      const data = await res.json();
+      const rows = data.history || [];
+      if (!rows.length) {
+        body.innerHTML =
+          '<tr><td colspan="6" class="empty-row">No trigger history yet.</td></tr>';
+        return;
+      }
+      body.innerHTML = rows.map((h) => {
+        const cond = `${h.field || ""} ${h.operator === "gt" ? ">" :
+          h.operator === "lt" ? "<" : (h.operator || "").replace("crosses_", "crosses ")} ${h.threshold ?? ""}`;
+        const t = (h.triggered_at || "").replace("T", " ").slice(0, 19);
+        const prov = h.provider ? `<span class="chip">${h.provider}</span>` : "—";
+        return `<tr>` +
+          `<td>${t}</td>` +
+          `<td>${h.tradingsymbol || ""}</td>` +
+          `<td>${cond}</td>` +
+          `<td>${h.observed_value ?? "—"}</td>` +
+          `<td>${prov}</td>` +
+          `<td>${h.exchange || ""}</td></tr>`;
+      }).join("");
+    } catch { /* silent */ }
   }
 
   async function loadAlerts() {

@@ -13,7 +13,7 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 def get_schema_version(conn: sqlite3.Connection) -> int:
@@ -110,6 +110,9 @@ def create_v7_schema(conn: sqlite3.Connection) -> None:
     # v11: product tables (instruments catalog, watchlists, alerts).
     from core.persistence.modules.products import create_product_tables
     create_product_tables(conn)
+    # v12: alert trigger history (durable per-trigger audit log).
+    from core.persistence.modules.products import create_alert_trigger_history_table
+    create_alert_trigger_history_table(conn)
 
 
 def create_alerts_table(conn: sqlite3.Connection) -> None:

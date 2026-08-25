@@ -100,18 +100,6 @@
     </div>
   </section>
 
-  <!-- ── OPTION CHAIN VIEW ── -->
-  <section id="view-options" class="view">
-    <div class="toolbar">
-      <select id="oc-underlying" class="wa-select"><option>Select underlying…</option></select>
-      <select id="oc-expiry" class="wa-select" disabled><option>Expiry</option></select>
-    </div>
-    <div class="empty-state">
-      <p class="empty-title">Option chain not available yet</p>
-      <p class="empty-desc">Normalized option data (greeks, IV, OI) exists in the canonical layer, but a canonical option-chain aggregation endpoint is not yet configured. This page will light up once that backend lands.</p>
-    </div>
-  </section>
-
   <!-- ── SOURCES VIEW ── -->
   <section id="view-sources" class="view">
     <div class="panel">
@@ -258,6 +246,19 @@
           <th>Enabled</th><th></th>
         </tr></thead>
         <tbody id="alerts-body"><tr><td colspan="5" class="empty-row">No alerts configured.</td></tr></tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Trigger History</h2>
+        <button id="alert-history-clear" class="btn" style="padding:2px 8px;font-size:11px">Clear history</button>
+      </div>
+      <table class="data-table" id="alert-history-table">
+        <thead><tr>
+          <th>Time</th><th>Symbol</th><th>Condition</th>
+          <th>Observed</th><th>Provider</th><th>Exchange</th>
+        </tr></thead>
+        <tbody id="alert-history-body"><tr><td colspan="6" class="empty-row">No trigger history yet.</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -422,6 +423,6 @@
 </footer>
 
 <script src="/ui/vendor/echarts/dist/echarts.min.js"></script>
-<script src="/ui/js/app.js?v=17"></script>
+<script src="/ui/js/app.js?v=19"></script>
 </body>
 </html>

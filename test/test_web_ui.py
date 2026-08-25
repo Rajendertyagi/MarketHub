@@ -98,15 +98,19 @@ def w3_static_js(runner: R, c) -> None:
     runner.assert_in(name + "-stream-url", '/api/market/stream"', body)
     # setInterval is allowed ONLY for UI/status refreshes — market data
     # itself must always arrive via the single EventSource, never polling.
-    runner.assert_eq(name + "-poll-count", body.count("setInterval"), 5)
+    # Current refresh intervals: pollSources, pollAuthStatus, loadWatchlists,
+    # loadAlerts, loadAlertHistory (alert trigger history), loadMarkets/...
+    runner.assert_eq(name + "-poll-count", body.count("setInterval"), 6)
     runner.assert_in(name + "-poll-source-status",
-                     "setInterval(pollSources", body)
+                      "setInterval(pollSources", body)
     runner.assert_in(name + "-poll-auth-status",
-                     "setInterval(pollAuthStatus", body)
+                      "setInterval(pollAuthStatus", body)
     runner.assert_in(name + "-poll-watchlists",
-                     "setInterval(loadWatchlists", body)
+                      "setInterval(loadWatchlists", body)
     runner.assert_in(name + "-poll-alerts",
-                     "setInterval(loadAlerts", body)
+                      "setInterval(loadAlerts", body)
+    runner.assert_in(name + "-poll-alert-history",
+                      "setInterval(loadAlertHistory", body)
 
 
 def w4_webawesome_vendored(runner: R, c) -> None:
