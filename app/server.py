@@ -263,7 +263,29 @@ from api.product_routes import (
 )
 
 _instrument_catalog = _InstrumentCatalog(_store)
-_alert_engine = _AlertEngine(_store)
+
+
+def _on_alert_trigger(notification: dict) -> None:
+    """Push alert events through the generic low-frequency EventBroker."""
+    envelope = {
+        "type": "alert.triggered",
+        "data": {
+            "alert_id": notification.get("alert_id"),
+            "tradingsymbol": notification.get("tradingsymbol"),
+            "field": notification.get("field"),
+            "operator": notification.get("operator"),
+            "threshold": notification.get("threshold"),
+            "observed_value": notification.get("value"),
+            "triggered_at": notification.get("ts"),
+        },
+    }
+    try:
+        _event_broker.broadcast(json.dumps(envelope, ensure_ascii=False))
+    except Exception:
+        _app_logger.warning("alert event broadcast failed", exc_info=True)
+
+
+_alert_engine = _AlertEngine(_store, on_trigger=_on_alert_trigger)
 
 from app.market_data import ProviderMarketData as _ProviderMarketData
 from api.product_routes import (
@@ -606,6 +628,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 

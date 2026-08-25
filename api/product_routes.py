@@ -462,6 +462,9 @@ def build_fyers_auth_routes(cred_store: Any,
     import secrets as _secrets
     import time as _time
 
+    # Runtime-only access token (never persisted). Refresh token lives
+    # encrypted in the credential store under provider "fyers_refresh".
+    _fyers_runtime_token: dict[str, str] = {"access_token": ""}
     _pending: dict[str, float] = {}
     _TTL = 600
 
@@ -470,10 +473,14 @@ def build_fyers_auth_routes(cred_store: Any,
             creds = cred_store.load_app_credentials("fyers")
         except Exception:
             creds = None
+        has_refresh = bool(await asyncio.to_thread(
+            cred_store.load_app_credentials, "fyers_refresh"))
         return _json({
             "app_id_configured": bool(creds and creds.get("api_key")),
             "secret_configured": bool(creds and creds.get("api_secret")),
             "login_available": bool(creds),
+            "access_token_active": bool(_fyers_runtime_token["access_token"]),
+            "refresh_token_stored": has_refresh,
         })
 
     async def _save(request: Request) -> Response:
@@ -566,14 +573,20 @@ def build_fyers_auth_routes(cred_store: Any,
         except Exception:
             return _fail("rejected")
 
-        # Persist BOTH tokens encrypted (refresh token is long-lived and
-        # officially supported by Fyers; access token daily).
+        # TOKEN POLICY (deliberate, documented):
+        #   refresh token -> encrypted persistent storage (long-lived,
+        #     officially supported by Fyers; required to regain access
+        #     after restart without re-login)
+        #   access token  -> RUNTIME MEMORY ONLY (short-lived; always
+        #     regenerable from the refresh token via the official
+        #     validate-authcode refresh grant). Never persisted.
         try:
             await asyncio.to_thread(
-                cred_store.save_app_credentials, "fyers_tokens",
-                bundle["access_token"], bundle["refresh_token"])
+                cred_store.save_app_credentials, "fyers_refresh",
+                "refresh", bundle["refresh_token"])
         except Exception:
             return _fail("error")
+        _fyers_runtime_token["access_token"] = bundle["access_token"]
         return RedirectResponse("/ui/?fyers_auth=ok", status_code=302)
 
     return [

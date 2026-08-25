@@ -513,3 +513,39 @@
 
     refresh();
   }
+
+  // ── Alert push via generic event stream (low-frequency) ─────────────────
+
+  let alertPushSource = null;
+
+  function initAlertPush() {
+    if (alertPushSource) return;   // never duplicate
+    try {
+      alertPushSource = new EventSource("/events/stream");
+      alertPushSource.onmessage = (e) => {
+        let envelope;
+        try { envelope = JSON.parse(e.data); } catch { return; }
+        const type = typeof envelope === "string"
+          ? JSON.parse(envelope).type : envelope.type;
+        if (type !== "alert.triggered") return;
+        const d = typeof envelope.data === "string"
+          ? JSON.parse(envelope.data) : envelope.data;
+        pushAlertNotification(d);
+      };
+      alertPushSource.onerror = () => { /* EventSource auto-reconnects */ };
+    } catch { /* silent */ }
+  }
+
+  function pushAlertNotification(d) {
+    const notes = $("alert-notifications");
+    if (!notes) return;
+    const time = new Date().toLocaleTimeString();
+    const cond = `${d.field} ${d.operator === "gt" ? ">" :
+      d.operator === "lt" ? "<" : d.operator.replace("crosses_", "crosses ")} ${d.threshold}`;
+    const div = document.createElement("div");
+    div.className = "hint err";
+    div.textContent =
+      `${time} — ${d.tradingsymbol}: ${cond} (now ${d.observed_value})`;
+    notes.prepend(div);
+    while (notes.children.length > 20) notes.removeChild(notes.lastChild);
+  }

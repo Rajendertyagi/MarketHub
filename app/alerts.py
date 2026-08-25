@@ -35,8 +35,9 @@ _ALL_OPERATORS = frozenset({"gt", "lt"}) | _CROSSING_OPERATORS
 class AlertEngine:
     """Evaluates enabled alerts against live canonical quotes."""
 
-    def __init__(self, store: Any) -> None:
+    def __init__(self, store: Any, on_trigger: Any = None) -> None:
         self._store = store
+        self._on_trigger = on_trigger   # push hook (generic EventBroker)
         self._lock = threading.Lock()
         self._rules: dict[int, dict[str, Any]] = {}
         self._notifications: list[dict[str, Any]] = []
@@ -96,6 +97,12 @@ class AlertEngine:
             }
             fired.append(notification)
             self.add_notification(notification)
+            if self._on_trigger is not None:
+                try:
+                    self._on_trigger(notification)
+                except Exception as exc:
+                    logger.warning("alert push failed: %s",
+                                   type(exc).__name__)
         return fired
 
     def add_notification(self, n: dict[str, Any]) -> None:
@@ -111,4 +118,5 @@ class AlertEngine:
         with self._lock:
             self._notifications = [n for n in self._notifications
                                    if n.get("alert_id") != alert_id]
+
 
