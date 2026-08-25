@@ -285,31 +285,62 @@
 
   let chartInstance = null;
 
+  let chartSelection = null;   // {instrument_key, exchange, tradingsymbol}
+
   function initCharts() {
-    const today = new Date().toISOString().slice(0, 10);
-    const monthAgo = new Date(Date.now() - 30 * 86400000)
-      .toISOString().slice(0, 10);
-    $("chart-from").value = monthAgo;
-    $("chart-to").value = today;
+    const search = $("chart-search");
+    const sel = $("chart-instrument-select");
+    let debounce = null;
+
+    search.addEventListener("input", () => {
+      clearTimeout(debounce);
+      debounce = setTimeout(async () => {
+        const q = search.value.trim();
+        if (!q) return;
+        try {
+          const res = await fetch("/api/instruments/search?limit=15&q=" +
+            encodeURIComponent(q));
+          const d = await res.json();
+          sel.innerHTML = '<option value="">Instrument…</option>' +
+            (d.results || []).map((r) =>
+              `<option value="${r.instrument_token}" data-ex="${r.exchange}"` +
+              ` data-sym="${r.tradingsymbol}">` +
+              `${r.tradingsymbol} (${r.exchange})</option>`).join("");
+        } catch { /* silent */ }
+      }, 300);
+    });
+
+    sel.addEventListener("change", () => {
+      const opt = sel.selectedOptions[0];
+      chartSelection = opt && opt.value ? {
+        instrument_key: opt.value,
+        exchange: opt.dataset.ex,
+        tradingsymbol: opt.dataset.sym,
+      } : null;
+    });
 
     $("chart-load").addEventListener("click", async () => {
-      const key = $("chart-instrument").value.trim();
       const unit = $("chart-unit").value;
       const interval = $("chart-interval").value || 1;
-      const from = $("chart-from").value;
-      const to = $("chart-to").value;
+      const days = Number($("chart-range").value) || 30;
+      const provider = $("chart-provider").value;
       const msg = $("chart-message");
-      if (!key || !from || !to) {
-        msg.textContent = "Instrument key, from and to dates are required.";
+      if (!chartSelection) {
+        msg.textContent = "Search and select an instrument first.";
         msg.className = "hint err";
         return;
       }
+      const to = new Date().toISOString().slice(0, 10);
+      const from = new Date(Date.now() - days * 86400000)
+        .toISOString().slice(0, 10);
       msg.textContent = "Loading history…";
       msg.className = "hint";
       try {
         const res = await fetch("/api/market/history?instrument_key=" +
-          encodeURIComponent(key) + "&unit=" + unit +
-          "&interval=" + interval + "&from=" + from + "&to=" + to);
+          encodeURIComponent(chartSelection.instrument_key) +
+          "&provider=" + provider +
+          "&unit=" + unit + "&interval=" + interval +
+          "&from=" + from + "&to=" + to);
         const d = await res.json();
         if (!res.ok) {
           msg.textContent = d.error || "History load failed.";

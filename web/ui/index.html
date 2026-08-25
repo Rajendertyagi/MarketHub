@@ -196,7 +196,12 @@
   <!-- ── CHARTS VIEW ── -->
   <section id="view-charts" class="view">
     <div class="toolbar">
-      <input type="text" id="chart-instrument" placeholder="Instrument key (e.g. NSE_EQ|INE002A01018)…" class="filter-input" style="width:300px">
+      <input type="text" id="chart-search" placeholder="Search instrument (e.g. RELIANCE)…" class="filter-input" style="width:240px">
+      <select id="chart-instrument-select" class="wa-select"><option value="">Instrument…</option></select>
+      <select id="chart-provider" class="wa-select">
+        <option value="upstox" selected>Upstox</option>
+        <option value="fyers">Fyers</option>
+      </select>
       <select id="chart-unit" class="wa-select">
         <option value="minutes">Minutes</option>
         <option value="hours" selected>Hours</option>
@@ -205,8 +210,14 @@
         <option value="months">Months</option>
       </select>
       <input type="number" id="chart-interval" value="1" min="1" class="filter-input" style="width:70px">
-      <input type="date" id="chart-from" class="filter-input">
-      <input type="date" id="chart-to" class="filter-input">
+      <select id="chart-range" class="wa-select">
+        <option value="1">1D</option>
+        <option value="5">5D</option>
+        <option value="30" selected>1M</option>
+        <option value="90">3M</option>
+        <option value="180">6M</option>
+        <option value="365">1Y</option>
+      </select>
       <button id="chart-load" class="btn">Load Chart</button>
     </div>
     <div id="chart-message" class="hint"></div>
