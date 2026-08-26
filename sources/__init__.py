@@ -244,13 +244,13 @@ class SourceManager:
         """
         for name, source in self._sources.items():
             src_cfg = configs.get(name, {})
-            if not src_cfg.get("enabled", False):
-                logger.info("source '%s' disabled — skipping", name)
-                continue
             # Config is ALWAYS recorded (even when start is gated) so a
-            # later restart_source() can launch it once prerequisites
-            # (e.g. daily authentication) are satisfied.
+            # later restart_source()/start_source() can launch it once
+            # prerequisites (e.g. daily authentication) are satisfied.
             self._configs[name] = src_cfg
+            if not src_cfg.get("enabled", False):
+                logger.info("source '%s' disabled - skipping", name)
+                continue
             # Operator-stopped sources stay stopped until explicitly started
             # again (WP20/CASE E): an explicit Stop Feed must never be undone
             # by a later start_all() (e.g. at server restart within the same

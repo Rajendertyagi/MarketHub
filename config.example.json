@@ -9,6 +9,7 @@
     "fyers": {
       "_comment": "Source definition only. No secrets. Credentials are supplied via WebUI Settings (encrypted). The Fyers feed becomes ready once credentials are configured and you complete 'Login with Fyers'.",
       "type": "fyers_feed",
+      "enabled": true,
       "mode": "full",
       "instruments": [
         {
