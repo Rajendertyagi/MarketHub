@@ -693,3 +693,94 @@ class NewsSnapshot:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "articles", tuple(self.articles))
+
+# ---------------------------------------------------------------------------
+# Margin Calculator models
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class MarginEntry:
+    """Margin breakdown for one instrument."""
+    instrument_key: str
+    span_margin: float
+    exposure_margin: float
+    equity_margin: float
+    net_buy_premium: float
+    additional_margin: float
+    tender_margin: float
+    total_margin: float
+
+
+@dataclass(frozen=True, slots=True)
+class MarginBasket:
+    """Margin calculation for a basket of instruments."""
+    required_margin: float
+    final_margin: float
+    entries: tuple[MarginEntry, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "entries", tuple(self.entries))
+
+
+# ---------------------------------------------------------------------------
+# Shareholdings models
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ShareholdingRecord:
+    """One quarter of shareholding data for a category."""
+    period: str
+    value: float
+
+
+@dataclass(frozen=True, slots=True)
+class ShareholdingCategory:
+    """Shareholding category with quarterly history."""
+    category: str
+    history: tuple[ShareholdingRecord, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "history", tuple(self.history))
+
+
+@dataclass(frozen=True, slots=True)
+class Shareholdings:
+    """Quarterly shareholding pattern for a company."""
+    isin: str
+    categories: tuple[ShareholdingCategory, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "categories", tuple(self.categories))
+
+
+# ---------------------------------------------------------------------------
+# Option Greeks standalone models
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class OptionGreekEntry:
+    """Greeks and market data for one option instrument."""
+    instrument_key: str
+    last_price: float | None = None
+    delta: float | None = None
+    gamma: float | None = None
+    theta: float | None = None
+    vega: float | None = None
+    rho: float | None = None
+    iv: float | None = None
+    oi: int | None = None
+    volume: int | None = None
+    last_traded_qty: int | None = None
+    previous_close: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class OptionGreekSnapshot:
+    """Standalone option Greeks for one or more instruments."""
+    entries: tuple[OptionGreekEntry, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "entries", tuple(self.entries))
