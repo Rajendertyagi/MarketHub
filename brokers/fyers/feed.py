@@ -50,6 +50,200 @@ class _Terminal:
 
 _TERMINAL = _Terminal()
 
+# ---------------------------------------------------------------------------
+# Fyers HSM data-socket protocol (binary) — ported from the official
+# fyers-apiv3 SDK (FyersWebsocket/data_ws.py). The socket speaks a packed
+# binary protocol, NOT JSON:
+#   * connect plain (no auth header)
+#   * send auth frame built from the hsm_key inside the access-token JWT
+#   * send full/lite mode frame
+#   * subscribe with HSM symbol tokens ("sf|<seg>|<tok>" / "if|<seg>|<name>")
+#   * ticks arrive as binary datafeed frames (resp_type 6)
+# ---------------------------------------------------------------------------
+
+_SYMBOL_TOKEN_API = "https://api-t1.fyers.in/data/symbol-token"
+_HSM_SOURCE = "MarketHub-1.0"
+_HSM_CHANNEL = 11
+
+# fytoken[:4] -> HSM segment name (official map.json).
+_EXCH_SEG = {
+    "1010": "nse_cm", "1011": "nse_fo", "1120": "mcx_fo",
+    "1210": "bse_cm", "1012": "cde_fo", "1211": "bse_fo",
+    "1212": "bcs_fo", "1020": "nse_com",
+}
+
+# Known index symbols -> HSM index token (official map.json, NSE section).
+_INDEX_DICT = {
+    "NSE:NIFTY50-INDEX": "Nifty 50",
+    "NSE:NIFTYBANK-INDEX": "Nifty Bank",
+    "NSE:NIFTYNEXT50-INDEX": "Nifty Next 50",
+    "NSE:FINNIFTY-INDEX": "Nifty Fin Service",
+    "NSE:MIDCPNIFTY-INDEX": "NIFTY MID SELECT",
+    "NSE:NIFTYMIDSELECT-INDEX": "NIFTY MID SELECT",
+    "NSE:INDIAVIX-INDEX": "India VIX",
+    "NSE:NIFTY500-INDEX": "Nifty 500",
+    "NSE:NIFTY200-INDEX": "Nifty 200",
+    "NSE:NIFTY100-INDEX": "Nifty 100",
+    "NSE:NIFTYMIDCAP150-INDEX": "NIFTY MIDCAP 150",
+    "NSE:NIFTYMIDCAP100-INDEX": "NIFTY MIDCAP 100",
+    "NSE:NIFTYMIDCAP50-INDEX": "Nifty Midcap 50",
+    "NSE:NIFTYSMLCAP250-INDEX": "NIFTY SMLCAP 250",
+    "NSE:NIFTYSMLCAP100-INDEX": "NIFTY SMLCAP 100",
+    "NSE:NIFTYLARGEMID250-INDEX": "NIFTY LARGEMID250",
+    "NSE:NIFTYIT-INDEX": "Nifty IT",
+    "NSE:NIFTYPHARMA-INDEX": "Nifty Pharma",
+    "NSE:NIFTYAUTO-INDEX": "Nifty Auto",
+    "NSE:NIFTYFMCG-INDEX": "Nifty FMCG",
+    "NSE:NIFTYMETAL-INDEX": "Nifty Metal",
+    "NSE:NIFTYENERGY-INDEX": "Nifty Energy",
+    "NSE:NIFTYREALTY-INDEX": "Nifty Realty",
+    "NSE:NIFTYINFRA-INDEX": "Nifty Infra",
+    "NSE:NIFTYPVTBANK-INDEX": "Nifty Pvt Bank",
+    "NSE:NIFTYPSUBANK-INDEX": "Nifty PSU Bank",
+    "NSE:NIFTYMNC-INDEX": "Nifty MNC",
+    "NSE:NIFTYPSE-INDEX": "Nifty PSE",
+    "NSE:NIFTYALPHA50-INDEX": "NIFTY Alpha 50",
+    "NSE:NIFTYQUALITY30-INDEX": "NIFTY100 Qualty30",
+    "NSE:NIFTYCONSUMPTION-INDEX": "Nifty Commodities",
+    "NSE:NIFTYSERVSECTOR-INDEX": "Nifty Serv Sector",
+}
+
+# Field order for binary tick decoding (official map.json).
+_DATA_VAL = (
+    "ltp", "vol_traded_today", "last_traded_time", "exch_feed_time",
+    "bid_size", "ask_size", "bid_price", "ask_price", "last_traded_qty",
+    "tot_buy_qty", "tot_sell_qty", "avg_trade_price", "OI", "low_price",
+    "high_price", "Yhigh", "Ylow", "lower_ckt", "upper_ckt", "open_price",
+    "prev_close_price",
+)
+_INDEX_VAL = (
+    "ltp", "prev_close_price", "exch_feed_time", "high_price", "low_price",
+    "open_price",
+)
+_SCALED_VAL = frozenset((
+    "ltp", "bid_price", "ask_price", "avg_trade_price", "low_price",
+    "high_price", "open_price", "prev_close_price",
+))
+_DEPTH_VAL = (
+    "bid_price1", "bid_price2", "bid_price3", "bid_price4", "bid_price5",
+    "ask_price1", "ask_price2", "ask_price3", "ask_price4", "ask_price5",
+    "bid_size1", "bid_size2", "bid_size3", "bid_size4", "bid_size5",
+    "ask_size1", "ask_size2", "ask_size3", "ask_size4", "ask_size5",
+    "bid_order1", "bid_order2", "bid_order3", "bid_order4", "bid_order5",
+    "ask_order1", "ask_order2", "ask_order3", "ask_order4", "ask_order5",
+)
+
+
+def _hsm_auth_frame(hsm_key: str) -> bytes:
+    """Binary auth frame (SDK __access_token_msg)."""
+    import struct
+    buf = bytearray()
+    buf.extend(struct.pack("!H", 18 - 2 + len(hsm_key) + len(_HSM_SOURCE)))
+    buf.append(1)   # ReqType: auth
+    buf.append(4)   # FieldCount
+    buf.append(1)                       # Field 1: hsm token
+    buf.extend(struct.pack("!H", len(hsm_key)))
+    buf.extend(hsm_key.encode())
+    buf.append(2); buf.extend(struct.pack("!H", 1)); buf.append(ord("P"))
+    buf.append(3); buf.extend(struct.pack("!H", 1)); buf.append(1)
+    buf.append(4)                       # Field 4: source
+    buf.extend(struct.pack("!H", len(_HSM_SOURCE)))
+    buf.extend(_HSM_SOURCE.encode())
+    return bytes(buf)
+
+
+def _hsm_mode_frame() -> bytes:
+    """Binary full-mode frame (SDK __full_mode_msg), channel 11."""
+    import struct
+    data = bytearray()
+    data.extend(struct.pack(">H", 0))
+    data.append(12)
+    data.append(2)
+    channel_bits = 1 << _HSM_CHANNEL
+    data.append(1)
+    data.extend(struct.pack(">H", 8))
+    data.extend(struct.pack(">Q", channel_bits))
+    data.append(2)
+    data.extend(struct.pack(">H", 1))
+    data.append(70)          # 70 = full mode (76 = lite)
+    return bytes(data)
+
+
+def _hsm_subscribe_frame(symbols: list[str]) -> bytes:
+    """Binary subscribe frame (SDK __subscription_msg)."""
+    import struct
+    scrips = bytearray()
+    scrips.append(len(symbols) >> 8 & 0xFF)
+    scrips.append(len(symbols) & 0xFF)
+    for s in symbols:
+        b = str(s).encode("ascii")
+        scrips.append(len(b))
+        scrips.extend(b)
+    out = bytearray()
+    out.append(len(scrips) >> 8 & 0xFF)
+    out.append(len(scrips) & 0xFF)
+    out.append(4)            # request_type: subscribe
+    out.append(2)            # field_count
+    out.append(1)
+    out.extend(struct.pack(">H", len(scrips)))
+    out.extend(scrips)
+    out.append(2)
+    out.extend(struct.pack(">H", 1))
+    out.append(_HSM_CHANNEL)
+    return bytes(out)
+
+
+def _hsm_unsubscribe_frame(symbols: list[str]) -> bytes:
+    """Binary unsubscribe frame (SDK __unsubscription_msg)."""
+    import struct
+    scrips = bytearray()
+    scrips.append(len(symbols) >> 8 & 0xFF)
+    scrips.append(len(symbols) & 0xFF)
+    for s in symbols:
+        b = str(s).encode("ascii")
+        scrips.append(len(b))
+        scrips.extend(b)
+    out = bytearray()
+    out.append(len(scrips) >> 8 & 0xFF)
+    out.append(len(scrips) & 0xFF)
+    out.append(5)            # request_type: unsubscribe
+    out.append(2)
+    out.append(1)
+    out.extend(struct.pack(">H", len(scrips)))
+    out.extend(scrips)
+    out.append(2)
+    out.extend(struct.pack(">H", 1))
+    out.append(_HSM_CHANNEL)
+    return bytes(out)
+
+
+def _hsm_ack_frame(message_number: int) -> bytes:
+    """Binary acknowledgement frame (SDK __ackowledgement_msg)."""
+    import struct
+    buf = bytearray()
+    buf.extend(struct.pack(">H", 11 - 2))
+    buf.append(3)
+    buf.append(1)
+    buf.append(1)
+    buf.extend(struct.pack(">H", 4))
+    buf.extend(struct.pack(">I", message_number))
+    return bytes(buf)
+
+
+def _hsm_key_from_access_token(token: str) -> str:
+    """Extract the hsm_key claim from the access-token JWT payload."""
+    import base64
+    bare = token.split(":", 1)[1] if ":" in token else token
+    parts = bare.split(".")
+    if len(parts) < 2:
+        raise ValueError("access token is not a JWT")
+    padded = parts[1] + "=" * (-len(parts[1]) % 4)
+    payload = json.loads(base64.urlsafe_b64decode(padded))
+    hsm_key = payload.get("hsm_key")
+    if not hsm_key:
+        raise ValueError("access token payload has no hsm_key")
+    return str(hsm_key)
+
 
 def _safe_ws_summary(exc: BaseException) -> str:
     return f"{type(exc).__name__}"
@@ -91,6 +285,9 @@ class FyersFeed:
         self._provider = "fyers"
         self._connect_attempts = 0
         self._reconnect_count = 0
+        self._hsm_symbols: dict[str, str] = {}      # config key -> HSM token
+        self._hsm_by_topic: dict[int, str] = {}     # topic id -> config key
+        self._sym_data: dict[int, dict] = {}        # topic id -> last fields
         self._frames_received = 0
         self._malformed_frames = 0
         self._last_message_at: str | None = None
@@ -239,22 +436,19 @@ class FyersFeed:
         base = min(30.0, 0.5 * (2 ** min(self._reconnect_count, 6)))
         return hint if hint else base * (0.5 + random.random())
 
-    # -- frames -------------------------------------------------------------------
-
-    def _join_frame(self) -> bytes:
-        return json.dumps({"type": 1}, separators=(",", ":")).encode()
+    # -- frames (HSM binary protocol) --------------------------------------------
 
     def _ping_frame(self) -> bytes:
-        return json.dumps({"type": 3}, separators=(",", ":")).encode()
+        return b"\x00\x01\x0b"     # SDK ping: bytes([0, 1, 11])
 
     def _mutation_frame(self, sub_type: str, symbols: list[str]) -> bytes:
-        return json.dumps({
-            "type": 2,
-            "data": {"symbols": symbols, "subType": sub_type},
-        }, separators=(",", ":")).encode()
+        hsm = [self._hsm_symbols.get(s, s) for s in symbols]
+        if sub_type == "unsub":
+            return _hsm_unsubscribe_frame(hsm)
+        return _hsm_subscribe_frame(hsm)
 
     def _full_subscribe_frame(self) -> bytes:
-        return self._mutation_frame("SymbolUpdate", list(self._desired))
+        return _hsm_mode_frame()
 
     async def _send_mutation(self, frame: bytes) -> bool:
         async with self._sub_lock:
@@ -358,9 +552,31 @@ class FyersFeed:
         self._live_ws = ws
         self._connected_at = self._now()
         try:
+            # HSM handshake: binary auth frame from the token's hsm_key,
+            # then the full-mode frame, then the subscription frame.
             try:
-                await ws.send(self._join_frame())
+                hsm_key = _hsm_key_from_access_token(token)
+            except Exception as exc:
+                self._note_error(f"token_decode: {type(exc).__name__}")
+                await self._close_quietly(ws)
+                self._set_state("reconnecting", reason="token_decode_failed")
+                return self._next_backoff()
+            try:
+                await ws.send(_hsm_auth_frame(hsm_key))
+                ack = await self._wait_auth_response(ws, stop_event)
+                if not ack:
+                    # Server rejected the credentials (or stopped).
+                    if stop_event.is_set():
+                        await self._close_quietly(ws)
+                        return None
+                    self._note_error("auth_rejected")
+                    await self._close_quietly(ws)
+                    self._set_state("reconnecting", reason="auth_rejected")
+                    return self._next_backoff()
                 await ws.send(self._full_subscribe_frame())
+                await self._resolve_hsm_symbols(token)
+                await ws.send(_hsm_subscribe_frame(
+                    list(self._hsm_symbols.values())))
             except Exception as exc:
                 self._note_error(_safe_ws_summary(exc))
                 await self._close_quietly(ws)
@@ -405,15 +621,15 @@ class FyersFeed:
             else None
 
     async def _connect(self, token: str):
-        import websockets
-
-        app_id = self._resolve_app_id()
         if self._ws_connect is not None:
             return await self._ws_connect(token)
+        import websockets
+
+        # The HSM socket authenticates via a binary frame AFTER connect —
+        # no Authorization header (and therefore no websockets-version
+        # header-kwarg compatibility issues).
         return await websockets.connect(
             _FYERS_WS_URL,
-            extra_headers={"Authorization":
-                           f"{app_id}:{token}"},
             close_timeout=2,
         )
 
@@ -480,25 +696,195 @@ class FyersFeed:
             await asyncio.gather(stop_task, ping_task,
                                  return_exceptions=True)
 
+    async def _wait_auth_response(self, ws: Any,
+                                  stop_event: asyncio.Event) -> bool:
+        """Wait for the HSM auth response; True only on 'K' (ok)."""
+        get_msg = asyncio.create_task(ws.recv())
+        stop_task = asyncio.create_task(stop_event.wait())
+        done, _pending = await asyncio.wait(
+            {get_msg, stop_task}, return_when=asyncio.FIRST_COMPLETED)
+        stop_task.cancel()
+        if get_msg not in done:
+            get_msg.cancel()
+            await asyncio.gather(get_msg, return_exceptions=True)
+            return False
+        try:
+            raw = get_msg.result()
+        except Exception:
+            return False
+        # Auth response frame: resp_type byte[2] == 1; payload char 'K' = ok
+        # (SDK __auth_resp: offset 4 skip, len@5:7, char@7).
+        if isinstance(raw, (bytes, bytearray)) and len(raw) > 7:
+            ok = raw[7:8] == b"K"
+            logger.debug("fyers feed %s: hsm auth %s",
+                         self._name, "ok" if ok else "rejected")
+            return ok
+        return False
+
+    async def _resolve_hsm_symbols(self, token: str) -> None:
+        """Map configured instrument keys to HSM tokens via the REST API."""
+        if self._hsm_symbols:
+            return
+
+        def _convert() -> dict:
+            import urllib.request
+            bare = token.split(":", 1)[1] if ":" in token else token
+            req = urllib.request.Request(
+                _SYMBOL_TOKEN_API,
+                data=json.dumps({"symbols": list(self._desired)}).encode(),
+                method="POST",
+                headers={"Content-Type": "application/json",
+                         "Authorization": bare,
+                         "User-Agent": USER_AGENT})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                return json.loads(r.read())
+
+        try:
+            payload = await asyncio.to_thread(_convert)
+        except Exception as exc:
+            logger.warning("fyers feed %s: symbol-token lookup failed: %s",
+                           self._name, type(exc).__name__)
+            self._hsm_symbols = {k: k for k in self._desired}
+            self._hsm_by_topic = {}
+            return
+        valid = payload.get("validSymbol") or {}
+        out: dict[str, str] = {}
+        for key in self._desired:
+            fytoken = valid.get(key)
+            seg = _EXCH_SEG.get((fytoken or "")[:4], "nse_cm")
+            if key.endswith("-INDEX"):
+                tok = _INDEX_DICT.get(key) \
+                    or key.split(":", 1)[-1].split("-")[0]
+                out[key] = f"if|{seg}|{tok}"
+            elif fytoken:
+                out[key] = f"sf|{seg}|{fytoken[10:]}"
+            else:
+                out[key] = key
+        self._hsm_symbols = out
+        self._hsm_by_topic = {v: k for k, v in out.items()}
+        logger.info("fyers feed %s: subscribed %d instrument(s)",
+                    self._name, len(out))
+
     def _handle_message(self, raw: Any) -> None:
-        """Decode one text frame into canonical patches (isolated)."""
-        if isinstance(raw, bytes):
-            raw = raw.decode("utf-8", "replace")
-        msg = json.loads(raw)
-        if not isinstance(msg, dict):
-            raise NormalizationError("frame is not a JSON object")
-        msgs = msg.get("data") if isinstance(msg.get("data"), list) \
-            else [msg]
-        for m in msgs:
-            if not isinstance(m, dict):
-                continue
-            mtype = m.get("type", "sf")
-            received = self._received_ts()
-            if mtype == "dp":
-                self._apply_depth(m, received)
-            elif mtype in ("sf", "if"):
-                self._apply_quote(m, received)
-            # unknown types are ignored silently (protocol tolerance)
+        """Decode one socket frame (binary HSM or legacy text) — isolated."""
+        if isinstance(raw, str):
+            # Text frames are not part of the HSM protocol; tolerate them.
+            logger.debug("fyers feed %s: text frame ignored (%d chars)",
+                         self._name, len(raw))
+            return
+        if not isinstance(raw, (bytes, bytearray)) or len(raw) < 3:
+            raise NormalizationError("frame too short")
+        resp_type = raw[2]
+        if resp_type == 6:
+            self._parse_datafeed(bytes(raw))
+        elif resp_type == 1:
+            logger.debug("fyers feed %s: late auth ack", self._name)
+        elif resp_type in (4, 5, 7, 8, 12):
+            logger.debug("fyers feed %s: hsm ack type=%d", self._name,
+                         resp_type)
+        else:
+            logger.debug("fyers feed %s: unknown frame type=%d",
+                         self._name, resp_type)
+
+    def _parse_datafeed(self, data: bytes) -> None:
+        """Decode a binary datafeed frame (resp_type 6) into quote patches.
+
+        Ports the SDK's __datafeed_resp: snapshot (83) carries the full
+        field set plus multiplier/precision/identity; update (85) carries
+        changed fields only. Depth ('dp') topics are tolerated and skipped
+        (REST depth is used instead).
+        """
+        import struct
+        scrip_count = struct.unpack("!H", data[7:9])[0]
+        offset = 9
+        for _ in range(scrip_count):
+            if offset >= len(data):
+                break
+            data_type = data[offset]
+            if data_type == 83:      # snapshot
+                offset += 1
+                topic_id = struct.unpack("H", data[offset:offset + 2])[0]
+                offset += 2
+                name_len = data[offset]
+                offset += 1
+                topic_name = data[offset:offset + name_len].decode(
+                    "utf-8", "replace")
+                offset += name_len
+                field_count = data[offset]
+                offset += 1
+                values: dict[str, int] = {}
+                is_depth = topic_name.startswith("dp")
+                val_map = _DEPTH_VAL if is_depth else (
+                    _INDEX_VAL if topic_name.startswith("if") else _DATA_VAL)
+                for idx in range(field_count):
+                    value = struct.unpack(">i", data[offset:offset + 4])[0]
+                    offset += 4
+                    if idx < len(val_map) and value != -2147483648:
+                        values[val_map[idx]] = value
+                multiplier = struct.unpack(">H", data[offset:offset + 2])[0]
+                offset += 2
+                precision = data[offset]
+                offset += 1
+                for _i in range(3):   # exchange, exchange_token, symbol str
+                    slen = data[offset]
+                    offset += 1 + slen
+                self._sym_data[topic_id] = {
+                    "values": values, "multiplier": multiplier,
+                    "precision": precision, "topic": topic_name}
+                if not is_depth:
+                    self._emit_tick(topic_id)
+            elif data_type == 85:    # delta update
+                offset += 1
+                topic_id = struct.unpack("H", data[offset:offset + 2])[0]
+                offset += 2
+                field_count = data[offset]
+                offset += 1
+                snap = self._sym_data.get(topic_id)
+                if snap is None:
+                    offset += field_count * 4   # delta before snapshot
+                    continue
+                val_map = (_INDEX_VAL if snap["topic"].startswith("if")
+                           else _DATA_VAL)
+                changed = False
+                for idx in range(field_count):
+                    value = struct.unpack(">i", data[offset:offset + 4])[0]
+                    offset += 4
+                    if idx >= len(val_map) or value == -2147483648:
+                        continue
+                    name = val_map[idx]
+                    if snap["values"].get(name) != value:
+                        snap["values"][name] = value
+                        changed = True
+                if changed:
+                    self._emit_tick(topic_id)
+            else:
+                break                     # unknown record type: stop parse
+
+    def _emit_tick(self, topic_id: int) -> None:
+        """Scale stored raw fields and deliver one canonical patch."""
+        snap = self._sym_data.get(topic_id)
+        if snap is None:
+            return
+        scale = (10 ** snap["precision"]) * snap["multiplier"]
+        msg: dict[str, Any] = {}
+        for name, raw_value in snap["values"].items():
+            if name in _SCALED_VAL:
+                msg[name] = raw_value / scale
+            elif name in ("last_traded_time", "exch_feed_time"):
+                continue                  # received_ts covers timing
+            else:
+                msg[name] = raw_value
+        original = self._hsm_by_topic.get(snap["topic"])
+        if original:
+            msg["symbol"] = original
+        elif snap["topic"].startswith(("sf", "if")):
+            return                        # unresolvable identity: skip
+        received = self._received_ts()
+        try:
+            self._apply_quote(msg, received)
+        except NormalizationError:
+            raise
+        # (inner errors are isolated by the recv loop)
 
     def _apply_quote(self, m: dict, received) -> None:
         from market.service import QuotePatch

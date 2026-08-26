@@ -29,7 +29,9 @@ NO LIVE BROKER. Stub transport/ws only. Run: python test/test_source_controls.py
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
+import struct
 import os
 import sys
 import tempfile
@@ -382,17 +384,37 @@ async def test_sc9_concurrent_starts_one_task(runner: R) -> None:
 class FyersStubWS:
     def __init__(self):
         self.sent: list[bytes] = []
+        self.incoming: list[bytes] = []
         self.closed = False
 
     async def send(self, data):
+        data = bytes(data)
         self.sent.append(data)
+        # Auto-answer the binary auth frame (resp_type 1) with 'K' ok.
+        if len(data) >= 3 and data[2] == 1:
+            self.incoming.insert(0, _FYERS_AUTH_OK)
 
     async def recv(self):
+        if getattr(self, "incoming", None):
+            return self.incoming.pop(0)
         await asyncio.sleep(3600)
         return ""
 
     async def close(self):
         self.closed = True
+
+
+_FYERS_AUTH_OK = (
+    struct.pack("!H", 15) + b"\x01\x00\x00"
+    + struct.pack("!H", 1) + b"K" + b"\x00\x00\x00"
+    + struct.pack(">I", 5))
+
+
+def _fy_jwt(hsm_key: str = "HSMSYNTH") -> str:
+    def b64(obj):
+        return base64.urlsafe_b64encode(
+            json.dumps(obj).encode()).decode().rstrip("=")
+    return f"{b64({'alg': 'none'})}.{b64({'hsm_key': hsm_key})}."
 
 
 async def test_sc10_fyers_generic_api(runner: R) -> None:
@@ -414,7 +436,7 @@ async def test_sc10_fyers_generic_api(runner: R) -> None:
     cfg = {"source_name": "fyers",
            "instrument_keys": ["NSE:SBIN-EQ"],
            "app_id": "APP-1",
-           "access_token_getter": lambda: "SYNTHETIC-FY-TOKEN",
+           "access_token_getter": lambda: _fy_jwt(),
            "ws_connect": ws_connect,
            "utc_now_iso": lambda: "2026-08-25T10:00:00+00:00"}
     feed = FyersFeed(config=cfg, auth=object(), market_service=None)
@@ -442,10 +464,9 @@ async def test_sc10_fyers_generic_api(runner: R) -> None:
         "SC10-streaming-again",
         await wait_for(lambda: feed.status()["state"] == "streaming"))
 
-    join_sub = [json.loads(f) for f in sockets[1].sent]
-    types = [f.get("type") for f in join_sub]
+    types = [f[2] for f in sockets[1].sent if len(f) >= 3]
     runner.assert_true("SC10-rejoin-and-resubscribe",
-                       1 in types and 2 in types, f"frames: {types}")
+                       1 in types and 4 in types, f"frame types: {types}")
 
     # Stop through the generic API.
     runner.assert_true("SC10-stop-ok", await mgr.stop_source("fyers"))
@@ -838,7 +859,7 @@ async def test_sm1_startup_matrix(runner: R) -> None:
 
     from brokers.fyers.feed import FyersFeed
     fcfg = {"source_name": "fyers", "instrument_keys": ["NSE:SBIN-EQ"],
-            "app_id": "A", "access_token_getter": lambda: "FY",
+            "app_id": "A", "access_token_getter": lambda: _fy_jwt(),
             "ws_connect": fws,
             "utc_now_iso": lambda: "2026-08-25T10:00:00+00:00"}
     ff = FyersFeed(config=fcfg, auth=object())
@@ -1009,7 +1030,7 @@ async def test_fyr_fyers_readiness_parity(runner: R) -> None:
     runner.assert_eq("FY-R-readiness-reason",
                      mgr.readiness_reason("fyers"), "missing_token")
     # Supply token -> start works
-    holder["token"] = "SYNTHETIC-FY-TOKEN"
+    holder["token"] = _fy_jwt()
     r = await mgr.start_source("fyers")
     runner.assert_eq("FY-R-start", r, "started")
     await wait_for(lambda: feed.status()["state"] == "streaming")
