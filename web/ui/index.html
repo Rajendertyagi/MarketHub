@@ -321,15 +321,23 @@
     </div>
 
     <div class="panel" style="margin-top:10px">
-      <div class="panel-header"><h2>Upstox API Credentials</h2></div>
+      <div class="panel-header"><h2>Upstox</h2></div>
       <div class="auth-form">
         <p class="hint" style="padding:0 0 10px 0">
-          One-time setup. Saved on this computer only — never shown again.
+          One-time setup. Saved encrypted on this computer only.
         </p>
         <div class="auth-row">
           <label>Status</label>
           <span id="cred-key-status" class="chip chip-off">API Key: —</span>
           <span id="cred-secret-status" class="chip chip-off">API Secret: —</span>
+        </div>
+        <div class="auth-row">
+          <label>Daily Login</label>
+          <span id="auth-token-status" class="chip chip-off">Not configured</span>
+        </div>
+        <div class="auth-row">
+          <label>Feed State</label>
+          <span id="auth-feed-state" class="setting-val">—</span>
         </div>
         <div class="auth-row">
           <label for="cred-api-key">API Key</label>
@@ -346,12 +354,25 @@
           <button id="cred-save" class="btn">Save Credentials</button>
           <button id="cred-delete" class="btn" style="border-color:var(--red);color:var(--red)">Delete Credentials</button>
         </div>
+        <div class="auth-row">
+          <label></label>
+          <button id="oauth-login-btn" class="btn" style="display:none">Login with Upstox</button>
+        </div>
         <div id="cred-message" class="hint"></div>
+        <div id="auth-message" class="hint"></div>
+        <div class="auth-row" style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+          <label for="auth-token-input">Manual Token</label>
+          <input type="password" id="auth-token-input" aria-label="Upstox manual access token"
+                 placeholder="Paste Upstox access token (emergency fallback)…" autocomplete="off">
+        </div>
+        <div class="auth-row">
+          <label></label>
+          <button id="auth-submit" class="btn">Save Token</button>
+        </div>
       </div>
     </div>
-
-    <div class="panel" style="margin-top:10px">
-      <div class="panel-header"><h2>Fyers Credentials</h2></div>
+<div class="panel" style="margin-top:10px">
+      <div class="panel-header"><h2>Fyers</h2></div>
       <div class="auth-form">
         <p class="hint" style="padding:0 0 10px 0">
           One-time setup. Saved encrypted on this computer only.
@@ -458,34 +479,7 @@
       </div>
     </div>
 
-    <div class="panel" style="margin-top:10px">
-      <div class="panel-header"><h2>Upstox Login</h2></div>
-      <div class="auth-form">
-        <div class="auth-row">
-          <label>Authentication</label>
-          <span id="auth-token-status" class="chip chip-off">Not configured</span>
-        </div>
-        <div class="auth-row">
-          <label>Feed State</label>
-          <span id="auth-feed-state" class="setting-val">—</span>
-        </div>
-        <div class="auth-row">
-          <label></label>
-          <button id="oauth-login-btn" class="btn" style="display:none">Login with Upstox</button>
-        </div>
-        <div id="auth-message" class="hint"></div>
-        <div class="auth-row" style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
-          <label for="auth-token-input">Manual Token</label>
-          <input type="password" id="auth-token-input" class="filter-input"
-                 placeholder="Paste Upstox access token (emergency fallback)…" autocomplete="off">
-        </div>
-        <div class="auth-row">
-          <label></label>
-          <button id="auth-submit" class="btn">Save Token</button>
-        </div>
-      </div>
-    </div>
-  </section>
+      </section>
 
 </main>
 

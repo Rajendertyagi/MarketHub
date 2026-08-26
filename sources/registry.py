@@ -18,8 +18,11 @@ automatically receive the shared application instance from
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Callable, Type
+
+logger = logging.getLogger(__name__)
 
 from sources.http_poller import HttpJsonPoller
 from sources.test_source import TestSource
@@ -50,9 +53,14 @@ def _create_upstox_feed(config: dict, *, market_service: Any = None) -> Any:
     else:
         token = str(token_ref)
     if not token.strip():
-        raise ValueError(
-            "upstox access_token must be a non-empty string or $ENV_VAR reference"
-        )
+        # OAuth-configured deployments have no static token:
+        # construct with the known placeholder so the source
+        # registers and gates on readiness until WebUI login
+        # supplies real credentials.
+        token = 'PENDING-OAUTH-LOGIN'
+        logger.info(
+            'upstox access_token not configured - source will gate on OAuth login')
+
 
     credentials = UpstoxCredentials(access_token=token)
     rest = UpstoxRest()
