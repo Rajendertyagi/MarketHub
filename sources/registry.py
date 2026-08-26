@@ -125,6 +125,10 @@ def _create_fyers_feed(config: dict, *, market_service: Any = None) -> Any:
     + ``redirect_uri``) — never from config.json. The feed resolves the App
     ID from the store at connect time, so credentials added after startup
     (first-run WebUI setup) are picked up without rebuilding the feed.
+
+    Optional TBT depth channel:
+      Set ``tbt_enabled: true`` in config to activate 50-level depth.
+      TBT supplements HSM — both update the same MarketService.
     """
     from brokers.fyers.auth import FyersAuth
     from brokers.fyers.feed import FyersFeed

@@ -296,6 +296,11 @@ class FyersFeed:
         self._connected_at: str | None = None
         self._started_at: str | None = None
 
+        # TBT depth channel (optional, supplements HSM)
+        self._tbt_enabled = config.get("tbt_enabled", False)
+        self._tbt_feed = None
+        self._tbt_task = None
+
     # -- identity / status ------------------------------------------------------
 
     @property
@@ -378,7 +383,7 @@ class FyersFeed:
         return self._app_id
 
     def status(self) -> dict[str, Any]:
-        return {
+        base = {
             "name": self._name,
             "state": self._state,
             "provider": "fyers",
@@ -401,7 +406,10 @@ class FyersFeed:
             "auth_required": self._state == "auth_required",
             "not_ready_reason": self.readiness_reason(),
             "recent_transitions": list(self._transitions),
+            # TBT depth channel status
+            "tbt": self._tbt_status(),
         }
+        return base
 
     def readiness_reason(self) -> str | None:
         """Why this feed cannot start right now, or None if ready (WP2).
@@ -495,6 +503,10 @@ class FyersFeed:
         """Shared lifecycle loop: authorize->connect->subscribe->recv."""
         del publisher
         self._started_at = self._now()
+
+        # Start TBT channel if enabled
+        await self._start_tbt_channel(stop_event)
+
         try:
             while not stop_event.is_set():
                 outcome = await self._run_session(stop_event)
@@ -521,6 +533,9 @@ class FyersFeed:
             self._note_exit("cancelled")
             self._set_state("stopped", reason="cancelled")
             raise
+        finally:
+            # Stop TBT channel
+            await self._stop_tbt_channel()
 
     async def _run_session(self, stop_event: asyncio.Event):
         """One connect->join->subscribe->recv cycle.
@@ -930,6 +945,50 @@ class FyersFeed:
     def _received_ts(self):
         from datetime import datetime, timezone
         return datetime.now(timezone.utc)
+
+    # -- TBT depth channel -------------------------------------------------------
+
+    async def _start_tbt_channel(self, stop_event: asyncio.Event) -> None:
+        """Start TBT depth channel if enabled."""
+        if not self._tbt_enabled:
+            return
+
+        try:
+            from brokers.fyers.tbt.feed import FyersTbtFeed
+
+            self._tbt_feed = FyersTbtFeed(
+                access_token_getter=self._access_token_getter,
+                config=self._config,
+                market_service=self._market_service,
+            )
+
+            self._tbt_task = asyncio.create_task(
+                self._tbt_feed.run(publisher=None, stop_event=stop_event)
+            )
+            logger.info("TBT depth channel started")
+
+        except Exception as e:
+            logger.error("Failed to start TBT channel: %s", e)
+
+    async def _stop_tbt_channel(self) -> None:
+        """Stop TBT depth channel."""
+        if self._tbt_feed:
+            await self._tbt_feed.stop()
+            self._tbt_feed = None
+        if self._tbt_task:
+            self._tbt_task.cancel()
+            try:
+                await self._tbt_task
+            except asyncio.CancelledError:
+                pass
+            self._tbt_task = None
+            logger.info("TBT depth channel stopped")
+
+    def _tbt_status(self) -> dict[str, Any]:
+        """Get TBT channel status."""
+        if not self._tbt_feed:
+            return {"enabled": self._tbt_enabled, "state": "not_started"}
+        return self._tbt_feed.status()
 
     def _fail(self, message: str) -> None:
         self._last_error = message
