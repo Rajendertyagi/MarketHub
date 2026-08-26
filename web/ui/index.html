@@ -391,6 +391,39 @@
     </div>
 
     <div class="panel" style="margin-top:10px">
+      <div class="panel-header"><h2>AI Provider</h2></div>
+      <div class="auth-form">
+        <p class="hint" style="padding:0 0 10px 0">
+          OpenAI-compatible endpoint for Chat. API key is stored
+          encrypted on this computer only.
+        </p>
+        <div class="auth-row">
+          <label for="ai-endpoint">Endpoint</label>
+          <input type="text" id="ai-endpoint" aria-label="AI endpoint"
+                 placeholder="https://api.openai.com/v1" autocomplete="off"
+                 class="filter-input">
+        </div>
+        <div class="auth-row">
+          <label for="ai-model">Model</label>
+          <input type="text" id="ai-model" aria-label="AI model"
+                 placeholder="gpt-4o-mini" autocomplete="off"
+                 class="filter-input">
+        </div>
+        <div class="auth-row">
+          <label for="ai-key">API Key</label>
+          <input type="password" id="ai-key" aria-label="AI API key"
+                 placeholder="Paste API key\u2026" autocomplete="new-password"
+                 class="filter-input">
+        </div>
+        <div class="auth-row">
+          <label></label>
+          <button id="ai-save" class="btn">Save AI Settings</button>
+        </div>
+        <div id="ai-message" class="hint"></div>
+      </div>
+    </div>
+
+<div class="panel" style="margin-top:10px">
       <div class="panel-header"><h2>Application</h2></div>
       <div class="auth-form">
         <p class="hint" style="padding:0 0 10px 0">
