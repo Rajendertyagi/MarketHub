@@ -35,6 +35,29 @@ __all__ = ["setup_logging", "log_startup_diagnostics"]
 
 DEFAULT_LOG_RELATIVE = os.path.join("data", "logs")
 LOG_FILE_NAME = "markethub.log"
+
+
+class _BenignSocketClosureFilter(logging.Filter):
+    """Drop 'Task exception was never retrieved' noise for NORMAL socket
+    closures.
+
+    When the feed closes the websocket while the websockets library has an
+    internal recv() pending, that task raises ConnectionClosedOK
+    (1000/1000) which nothing retrieves — asyncio logs it as ERROR. It is
+    a normal, expected closure path, not a fault. Anything else (real
+    errors, abnormal closures) still passes through.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            if record.name != "asyncio":
+                return True
+            msg = record.getMessage()
+            if "Task exception was never retrieved" not in msg:
+                return True
+            return "ConnectionClosedOK" not in msg
+        except Exception:
+            return True
 MAX_BYTES = 10 * 1024 * 1024   # 10 MiB per file
 BACKUP_COUNT = 5               # markethub.log.1 .. markethub.log.5
 _FORMAT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
@@ -74,6 +97,7 @@ def setup_logging(
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
     formatter = logging.Formatter(_FORMAT)
+    root.addFilter(_BenignSocketClosureFilter())
 
     # Detach handlers from previous configuration (force/idempotency).
     for handler in list(root.handlers):
