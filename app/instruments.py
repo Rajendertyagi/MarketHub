@@ -224,6 +224,13 @@ class InstrumentCatalog:
     def search(self, **kw: Any) -> list[dict[str, Any]]:
         return self._store.search_instruments(**kw)
 
+    def derivative_expiries(self, underlying: str,
+                            instrument_type: str) -> list[str]:
+        return self._store.derivative_expiries(underlying, instrument_type)
+
+    def option_strikes(self, underlying: str, expiry: str) -> list[dict]:
+        return self._store.option_strikes(underlying, expiry)
+
     def get(self, provider: str, token: str) -> dict[str, Any] | None:
         return self._store.get_instrument(provider, token)
 

@@ -589,6 +589,25 @@ class EventStore:
         finally:
             conn.close()
 
+    def derivative_expiries(self, underlying: str,
+                            instrument_type: str) -> list[str]:
+        """Sorted distinct expiries for one underlying's futures/options."""
+        conn = self._open(self._db_path)
+        try:
+            return _products.derivative_expiries(
+                conn, underlying=underlying, instrument_type=instrument_type)
+        finally:
+            conn.close()
+
+    def option_strikes(self, underlying: str, expiry: str) -> list[dict]:
+        """All option contracts for one underlying+expiry, strike-sorted."""
+        conn = self._open(self._db_path)
+        try:
+            return _products.option_strikes(
+                conn, underlying=underlying, expiry=expiry)
+        finally:
+            conn.close()
+
     def get_instrument(self, provider: str,
                        instrument_token: str) -> dict[str, Any] | None:
         conn = self._open(self._db_path)

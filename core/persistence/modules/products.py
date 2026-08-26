@@ -148,6 +148,10 @@ def search_instruments(
     exchange: str | None = None,
     instrument_type: str | None = None,
     provider: str | None = None,
+    underlying: str | None = None,
+    expiry: str | None = None,
+    option_type: str | None = None,
+    strike: float | None = None,
     limit: int = 25,
 ) -> list[dict[str, Any]]:
     sql = f"SELECT {', '.join(_INSTRUMENT_COLUMNS)} FROM instruments WHERE 1=1"
@@ -164,11 +168,62 @@ def search_instruments(
     if provider:
         sql += " AND provider = ?"
         args.append(provider)
+    if underlying:
+        sql += " AND underlying = ?"
+        args.append(underlying)
+    if expiry:
+        sql += " AND expiry = ?"
+        args.append(expiry)
+    if option_type:
+        sql += " AND option_type = ?"
+        args.append(option_type)
+    if strike is not None:
+        sql += " AND strike = ?"
+        args.append(strike)
     sql += " ORDER BY tradingsymbol LIMIT ?"
     args.append(max(1, min(int(limit), 100)))
     conn.row_factory = sqlite3.Row
     try:
         return [dict(r) for r in conn.execute(sql, args)]
+    finally:
+        conn.row_factory = None
+
+
+def derivative_expiries(
+    conn: sqlite3.Connection,
+    *,
+    underlying: str,
+    instrument_type: str,
+) -> list[str]:
+    """Sorted distinct expiries for one underlying's futures/options."""
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT expiry FROM instruments "
+            "WHERE underlying = ? AND instrument_type = ? "
+            "AND expiry IS NOT NULL ORDER BY expiry",
+            (underlying, instrument_type))
+        return [r["expiry"] for r in rows]
+    finally:
+        conn.row_factory = None
+
+
+def option_strikes(
+    conn: sqlite3.Connection,
+    *,
+    underlying: str,
+    expiry: str,
+) -> list[dict[str, Any]]:
+    """All option contracts for one underlying+expiry, strike-sorted.
+
+    Returns flat contract rows; callers pair CE/PE per strike.
+    """
+    sql = (f"SELECT {', '.join(_INSTRUMENT_COLUMNS)} FROM instruments "
+           "WHERE underlying = ? AND expiry = ? "
+           "AND instrument_type = 'OPTION' ORDER BY strike, option_type")
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(sql, (underlying, expiry))]
     finally:
         conn.row_factory = None
 
