@@ -26,7 +26,6 @@
     <button class="nav-link active" data-view="dashboard">Dashboard</button>
     <button class="nav-link" data-view="markets">Markets</button>
     <button class="nav-link" data-view="options">Option Chain</button>
-    <button class="nav-link" data-view="sources">Sources</button>
     <button class="nav-link" data-view="instruments">Instruments</button>
     <button class="nav-link" data-view="watchlists">Watchlists</button>
     <button class="nav-link" data-view="charts">Charts</button>
@@ -102,15 +101,6 @@
   </section>
 
   <!-- ── SOURCES VIEW ── -->
-  <section id="view-sources" class="view">
-    <div class="panel">
-      <div class="panel-header"><h2>Source Status</h2></div>
-      <div id="sources-msg" class="hint"></div>
-      <div id="sources-detail"><em>Loading…</em></div>
-    </div>
-    <p class="hint">To log in or manage Upstox credentials, go to <button class="nav-link" data-view="settings" style="padding:0;font-size:12px;text-decoration:underline">Settings</button>.</p>
-  </section>
-
   <!-- ── INSTRUMENTS VIEW ── -->
   <section id="view-instruments" class="view">
     <div class="toolbar">
@@ -339,6 +329,8 @@
           <label>Feed State</label>
           <span id="auth-feed-state" class="setting-val">—</span>
         </div>
+        <div id="upstox-src-detail" style="margin-top:10px"></div>
+        <div id="upstox-src-msg" class="hint"></div>
         <div class="auth-row">
           <label for="cred-api-key">API Key</label>
           <input type="text" id="cred-api-key" class="filter-input"
@@ -389,6 +381,8 @@
           <label>Feed State</label>
           <span id="fyers-feed-state" class="setting-val">—</span>
         </div>
+        <div id="fyers-src-detail" style="margin-top:10px"></div>
+        <div id="fyers-src-msg" class="hint"></div>
         <div class="auth-row">
           <label for="fyers-app-id">App ID</label>
           <input type="text" id="fyers-app-id" class="filter-input"
@@ -511,6 +505,6 @@
 </footer>
 
 <script src="/ui/vendor/echarts/dist/echarts.min.js"></script>
-<script src="/ui/js/app.js?v=24"></script>
+<script src="/ui/js/app.js?v=28"></script>
 </body>
 </html>

@@ -311,9 +311,9 @@
 
       renderMovers();
       renderMarketStatus();
-      // Update sources detail panel (only when visible).
-      if (currentView === "sources") {
-        renderSourcesDetail(sources);
+      // Update per-broker source detail tables inside Settings (single page).
+      if (currentView === "settings") {
+        renderAllSourceDetails(sources);
       }
     } catch { /* silent */ }
   }
@@ -405,42 +405,42 @@
     return html;
   }
 
-  function renderSourcesDetail(sources) {
-    const el = $("sources-detail");
-    if (!sources.length) {
-      el.innerHTML = "<em>No sources configured</em>";
+  function renderSourceDetail(provider, sources) {
+    const el = document.getElementById(provider + "-src-detail");
+    if (!el) return;
+    const s = sources.find((x) => x.name === provider);
+    if (!s) {
+      el.innerHTML = "<em>Source not configured</em>";
       return;
     }
-    el.innerHTML = sources.map((s) => {
-      const state = s.state || "—";
-      const stateFriendly = friendlyState(state);
-      const stateCls = state === "streaming" ? "chip chip-on"
-        : state === "auth_required" ? "chip" : "chip chip-off";
-      // Stale-state surfacing: an active label with a dead task means the
-      // feed task exited without reporting (never hide this).
-      const stale = s.task_running === false && ACTIVE_STATES.has(state);
-      const staleHint = stale
-        ? `<tr><td style="color:var(--text-muted)"></td>` +
-          `<td style="color:var(--red)">Feed task exited — status may be stale` +
-          `${s.last_exit_reason ? ` (${esc(s.last_exit_reason)})` : ""}</td></tr>`
-        : "";
-      const authHint = state === "auth_required"
-        ? '<tr><td style="color:var(--text-muted)"></td>' +
-          '<td>Daily login required — use Login with Upstox below or in Settings</td></tr>'
-        : "";
-      const creds = (s.provider || "") === "upstox"
-        ? (usableCreds(s) ? "Configured" : "Missing / expired")
-        : "—";
-      const dailyLogin = (s.provider || "") === "upstox"
-        ? (usableCreds(s) ? "Active" : "Required")
-        : "—";
-      const subd = s.subscribed_instruments != null
-        ? `${s.configured_instruments ?? 0} desired / ${s.subscribed_instruments} subscribed`
-        : `${s.configured_instruments ?? 0} desired`;
-      return `
+    const state = s.state || "—";
+    const stateFriendly = friendlyState(state);
+    const stateCls = state === "streaming" ? "chip chip-on"
+      : state === "auth_required" ? "chip" : "chip chip-off";
+    // Stale-state surfacing: an active label with a dead task means the
+    // feed task exited without reporting (never hide this).
+    const stale = s.task_running === false && ACTIVE_STATES.has(state);
+    const staleHint = stale
+      ? `<tr><td style="color:var(--text-muted)"></td>` +
+        `<td style="color:var(--red)">Feed task exited — status may be stale` +
+        `${s.last_exit_reason ? ` (${esc(s.last_exit_reason)})` : ""}</td></tr>`
+      : "";
+    const authHint = state === "auth_required"
+      ? '<tr><td style="color:var(--text-muted)"></td>' +
+        '<td>Daily login required — use Login with Upstox below</td></tr>'
+      : "";
+    const creds = (s.provider || "") === "upstox"
+      ? (usableCreds(s) ? "Configured" : "Missing / expired")
+      : "—";
+    const dailyLogin = (s.provider || "") === "upstox"
+      ? (usableCreds(s) ? "Active" : "Required")
+      : "—";
+    const subd = s.subscribed_instruments != null
+      ? `${s.configured_instruments ?? 0} desired / ${s.subscribed_instruments} subscribed`
+      : `${s.configured_instruments ?? 0} desired`;
+    el.innerHTML = `
       <table class="data-table">
-        <tr><td style="width:180px;color:var(--text-muted)">Name</td><td><strong>${esc(s.name)}</strong></td></tr>
-        <tr><td style="color:var(--text-muted)">Provider</td><td>${esc(s.provider)}</td></tr>
+        <tr><td style="width:180px;color:var(--text-muted)">Provider</td><td>${esc(s.provider)}</td></tr>
         <tr><td style="color:var(--text-muted)">App Credentials</td><td>${creds}</td></tr>
         <tr><td style="color:var(--text-muted)">Daily Login</td><td>${dailyLogin}</td></tr>
         <tr><td style="color:var(--text-muted)">Feed State</td><td><span class="${stateCls}">${stateFriendly}</span></td></tr>
@@ -462,11 +462,16 @@
         ${renderTransitions(s.recent_transitions)}
         <tr><td style="color:var(--text-muted)">Controls</td><td>${sourceButtonsHtml(s)}</td></tr>
       </table>`;
-    }).join("<hr>");
   }
 
-  function showSourcesMsg(text, ok) {
-    const msg = $("sources-msg");
+  function renderAllSourceDetails(sources) {
+    renderSourceDetail("upstox", sources);
+    renderSourceDetail("fyers", sources);
+  }
+
+  function showSourcesMsg(text, ok, name) {
+    const id = name ? name + "-src-msg" : "sources-msg";
+    const msg = $(id);
     if (!msg) return;
     msg.textContent = text;
     msg.className = "hint " + (ok ? "ok" : "err");
@@ -493,7 +498,7 @@
     }
     sourceActionInFlight.set(name, action);
     try {
-      renderSourcesDetail(lastSourcesSnapshot || []);
+      renderAllSourceDetails(lastSourcesSnapshot || []);
       const res = await fetch(`/api/sources/${encodeURIComponent(name)}/${action}`,
                               { method: "POST" });
       let body = {};
@@ -502,21 +507,21 @@
         if (action === "start") {
           showSourcesMsg(body.result === "already_running"
             ? "Feed already running — no duplicate started."
-            : "Start requested — connecting…", true);
+            : "Start requested — connecting…", true, name);
         } else if (action === "stop") {
-          showSourcesMsg("Feed stopped. Credentials and subscriptions retained.", true);
+          showSourcesMsg("Feed stopped. Credentials and subscriptions retained.", true, name);
         } else {
-          showSourcesMsg("Restart requested — fresh authorize + reconnect…", true);
+          showSourcesMsg("Restart requested — fresh authorize + reconnect…", true, name);
         }
       } else if (body.reason === "authentication_required") {
-        showSourcesMsg("Daily login required.", false);
+        showSourcesMsg("Daily login required.", false, name);
       } else if (body.reason === "unknown_source") {
-        showSourcesMsg("Unknown source.", false);
+        showSourcesMsg("Unknown source.", false, name);
       } else {
-        showSourcesMsg(`Command failed (HTTP ${res.status}).`, false);
+        showSourcesMsg(`Command failed (HTTP ${res.status}).`, false, name);
       }
     } catch {
-      showSourcesMsg("Network error while controlling the feed.", false);
+      showSourcesMsg("Network error while controlling the feed.", false, name);
     } finally {
       sourceActionInFlight.delete(name);
       pollSources();   // immediate refresh of status + buttons
@@ -524,11 +529,16 @@
   }
 
   function initSourceControls() {
-    $("sources-detail").addEventListener("click", (e) => {
-      const btn = e.target.closest("[data-src-action]");
-      if (!btn || btn.disabled) return;
-      sourceControlRequest(btn.dataset.srcAction, btn.dataset.srcName);
-    });
+    // Delegated on the Settings view: the per-broker detail tables render
+    // Start/Stop/Restart (and Login) buttons with data-src-action / -name.
+    const settings = $("view-settings");
+    if (settings) {
+      settings.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-src-action]");
+        if (!btn || btn.disabled) return;
+        sourceControlRequest(btn.dataset.srcAction, btn.dataset.srcName);
+      });
+    }
   }
 
   // ── Upstox auth (token submit) ──────────────────────────────────────────

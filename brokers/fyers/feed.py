@@ -841,7 +841,14 @@ class FyersFeed:
                 self._sym_data[topic_id] = {
                     "values": values, "multiplier": multiplier,
                     "precision": precision, "topic": topic_name}
-                if not is_depth:
+                if is_depth:
+                    # Emit depth separately (does not go through _emit_tick)
+                    received = self._received_ts()
+                    try:
+                        self._apply_depth(values, received)
+                    except NormalizationError:
+                        raise
+                else:
                     self._emit_tick(topic_id)
             elif data_type == 85:    # delta update
                 offset += 1

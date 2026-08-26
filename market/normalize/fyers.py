@@ -86,6 +86,7 @@ _WS_SYMBOL_ALIASES = {
     # extended coverage
     "upper_ckt": "upper_circuit",
     "lower_ckt": "lower_circuit",
+    "OI": "open_interest",
 }
 
 
@@ -174,10 +175,18 @@ def quote_fields_from_symbol_update(
     symbol = msg.get("symbol")
     fields = _identity(symbol, received_ts)
     fields.update(_fields_from_aliases(msg, _WS_SYMBOL_ALIASES))
-    if msg.get("last_traded_time") is not None:
+    # Prefer exch_feed_time for exchange timestamp if available
+    # (last_traded_time is the timestamp of the last trade, exch_feed_time
+    #  is the exchange's feed timestamp — more useful for latency analysis)
+    if msg.get("exch_feed_time") is not None:
+        fields["exchange_ts"] = parse_timestamp(
+            msg["exch_feed_time"], unit="s", field="exch_feed_time"
+        )
+    elif msg.get("last_traded_time") is not None:
         fields["exchange_ts"] = parse_timestamp(
             msg["last_traded_time"], unit="s", field="last_traded_time"
         )
+    if msg.get("last_traded_time") is not None:
         fields["last_trade_time"] = parse_timestamp(
             msg["last_traded_time"], unit="s", field="last_traded_time"
         )

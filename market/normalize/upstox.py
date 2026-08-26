@@ -130,6 +130,17 @@ def quote_from_rest(entry: dict[str, Any], *, received_ts: datetime) -> Quote:
     set_reported(fields, entry, "oi", "open_interest", to_float)
     set_reported(fields, entry, "total_buy_quantity", "total_buy_qty", to_int)
     set_reported(fields, entry, "total_sell_quantity", "total_sell_qty", to_int)
+    # Circuit limits (only present in REST, not in WS)
+    set_reported(fields, entry, "upper_circuit_limit", "upper_circuit", to_float)
+    set_reported(fields, entry, "lower_circuit_limit", "lower_circuit", to_float)
+    # Last trade time (epoch ms from REST)
+    ltt = entry.get("last_trade_time")
+    if ltt is not None:
+        try:
+            fields["last_trade_time"] = parse_timestamp(ltt, unit="ms",
+                                                        field="last_trade_time")
+        except TimestampError:
+            pass
     if entry.get("timestamp") is not None:
         fields["exchange_ts"] = _rest_timestamp(
             entry["timestamp"], f"upstox {fields['instrument_token']} timestamp"
