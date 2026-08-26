@@ -111,54 +111,70 @@ def upstox_master_records(payload: bytes | list) -> list[dict[str, Any]]:
 # Fyers master parsing
 # ---------------------------------------------------------------------------
 
-# Fyers sym_master JSON rows use positional arrays behind a header object;
-# documented key order for NSE_CM/NSE_FO:
-#   0 fyToken, 1 symbol string, 2 exchange, 3 segment, 4 symbolDetails,
-#   5 exSymName, 6 displayName?, ... variable — parse defensively by name
-# when dicts, positionally when lists with >=13 columns:
-#   [fyToken, sym, exch, seg, details, exSym, tick, lot, currency?, ...]
-_FYERS_POS = {"token": 0, "symbol": 1, "exchange": 2, "segment": 3,
-              "details": 4, "ex_sym": 5, "tick": 6, "lot": 7}
+# Fyers sym_master files are JSON OBJECTS keyed by "EXCH:SYMBOL" with
+# authoritative per-instrument fields (verified against live masters):
+#   fyToken, exchange (10 NSE/12 BSE/11 MCX), segment (10 CM/11 FO),
+#   exInstType (0 EQ, 9 ETF, 10 INDEX, 11 FUTIDX, 13 FUTSTK,
+#   14 OPTIDX, 15 OPTSTK), expiryDate (epoch seconds string),
+#   optType (CE/PE/XX), strikePrice, minLotSize, tickSize, isin,
+#   underSym, symDetails.
+_FYERS_INST_TYPE = {
+    0: "EQUITY", 9: "ETF", 10: "INDEX",
+    11: "FUTURE", 13: "FUTURE",
+    14: "OPTION", 15: "OPTION",
+}
+_FYERS_EXCHANGE = {10: "NSE", 12: "BSE", 11: "MCX"}
+
+
+def _fyers_expiry_iso(raw: Any) -> str | None:
+    """epoch-seconds string -> ISO date (YYYY-MM-DD)."""
+    try:
+        if raw in (None, "", 0):
+            return None
+        from datetime import datetime, timezone
+        return datetime.fromtimestamp(
+            int(raw), tz=timezone.utc).strftime("%Y-%m-%d")
+    except Exception:
+        return None
 
 
 def fyers_master_records(payload: bytes) -> list[dict[str, Any]]:
     """Parse official Fyers <SEGMENT>_sym_master.json into canonical records."""
     data = json.loads(payload.decode("utf-8"))
-    if not isinstance(data, list):
-        raise InstrumentSyncError("fyers master: expected JSON array")
+    if not isinstance(data, dict):
+        raise InstrumentSyncError(
+            "fyers master: expected JSON object keyed by EXCH:SYMBOL")
     records: list[dict[str, Any]] = []
-    for row in data:
-        rec: dict[str, Any] = {}
-        if isinstance(row, dict):
-            rec["provider_symbol"] = row.get("symbol") or row.get("Sym")
-            rec["instrument_token"] = _opt_str(
-                row.get("fyToken") or row.get("FytokenId"))
-            rec["exchange"] = row.get("exchange") or row.get("Exch")
-            rec["tradingsymbol"] = (row.get("symName")
-                                    or row.get("Symbol") or "")
-            rec["name"] = row.get("symbolDetails") or row.get("displayName")
-            rec["instrument_type"] = _opt_str(row.get("optType")
-                                              or row.get("InstrType"))
-            rec["segment"] = _opt_str(row.get("segment") or row.get("Seg"))
-            rec["expiry"] = _opt_str(row.get("expiryDate"))
-            rec["strike"] = _opt_float(row.get("strikePrice"))
-            rec["option_type"] = _opt_str(row.get("optType"))
-            rec["lot_size"] = _opt_int(row.get("minLotSize")
-                                       or row.get("LotSize"))
-            rec["tick_size"] = _opt_float(row.get("tickSize"))
-        elif isinstance(row, list) and len(row) > max(_FYERS_POS.values()):
-            rec["provider_symbol"] = _opt_str(row[_FYERS_POS["symbol"]])
-            rec["instrument_token"] = _opt_str(row[_FYERS_POS["token"]])
-            rec["exchange"] = row[_FYERS_POS["exchange"]]
-            rec["segment"] = _opt_str(row[_FYERS_POS["segment"]])
-            rec["name"] = row[_FYERS_POS["details"]]
-            rec["tradingsymbol"] = (_opt_str(row[_FYERS_POS["ex_sym"]])
-                                    or rec["provider_symbol"] or "")
-            rec["tick_size"] = _opt_float(row[_FYERS_POS["tick"]])
-            rec["lot_size"] = _opt_int(row[_FYERS_POS["lot"]])
-        else:
+    for symbol_key, row in data.items():
+        if not isinstance(row, dict):
             continue
-        if rec["instrument_token"] and rec["exchange"] and rec["tradingsymbol"]:
+        inst_type = _FYERS_INST_TYPE.get(
+            row.get("exInstType"))
+        rec: dict[str, Any] = {
+            "provider": "fyers",
+            "provider_symbol": symbol_key,
+            "instrument_token": _opt_str(row.get("fyToken")),
+            "exchange": (_FYERS_EXCHANGE.get(row.get("exchange"))
+                         or _opt_str(row.get("exchangeName"))
+                         or _opt_str(row.get("exchange"))),
+            "segment": _opt_str(row.get("segment")),
+            "name": row.get("symDetails") or row.get("symbolDetails"),
+            "tradingsymbol": (_opt_str(row.get("symTicker"))
+                              or symbol_key),
+            "instrument_type": inst_type,
+            "expiry": _fyers_expiry_iso(row.get("expiryDate")),
+            "strike": _opt_float(row.get("strikePrice")),
+            "option_type": ((_opt_str(row.get("optType")) or "").upper()
+                            or None) if inst_type == "OPTION" else None,
+            "lot_size": _opt_int(row.get("minLotSize")),
+            "tick_size": _opt_float(row.get("tickSize")),
+            "isin": _opt_str(row.get("isin")),
+            "underlying": _opt_str(row.get("underSym")),
+        }
+        if rec["option_type"] in ("XX", ""):
+            rec["option_type"] = None
+        if rec["instrument_token"] and rec["exchange"] \
+                and rec["tradingsymbol"]:
             records.append(rec)
     return records
 
@@ -186,7 +202,10 @@ class InstrumentCatalog:
 
     def sync_fyers(self, *, fetch=None) -> dict[str, Any]:
         fetch = fetch or _fetch
-        total = 0
+        # Fyers publishes one master PER SEGMENT but the catalog replaces
+        # per PROVIDER — accumulate every segment first, then replace once,
+        # otherwise each segment would wipe the previous one.
+        all_records: list[dict[str, Any]] = []
         parsed = 0
         for url in FYERS_SEGMENT_URLS.values():
             try:
@@ -196,8 +215,9 @@ class InstrumentCatalog:
                                url.rsplit("/", 1)[-1], exc)
                 continue
             parsed += len(records)
-            total += self._store.replace_provider_instruments("fyers",
-                                                              records)
+            all_records.extend(records)
+        total = self._store.replace_provider_instruments("fyers",
+                                                         all_records)
         logger.info("fyers instrument sync: %d records", total)
         return {"provider": "fyers", "records": total, "parsed": parsed}
 
