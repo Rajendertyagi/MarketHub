@@ -99,6 +99,14 @@ def has_any_secret(conn: sqlite3.Connection) -> bool:
     return row is not None
 
 
+def iter_all_secrets(conn: sqlite3.Connection):
+    """Yield (provider, name, encrypted_value) for every stored secret."""
+    for row in conn.execute(
+            "SELECT provider, name, encrypted_value FROM secrets "
+            "ORDER BY provider, name"):
+        yield row[0], row[1], row[2]
+
+
 def delete_provider_secrets(
     conn: sqlite3.Connection,
     provider: str,

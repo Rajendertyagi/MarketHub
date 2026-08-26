@@ -200,6 +200,10 @@ def build_settings_routes(
 
     async def _settings_status(request: Request) -> Response:  # noqa: ARG001
         status = cred_store.status()
+        store = cred_store.store_status()
+        # Distinguish "nothing stored" from "stored but undecryptable with
+        # the current master.key" (a store ERROR, not plain unconfigured).
+        status["store_error"] = store.get("reason")
         status["oauth_available"] = bool(
             isinstance(oauth_ref.get("api_key"), str)
             and oauth_ref["api_key"].strip()

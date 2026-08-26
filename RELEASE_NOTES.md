@@ -1,4 +1,4 @@
-# MarketHub 0.3.0-rc — Release Notes (Release Candidate)
+# MarketHub 0.3.0-rc.1 — Release Notes (Release Candidate)
 
 Status: **RELEASE CANDIDATE — READY FOR FINAL FYERS LIVE ACCEPTANCE.**
 Merge/tag happens only after the live Fyers acceptance passes.

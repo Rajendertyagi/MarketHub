@@ -548,6 +548,14 @@ class EventStore:
         finally:
             conn.close()
 
+    def iter_all_secrets(self):
+        """Yield (provider, name, encrypted_value) for every stored secret."""
+        conn = self._open(self._db_path)
+        try:
+            yield from _secrets.iter_all_secrets(conn)
+        finally:
+            conn.close()
+
     def schema_version(self) -> int:
         """Current on-disk schema version (PRAGMA user_version)."""
         conn = self._open(self._db_path)

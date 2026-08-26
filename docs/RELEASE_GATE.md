@@ -43,5 +43,5 @@ git operations are manual and deliberate.
 ## Finalize (only after ALL boxes above)
 
 1. Merge `feature/market-phase-c-sse` → main
-2. Tag `v0.3.0-rc` on main
+2. Tag `v0.3.0-rc.1` on main
 3. Announce with RELEASE_NOTES.md

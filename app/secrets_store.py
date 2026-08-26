@@ -263,13 +263,42 @@ class CredentialStore:
         }
 
     def status(self) -> dict[str, bool]:
-        """Redacted configuration state — booleans only, no decryption."""
+        """Redacted configuration state - booleans only, no decryption."""
         return {
             "api_key_configured":
                 self._store.has_secret(_UPSTOX_PROVIDER, "api_key"),
             "api_secret_configured":
                 self._store.has_secret(_UPSTOX_PROVIDER, "api_secret"),
         }
+
+    def store_status(self) -> dict[str, Any]:
+        """Distinguish 'nothing stored' from 'stored but undecryptable'.
+
+        Returns redacted booleans + a reason code only — never secret
+        contents:
+          has_ciphertext  any encrypted row exists (any provider)
+          readable        current master key can decrypt what is stored
+          reason          None | "key_missing" | "decrypt_failed"
+
+        A wrong/missing master.key over existing ciphertext must surface as
+        a store ERROR, never as ordinary "Not Configured" (which could
+        tempt an operator to overwrite credentials that are still
+        recoverable with the matching key).
+        """
+        if not self._store.has_any_secret():
+            return {"has_ciphertext": False, "readable": True,
+                    "reason": None}
+        enc = self._get_encryption(allow_generate=False)
+        if enc is None:
+            return {"has_ciphertext": True, "readable": False,
+                    "reason": "key_missing"}
+        try:
+            for _provider, _name, encrypted in self._store.iter_all_secrets():
+                enc.decrypt(encrypted)
+        except Exception:
+            return {"has_ciphertext": True, "readable": False,
+                    "reason": "decrypt_failed"}
+        return {"has_ciphertext": True, "readable": True, "reason": None}
 
     def delete_upstox_app_credentials(self) -> bool:
         n = self._store.delete_provider_secrets(_UPSTOX_PROVIDER)

@@ -297,6 +297,85 @@ def test_master_key_safety(runner: R) -> None:
     runner.assert_eq("MK-stable",
                      open(_key_path, "rb").read(), _key_bytes)
 
+    # P1: store_status distinguishes "nothing stored" from "stored but
+    # undecryptable" — a wrong key is a store ERROR, not Not Configured.
+    from cryptography.fernet import Fernet as _F
+    _wrong = os.path.join(_tmp, "d1")
+    with open(_key_path, "wb") as _f:
+        _f.write(_F.generate_key())          # plant a WRONG (valid) key
+    _s5 = CredentialStore(EventStore(_db1), data_dir=_wrong)
+    _st = _s5.store_status()
+    runner.assert_true("MK1-wrong-key-has-ciphertext",
+                       _st["has_ciphertext"])
+    runner.assert_false("MK1-wrong-key-not-readable", _st["readable"])
+    runner.assert_eq("MK1-wrong-key-reason", _st["reason"],
+                     "decrypt_failed")
+    # Restore matching key -> readable again, reason cleared.
+    with open(_key_path, "wb") as _f:
+        _f.write(_key_bytes)
+    _st = CredentialStore(EventStore(_db1),
+                          data_dir=_wrong).store_status()
+    runner.assert_true("MK1-matching-key-readable", _st["readable"])
+    runner.assert_eq("MK1-matching-key-reason", _st["reason"], None)
+
+    # Missing key file over existing ciphertext -> key_missing.
+    os.remove(_key_path)
+    _st = CredentialStore(EventStore(_db1), data_dir=_dir1).store_status()
+    runner.assert_eq("MK1-missing-key-reason", _st["reason"], "key_missing")
+
+    # Empty store -> genuinely not configured (no error).
+    _empty = CredentialStore(EventStore(os.path.join(_tmp, "b.db")),
+                             data_dir=os.path.join(_tmp, "d2"))
+    os.makedirs(os.path.join(_tmp, "d2"), exist_ok=True)
+    _st = _empty.store_status()
+    runner.assert_false("MK1-empty-no-ciphertext", _st["has_ciphertext"])
+    runner.assert_eq("MK1-empty-reason", _st["reason"], None)
+
+
+def test_store_error_surfaced_by_api(runner: R) -> None:
+    """Settings APIs must report store_error, never plain unconfigured,
+    when ciphertext exists but the key cannot decrypt it."""
+    import shutil
+    from pathlib import Path
+    from starlette.applications import Starlette
+    from starlette.testclient import TestClient
+    from core.persistence.store import EventStore
+    from app.secrets_store import CredentialStore
+    from api.product_routes import build_fyers_auth_routes
+
+    _tmp = tempfile.mkdtemp()
+    _db = os.path.join(_tmp, "events.db")
+    _dir = os.path.join(_tmp, "d")
+    os.makedirs(_dir)
+    store = CredentialStore(EventStore(_db), data_dir=Path(_dir))
+    store.save_fyers_credentials("APP-API", "SEC-API")
+
+    # Plant a wrong key: credentials become undecryptable.
+    from cryptography.fernet import Fernet as _F
+    shutil.copy(os.path.join(_dir, "master.key"),
+                os.path.join(_tmp, "good.key"))
+    with open(os.path.join(_dir, "master.key"), "wb") as f:
+        f.write(_F.generate_key())
+
+    app = Starlette(routes=build_fyers_auth_routes(
+        CredentialStore(EventStore(_db), data_dir=Path(_dir)),
+        runtime_token={"access_token": ""},
+        redirect_uri="http://localhost:7070/auth/fyers/callback"))
+    d = TestClient(app).get("/api/settings/fyers").json()
+    runner.assert_eq("SE-api-store-error", d.get("store_error"),
+                     "decrypt_failed")
+    # Ciphertext preserved: after restoring the good key, a fresh store
+    # instance (post-restart semantics) recovers the credentials.
+    shutil.copy(os.path.join(_tmp, "good.key"),
+                os.path.join(_dir, "master.key"))
+    app = Starlette(routes=build_fyers_auth_routes(
+        CredentialStore(EventStore(_db), data_dir=Path(_dir)),
+        runtime_token={"access_token": ""},
+        redirect_uri="http://localhost:7070/auth/fyers/callback"))
+    d = TestClient(app).get("/api/settings/fyers").json()
+    runner.assert_eq("SE-api-recovered", d.get("store_error"), None)
+    runner.assert_true("SE-api-configured-again", d.get("app_id_configured"))
+
 
 # ---------------------------------------------------------------------------
 # P16: log redaction adversarial test (dummy values only)
@@ -488,6 +567,7 @@ if __name__ == "__main__":
     test_migration_failure_safety(_runner)
     test_backup_from_v12(_runner)
     test_master_key_safety(_runner)
+    test_store_error_surfaced_by_api(_runner)
     test_log_redaction(_runner)
     test_diagnostics_endpoint(_runner)
     test_api_contract_safety(_runner)

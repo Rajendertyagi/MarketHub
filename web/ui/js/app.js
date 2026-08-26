@@ -688,6 +688,26 @@
       const d = await res.json();
       const keyChip = $("cred-key-status");
       const secretChip = $("cred-secret-status");
+      if (d.store_error) {
+        // Ciphertext exists but the current master.key cannot read it.
+        if (keyChip) {
+          keyChip.textContent = "Store Error";
+          keyChip.className = "chip chip-off";
+        }
+        if (secretChip) {
+          secretChip.textContent = "Store Error";
+          secretChip.className = "chip chip-off";
+        }
+        const credMsg = $("cred-message");
+        if (credMsg) {
+          credMsg.textContent =
+            "Encrypted credentials exist but the current master.key cannot " +
+            "read them. Restore the matching master.key backup — do NOT " +
+            "re-save credentials over them unless you intend to replace.";
+          credMsg.className = "hint err";
+        }
+        return;
+      }
       if (keyChip) {
         keyChip.textContent = d.api_key_configured
           ? "API Key: Configured" : "API Key: Missing";
@@ -1575,7 +1595,15 @@ function initBackup() {
         const d = await res.json();
         // App Credentials: are App ID + Secret saved (encrypted)?
         const credChip = $("fyers-status");
-        if (d.app_id_configured && d.secret_configured) {
+        if (d.store_error) {
+          credChip.textContent = "Credential Store Error";
+          credChip.className = "chip chip-off";
+          msg.textContent =
+            "Encrypted credentials exist but the current master.key cannot " +
+            "read them. Restore the matching master.key backup — do NOT " +
+            "re-save credentials over them unless you intend to replace.";
+          msg.className = "hint err";
+        } else if (d.app_id_configured && d.secret_configured) {
           credChip.textContent = "Configured";
           credChip.className = "chip chip-on";
         } else {

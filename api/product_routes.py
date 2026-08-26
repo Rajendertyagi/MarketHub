@@ -673,12 +673,17 @@ def build_fyers_auth_routes(cred_store: Any,
             creds = None
         has_refresh = bool(await asyncio.to_thread(
             cred_store.load_fyers_refresh_token))
+        store = await asyncio.to_thread(cred_store.store_status)
         return _json({
             "app_id_configured": bool(creds and creds.get("app_id")),
             "secret_configured": bool(creds and creds.get("app_secret")),
             "login_available": bool(creds),
             "access_token_active": bool(_fyers_runtime_token["access_token"]),
             "refresh_token_stored": has_refresh,
+            # "key_missing"/"decrypt_failed": ciphertext exists but the
+            # current master.key cannot read it — a store ERROR, distinct
+            # from ordinary "not configured".
+            "store_error": store.get("reason"),
         })
 
     async def _save(request: Request) -> Response:

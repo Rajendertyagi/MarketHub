@@ -202,6 +202,9 @@ async def test_ld8_alert_throughput(runner: R) -> None:
         def record_trigger(self, aid):
             pass
 
+        def record_alert_trigger_history(self, **kwargs):
+            return 1
+
     engine = AlertEngine(_Store())
     fired_total = 0
     for i in range(2000):

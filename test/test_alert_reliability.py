@@ -57,6 +57,13 @@ class _Store:
     def record_trigger(self, aid):
         self.triggered.append(aid)
 
+    def record_alert_trigger_history(self, **kwargs):
+        # Real EventStore persists per-firing history (schema v12); the
+        # fixture mirrors the signature so the engine's full fire path is
+        # exercised without spurious persistence warnings.
+        self.triggered.append(("history", kwargs.get("alert_id")))
+        return 1
+
 
 # -- alert reliability -----------------------------------------------------------
 
@@ -230,7 +237,7 @@ async def main() -> bool:
     test_ar4_triggered_state_persists(runner)
     test_ar5_rearm_allows_one_fire(runner)
     await test_ar6_stale_never_reaches_engine(runner)
-    test_ar7_ar8_backpressure(runner)
+    await test_ar7_ar8_backpressure(runner)
 
     return runner.summary()
 
