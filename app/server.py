@@ -386,6 +386,7 @@ def _on_source_state_change(
 # ── Product services: instrument catalog, alerts ─────────────────────────────
 from app.instruments import InstrumentCatalog as _InstrumentCatalog
 from app.market_intel import MarketIntel as _MarketIntel
+from app.instrument_identity import InstrumentIdentityRegistry as _IdentityRegistry
 from app.chat_tools import ChatToolRegistry as _ChatToolRegistry
 from app.alerts import AlertEngine as _AlertEngine
 from api.product_routes import (
@@ -404,6 +405,56 @@ from api.product_routes import (
 from api.chat_routes import build_chat_routes as _build_chat_routes
 
 _instrument_catalog = _InstrumentCatalog(_store)
+
+# Canonical instrument-identity registry: maps provider-normalized
+# storage keys (config keys) to catalog identities so ONE real
+# instrument has ONE quote state across feed/REST/intel/option-chain.
+_identity_registry = _IdentityRegistry()
+
+
+def _register_config_identities() -> None:
+    """Bind config instrument keys to catalog identities (best-effort).
+
+    For every configured source instrument, the storage key (config
+    ``key``) is canonical; aliases include the tradingsymbol and the
+    catalog provider token when a catalog row matches on
+    exchange+tradingsymbol. Runs at startup and is safe to re-run.
+    """
+    for _src_name, _src_cfg in SOURCES_CFG.items():
+        if not isinstance(_src_cfg, dict):
+            continue
+        for _instr in _src_cfg.get("instruments") or []:
+            if not isinstance(_instr, dict):
+                continue
+            key = (_instr.get("key") or "").strip()
+            exchange = (_instr.get("exchange") or "").strip()
+            tsym = (_instr.get("tradingsymbol") or "").strip()
+            if not key:
+                continue
+            aliases = {key, tsym} - {""}
+            try:
+                import re as _re
+
+                def _norm(s: str) -> str:
+                    return _re.sub(r"[^a-z0-9]", "", s.lower())
+
+                targets = {_norm(t) for t in (tsym, key) if t}
+                for row in _instrument_catalog.search(
+                        q=tsym or key, exchange=exchange or None,
+                        limit=25):
+                    row_sym = _norm(row.get("tradingsymbol") or "")
+                    if row_sym in targets and \
+                            row.get("exchange") == exchange:
+                        token = row.get("instrument_token")
+                        if token:
+                            aliases.add(token)
+                        break
+            except Exception:
+                logger.warning("identity lookup failed for %s", key)
+            _identity_registry.register(key, aliases)
+
+
+_register_config_identities()
 
 
 def _on_alert_trigger(notification: dict) -> None:
@@ -452,9 +503,22 @@ _provider_market_data = _ProviderMarketData(_upstox_auth_context)
 
 
 class _FeedSubscription:
-    """Watchlist→feed adapter: desired-set updates on the live Upstox feed."""
+    """Watchlistfeed adapter: desired-set updates on the live Upstox feed."""
 
     async def add(self, exchange: str, token: str) -> None:
+        # Register identity aliases for runtime-added instruments so
+        # incoming provider-symbol quotes resolve to the same canonical
+        # state (best-effort; never blocks the subscription).
+        try:
+            for row in _instrument_catalog.search(q=token, limit=10):
+                if row.get("instrument_token") == token or \
+                        row.get("tradingsymbol") == token:
+                    _identity_registry.register_from_catalog_row(
+                        row, primary=token)
+                    break
+        except Exception:
+            logger.warning("runtime identity registration failed for %s",
+                           token)
         feed = _feed_ref.get("feed")
         if feed is not None and hasattr(feed, "add_instruments"):
             await feed.add_instruments([token])
@@ -637,11 +701,13 @@ _services = Services(
 
 # Unified market-intelligence service: ONE implementation backing WebUI
 # search, REST routes, MCP tools, and the Chat agent.
-async def _intel_spot(exchange: str, instrument_token: str):
-    return await _market_service.get_quote(exchange, instrument_token)
+def _intel_spot(exchange: str, instrument_token: str):
+    return _market_service.get_quote_now(exchange, instrument_token)
 
 
-_market_intel = _MarketIntel(_instrument_catalog, spot_provider=_intel_spot)
+_market_intel = _MarketIntel(
+    _instrument_catalog, spot_provider=_intel_spot,
+    identity_resolver=_identity_registry)
 _services.market_intel = _market_intel
 
 # Chat tool registry: same services, same semantics as REST/MCP.
@@ -774,6 +840,7 @@ app = Starlette(
     + build_market_routes(
         _market_event_broker,
         market_service=_market_service,
+        identity_resolver=_identity_registry,
         # Merged view: source status + task liveness + exit forensics, so the
         # UI can distinguish "streaming" from "dead task with stale state".
         source_status_fn=lambda: [

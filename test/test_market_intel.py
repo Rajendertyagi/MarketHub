@@ -188,7 +188,7 @@ def test_mi5_snapshot_freshness(runner: R) -> None:
                        received_ts=datetime.now(timezone.utc),
                        ltp=123.5)
 
-    async def spot(exchange, token):
+    def spot(exchange, token):
         if token == "100IDX":
             return live_quote
         return None

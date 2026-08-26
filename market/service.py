@@ -197,6 +197,16 @@ class MarketService:
             "stale_depth_updates": 0,
         }
 
+    def get_quote_now(self, exchange: str,
+                      instrument_token: str) -> Quote | None:
+        """Synchronous lock-free quote read (for non-async consumers)."""
+        return self._quotes.get((exchange, instrument_token))
+
+    def get_depth_now(self, exchange: str,
+                      instrument_token: str) -> Depth | None:
+        """Synchronous lock-free depth read (for non-async consumers)."""
+        return self._depths.get((exchange, instrument_token))
+
     # -- internal helpers ---------------------------------------------------
 
     @staticmethod

@@ -41,12 +41,29 @@ class MarketIntel:
 
     def __init__(self, catalog: Any,
                  spot_provider: Callable[[str, str], Any] | None = None,
+                 identity_resolver: Any = None,
                  ) -> None:
         # catalog: app.instruments.InstrumentCatalog
-        # spot_provider: async (exchange, instrument_token) -> quote|None;
-        #   injected lazily to avoid a circular import with MarketService.
+        # spot_provider: SYNC (exchange, instrument_token) -> quote|None
+        #   (MarketService.get_quote_now) - safe lock-free state read.
+        # identity_resolver: app.instrument_identity registry - resolves
+        #   any known identifier (catalog token, config key, symbol) to
+        #   the MarketService storage key. Optional for tests.
         self._catalog = catalog
         self._spot_provider = spot_provider
+        self._identity = identity_resolver
+
+    def _storage_key(self, exchange: str, token: str) -> tuple[str, str]:
+        """Resolve (exchange, any-identifier) to the MarketService key.
+
+        Identity resolution lives HERE so consumers never branch on
+        provider specifics. Unresolvable ids pass through unchanged.
+        """
+        if self._identity is not None:
+            resolved = self._identity.resolve(token)
+            if resolved:
+                return exchange, resolved
+        return exchange, token
 
     # -- internals ---------------------------------------------------------
 
@@ -278,9 +295,10 @@ class MarketIntel:
         """
         if self._spot_provider is not None:
             try:
-                quote = self._spot_provider(
+                exch, tok = self._storage_key(
                     under_row.get("exchange"),
                     under_row.get("instrument_token"))
+                quote = self._spot_provider(exch, tok)
             except Exception:
                 quote = None
             if quote is not None:
@@ -401,6 +419,7 @@ class MarketIntel:
             return None
         try:
             exchange, token = compact["instrument_key"].split(":", 1)
+            exchange, token = self._storage_key(exchange, token)
             quote = self._spot_provider(exchange, token)
         except Exception:
             return None
@@ -435,9 +454,10 @@ class MarketIntel:
         best = found["results"][0]
         snap: dict[str, Any] = {"instrument": best}
         exchange, token = best["instrument_key"].split(":", 1)
+        exchange, token = self._storage_key(exchange, token)
         if self._spot_provider is not None:
             try:
-                quote = await self._spot_provider(exchange, token)
+                quote = self._spot_provider(exchange, token)
             except Exception:
                 quote = None
             if quote is not None:

@@ -51,8 +51,8 @@ def _mk_world():
     from market.service import MarketService, QuotePatch
     msvc = MarketService()
 
-    async def intel_spot(exchange, token):
-        return await msvc.get_quote(exchange, token)
+    def intel_spot(exchange, token):
+        return msvc.get_quote_now(exchange, token)
 
     intel = MarketIntel(catalog, spot_provider=intel_spot)
 
@@ -117,10 +117,12 @@ def test_ch2_option_chain_question(runner: R) -> None:
 
     events = asyncio.run(_collect(agent))
     result = next(e for e in events if e["type"] == "tool_result")["result"]
-    runner.assert_eq("CH2-atm", result["atm_strike"], 23950.0)
+    # Live spot 24005.5 (seeded quote) -> ATM = nearest listed strike.
+    runner.assert_eq("CH2-atm", result["atm_strike"], 24000.0)
+    runner.assert_eq("CH2-spot-basis", result["spot_basis"], "live")
     runner.assert_true("CH2-ce-pe-paired",
                        all(r["call"] and r["put"] for r in result["rows"]))
-    runner.assert_eq("CH2-window-rows", result["strikes_loaded"], 3)
+    runner.assert_eq("CH2-window-rows", result["strikes_loaded"], 2)
 
 
 def test_ch3_alert_actions(runner: R) -> None:

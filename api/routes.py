@@ -37,8 +37,22 @@ def build_market_routes(
     market_broker: Any,
     market_service: Any = None,
     source_status_fn: Callable[[], list[dict]] | None = None,
+    identity_resolver: Any = None,
 ) -> list[Route]:
-    """Build market API routes around injected dependencies."""
+    """Build market API routes around injected dependencies.
+
+    identity_resolver: optional registry resolving any known instrument
+    identifier (config key, catalog token, symbol) to the MarketService
+    storage key before lookup, so config keys and catalog ids address
+    the same quote state.
+    """
+
+    def _resolve_token(exchange: str, token: str) -> tuple[str, str]:
+        if identity_resolver is not None:
+            resolved = identity_resolver.resolve(token)
+            if resolved:
+                return exchange, resolved
+        return exchange, token
 
     # -- SSE stream ----------------------------------------------------------
 
@@ -73,6 +87,7 @@ def build_market_routes(
             return _json({"error": "market service unavailable"}, 503)
         exchange = request.path_params.get("exchange", "")
         token = request.path_params.get("instrument_token", "")
+        exchange, token = _resolve_token(exchange, token)
         q = await market_service.get_quote(exchange, token)
         if q is None:
             return _json({"error": "not found"}, 404)
@@ -84,6 +99,7 @@ def build_market_routes(
             return _json({"error": "market service unavailable"}, 503)
         exchange = request.path_params.get("exchange", "")
         token = request.path_params.get("instrument_token", "")
+        exchange, token = _resolve_token(exchange, token)
         d = await market_service.get_depth(exchange, token)
         if d is None:
             return _json({"error": "not found"}, 404)
