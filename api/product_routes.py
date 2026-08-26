@@ -96,6 +96,119 @@ def _news_to_dict(news):
     }
 
 
+def _holiday_to_dict(h):
+    return {
+        "date": h.date,
+        "description": h.description,
+        "holiday_type": h.holiday_type,
+        "closed_exchanges": list(h.closed_exchanges),
+        "open_exchanges": list(h.open_exchanges),
+    }
+
+
+def _session_to_dict(s):
+    return {
+        "exchange": s.exchange,
+        "start_time": s.start_time.isoformat() if s.start_time else None,
+        "end_time": s.end_time.isoformat() if s.end_time else None,
+    }
+
+
+def _futures_smartlist_to_dict(f):
+    return {
+        "asset_type": f.asset_type,
+        "category": f.category,
+        "metric_key": f.metric_key,
+        "timestamp": f.timestamp.isoformat() if f.timestamp else None,
+        "entries": [{
+            "instrument_key": e.instrument_key,
+            "price_current": e.price_current,
+            "price_close": e.price_close,
+            "price_change_abs": e.price_change_abs,
+            "price_change_pct": e.price_change_pct,
+            "metric_current": e.metric_current,
+            "metric_previous": e.metric_previous,
+            "metric_change_abs": e.metric_change_abs,
+            "metric_change_pct": e.metric_change_pct,
+        } for e in f.entries],
+        "page_number": f.page_number,
+        "page_size": f.page_size,
+        "total_pages": f.total_pages,
+    }
+
+
+def _fii_to_dict(fii):
+    return {
+        "data_type": fii.data_type,
+        "interval": fii.interval,
+        "records": [{
+            "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+            "buy_amount": r.buy_amount,
+            "sell_amount": r.sell_amount,
+            "buy_contracts": r.buy_contracts,
+            "sell_contracts": r.sell_contracts,
+            "oi_contracts": r.oi_contracts,
+            "oi_amount": r.oi_amount,
+        } for r in fii.records],
+    }
+
+
+def _dii_to_dict(dii):
+    return {
+        "data_type": dii.data_type,
+        "interval": dii.interval,
+        "records": [{
+            "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+            "buy_amount": r.buy_amount,
+            "sell_amount": r.sell_amount,
+            "buy_contracts": r.buy_contracts,
+            "sell_contracts": r.sell_contracts,
+        } for r in dii.records],
+    }
+
+
+def _company_profile_to_dict(p):
+    return {
+        "isin": p.isin,
+        "company_profile": p.company_profile,
+        "sector": p.sector,
+        "sector_market_cap_inr_crore": p.sector_market_cap_inr_crore,
+        "sector_market_cap_usd_billion": p.sector_market_cap_usd_billion,
+    }
+
+
+def _key_ratios_to_dict(r):
+    return {
+        "isin": r.isin,
+        "pe_ratio": r.pe_ratio,
+        "pb_ratio": r.pb_ratio,
+        "roe": r.roe,
+        "roa": r.roa,
+        "roce": r.roce,
+        "ev_ebitda": r.ev_ebitda,
+    }
+
+
+def _corporate_action_to_dict(a):
+    return {
+        "action_type": a.action_type,
+        "description": a.description,
+        "record_date": a.record_date,
+        "ex_date": a.ex_date,
+        "payment_date": a.payment_date,
+        "value": a.value,
+    }
+
+
+def _competitor_to_dict(c):
+    return {
+        "instrument_key": c.instrument_key,
+        "symbol": c.symbol,
+        "name": c.name,
+        "sector": c.sector,
+    }
+
+
 # Fields safe to expose in the support diagnostics snapshot. Everything else
 # in a source status dict (tokens, URLs, raw errors) is deliberately dropped.
 _DIAGNOSTIC_SOURCE_FIELDS = (

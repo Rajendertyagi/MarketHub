@@ -42,6 +42,11 @@ __all__ = [
     "OptionContractData", "OptionStrikeRow", "OptionChainSnapshot",
     "OIStrikeRow", "OISnapshot", "OIChangeStrikeRow", "OIChangeSnapshot",
     "MaxPainData", "PCRData", "NewsArticle", "NewsSnapshot",
+    "MarketHoliday", "MarketSession",
+    "FuturesSmartlistEntry", "FuturesSmartlist",
+    "FIIRecord", "FIIActivity",
+    "DIIRecord", "DIIActivity",
+    "CompanyProfile", "KeyRatios", "CorporateAction", "Competitor",
 ]
 
 # Identity field names shared by every instrument-bearing model.
@@ -494,3 +499,197 @@ class NewsSnapshot:
     total_records: int | None = None
     page: int | None = None
     page_size: int | None = None
+
+# ---------------------------------------------------------------------------
+# Market Information models
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class MarketHoliday:
+    """Holiday or special trading session for one or more exchanges."""
+    date: str
+    description: str
+    holiday_type: str
+    closed_exchanges: tuple[str, ...] = ()
+    open_exchanges: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class MarketSession:
+    """Trading session times for one exchange on one date."""
+    exchange: str
+    start_time: datetime
+    end_time: datetime
+
+
+# ---------------------------------------------------------------------------
+# Futures Smartlist models
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class FuturesSmartlistEntry:
+    """One ranked futures contract from a smartlist."""
+    instrument_key: str
+    price_current: float
+    price_close: float
+    price_change_abs: float
+    price_change_pct: float
+    metric_current: float
+    metric_previous: float
+    metric_change_abs: float
+    metric_change_pct: float
+    metric_key: str
+
+
+@dataclass(frozen=True, slots=True)
+class FuturesSmartlist:
+    """Ranked futures contracts by a market signal."""
+    asset_type: str
+    category: str
+    metric_key: str
+    timestamp: datetime | None = None
+    entries: tuple[FuturesSmartlistEntry, ...] = ()
+    page_number: int | None = None
+    page_size: int | None = None
+    total_pages: int | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "entries", tuple(self.entries))
+
+
+# ---------------------------------------------------------------------------
+# FII/DII Activity models
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class FIIRecord:
+    """One day/month of FII activity for a segment."""
+    timestamp: datetime
+    buy_amount: float
+    sell_amount: float
+    buy_contracts: int
+    sell_contracts: int
+    oi_contracts: int
+    oi_amount: float
+    total_long_contracts: int
+    total_short_contracts: int
+    total_call_long_contracts: int
+    total_put_long_contracts: int
+    total_call_short_contracts: int
+    total_put_short_contracts: int
+
+
+@dataclass(frozen=True, slots=True)
+class FIIActivity:
+    """FII activity aggregated across segments."""
+    data_type: str
+    interval: str
+    records: tuple[FIIRecord, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "records", tuple(self.records))
+
+
+@dataclass(frozen=True, slots=True)
+class DIIRecord:
+    """One day/month of DII activity for NSE cash."""
+    timestamp: datetime
+    buy_amount: float
+    sell_amount: float
+    buy_contracts: int
+    sell_contracts: int
+    oi_contracts: int
+    oi_amount: float
+    total_long_contracts: int
+    total_short_contracts: int
+    total_call_long_contracts: int
+    total_put_long_contracts: int
+    total_call_short_contracts: int
+    total_put_short_contracts: int
+
+
+@dataclass(frozen=True, slots=True)
+class DIIActivity:
+    """DII activity for NSE equity cash segment."""
+    data_type: str
+    interval: str
+    records: tuple[DIIRecord, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "records", tuple(self.records))
+
+
+# ---------------------------------------------------------------------------
+# Fundamentals models
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class CompanyProfile:
+    """Company profile from fundamentals API."""
+    isin: str
+    company_profile: str
+    sector: str
+    sector_market_cap_inr_crore: float | None = None
+    sector_market_cap_usd_billion: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class KeyRatios:
+    """Key financial ratios for a company."""
+    isin: str
+    pe_ratio: float | None = None
+    pb_ratio: float | None = None
+    roe: float | None = None
+    roa: float | None = None
+    roce: float | None = None
+    ev_ebitda: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CorporateAction:
+    """One corporate action event."""
+    action_type: str
+    description: str
+    record_date: str | None = None
+    ex_date: str | None = None
+    payment_date: str | None = None
+    value: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Competitor:
+    """One competitor instrument."""
+    instrument_key: str
+    symbol: str
+    name: str | None = None
+    sector: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# News enhanced
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class NewsPagination:
+    """Pagination metadata for news responses."""
+    total_records: int | None = None
+    page_number: int | None = None
+    page_size: int | None = None
+    total_pages: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class NewsSnapshot:
+    """Enhanced news response with pagination."""
+    instrument_token: str | None = None
+    category: str | None = None
+    articles: tuple[NewsArticle, ...] = ()
+    pagination: NewsPagination | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "articles", tuple(self.articles))

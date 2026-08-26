@@ -20,6 +20,15 @@ _OI_CHANGE_URL = "https://api.upstox.com/v2/market/change-oi"
 _MAX_PAIN_URL = "https://api.upstox.com/v2/market/max-pain"
 _PCR_URL = "https://api.upstox.com/v2/market/pcr"
 _NEWS_URL = "https://api.upstox.com/v2/news"
+_HOLIDAYS_URL = "https://api.upstox.com/v2/market/holidays"
+_TIMINGS_URL = "https://api.upstox.com/v2/market/timings"
+_FUTURES_SMARTLIST_URL = "https://api.upstox.com/v2/market/smartlist/futures"
+_FII_URL = "https://api.upstox.com/v2/market/fii"
+_DII_URL = "https://api.upstox.com/v2/market/dii"
+_COMPANY_PROFILE_URL = "https://api.upstox.com/v2/fundamentals"
+_KEY_RATIOS_URL = "https://api.upstox.com/v2/fundamentals"
+_CORPORATE_ACTIONS_URL = "https://api.upstox.com/v2/fundamentals"
+_COMPETITORS_URL = "https://api.upstox.com/v2/fundamentals"
 
 _VALID_UNITS = {"minutes", "hours", "days", "weeks", "months"}
 _MAX_RANGE_DAYS = 400
@@ -207,3 +216,152 @@ class ProviderMarketData:
             access_token=creds.access_token, params=params)
         key = instrument_keys[0] if instrument_keys else ""
         return news_from_rest(payload, key)
+    # -- Market Information --------------------------------------------------
+
+    async def holidays(self, date: str | None = None, provider: str = "upstox") -> Any:
+        """GET /market/holidays - Trading holidays."""
+        if provider != "upstox":
+            raise ProviderMarketDataError("holidays not available from this provider")
+        rest, creds = self._auth()
+        from market.normalize.upstox_market_info import holidays_from_rest, holiday_status_from_rest
+        url = f"{_HOLIDAYS_URL}/{date}" if date else _HOLIDAYS_URL
+        payload = await rest.authenticated_request(
+            method="GET", url=url, access_token=creds.access_token)
+        if date:
+            return holiday_status_from_rest(payload)
+        return holidays_from_rest(payload)
+
+    async def timings(self, date: str, provider: str = "upstox") -> Any:
+        """GET /market/timings/:date - Session times."""
+        if provider != "upstox":
+            raise ProviderMarketDataError("timings not available from this provider")
+        rest, creds = self._auth()
+        from market.normalize.upstox_market_info import timings_from_rest
+        url = f"{_TIMINGS_URL}/{date}"
+        payload = await rest.authenticated_request(
+            method="GET", url=url, access_token=creds.access_token)
+        return timings_from_rest(payload)
+
+    # -- Futures Smartlist ---------------------------------------------------
+
+    async def futures_smartlist(
+        self, *, asset_type: str, category: str,
+        page_number: int = 1, page_size: int = 20,
+        provider: str = "upstox",
+    ) -> Any:
+        """GET /market/smartlist/futures - Ranked futures contracts."""
+        if provider != "upstox":
+            raise ProviderMarketDataError("futures smartlist not available from this provider")
+        rest, creds = self._auth()
+        from market.normalize.upstox_analytics_extended import futures_smartlist_from_rest
+        payload = await rest.authenticated_request(
+            method="GET", url=_FUTURES_SMARTLIST_URL,
+            access_token=creds.access_token,
+            params={
+                "asset_type": asset_type,
+                "category": category,
+                "page_number": page_number,
+                "page_size": min(page_size, 50),
+            })
+        return futures_smartlist_from_rest(payload)
+
+    # -- FII Activity --------------------------------------------------------
+
+    async def fii(
+        self, *, data_types: list[str], interval: str = "1D",
+        from_date: str | None = None, provider: str = "upstox",
+    ) -> Any:
+        """GET /market/fii - FII activity data."""
+        if provider != "upstox":
+            raise ProviderMarketDataError("fii data not available from this provider")
+        rest, creds = self._auth()
+        from market.normalize.upstox_analytics_extended import fii_single_from_rest
+        params: dict[str, Any] = {"interval": interval}
+        for dt in data_types[:5]:  # max 5 at once
+            params["data_type"] = dt
+        payload = await rest.authenticated_request(
+            method="GET", url=_FII_URL,
+            access_token=creds.access_token, params=params)
+        if from_date:
+            params["from"] = from_date
+        payload = await rest.authenticated_request(
+            method="GET", url=_FII_URL,
+            access_token=creds.access_token, params=params)
+        # Return dict keyed by data_type
+        result = {}
+        for dt in data_types:
+            result[dt] = fii_single_from_rest(payload, dt)
+        return result
+
+    # -- DII Activity --------------------------------------------------------
+
+    async def dii(
+        self, *, data_types: list[str] | None = None,
+        interval: str = "1D", from_date: str | None = None,
+        provider: str = "upstox",
+    ) -> Any:
+        """GET /market/dii - DII activity data."""
+        if provider != "upstox":
+            raise ProviderMarketDataError("dii data not available from this provider")
+        if not data_types:
+            data_types = ["NSE_EQ|CASH"]
+        rest, creds = self._auth()
+        from market.normalize.upstox_analytics_extended import dii_single_from_rest
+        params: dict[str, Any] = {"interval": interval}
+        for dt in data_types:
+            params["data_type"] = dt
+        if from_date:
+            params["from"] = from_date
+        payload = await rest.authenticated_request(
+            method="GET", url=_DII_URL,
+            access_token=creds.access_token, params=params)
+        result = {}
+        for dt in data_types:
+            result[dt] = dii_single_from_rest(payload, dt)
+        return result
+
+    # -- Fundamentals --------------------------------------------------------
+
+    async def company_profile(self, isin: str, provider: str = "upstox") -> Any:
+        """GET /fundamentals/:isin/profile - Company profile."""
+        if provider != "upstox":
+            raise ProviderMarketDataError("company profile not available from this provider")
+        rest, creds = self._auth()
+        from market.normalize.upstox_fundamentals import company_profile_from_rest
+        payload = await rest.authenticated_request(
+            method="GET", url=f"{_COMPANY_PROFILE_URL}/{isin}/profile",
+            access_token=creds.access_token)
+        return company_profile_from_rest(payload)
+
+    async def key_ratios(self, isin: str, provider: str = "upstox") -> Any:
+        """GET /fundamentals/:isin/ratios - Key financial ratios."""
+        if provider != "upstox":
+            raise ProviderMarketDataError("key ratios not available from this provider")
+        rest, creds = self._auth()
+        from market.normalize.upstox_fundamentals import key_ratios_from_rest
+        payload = await rest.authenticated_request(
+            method="GET", url=f"{_KEY_RATIOS_URL}/{isin}/ratios",
+            access_token=creds.access_token)
+        return key_ratios_from_rest(payload)
+
+    async def corporate_actions(self, isin: str, provider: str = "upstox") -> Any:
+        """GET /fundamentals/:isin/corporate-actions - Corporate actions."""
+        if provider != "upstox":
+            raise ProviderMarketDataError("corporate actions not available from this provider")
+        rest, creds = self._auth()
+        from market.normalize.upstox_fundamentals import corporate_actions_from_rest
+        payload = await rest.authenticated_request(
+            method="GET", url=f"{_CORPORATE_ACTIONS_URL}/{isin}/corporate-actions",
+            access_token=creds.access_token)
+        return corporate_actions_from_rest(payload)
+
+    async def competitors(self, isin: str, provider: str = "upstox") -> Any:
+        """GET /fundamentals/:isin/competitors - Competitor instruments."""
+        if provider != "upstox":
+            raise ProviderMarketDataError("competitors not available from this provider")
+        rest, creds = self._auth()
+        from market.normalize.upstox_fundamentals import competitors_from_rest
+        payload = await rest.authenticated_request(
+            method="GET", url=f"{_COMPETITORS_URL}/{isin}/competitors",
+            access_token=creds.access_token)
+        return competitors_from_rest(payload)
