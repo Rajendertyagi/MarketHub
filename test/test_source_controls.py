@@ -440,6 +440,8 @@ async def test_sc10_fyers_generic_api(runner: R) -> None:
            "ws_connect": ws_connect,
            "utc_now_iso": lambda: "2026-08-25T10:00:00+00:00"}
     feed = FyersFeed(config=cfg, auth=object(), market_service=None)
+    feed._hsm_symbols = {"NSE:SBIN-EQ": "sf|nse_cm|1234"}
+    feed._hsm_by_topic = {"sf|nse_cm|1234": "NSE:SBIN-EQ"}
 
     mgr = await mk_manager(feed)
     await mgr.start_all({"fyers": {"enabled": True}})
@@ -863,6 +865,8 @@ async def test_sm1_startup_matrix(runner: R) -> None:
             "ws_connect": fws,
             "utc_now_iso": lambda: "2026-08-25T10:00:00+00:00"}
     ff = FyersFeed(config=fcfg, auth=object())
+    ff._hsm_symbols = {"NSE:SBIN-EQ": "sf|nse_cm|1234"}
+    ff._hsm_by_topic = {"sf|nse_cm|1234": "NSE:SBIN-EQ"}
     mgr5 = await mk_manager(fu, ff)
     await mgr5.start_all({"upstox": {"enabled": True},
                           "fyers": {"enabled": True}})
@@ -1022,6 +1026,8 @@ async def test_fyr_fyers_readiness_parity(runner: R) -> None:
             "ws_connect": fws,
             "utc_now_iso": lambda: "2026-08-25T10:00:00+00:00"}
     feed = FyersFeed(config=fcfg, auth=object())
+    feed._hsm_symbols = {"NSE:SBIN-EQ": "sf|nse_cm|1234"}
+    feed._hsm_by_topic = {"sf|nse_cm|1234": "NSE:SBIN-EQ"}
     mgr = await mk_manager(feed)
     # No token -> gated
     await mgr.start_all({"fyers": {"enabled": True}})
