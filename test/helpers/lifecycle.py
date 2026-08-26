@@ -274,9 +274,20 @@ async def start_server(
     os.makedirs(_LOG_DIR, exist_ok=True)
     out_path = os.path.join(_LOG_DIR, f"server_{port}.out")
     err_path = os.path.join(_LOG_DIR, f"server_{port}.err")
+    # NOTE: the shared local interpreter ships a python314._pth (isolated
+    # mode): environment variables like PYTHONPATH are IGNORED and the cwd
+    # is never added to sys.path, so plain "python -m app.server" cannot
+    # resolve the app package locally. Bootstrap explicitly instead. On
+    # normal interpreters (e.g. GitHub runners) this insert is simply
+    # redundant with the cwd prepend.
+    bootstrap = (
+        "import sys; "
+        f"sys.path.insert(0, r'{_PROJECT_DIR}'); "
+        "from app.server import main; main()"
+    )
     with open(out_path, "w", encoding="utf-8") as out_f, open(err_path, "w", encoding="utf-8") as err_f:
         proc = subprocess.Popen(
-            [sys.executable, "-m", "app.server"],
+            [sys.executable, "-c", bootstrap],
             cwd=_PROJECT_DIR,
             stdout=out_f,
             stderr=err_f,

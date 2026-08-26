@@ -10,6 +10,7 @@ from mcp_server.tools.sources import register_source_tools
 from mcp_server.tools.background import register_background_tools
 from mcp_server.tools.dev import register_dev_tools
 from mcp_server.tools.alerts import register_alert_tools
+from mcp_server.tools.market import register_market_tools
 
 __all__ = [
     "register_system_tools",

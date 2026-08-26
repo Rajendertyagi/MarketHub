@@ -45,32 +45,37 @@ Pinned standard tooling:
 |---|---|
 | `grpcio-tools` | **1.80.0** |
 | bundled protoc | the protoc shipped inside grpcio-tools 1.80.0 (`python -m grpc_tools.protoc --version` prints it) |
+| generated Python protobuf version | **6.31.1** (emitted header: `# Protobuf Python Version: 6.31.1`) |
 
 Why this pin: grpcio-tools 1.80.0 is the newest release on the
 protobuf-6.x code-generation line (`protobuf>=6.31.1,<7.0.0`), matching
 the runtime pin below. Later releases (1.81+) target protobuf 7.x and
-would emit bindings incompatible with `protobuf~=6.2`.
+would emit bindings incompatible with that runtime range.
+
+The generated binding enforces its own runtime minimum at import time via
+`_runtime_version.ValidateProtobufRuntimeVersion(Domain.PUBLIC, 6, 31, 1, ...)`;
+the declared runtime requirement in `requirements.txt`
+(`protobuf>=6.31.1,<7`) is derived from that check.
 
 CI enforcement: `.github/workflows/upstox-proto-check.yml`
-(`workflow_dispatch`):
-
-- **check** mode regenerates into a temp directory and requires the
-  result to be byte-identical to the committed binding (pinned tool ⇒
-  deterministic output). On mismatch it fails and uploads the canonical
-  generated file as an artifact.
-- **adopt** mode replaces the committed binding with the generator
-  output and pushes it to the triggering branch. Use deliberately after
-  a deliberate tool-version bump.
+(`workflow_dispatch`, **check-only**) regenerates into a temp directory
+and requires the result to be byte-identical to the committed binding.
+On mismatch it fails and uploads the canonical generated file as an
+artifact for manual adoption through the normal reviewed commit process.
+The workflow has **no write permissions and never commits or pushes** to
+the repository.
 
 The repository copy is never regenerated in place during comparison.
 
 ## Runtime dependency policy
 
-- Runtime requires **`protobuf~=6.2` only** (`requirements.txt`).
+- Runtime requires **`protobuf>=6.31.1,<7` only** (`requirements.txt`),
+  matching the generated binding's embedded runtime-version validation.
 - `grpcio-tools` is a development/CI-only tool and is **NOT** a runtime
   dependency; it is never added to `requirements.txt`.
-- There is **no runtime code generation** — the committed binding is
+- There is **no runtime code generation** - the committed binding is
   imported directly.
+- No custom proto parser/generator exists or is maintained.
 - `websockets` remains deferred until Phase D3.
 
 ## Presence semantics

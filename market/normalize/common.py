@@ -213,6 +213,12 @@ QUOTE_FIELD_NAMES = frozenset({
     "best_bid", "best_ask",
     "open_interest", "avg_trade_price", "last_traded_qty",
     "total_buy_qty", "total_sell_qty",
+    # extended coverage (provider-reported where available)
+    "upper_circuit", "lower_circuit",
+    "oi_change", "oi_change_percent",
+    "previous_oi",
+    "last_trade_time",
+    "greeks",
 })
 
 

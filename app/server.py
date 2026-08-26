@@ -11,29 +11,37 @@ This module owns ONLY application composition:
 Generic event/alert/runtime/SSE/persistence logic lives under core/.
 MCP contract/tools/resources live under mcp_server/.
 """
-
 from __future__ import annotations
 
 import asyncio
+
 import json
 import logging
 import os
 import sys
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any
 
 import uvicorn
 from sse_starlette import EventSourceResponse, ServerSentEvent
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
-from starlette.routing import Route
+from starlette.responses import JSONResponse, RedirectResponse, Response
+from starlette.staticfiles import StaticFiles
+from starlette.routing import Route, Mount
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.subscriptions import InMemorySubscriptionBus
 from mcp.server.transport_security import TransportSecuritySettings
 
-from app.config import ConfigError, load_config, validate_config
+from app.config import (
+    ConfigError,
+    load_config,
+    validate_config,
+    get_public_base_url,
+    oauth_callback_url,
+)
 from app.lifecycle import print_banner, print_shutdown
 from app.paths import CONFIG_PATH, PROJECT_ROOT
 from app import __version__
@@ -72,9 +80,14 @@ from mcp_server.tools import (
     register_replay_tools,
     register_source_tools,
     register_system_tools,
+    register_market_tools,
 )
 from sources import SourceManager, build_source_manager, SourceConfigError
-from api.routes import build_market_routes
+from api.routes import (  # noqa: F401  (build_settings_routes wired below)
+    build_market_routes,
+    build_auth_routes,
+    build_source_control_routes,
+)
 from market.models import Quote
 from market.serialization import quote_to_dict
 from market.service import MarketService
@@ -97,21 +110,18 @@ from market.service import MarketService
 # ---------------------------------------------------------------------------
 
 # ============================================================
-# LOGGER
+# LOGGING (centralized: console preserved + rotating file)
 # ============================================================
+# Single owner of handler configuration: app.logging_setup. Console output
+# is preserved; everything INFO+ is also persisted to data/logs/markethub.log
+# so an incident's final event survives the console window closing.
+
+from app.logging_setup import setup_logging, log_startup_diagnostics
+
+_LOG_FILE = setup_logging(PROJECT_ROOT)  # never raises; may degrade console-only
 
 _app_logger = logging.getLogger("event_server")
 _app_logger.setLevel(logging.DEBUG)
-
-_handler = logging.StreamHandler(sys.stdout)
-_handler.setLevel(logging.INFO)
-_handler.setFormatter(logging.Formatter("%(message)s"))
-_app_logger.addHandler(_handler)
-
-_debug_handler = logging.StreamHandler(sys.stdout)
-_debug_handler.setLevel(logging.DEBUG)
-_debug_handler.setFormatter(logging.Formatter("[DEBUG] %(name)s - %(message)s"))
-_app_logger.addHandler(_debug_handler)
 
 # Suppress the SDK's rich-format debug/info output to the console.
 # SDK errors (WARNING / ERROR) still propagate through uvicorn / standard error.
@@ -188,65 +198,13 @@ _metrics = RuntimeMetrics()
 _subscription_bus = InMemorySubscriptionBus()
 _bg_task_manager = runtime.BackgroundTaskManager()
 
-# ── Source Manager ──────────────────────────────────────────────────────────
-try:
-    _source_manager = build_source_manager(SOURCES_CFG)
-except SourceConfigError as exc:
-    _app_logger.error("source configuration error: %s", exc)
-    _source_manager = SourceManager()
-
-# ── Lifespan (created BEFORE MCPServer so it can be passed as constructor arg) ──
-_lifespan = runtime.make_lifespan(
-    _store,
-    bg_manager=_bg_task_manager,
-    shutdown_timeout=TIMEOUTS["shutdown_seconds"],
-    source_manager=_source_manager,
-    bus=_subscription_bus,
-    source_configs=SOURCES_CFG,
-    metrics=_metrics,
-    retention_cfg=RETENTION_CFG,
-)
-
-# ============================================================
-# MCP SERVER
-# ============================================================
-
-mcp = MCPServer(
-    name=SERVER_NAME,
-    version=__version__,
-    description="Generic self-hosted MCP event server with native event delivery",
-    log_level=LOG_LEVEL,
-    subscriptions=_subscription_bus,
-    lifespan=_lifespan,
-)
-
-# ============================================================
-# SERVICES BUNDLE
-# ============================================================
-
-_services = Services(
-    store=_store,
-    subscription_bus=_subscription_bus,
-    bg_task_manager=_bg_task_manager,
-    source_manager=_source_manager,
-    timeouts=TIMEOUTS,
-    replay_cfg=REPLAY_CFG,
-    metrics=_metrics,
-)
-
-# ── Alert engine (generic, Context-free) ──────────────────────────────────────
-# Single-process MVP: the evaluator is wired to the canonical publish path via
-# events.configure_alert_evaluator(). It depends only on the store and the
-# subscription bus — no MCP Context, ClientSession, or request state.
-_alert_evaluator = AlertEvaluator(store=_store, subscription_bus=_subscription_bus, metrics=_metrics)
-events.configure_alert_evaluator(_alert_evaluator.evaluate)
-events.configure_metrics(_metrics)
 
 # ── SSE broadcast broker ──────────────────────────────────────────────────────
 # Wired to the canonical publish path so every published event fans out to
 # connected GET /events/stream subscribers automatically.
 _event_broker = EventBroker()
 events.configure_sse_broker(_event_broker)
+
 
 # ── Dedicated MARKET SSE broker + shared market service ──────────────────────
 # Second EventBroker INSTANCE (same class as the generic stream above):
@@ -270,10 +228,412 @@ def _on_market_quote_update(quote: Quote) -> None:
         _app_logger.warning("market quote failed canonical JSON encoding; dropped")
         return
     _market_event_broker.broadcast(line)
+    # Alert engine consumes the same canonical quote (never polls REST).
+    try:
+        _alert_engine.evaluate(quote)
+    except Exception:
+        _app_logger.warning("alert evaluation failed", exc_info=True)
 
 
 _market_service = MarketService(on_quote_update=_on_market_quote_update)
 
+# ── Source Manager (needs _market_service for UpstoxFeed injection) ─────────
+# Fyers feed requires a runtime access_token_getter (it cannot be expressed
+# in static JSON config). Share ONE mutable dict between the getter and the
+# Fyers OAuth callback so a successful login immediately unblocks the feed.
+_fyers_runtime_token: dict[str, str] = {"access_token": ""}
+
+
+def _fyers_token_getter() -> str:
+    """Return the current Fyers access token (runtime-memory-only)."""
+    return _fyers_runtime_token.get("access_token", "")
+
+
+def _inject_fyers_source_config(sources_cfg: dict[str, Any]) -> None:
+    """Wire the Fyers source(s) to the single credential source of truth.
+
+    For every fyers_feed source this injects, in place (startup-only):
+      * ``access_token_getter``  — runtime-memory-only token (composition root)
+      * ``credential_store``     — encrypted credential store (app_id/secret/
+                                    refresh token live ONLY here, never in
+                                    config.json)
+      * ``redirect_uri``         — centralized OAuth callback URL
+
+    Legacy fallback: if a fyers source block in config.json still carries
+    plaintext ``app_id``/``app_secret`` AND the encrypted store has none, the
+    values are migrated into the encrypted store once (deterministic) and a
+    deprecation warning is logged. The store then becomes authoritative; the
+    operator should remove the secrets from config.json. Secrets are never
+    printed or exposed.
+    """
+    for _name, _cfg in (sources_cfg or {}).items():
+        if not isinstance(_cfg, dict):
+            continue
+        if _cfg.get("type") != "fyers_feed" and _name != "fyers":
+            continue
+        _cfg["access_token_getter"] = _fyers_token_getter
+        _cfg["credential_store"] = _credential_store
+        _cfg["redirect_uri"] = FYERS_REDIRECT_URI
+
+        _store_creds = None
+        try:
+            _store_creds = _credential_store.load_fyers_credentials()
+        except Exception:
+            _store_creds = None
+        if _store_creds:
+            _cfg["app_id"] = _store_creds["app_id"]
+            _cfg["app_secret"] = _store_creds["app_secret"]
+        elif _cfg.get("app_id") and _cfg.get("app_secret"):
+            # Legacy plaintext config credentials: migrate into the encrypted
+            # store (deterministic, one-time) so the store is authoritative.
+            try:
+                _credential_store.save_fyers_credentials(
+                    str(_cfg["app_id"]), str(_cfg["app_secret"]))
+                _app_logger.warning(
+                    "migrated legacy plaintext Fyers credentials from "
+                    "config.json into the encrypted store; you may now "
+                    "remove app_id/app_secret from the fyers source block")
+                _migrated = _credential_store.load_fyers_credentials()
+                if _migrated:
+                    _cfg["app_id"] = _migrated["app_id"]
+                    _cfg["app_secret"] = _migrated["app_secret"]
+            except Exception as _exc:
+                _app_logger.error(
+                    "failed to migrate legacy Fyers config credentials: %s",
+                    type(_exc).__name__)
+
+
+# Source-manager construction is deferred until AFTER the credential store
+# exists (it is needed to wire Fyers sources). See block below line ~464.
+def _build_source_manager() -> SourceManager:
+    try:
+        return build_source_manager(SOURCES_CFG, market_service=_market_service)
+    except SourceConfigError as exc:
+        _app_logger.error("source configuration error: %s", exc)
+        return SourceManager()
+
+
+async def _restart_fyers_source() -> None:
+    """Restart the Fyers source through SourceManager (lifecycle owner)."""
+    if _fyers_source_name is None:
+        _app_logger.warning(
+            "oauth restart skipped: no fyers source registered")
+        return
+    try:
+        await _source_manager.restart_source(_fyers_source_name)
+    except Exception:
+        _app_logger.exception("oauth restart of fyers source failed")
+        raise
+
+
+async def _try_restore_fyers_token() -> None:
+    """Best-effort: regain a Fyers access token from the stored refresh token.
+
+    Runs at startup (before sources start). If a refresh token is stored,
+    exchange it for a fresh access token so the Fyers feed is READY without
+    forcing the operator to re-log in after every restart.
+    """
+    try:
+        refresh_token = _credential_store.load_fyers_refresh_token()
+        app_creds = _credential_store.load_fyers_credentials()
+    except Exception:
+        return
+    if not refresh_token or not app_creds:
+        return
+    app_id = app_creds.get("app_id")
+    secret_id = app_creds.get("app_secret")
+    if not (refresh_token and app_id and secret_id):
+        return
+    try:
+        from brokers.fyers.auth import FyersAuth
+        bundle = await FyersAuth(app_id=app_id, secret_id=secret_id,
+                                 redirect_uri=FYERS_REDIRECT_URI
+                                 ).refresh_access_token(refresh_token)
+        _fyers_runtime_token["access_token"] = bundle["access_token"]
+        _app_logger.info("fyers access token restored from refresh token")
+    except Exception as exc:
+        # Refresh failed/revoked: leave the token empty so the feed reports
+        # auth_required ("Daily Login Required") instead of a generic failure.
+        _app_logger.warning("fyers token restore failed: %s",
+                            type(exc).__name__)
+
+# Wire low-frequency source lifecycle events into the generic EventBroker
+# (WP22). Feeds call their optional on_state_change listener; we broadcast a
+# redacted envelope so the WebUI can refresh immediately on state changes.
+def _on_source_state_change(
+    source: str, provider: str, old_state: str, new_state: str,
+    reason: str | None,
+) -> None:
+    envelope = {
+        "type": "source.state_changed",
+        "data": {
+            "source": source,
+            "provider": provider,
+            "old_state": old_state,
+            "new_state": new_state,
+            "reason": reason,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        },
+    }
+    try:
+        _event_broker.broadcast(json.dumps(envelope, ensure_ascii=False))
+    except Exception:  # pragma: no cover - broadcast must never break a feed
+        _app_logger.debug("source state change broadcast failed", exc_info=True)
+
+
+# ── Product services: instrument catalog, alerts ─────────────────────────────
+from app.instruments import InstrumentCatalog as _InstrumentCatalog
+from app.alerts import AlertEngine as _AlertEngine
+from api.product_routes import (
+    build_admin_routes as _build_admin_routes,
+    build_api_meta_routes as _build_api_meta_routes,
+    build_diagnostics_routes as _build_diagnostics_routes,
+    build_instrument_routes as _build_instrument_routes,
+    build_watchlist_routes as _build_watchlist_routes,
+    build_alert_routes as _build_alert_routes,
+    build_alert_history_routes as _build_alert_history_routes,
+    build_fyers_auth_routes as _build_fyers_auth_routes,
+    build_app_settings_routes as _build_app_settings_routes,
+    build_watchlist_portability_routes as _build_watchlist_portability_routes,
+)
+
+_instrument_catalog = _InstrumentCatalog(_store)
+
+
+def _on_alert_trigger(notification: dict) -> None:
+    """Push alert events through the generic low-frequency EventBroker."""
+    envelope = {
+        "type": "alert.triggered",
+        "data": {
+            "alert_id": notification.get("alert_id"),
+            "tradingsymbol": notification.get("tradingsymbol"),
+            "field": notification.get("field"),
+            "operator": notification.get("operator"),
+            "threshold": notification.get("threshold"),
+            "observed_value": notification.get("value"),
+            "triggered_at": notification.get("ts"),
+        },
+    }
+    try:
+        _event_broker.broadcast(json.dumps(envelope, ensure_ascii=False))
+    except Exception:
+        _app_logger.warning("alert event broadcast failed", exc_info=True)
+
+
+_alert_engine = _AlertEngine(_store, on_trigger=_on_alert_trigger)
+
+from app.market_data import ProviderMarketData as _ProviderMarketData
+from api.product_routes import (
+    build_market_data_routes as _build_market_data_routes,
+)
+
+
+def _upstox_auth_context():
+    """(rest, credentials) for the live feed, or None when unauthenticated."""
+    feed = _feed_ref.get("feed")
+    if feed is None:
+        return None
+    creds = getattr(feed, "credentials_snapshot", None)
+    rest = getattr(feed, "rest", None)
+    if creds is None or rest is None:
+        return None
+    if not creds.status().get("token_present"):
+        return None
+    return rest, creds
+
+
+_provider_market_data = _ProviderMarketData(_upstox_auth_context)
+
+
+class _FeedSubscription:
+    """Watchlist→feed adapter: desired-set updates on the live Upstox feed."""
+
+    async def add(self, exchange: str, token: str) -> None:
+        feed = _feed_ref.get("feed")
+        if feed is not None and hasattr(feed, "add_instruments"):
+            await feed.add_instruments([token])
+
+    async def remove(self, exchange: str, token: str) -> None:
+        feed = _feed_ref.get("feed")
+        if feed is not None and hasattr(feed, "remove_instruments"):
+            await feed.remove_instruments([token])
+
+
+_feed_subscription = _FeedSubscription()
+
+# ── OAuth login configuration (backend-only secrets) ─────────────────────────
+# Credential precedence (documented + tested):
+#   1. Credentials saved via WebUI  (encrypted in the app SQLite DB,
+#      table `secrets`; master key at data/master.key, outside the DB)
+#   2. Environment variables        (UPSTOX_API_KEY / UPSTOX_API_SECRET)
+#   3. Not configured               (manual token entry remains available)
+# The secret NEVER reaches the browser, API responses, or logs. The mutable
+# _oauth_cfg_ref dict is shared with the settings routes so saving new
+# credentials in the WebUI enables OAuth at runtime — no restart needed.
+from app.secrets_store import (
+    CredentialStore as _CredentialStore,
+    CredentialDecryptError as _CredentialDecryptError,
+)
+from api.routes import build_settings_routes
+
+_credential_store = _CredentialStore(
+    _store, data_dir=PROJECT_ROOT / DATA_DIR)
+
+# --- Fyers source wiring (requires the credential store above) -------------
+# Centralized OAuth callback URL: ONE source of truth, derived from the
+# explicit operator-configured public_base_url (never from request Host).
+FYERS_REDIRECT_URI = oauth_callback_url(
+    get_public_base_url(_config), "fyers")
+_inject_fyers_source_config(SOURCES_CFG)
+_source_manager = _build_source_manager()
+
+# Hold a reference to the Upstox feed for runtime auth management.
+_feed_ref: dict[str, Any] = {"feed": None}
+_upstox_source_name: str | None = None
+for _src_name, _src in _source_manager.enabled_sources.items():
+    if hasattr(_src, "update_credentials"):
+        _feed_ref["feed"] = _src
+        _upstox_source_name = _src_name
+        break
+
+# Track the Fyers source name so the OAuth callback can (re)start it.
+_fyers_source_name: str | None = None
+for _src_name, _src in _source_manager.enabled_sources.items():
+    if _src_name == "fyers" or getattr(_src, "__class__", None).__name__ == "FyersFeed":
+        _fyers_source_name = _src_name
+        break
+
+# Wire lifecycle state-change broadcasting into every source (requires the
+# source manager constructed just above).
+for _src in _source_manager.enabled_sources.values():
+    try:
+        _src.on_state_change = _on_source_state_change
+    except Exception:  # non-feed sources may not accept the attribute
+        _app_logger.debug(
+            "source %s does not support on_state_change", getattr(_src, "name", "?"))
+
+# One-time startup diagnostic header (safe values only — no credentials,
+# no config secret values).
+log_startup_diagnostics(
+    _app_logger,
+    version=__version__,
+    source_names=_source_manager.enabled_sources.keys(),
+    listen_host=LISTEN_HOST,
+    listen_port=LISTEN_PORT,
+    log_file=_LOG_FILE,
+)
+
+_oauth_cfg_ref: dict[str, str] = {
+    "api_key": "",
+    "api_secret": "",
+    "redirect_uri": os.environ.get(
+        "UPSTOX_REDIRECT_URI",
+        f"http://localhost:{LISTEN_PORT}/auth/upstox/callback",
+    ).strip(),
+}
+
+try:
+    _saved_creds = _credential_store.load_upstox_app_credentials()
+except _CredentialDecryptError:
+    # Lost/corrupt master key: do NOT fail startup and do NOT regenerate
+    # silently. Operator sees "cannot decrypt" in Settings and re-enters.
+    _saved_creds = None
+    _app_logger.error(
+        "stored upstox credentials cannot be decrypted - "
+        "re-enter credentials in Settings"
+    )
+
+if _saved_creds is not None:
+    # Precedence 1: WebUI-saved credentials win over env fallback.
+    _oauth_cfg_ref["api_key"] = _saved_creds["api_key"]
+    _oauth_cfg_ref["api_secret"] = _saved_creds["api_secret"]
+    _app_logger.info("upstox oauth configured from saved credentials")
+else:
+    # Precedence 2: environment-variable fallback.
+    _env_key = os.environ.get("UPSTOX_API_KEY", "").strip()
+    _env_secret = os.environ.get("UPSTOX_API_SECRET", "").strip()
+    if _env_key and _env_secret:
+        _oauth_cfg_ref["api_key"] = _env_key
+        _oauth_cfg_ref["api_secret"] = _env_secret
+        _app_logger.info(
+            "upstox oauth configured from environment fallback"
+        )
+    else:
+        _app_logger.info(
+            "upstox oauth not configured - set credentials in Settings"
+        )
+
+
+async def _restart_upstox_source() -> None:
+    """Restart the Upstox source through SourceManager (lifecycle owner)."""
+    if _upstox_source_name is None:
+        _app_logger.warning(
+            "oauth restart skipped: no upstox source registered")
+        return
+    try:
+        await _source_manager.restart_source(_upstox_source_name)
+    except Exception:
+        _app_logger.exception("oauth restart of upstox source failed")
+        raise
+
+
+# Stateless REST transport for the OAuth code exchange. Stores no secrets.
+# Created unconditionally: OAuth may become available at runtime when the
+# operator saves credentials in Settings.
+from brokers.upstox.rest import UpstoxRest as _UpstoxRest
+_oauth_rest: Any = _UpstoxRest()
+
+# ── Lifespan ─────────────────────────────────────────────────────────────────
+_lifespan = runtime.make_lifespan(
+    _store,
+    bg_manager=_bg_task_manager,
+    shutdown_timeout=TIMEOUTS["shutdown_seconds"],
+    source_manager=_source_manager,
+    bus=_subscription_bus,
+    source_configs=SOURCES_CFG,
+    metrics=_metrics,
+    retention_cfg=RETENTION_CFG,
+)
+
+
+# ============================================================
+# MCP SERVER
+# ============================================================
+
+mcp = MCPServer(
+    name=SERVER_NAME,
+    version=__version__,
+    description="Generic self-hosted MCP event server with native event delivery",
+    log_level=LOG_LEVEL,
+    subscriptions=_subscription_bus,
+    lifespan=_lifespan,
+)
+
+# ============================================================
+# SERVICES BUNDLE
+# ============================================================
+
+
+_services = Services(
+    store=_store,
+    subscription_bus=_subscription_bus,
+    bg_task_manager=_bg_task_manager,
+    source_manager=_source_manager,
+    timeouts=TIMEOUTS,
+    replay_cfg=REPLAY_CFG,
+    metrics=_metrics,
+    market_service=_market_service,
+    instrument_catalog=_instrument_catalog,
+    provider_market_data=_provider_market_data,
+)
+
+# ── Alert engine (generic, Context-free) ──────────────────────────────────────
+# Single-process MVP: the evaluator is wired to the canonical publish path via
+# events.configure_alert_evaluator(). It depends only on the store and the
+# subscription bus — no MCP Context, ClientSession, or request state.
+_alert_evaluator = AlertEvaluator(store=_store, subscription_bus=_subscription_bus, metrics=_metrics)
+events.configure_alert_evaluator(_alert_evaluator.evaluate)
+events.configure_metrics(_metrics)
 # ============================================================
 # REGISTER RESOURCES
 # ============================================================
@@ -300,6 +660,7 @@ register_resources(mcp, _services, _constants)
 # ============================================================
 
 register_system_tools(mcp)
+register_market_tools(mcp, _services)
 register_event_tools(mcp, _services)
 register_consumer_tools(mcp, _services)
 register_replay_tools(mcp, _services)
@@ -324,6 +685,9 @@ mcp_asgi_app = mcp.streamable_http_app(
     transport_security=_transport_security,
 )
 
+
+async def _root_redirect(request: Request) -> Response:
+    return RedirectResponse(url="/ui/", status_code=302)
 
 async def _health_check(request: Request) -> JSONResponse:  # noqa: ARG001
     """Minimal liveness probe — returns 200 without requiring MCP init."""
@@ -365,6 +729,9 @@ async def _lifespan(app: Starlette) -> None:  # noqa: ARG001
     application lifespan (_lifespan passed to MCPServer) so source managers
     and background tasks start/stop correctly.
     """
+    # Restore a Fyers access token from the stored refresh token BEFORE the
+    # SDK starts sources, so an enabled Fyers feed is READY without re-login.
+    await _try_restore_fyers_token()
     async with mcp_asgi_app.router.lifespan_context(app):
         yield
 
@@ -374,10 +741,54 @@ async def _lifespan(app: Starlette) -> None:  # noqa: ARG001
 app = Starlette(
     routes=list(mcp_asgi_app.routes)
     + [
+        Route("/", endpoint=_root_redirect, methods=["GET"]),
         Route("/health", endpoint=_health_check, methods=["GET"]),
         Route("/events/stream", endpoint=_event_stream, methods=["GET"]),
     ]
-    + build_market_routes(_market_event_broker),
+    + build_market_routes(
+        _market_event_broker,
+        market_service=_market_service,
+        # Merged view: source status + task liveness + exit forensics, so the
+        # UI can distinguish "streaming" from "dead task with stale state".
+        source_status_fn=lambda: [
+            dict(info, name=name) if isinstance(info, dict) else {"name": name}
+            for name, info in _source_manager.get_status().items()
+        ],
+    )
+    + build_source_control_routes(_source_manager)
+    + build_auth_routes(
+        _feed_ref,
+        restart_fn=_restart_upstox_source,
+        oauth=_oauth_cfg_ref,
+        rest=_oauth_rest,
+    )
+    + build_settings_routes(_oauth_cfg_ref)
+    + _build_instrument_routes(_instrument_catalog, store=_store)
+    + _build_watchlist_routes(_store, subscription=_feed_subscription)
+    + _build_watchlist_portability_routes(_store)
+    + _build_alert_routes(_store, _alert_engine)
+    + _build_alert_history_routes(_store)
+    + _build_market_data_routes(_provider_market_data)
+    + _build_admin_routes(_store, PROJECT_ROOT / DATA_DIR)
+    + _build_fyers_auth_routes(
+        _credential_store,
+        runtime_token=_fyers_runtime_token,
+        restart_fn=_restart_fyers_source,
+        redirect_uri=FYERS_REDIRECT_URI,
+    )
+    + _build_app_settings_routes(str(CONFIG_PATH))
+    + _build_diagnostics_routes(
+        __version__,
+        _store,
+        lambda: [
+            dict(info, name=name) if isinstance(info, dict) else {"name": name}
+            for name, info in _source_manager.get_status().items()
+        ],
+        lambda: get_public_base_url(_config),
+    )
+    + _build_api_meta_routes()
+    + [Mount("/ui", app=StaticFiles(directory=str(PROJECT_ROOT / "web" / "ui"), html=True),
+            name="ui")],
     middleware=list(mcp_asgi_app.user_middleware),
     lifespan=_lifespan,
 )
@@ -428,3 +839,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+

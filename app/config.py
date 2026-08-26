@@ -17,7 +17,7 @@ logger = logging.getLogger("event_server")
 DEFAULTS: dict[str, Any] = {
     "server_name": "MCP Event Server",
     "host": "127.0.0.1",
-    "port": 8000,
+    "port": 7070,
     "log_level": "INFO",
     "max_request_body_size_mb": 4,
     "data_dir": "data",
@@ -34,6 +34,11 @@ DEFAULTS: dict[str, Any] = {
         "max_age_days": 0,   # 0 = disabled
         "max_rows": 0,       # 0 = disabled
     },
+    # Public base URL used to build OAuth redirect/callback URLs. MUST be an
+    # explicit, operator-configured value — never derived from request Host
+    # headers (avoids DNS-rebinding / open-redirect style abuse). Defaults to
+    # the local dev address; override for LAN / reverse-proxy deployments.
+    "public_base_url": "http://localhost:7070",
 }
 
 
@@ -112,6 +117,17 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ConfigError(
             "'log_level' must be one of: {0}".format(", ".join(valid_levels))
         )
+
+    base_url = config.get("public_base_url", "http://localhost:7070")
+    if not isinstance(base_url, str) or not base_url.strip():
+        raise ConfigError("'public_base_url' must be a non-empty string")
+    import urllib.parse as _urlparse
+    _parts = _urlparse.urlsplit(base_url.strip())
+    if _parts.scheme not in ("http", "https") or not _parts.netloc:
+        raise ConfigError(
+            "'public_base_url' must be a valid http(s) URL "
+            "(e.g. http://localhost:7070)"
+        )
     config["log_level"] = log_level
 
     max_body_mb = config.get("max_request_body_size_mb")
@@ -166,3 +182,55 @@ def validate_config(config: dict[str, Any]) -> None:
         val = config["allowed_origins"]
         if not isinstance(val, list) or not all(isinstance(o, str) for o in val):
             raise ConfigError("'allowed_origins' must be a list of strings")
+
+
+# ---------------------------------------------------------------------------
+# OAuth redirect / callback URL construction (single source of truth)
+# ---------------------------------------------------------------------------
+
+_DEFAULT_BASE_URL = "http://localhost:7070"
+
+
+def _normalize_base_url(raw: Any) -> str:
+    """Normalize an operator-supplied base URL to a bare origin.
+
+    Returns ``scheme://host[:port]`` (lowercased), dropping any path, query,
+    or fragment accidentally supplied. Returns "" when the value cannot be
+    interpreted as an http(s) origin (callers fall back to the default).
+    """
+    import urllib.parse as _urlparse
+
+    if not isinstance(raw, str):
+        return ""
+    try:
+        _parts = _urlparse.urlsplit(raw.strip())
+    except ValueError:
+        return ""
+    _scheme = _parts.scheme.lower()
+    _netloc = _parts.netloc.lower()
+    if _scheme not in ("http", "https") or not _netloc:
+        return ""
+    return "{0}://{1}".format(_scheme, _netloc)
+
+
+def get_public_base_url(config: dict[str, Any]) -> str:
+    """Return the operator-configured public base URL (never from Host header).
+
+    The value is normalized to a bare origin so stray paths/query strings can
+    never leak into OAuth callback URLs.
+    """
+    normalized = _normalize_base_url(
+        config.get("public_base_url", _DEFAULT_BASE_URL))
+    return normalized or _DEFAULT_BASE_URL
+
+
+def oauth_callback_url(base_url: str, provider: str) -> str:
+    """Build the OAuth callback URL for a provider from the configured base.
+
+    One source of truth: both authorization-URL generation and token-exchange
+    validation must call this with the SAME ``base_url``. No duplicated string
+    constants across modules. The base is normalized to a bare origin first,
+    so trailing slashes / stray paths cannot produce mismatched redirects.
+    """
+    base = _normalize_base_url(base_url) or _DEFAULT_BASE_URL
+    return "{0}/auth/{1}/callback".format(base, provider)

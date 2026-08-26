@@ -84,8 +84,29 @@ _TEST_FILES: dict[str, str] = {
     "retention": "test_retention.py",
     "market_normalize": "test_market_normalize.py",
     "market_models": "test_market_models.py",
+    "web_ui": "test_web_ui.py",
     "market_service": "test_market_service.py",
     "market_sse": "test_market_sse.py",
+    "upstox_auth": "test_upstox_auth.py",
+    "upstox_rest": "test_upstox_rest.py",
+    "upstox_feed": "test_upstox_feed.py",
+    "upstox_wiring": "test_upstox_wiring.py",
+    "web_auth": "test_web_auth.py",
+    "oauth_login": "test_oauth_login.py",
+    "credential_settings": "test_credential_settings.py",
+    "provider_coverage": "test_provider_coverage.py",
+    "consumer_completeness": "test_consumer_completeness.py",
+    "product_foundations": "test_product_foundations.py",
+    "option_chain_history": "test_option_chain_history.py",
+    "fyers_integration": "test_fyers_integration.py",
+    "fyers_feed": "test_fyers_feed.py",
+    "fyers_config": "test_fyers_config_architecture.py",
+    "release_hardening": "test_release_hardening.py",
+    "market_load": "test_market_load.py",
+    "alert_reliability": "test_alert_reliability.py",
+    "auth_startup": "test_auth_startup.py",
+    "source_controls": "test_source_controls.py",
+    "alert_history": "test_alert_history.py",
 }
 
 # Group -> ordered list of module keys. Order matters (fast/stable first).
@@ -103,13 +124,33 @@ GROUPS: dict[str, list[str]] = {
         "market_normalize",
         "market_models",
         "market_service",
+        "web_ui",
         "market_sse",
+        "upstox_auth",
+        "upstox_rest",
+        "upstox_feed",
+        "web_auth",
+        "oauth_login",
+        "credential_settings",
+        "provider_coverage",
+        "consumer_completeness",
+        "product_foundations",
+        "option_chain_history",
+        "fyers_integration",
+        "fyers_feed",
+        "fyers_config",
+        "release_hardening",
+        "market_load",
+        "alert_reliability",
+        "auth_startup",
+        "source_controls",
     ],
-    "source": ["source_lifecycle", "source_dedup"],
+    "source": ["source_lifecycle", "source_dedup", "source_controls", "alert_history", "fyers_config", "release_hardening"],
     "consumer": ["consumers", "acknowledgement"],
     "mcp": ["subscriptions", "sdk_alignment", "lifespan", "multi_client", "errors", "timeouts", "sse_stream"],
     "lifecycle": ["source_lifecycle", "reconnect"],
-    "unit": ["unit_sources", "market_normalize", "market_service"],
+    "unit": ["unit_sources", "market_normalize", "market_service", "upstox_auth",
+             "upstox_rest"],
     "performance": ["performance"],
 }
 
@@ -371,3 +412,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+

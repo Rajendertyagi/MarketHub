@@ -1,66 +1,129 @@
-# EventHub — MCP Event Server
+# MarketHub
 
-Generic self-hosted MCP event server foundation (`python -m app.server`).
+Self-hosted market data desktop for Indian markets: live Upstox and Fyers
+feeds, watchlists, option chain, charts, alerts with durable trigger
+history, and a read-only MCP tool surface. Windows-first; runs entirely on
+your machine.
 
-## Layout
+- **Read-only.** MarketHub never places orders. There are no trading tools.
+- **Secrets stay local.** Broker credentials are encrypted (Fernet) inside
+  the application database; access tokens live only in process memory.
 
-```
-app/      application composition: Starlette+Uvicorn host, entrypoint,
-          lifespan presentation helpers, canonical config + paths
-core/     generic services: events, alerts, runtime/background tasks,
-          SSE broker, persistence (core/persistence/store.py + modules/)
-mcp_server/  MCP surface: contract identifiers, tools/, resources,
-          services bundle, metrics   (named mcp_server so it can never
-          shadow the installed `mcp` SDK distribution)
-sources/  external source subsystem (registry, HTTP poller, test source)
-test/     feature-focused regression suite (see below)
-```
+## Requirements
 
-## Layout
+- Windows 10/11
+- Python 3.12+ on PATH (`python --version`)
+- A free port (default 7070)
+- An Upstox and/or Fyers developer app (API key + secret)
 
-```
-test/
-  run_all.py            # regression driver: isolated subprocess per file, hard 300s/file timeout
-  helpers/              # lifecycle, mcp, wait, mock_http, runner — shared test support
-  mcp_result.py         # SDK result normalization + safe teardown
-  test_*.py             # one feature per file (the units of the suite)
-  config.json           # base server config (overwritten per-test, restored after)
-TEST_RUNTIME_MAP.md     # per-file server usage, harness behavior, run guidance
-```
+## Start
 
-Production source under `test/` is **frozen** — do not edit `server.py`, `events.py`,
-`store.py`, `runtime.py`, `errors.py`, `client.py`, `config.json`, `requirements.txt`,
-or `sources/*` as part of test work.
+Double-click `start_market_hub.bat`, then open <http://localhost:7070/ui/>.
 
-## Run
+The script starts the server from its own folder; press Ctrl+C (or close the
+window) to stop. Logs are written to `data/logs/markethub.log`.
 
-```bash
-# Focused (preferred while debugging one feature):
-python test/test_acknowledgement.py
-python test/run_all.py --group fast
+## First Run
 
-# Full regression (CI / release only — slow path):
-python test/run_all.py
-python test/run_all.py --timeout 300
-```
+On a fresh install there is no database, no credentials, no catalogs:
 
-See `TEST_RUNTIME_MAP.md` for the server-usage matrix, the bounded-wait strategy, and
-why you should run focused, not full, during development.
+1. Open **Settings** → save your broker App credentials (encrypted).
+2. Open **Instruments** → run the catalog sync for your provider(s).
+3. Create a **Watchlist** and add instruments.
+4. Click **Login** for your provider to start the daily session.
 
-## Principles
+## Upstox Setup
 
-- **No server unless the test needs the MCP/HTTP boundary.** Application logic
-  (store, events, routing, checkpoint/ack, background tasks, source lifecycle, dedup)
-  is tested directly against the real objects with an in-memory stub bus.
-- **One server per D-level file** (exceptions: restart tests in `test_errors.py` /
-  `test_reconnect.py`, and `test_subscriptions.py` whose tests need different source
-  configs).
-- **Bounded waits, no long fixed sleeps.** Readiness/counts are polled with timeouts.
-- **Hard timeout (300 s/file) + parent-owned cleanup** — the runner terminates the child's
-  process group, so a hung file fails fast (reported as **TIMEOUT**) and any `server.py`
-  it spawned is killed with it. No reliance on the child's `atexit` (which can't run after
-  a hard kill).
+1. Settings → Upstox → enter API Key + Secret → Save.
+2. Check that the Redirect URL in your Upstox developer app is EXACTLY the
+   callback shown in Settings (default `http://localhost:7070/auth/upstox/callback`).
+3. Click **Login with Upstox** and approve on the Upstox page.
 
-## Deleted (do not recreate)
+Upstox sessions are **daily**: the access token is memory-only, so after a
+MarketHub restart you log in again. Credentials themselves persist encrypted.
 
-`test/test_phase8.py`, `test/integrate_test.py` — replaced by the per-feature files above.
+## Fyers Setup
+
+1. Settings → Fyers → enter App ID + Secret Key → Save.
+2. Register the exact redirect URL shown in Settings in your Fyers developer
+   console (default `http://localhost:7070/auth/fyers/callback`). If you open
+   MarketHub from another address, set it under Settings → Application →
+   Public Base URL (restart required).
+3. Click **Login with Fyers** and approve.
+
+Fyers provides a refresh token: MarketHub stores it encrypted and uses it at
+startup to restore the session automatically when possible. If the refresh
+is rejected you get a clear *Login Required* state instead of an error.
+
+## Daily Use
+
+- Markets page: live quotes/depth for your watchlists.
+- Option Chain / Charts: pick an underlying or instrument from the synced
+  catalog.
+- Alerts: threshold and crossing rules; every firing is recorded in Trigger
+  History even across restarts.
+
+## Sources Controls
+
+The Sources page shows each feed's state (Streaming / Connecting / Stopped /
+Login Required), frame counters, reconnect counts, and recent transitions.
+Start / Stop / Restart buttons control each source independently. A stopped
+feed with valid auth can be restarted without logging in again.
+
+## Instrument Sync
+
+Instruments → Sync loads the official instrument master for a provider.
+Syncs are manual and safe: a failed or interrupted sync leaves your existing
+catalog untouched.
+
+## Watchlists
+
+Multiple lists, reorder, rename, import/export (JSON). An instrument in two
+lists stays subscribed until removed from both.
+
+## Alerts & Trigger History
+
+Rules evaluate against canonical quotes; one crossing fires once until
+re-armed. Every firing is appended to `alert_trigger_history` (survives
+restarts, included in backups). Deleting an alert does not erase its past
+trigger records.
+
+## Backup / Recovery
+
+Settings → **Create Backup** writes a timestamped copy of the database to
+`data/backups/` (contains ciphertext only). To restore manually:
+
+1. Stop MarketHub.
+2. Copy the backup file to `data/events.db`.
+3. Ensure `data/master.key` matches the one used when the backup was made —
+   without the matching key, stored credentials cannot be decrypted (the app
+   reports them as unconfigured rather than crashing).
+
+There is intentionally no destructive one-click restore.
+
+## Logs
+
+`data/logs/markethub.log`, rotating at 10 MiB with 5 backups, UTF-8.
+Lifecycle events, OAuth outcomes, and source transitions are logged;
+credentials, tokens, and authorized URLs are never written.
+
+## MCP
+
+MarketHub exposes ~27 read-only MCP tools (quotes, depth, market status,
+instrument search, watchlists, option chain, history, alerts, sources).
+No order or trading tools exist. Point an MCP client at `http://<host>:7070`
+(streamable HTTP).
+
+## Known Limitations
+
+- **Fyers production session pending live validation.** The implementation
+  is complete offline-tested (login URL construction, callback state
+  handling, encrypted store, refresh restore); one real login is required to
+  confirm end-to-end.
+- **Upstox restart requires daily login** (access token is runtime-only by
+  design; Upstox offers no refresh flow in this integration).
+- Whole-market scanner deferred pending a curated-universe and provider-limit
+  policy.
+- Market status outside session hours is inferred from IST time and clearly
+  labelled — not broker-confirmed.
+- Quotes older than 5 minutes are marked [STALE] in the UI.

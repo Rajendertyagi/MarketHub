@@ -1,0 +1,23 @@
+{
+  "_comment": "MarketHub example configuration. Copy to config.json and edit. Broker credentials (app_id, app_secret, refresh_token) are NOT configured here — they are entered in the WebUI Settings page and stored encrypted in the application database. Do NOT put app_secret / refresh_token / access_token in this file.",
+  "server_name": "MCP Event Server",
+  "host": "127.0.0.1",
+  "port": 7070,
+  "log_level": "INFO",
+  "public_base_url": "http://localhost:7070",
+  "sources": {
+    "fyers": {
+      "_comment": "Source definition only. No secrets. Credentials are supplied via WebUI Settings (encrypted). The Fyers feed becomes ready once credentials are configured and you complete 'Login with Fyers'.",
+      "type": "fyers_feed",
+      "enabled": true,
+      "mode": "full",
+      "instruments": [
+        {
+          "key": "NSE:NIFTY50-INDEX",
+          "exchange": "NSE",
+          "tradingsymbol": "NIFTY50"
+        }
+      ]
+    }
+  }
+}

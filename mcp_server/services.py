@@ -21,4 +21,8 @@ class Services:
     source_manager: Any   # SourceManager
     timeouts: dict[str, Any]
     replay_cfg: dict[str, Any]
-    metrics: Any          # RuntimeMetrics
+    metrics: Any
+    market_service: Any = None          # RuntimeMetrics
+    instrument_catalog: Any = None      # canonical instrument catalog
+    provider_market_data: Any = None    # history/option-chain services
+

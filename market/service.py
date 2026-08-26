@@ -67,7 +67,7 @@ from datetime import datetime
 from types import MappingProxyType
 from typing import Any, Awaitable, Callable, Mapping
 
-from market.models import Depth, Quote
+from market.models import Depth, Quote, merge_greeks
 from market.normalize.common import QUOTE_FIELD_NAMES
 
 logger = logging.getLogger(__name__)
@@ -217,10 +217,20 @@ class MarketService:
         return inc_recv, cur_recv
 
     def _merge_quote(self, current: Quote, patch: QuotePatch) -> Quote:
-        """Immutable merge per the locked presence rules (1-3)."""
+        """Immutable merge per the locked presence rules (1-3).
+
+        Greeks exception: a reported greeks snapshot merges FIELD-WISE
+        over prior state (merge_greeks) so a partial provider snapshot
+        cannot discard previously reported values. Whole-object clear is
+        expressed as greeks=None... which per rule 2 would clear — but a
+        None INSIDE the snapshot means "not reported" and preserves.
+        """
         values = {name: getattr(current, name) for name in PATCH_FIELD_NAMES}
         for name, value in patch.reported_fields.items():
-            values[name] = value  # None clears; a value replaces
+            if name == "greeks" and value is not None:
+                values[name] = merge_greeks(current.greeks, value)
+            else:
+                values[name] = value  # None clears; a value replaces
         return Quote(
             instrument_token=current.instrument_token,
             exchange=current.exchange,

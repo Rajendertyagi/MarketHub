@@ -11,4 +11,11 @@ uvicorn>=0.31.1,<1.0.0
 sse-starlette>=3.0.0,<4.0.0
 # Phase D1: Upstox V3 market-data feed — runtime for the vendored generated
 # bindings in brokers/upstox/proto/ (websockets follows in Phase D3).
-protobuf~=6.2
+# Lower bound matches the binding's ValidateProtobufRuntimeVersion(6, 31, 1).
+protobuf>=6.31.1,<7
+# Phase D3: Upstox V3 WebSocket feed adapter (asyncio API only).
+websockets>=17.0,<18.0
+# WebUI credential management: Fernet authenticated encryption for long-lived
+# app credentials stored in the SQLite `secrets` table (app/secrets_store.py).
+# Lower bound: stable Fernet API present since 42; upper bound: next major.
+cryptography>=44.0,<51

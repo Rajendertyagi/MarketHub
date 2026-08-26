@@ -35,6 +35,13 @@ class R:
         self.fail(name, f"expected {expected!r}, got {actual!r}")
         return False
 
+    def assert_not_eq(self, name: str, actual: Any, expected: Any) -> bool:
+        if actual != expected:
+            self.ok(name)
+            return True
+        self.fail(name, f"expected values to differ, both are {actual!r}")
+        return False
+
     def assert_true(self, name: str, cond: bool, msg: str = "") -> bool:
         if cond:
             self.ok(name)

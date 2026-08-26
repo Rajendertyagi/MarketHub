@@ -260,7 +260,10 @@ def quote_fields_from_ws_full(
 ) -> dict[str, Any]:
     """Normalize a full-mode MarketFullFeed tick into a canonical field map.
 
-    optionGreeks / marketOHLC / iv are intentionally ignored (deferred).
+    Extended coverage: optionGreeks, iv, and the day candle from
+    marketOHLC (interval "1d") are extracted when wire-present. All other
+    OHLC intervals are ignored (intraday candles are charting data, not
+    quote state).
     """
     if not isinstance(ff, dict):
         raise NormalizationError("upstox ws full feed: expected object")
@@ -282,6 +285,66 @@ def quote_fields_from_ws_full(
         if raw is None or raw == 0:
             continue
         fields[dst] = to_int(raw, field=src)
+
+    # Implied volatility (P-ZERO: wire-absent decodes as 0).
+    # GREEKS WIRE-FORCED NOTE: OptionGreeks children are plain proto3
+    # scalars (no `optional`), so an exact 0.0 value is NEVER serialized —
+    # ListFields cannot distinguish "unset" from "truly 0.0". Dropping
+    # zeros here is therefore forced by the wire format, not a heuristic.
+    # A deep-OTM delta of exactly 0.0 is unrepresentable over Upstox WS;
+    # near-zero values (0.05, 0.001) pass through correctly.
+    iv_raw = ff.get("iv")
+    if iv_raw is not None and iv_raw != 0:
+        from market.models import OptionGreeks
+
+        iv_val = to_float(iv_raw, field="iv")
+        existing = fields.get("greeks")
+        if existing is not None:
+            fields["greeks"] = OptionGreeks(
+                delta=existing.delta, gamma=existing.gamma,
+                theta=existing.theta, vega=existing.vega,
+                rho=existing.rho, iv=iv_val,
+            )
+        else:
+            fields["greeks"] = OptionGreeks(iv=iv_val)
+
+    # Option greeks message.
+    og = ff.get("optionGreeks")
+    if isinstance(og, dict) and og:
+        from market.models import OptionGreeks
+
+        greek_values: dict[str, float] = {}
+        for name in ("delta", "gamma", "theta", "vega", "rho"):
+            raw = og.get(name)
+            if raw is None or raw == 0:
+                continue
+            greek_values[name] = to_float(raw, field=f"optionGreeks.{name}")
+        if greek_values:
+            existing = fields.get("greeks")
+            if existing is not None:
+                merged = {
+                    "delta": existing.delta, "gamma": existing.gamma,
+                    "theta": existing.theta, "vega": existing.vega,
+                    "rho": existing.rho, "iv": existing.iv,
+                }
+                merged.update(greek_values)
+                fields["greeks"] = OptionGreeks(**merged)
+            else:
+                fields["greeks"] = OptionGreeks(**greek_values)
+
+    # Day candle from marketOHLC: fills open/high/low when wire-present.
+    market_ohlc = (ff.get("marketOHLC") or {}).get("ohlc") or []
+    for candle in market_ohlc:
+        if not isinstance(candle, dict):
+            continue
+        if candle.get("interval") != "1d":
+            continue
+        for src, dst in (("open", "open"), ("high", "high"), ("low", "low")):
+            raw = candle.get(src)
+            if raw is None or raw == 0:
+                continue
+            fields[dst] = to_float(raw, field=f"marketOHLC.1d.{src}")
+        break
 
     bid_ask = (ff.get("marketLevel") or {}).get("bidAskQuote") or []
     for src_key, dst_key in (("bidP", "best_bid"), ("askP", "best_ask")):
@@ -418,3 +481,133 @@ def instrument_from_master(record: dict[str, Any]) -> Instrument:
         expiry=expiry,
         strike=strike,
     )
+
+
+# ---------------------------------------------------------------------------
+# Historical candles (GET /v2/historical-candle/... and intraday)
+# ---------------------------------------------------------------------------
+
+
+def candles_from_rest(payload: dict[str, Any]):
+    """Normalize an Upstox historical/intraday candle response.
+
+    Response shape: {"status":"ok","data":{"candles":[[ts,o,h,l,c,v,oi?]...]}}
+    with ISO-8601 timestamps (IST-offset aware). Malformed rows are skipped.
+    """
+    if not isinstance(payload, dict):
+        raise NormalizationError("upstox candles: expected object")
+    rows = ((payload.get("data") or {}).get("candles")) or []
+    from market.models import Candle
+
+    out: list[Candle] = []
+    for row in rows:
+        if not isinstance(row, list) or len(row) < 5:
+            continue
+        try:
+            ts = parse_timestamp(row[0], unit="iso", field="candle.ts")
+        except Exception:
+            continue
+        try:
+            o, h, l, c = (to_float(row[1], field="candle.open"),
+                          to_float(row[2], field="candle.high"),
+                          to_float(row[3], field="candle.low"),
+                          to_float(row[4], field="candle.close"))
+        except NormalizationError:
+            continue
+        vol = to_int(row[5], field="candle.volume") \
+            if len(row) > 5 and row[5] is not None else None
+        oi = to_float(row[6], field="candle.oi") \
+            if len(row) > 6 and row[6] is not None else None
+        out.append(Candle(timestamp=ts, open=o, high=h, low=l, close=c,
+                          volume=vol, open_interest=oi))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Option chain (PUT /v2/option/chain)
+# ---------------------------------------------------------------------------
+
+
+def _contract_data(md: Any, og: Any) -> "OptionContractData | None":
+    from market.models import OptionContractData
+
+    if not isinstance(md, dict):
+        return None
+    greeks = og if isinstance(og, dict) else {}
+
+    def num(key: str, src=None) -> float | None:
+        raw = (src or md).get(key)
+        try:
+            f = float(raw)
+            return f
+        except (TypeError, ValueError):
+            return None
+
+    def integer(key: str) -> int | None:
+        f = num(key)
+        return int(f) if f is not None else None
+
+    return OptionContractData(
+        ltp=num("ltp"), volume=integer("volume"),
+        bid=num("bid_price"), ask=num("ask_price"),
+        oi=num("oi"), previous_oi=num("prev_oi"),
+        oi_change=(num("oi") - num("prev_oi"))
+        if num("oi") is not None and num("prev_oi") is not None else None,
+        close=num("close_price"),
+        iv=num("iv", greeks), delta=num("delta", greeks),
+        theta=num("theta", greeks), gamma=num("gamma", greeks),
+        vega=num("vega", greeks), pop=num("pop", greeks),
+    )
+
+
+def option_chain_from_rest(payload: dict[str, Any], *,
+                           instrument_token: str, exchange: str,
+                           tradingsymbol: str = "", expiry: str):
+    """Normalize an Upstox option-chain response into a canonical snapshot."""
+    if not isinstance(payload, dict):
+        raise NormalizationError("upstox option chain: expected object")
+    data = payload.get("data")
+    if not isinstance(data, list):
+        raise NormalizationError("upstox option chain: missing data array")
+
+    from market.models import OptionChainSnapshot, OptionStrikeRow
+
+    strikes: list[OptionStrikeRow] = []
+    spot: float | None = None
+    atm_strike: float | None = None
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        strike_raw = entry.get("strike_price")
+        try:
+            strike = float(strike_raw)
+        except (TypeError, ValueError):
+            continue
+        call = _contract_data((entry.get("call_options") or {})
+                              .get("market_data"),
+                              (entry.get("call_options") or {})
+                              .get("option_greeks"))
+        put = _contract_data((entry.get("put_options") or {})
+                             .get("market_data"),
+                             (entry.get("put_options") or {})
+                             .get("option_greeks"))
+        is_atm = bool(entry.get("atm"))
+        if is_atm:
+            atm_strike = strike
+        sp = entry.get("spot_price")
+        try:
+            spot = float(sp) if sp is not None else spot
+        except (TypeError, ValueError):
+            pass
+        strikes.append(OptionStrikeRow(strike=strike, call=call, put=put,
+                                       atm=is_atm))
+    strikes.sort(key=lambda s: s.strike)
+    return OptionChainSnapshot(
+        instrument_token=instrument_token, exchange=exchange,
+        tradingsymbol=tradingsymbol, expiry=expiry,
+        spot_price=spot, atm_strike=atm_strike, strikes=tuple(strikes))
+
+
+
+
+

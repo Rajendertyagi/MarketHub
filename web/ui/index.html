@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en" class="wa-theme-dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MarketHub</title>
+<link rel="stylesheet" href="/ui/vendor/webawesome/dist/styles/webawesome.css">
+<link rel="stylesheet" href="/ui/vendor/webawesome/dist/styles/themes/default.css">
+<link rel="stylesheet" href="/ui/vendor/webawesome/dist/styles/utilities.css">
+<link rel="stylesheet" href="/ui/css/style.css?v=13">
+<script type="importmap">
+{
+  "imports": {
+    "@shoelace-style/animations": "/ui/vendor/shoelace-style/animations/index.js"
+  }
+}
+</script>
+<script type="module" src="/ui/vendor/webawesome/dist/webawesome.loader.js"></script>
+</head>
+<body>
+
+<!-- ══ TOP NAVIGATION ══ -->
+<nav class="topnav">
+  <div class="topnav-brand">Market<span class="accent">Hub</span></div>
+  <div class="topnav-links">
+    <button class="nav-link active" data-view="dashboard">Dashboard</button>
+    <button class="nav-link" data-view="markets">Markets</button>
+    <button class="nav-link" data-view="options">Option Chain</button>
+    <button class="nav-link" data-view="sources">Sources</button>
+    <button class="nav-link" data-view="instruments">Instruments</button>
+    <button class="nav-link" data-view="watchlists">Watchlists</button>
+    <button class="nav-link" data-view="charts">Charts</button>
+    <button class="nav-link" data-view="alerts">Alerts</button>
+    <button class="nav-link" data-view="mcp">MCP</button>
+    <button class="nav-link" data-view="settings">Settings</button>
+  </div>
+  <div class="topnav-right">
+    <span id="sse-indicator" class="indicator indicator-off" title="SSE connection">● SSE</span>
+    <span id="broker-indicator" class="indicator indicator-off" title="Broker feed">● Broker</span>
+    <button id="theme-toggle" class="icon-btn" title="Toggle theme">◐</button>
+  </div>
+</nav>
+
+<!-- ══ TICKER STRIP ══ -->
+<div class="ticker-strip" id="ticker-strip">
+  <span class="ticker-empty">No market data yet</span>
+</div>
+
+<!-- ══ MAIN CONTENT ══ -->
+<main id="main-content">
+
+  <!-- ── DASHBOARD VIEW ── -->
+  <section id="view-dashboard" class="view active">
+    <div class="status-strip">
+      <div class="status-chip"><label>Upstox</label><span id="chip-upstox" class="chip chip-off">—</span></div>
+      <div class="status-chip"><label>SSE</label><span id="chip-sse" class="chip chip-off">—</span></div>
+      <div class="status-chip"><label>Instruments</label><span id="chip-instruments" class="chip-val">0</span></div>
+      <div class="status-chip"><label>Frames</label><span id="chip-frames" class="chip-val">0</span></div>
+      <div class="status-chip"><label>Reconnects</label><span id="chip-reconnects" class="chip-val">0</span></div>
+      <div class="status-chip"><label>Last Update</label><span id="chip-last-update" class="chip-val">—</span></div>
+    </div>
+    <div class="market-cards" id="market-cards"></div>
+    <div class="panel">
+      <div class="panel-header"><h2>Subscribed Universe Movers</h2></div>
+      <table class="data-table" id="movers-table">
+        <thead><tr><th>Category</th><th>Symbol</th><th>LTP</th><th>Chg%</th><th>Volume</th></tr></thead>
+        <tbody id="movers-body"><tr><td colspan="5" class="empty-row">Waiting for market data…</td></tr></tbody>
+      </table>
+    </div>
+    <p class="hint" id="market-status-hint"></p>
+    <div class="panel">
+      <div class="panel-header"><h2>Live Market</h2></div>
+      <table class="data-table" id="dash-table">
+        <thead><tr>
+          <th>Symbol</th><th>LTP</th><th>Chg</th><th>Chg%</th>
+          <th>Open</th><th>High</th><th>Low</th><th>Close</th>
+          <th>Vol</th><th>Bid</th><th>Ask</th><th>Updated</th>
+        </tr></thead>
+        <tbody id="dash-body"><tr><td colspan="12" class="empty-row">Waiting for market data…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── MARKETS VIEW ── -->
+  <section id="view-markets" class="view">
+    <div class="toolbar">
+      <input type="text" id="market-filter" aria-label="Filter markets by symbol" placeholder="Filter symbols…" class="filter-input">
+    </div>
+    <div class="panel">
+      <table class="data-table" id="markets-table">
+        <thead><tr>
+          <th>Symbol</th><th>LTP</th><th>Chg</th><th>Chg%</th>
+          <th>Open</th><th>High</th><th>Low</th><th>Prev Close</th>
+          <th>ATP</th><th>Volume</th><th>OI</th><th>OI Chg</th><th>OI Chg%</th>
+          <th>Bid</th><th>Ask</th><th>Upper Ckt</th><th>Lower Ckt</th>
+          <th>Last Trade</th><th>Updated</th>
+        </tr></thead>
+        <tbody id="markets-body"><tr><td colspan="19" class="empty-row">No data</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── SOURCES VIEW ── -->
+  <section id="view-sources" class="view">
+    <div class="panel">
+      <div class="panel-header"><h2>Source Status</h2></div>
+      <div id="sources-msg" class="hint"></div>
+      <div id="sources-detail"><em>Loading…</em></div>
+    </div>
+    <p class="hint">To log in or manage Upstox credentials, go to <button class="nav-link" data-view="settings" style="padding:0;font-size:12px;text-decoration:underline">Settings</button>.</p>
+  </section>
+
+  <!-- ── INSTRUMENTS VIEW ── -->
+  <section id="view-instruments" class="view">
+    <div class="toolbar">
+      <input type="text" id="instr-search" aria-label="Search instrument catalog" placeholder="Search symbol or name (e.g. RELIANCE, NIFTY)…" class="filter-input" style="width:320px">
+      <select id="instr-exchange" class="wa-select">
+        <option value="">All exchanges</option>
+        <option>NSE</option><option>NFO</option><option>BSE</option><option>MCX</option>
+      </select>
+      <button id="instr-sync-upstox" class="btn">Sync Upstox</button>
+      <button id="instr-sync-fyers" class="btn">Sync Fyers</button>
+    </div>
+    <div id="instr-sync-msg" class="hint"></div>
+    <div id="instr-sync-state" class="hint"></div>
+    <div class="panel">
+      <table class="data-table" id="instr-table">
+        <thead><tr>
+          <th>Symbol</th><th>Name</th><th>Exchange</th><th>Type</th>
+          <th>Expiry</th><th>Strike</th><th>Lot</th><th>Provider</th><th></th>
+        </tr></thead>
+        <tbody id="instr-body"><tr><td colspan="9" class="empty-row">Search to find instruments. Sync a provider master first if no results.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── WATCHLISTS VIEW ── -->
+  <section id="view-watchlists" class="view">
+    <div class="toolbar">
+      <select id="wl-select" class="wa-select"></select>
+      <input type="text" id="wl-new-name" aria-label="New watchlist name" placeholder="New watchlist name…" class="filter-input">
+      <button id="wl-create" class="btn">Create</button>
+      <button id="wl-rename" class="btn">Rename</button>
+      <button id="wl-delete" class="btn" style="border-color:var(--red);color:var(--red)">Delete</button>
+    </div>
+    <div class="panel">
+      <table class="data-table" id="wl-table">
+        <thead><tr>
+          <th>Symbol</th><th>LTP</th><th>Chg</th><th>Chg%</th>
+          <th>Volume</th><th>Bid</th><th>Ask</th><th></th>
+        </tr></thead>
+        <tbody id="wl-body"><tr><td colspan="8" class="empty-row">No items. Add instruments from the Instruments page.</td></tr></tbody>
+      </table>
+    </div>
+    <p class="hint">Live values update via the shared market stream for subscribed instruments only.</p>
+  </section>
+
+  <!-- ── OPTION CHAIN VIEW ── -->
+  <section id="view-options" class="view">
+    <div class="toolbar">
+      <input type="text" id="oc-underlying-search" aria-label="Search option underlying" placeholder="Search underlying (e.g. NIFTY)…" class="filter-input" style="width:240px">
+      <select id="oc-underlying-select" class="wa-select"><option value="">Underlying…</option></select>
+      <select id="oc-expiry-select" class="wa-select" disabled><option value="">Expiry…</option></select>
+      <select id="oc-window" class="wa-select">
+        <option value="5">±5 strikes</option>
+        <option value="10">±10 strikes</option>
+        <option value="0" selected>All</option>
+      </select>
+      <button id="oc-load" class="btn">Load Chain</button>
+    </div>
+    <div class="status-strip">
+      <div class="status-chip"><label>Spot</label><span id="oc-spot" class="chip-val">—</span></div>
+      <div class="status-chip"><label>ATM</label><span id="oc-atm" class="chip-val">—</span></div>
+    </div>
+    <div id="oc-message" class="hint"></div>
+    <div class="panel">
+      <div style="overflow-x:auto">
+      <table class="data-table" id="oc-table">
+        <thead><tr>
+          <th colspan="6">CALLS</th><th rowspan="2">Strike</th><th colspan="6">PUTS</th>
+        </tr>
+        <tr>
+          <th>OI</th><th>OI Chg</th><th>Vol</th><th>IV</th><th>LTP</th><th>Chg</th>
+          <th>OI</th><th>OI Chg</th><th>Vol</th><th>IV</th><th>LTP</th><th>Chg</th>
+        </tr></thead>
+        <tbody id="oc-body"><tr><td colspan="13" class="empty-row">Search an underlying (sync the instrument master first), pick an expiry, then Load Chain.</td></tr></tbody>
+      </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── CHARTS VIEW ── -->
+  <section id="view-charts" class="view">
+    <div class="toolbar">
+      <input type="text" id="chart-search" aria-label="Search chart instrument" placeholder="Search instrument (e.g. RELIANCE)…" class="filter-input" style="width:240px">
+      <select id="chart-instrument-select" class="wa-select"><option value="">Instrument…</option></select>
+      <select id="chart-provider" class="wa-select">
+        <option value="upstox" selected>Upstox</option>
+        <option value="fyers">Fyers</option>
+      </select>
+      <select id="chart-unit" class="wa-select">
+        <option value="minutes">Minutes</option>
+        <option value="hours" selected>Hours</option>
+        <option value="days">Days</option>
+        <option value="weeks">Weeks</option>
+        <option value="months">Months</option>
+      </select>
+      <input type="number" id="chart-interval" aria-label="Chart interval" value="1" min="1" class="filter-input" style="width:70px">
+      <select id="chart-range" class="wa-select">
+        <option value="1">1D</option>
+        <option value="5">5D</option>
+        <option value="30" selected>1M</option>
+        <option value="90">3M</option>
+        <option value="180">6M</option>
+        <option value="365">1Y</option>
+      </select>
+      <button id="chart-load" class="btn">Load Chart</button>
+    </div>
+    <div id="chart-message" class="hint"></div>
+    <div class="panel"><div id="chart-container" style="height:480px;width:100%"></div></div>
+  </section>
+
+  <!-- ── ALERTS VIEW ── -->
+  <section id="view-alerts" class="view">
+    <div class="toolbar">
+      <input type="text" id="alert-token" aria-label="Alert instrument token" placeholder="Instrument token…" class="filter-input" style="width:220px">
+      <input type="text" id="alert-symbol" aria-label="Alert trading symbol" placeholder="Symbol…" class="filter-input" style="width:120px">
+      <select id="alert-field" class="wa-select">
+        <option value="ltp">LTP</option>
+        <option value="change_percent">Change %</option>
+        <option value="volume">Volume</option>
+        <option value="oi_change_percent">OI Change %</option>
+      </select>
+      <select id="alert-operator" class="wa-select">
+        <option value="gt">&gt;</option>
+        <option value="lt">&lt;</option>
+      </select>
+      <input type="number" id="alert-threshold" aria-label="Alert threshold value" placeholder="Value" class="filter-input" style="width:110px">
+      <button id="alert-create" class="btn">Add Alert</button>
+    </div>
+    <div id="alert-notifications"></div>
+    <div class="panel">
+      <table class="data-table" id="alerts-table">
+        <thead><tr>
+          <th>Symbol</th><th>Condition</th><th>Status</th>
+          <th>Enabled</th><th></th>
+        </tr></thead>
+        <tbody id="alerts-body"><tr><td colspan="5" class="empty-row">No alerts configured.</td></tr></tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Trigger History</h2>
+        <button id="alert-history-clear" class="btn" style="padding:2px 8px;font-size:11px">Clear history</button>
+      </div>
+      <table class="data-table" id="alert-history-table">
+        <thead><tr>
+          <th>Time</th><th>Symbol</th><th>Condition</th>
+          <th>Observed</th><th>Provider</th><th>Exchange</th>
+        </tr></thead>
+        <tbody id="alert-history-body"><tr><td colspan="6" class="empty-row">No trigger history yet.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── MCP VIEW ── -->
+  <section id="view-mcp" class="view">
+    <div class="panel">
+      <div class="panel-header"><h2>MCP Market Tools</h2></div>
+      <table class="data-table mcp-table">
+        <thead><tr><th>Tool</th><th>Description</th><th>Type</th></tr></thead>
+        <tbody>
+          <tr><td><code>market_quote</code></td><td>Latest normalized quote for an instrument</td><td>Read-only</td></tr>
+          <tr><td><code>market_depth</code></td><td>Market depth (bid/ask levels)</td><td>Read-only</td></tr>
+          <tr><td><code>market_status</code></td><td>Service counters and state</td><td>Read-only</td></tr>
+        </tbody>
+      </table>
+      <p class="hint">Tools read from the shared MarketService. No broker connections are created by MCP callers.</p>
+    </div>
+  </section>
+
+  <!-- ── SETTINGS VIEW ── -->
+  <section id="view-settings" class="view">
+    <div class="panel">
+      <div class="panel-header"><h2>Settings</h2></div>
+      <div class="setting-row">
+        <label>Theme</label>
+        <button id="settings-theme-toggle" class="btn">Toggle Dark / Light</button>
+      </div>
+      <div class="setting-row">
+        <label>Data Source</label>
+        <span class="setting-val">Upstox V3 WebSocket Feed</span>
+      </div>
+      <div class="setting-row">
+        <label>SSE Endpoint</label>
+        <span class="setting-val mono">/api/market/stream</span>
+      </div>
+      <div class="setting-row">
+        <label>Database Backup</label>
+        <button id="db-backup" class="btn">Backup Database</button>
+      </div>
+      <div id="backup-message" class="hint"></div>
+    </div>
+
+    <div class="panel" style="margin-top:10px">
+      <div class="panel-header"><h2>Upstox API Credentials</h2></div>
+      <div class="auth-form">
+        <p class="hint" style="padding:0 0 10px 0">
+          One-time setup. Saved on this computer only — never shown again.
+        </p>
+        <div class="auth-row">
+          <label>Status</label>
+          <span id="cred-key-status" class="chip chip-off">API Key: —</span>
+          <span id="cred-secret-status" class="chip chip-off">API Secret: —</span>
+        </div>
+        <div class="auth-row">
+          <label for="cred-api-key">API Key</label>
+          <input type="text" id="cred-api-key" class="filter-input"
+                 placeholder="Paste API key…" autocomplete="off">
+        </div>
+        <div class="auth-row">
+          <label for="cred-api-secret">API Secret</label>
+          <input type="password" id="cred-api-secret" class="filter-input"
+                 placeholder="Paste API secret…" autocomplete="new-password">
+        </div>
+        <div class="auth-row">
+          <label></label>
+          <button id="cred-save" class="btn">Save Credentials</button>
+          <button id="cred-delete" class="btn" style="border-color:var(--red);color:var(--red)">Delete Credentials</button>
+        </div>
+        <div id="cred-message" class="hint"></div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:10px">
+      <div class="panel-header"><h2>Fyers Credentials</h2></div>
+      <div class="auth-form">
+        <p class="hint" style="padding:0 0 10px 0">
+          One-time setup. Saved encrypted on this computer only.
+        </p>
+        <div class="auth-row">
+          <label>App Credentials</label>
+          <span id="fyers-status" class="chip chip-off">Not configured</span>
+        </div>
+        <div class="auth-row">
+          <label>Daily Login</label>
+          <span id="fyers-login-status" class="chip chip-off">Credentials Required</span>
+        </div>
+        <div class="auth-row">
+          <label>Feed State</label>
+          <span id="fyers-feed-state" class="setting-val">—</span>
+        </div>
+        <div class="auth-row">
+          <label for="fyers-app-id">App ID</label>
+          <input type="text" id="fyers-app-id" class="filter-input"
+                 placeholder="Paste Fyers app id…" autocomplete="off">
+        </div>
+        <div class="auth-row">
+          <label for="fyers-secret">Secret Key</label>
+          <input type="password" id="fyers-secret" class="filter-input"
+                 placeholder="Paste secret key…" autocomplete="new-password">
+        </div>
+        <div class="auth-row">
+          <label></label>
+          <button id="fyers-save" class="btn">Save Fyers Credentials</button>
+        </div>
+        <div class="auth-row">
+          <label></label>
+          <button id="fyers-login-btn" class="btn" style="display:none">Login with Fyers</button>
+        </div>
+        <div id="fyers-message" class="hint"></div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:10px">
+      <div class="panel-header"><h2>Application</h2></div>
+      <div class="auth-form">
+        <p class="hint" style="padding:0 0 10px 0">
+          Public base URL used to build OAuth callback URLs. Must match the
+          address you open MarketHub from. Changing it requires a restart.
+        </p>
+        <div class="auth-row">
+          <label>Effective Base URL</label>
+          <span id="app-base-url" class="chip chip-off">—</span>
+        </div>
+        <div class="auth-row">
+          <label>Fyers Callback</label>
+          <span id="app-fyers-callback" class="chip chip-off">—</span>
+        </div>
+        <div class="auth-row">
+          <label for="app-base-url-input">Public Base URL</label>
+          <input type="text" id="app-base-url-input" class="filter-input"
+                 placeholder="http://localhost:7070" autocomplete="off">
+        </div>
+        <div class="auth-row">
+          <label></label>
+          <button id="app-save" class="btn">Save Application Settings</button>
+        </div>
+        <div id="app-message" class="hint"></div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:10px">
+      <div class="panel-header"><h2>Upstox Login</h2></div>
+      <div class="auth-form">
+        <div class="auth-row">
+          <label>Authentication</label>
+          <span id="auth-token-status" class="chip chip-off">Not configured</span>
+        </div>
+        <div class="auth-row">
+          <label>Feed State</label>
+          <span id="auth-feed-state" class="setting-val">—</span>
+        </div>
+        <div class="auth-row">
+          <label></label>
+          <button id="oauth-login-btn" class="btn" style="display:none">Login with Upstox</button>
+        </div>
+        <div id="auth-message" class="hint"></div>
+        <div class="auth-row" style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+          <label for="auth-token-input">Manual Token</label>
+          <input type="password" id="auth-token-input" class="filter-input"
+                 placeholder="Paste Upstox access token (emergency fallback)…" autocomplete="off">
+        </div>
+        <div class="auth-row">
+          <label></label>
+          <button id="auth-submit" class="btn">Save Token</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ══ QUOTE DETAILS DRAWER ══ -->
+<div id="quote-drawer" class="drawer hidden">
+  <div class="drawer-header">
+    <span id="drawer-title" class="mono">—</span>
+    <button id="drawer-close" class="icon-btn" title="Close">✕</button>
+  </div>
+  <div class="drawer-body">
+    <h3>Price</h3>
+    <table class="data-table kv-table" id="drawer-price"></table>
+    <h3>Trade / Volume</h3>
+    <table class="data-table kv-table" id="drawer-trade"></table>
+    <h3>Open Interest</h3>
+    <table class="data-table kv-table" id="drawer-oi"></table>
+    <h3>Market</h3>
+    <table class="data-table kv-table" id="drawer-markets-section"></table>
+    <h3>Option Greeks</h3>
+    <div id="drawer-greeks"><em>Greeks not available</em></div>
+    <h3>Depth</h3>
+    <div id="drawer-depth"><em>Loading…</em></div>
+  </div>
+</div>
+
+<footer class="app-footer">
+  <span>MarketHub</span>
+  <span id="footer-tick"></span>
+</footer>
+
+<script src="/ui/vendor/echarts/dist/echarts.min.js"></script>
+<script src="/ui/js/app.js?v=23"></script>
+</body>
+</html>

@@ -38,13 +38,18 @@ from core.persistence.modules.schema import (
     migrate_v8_to_v9,
     SCHEMA_VERSION,
 )
+from core.persistence.modules.products import migrate_v10_to_v11
+from core.persistence.modules.products import migrate_v11_to_v12
+from core.persistence.modules.secrets import migrate_v9_to_v10
 from core.persistence.modules import alerts as _alerts
 from core.persistence.modules import consumers as _consumers
 from core.persistence.modules import delivery as _delivery
 from core.persistence.modules import events as _events
+from core.persistence.modules import products as _products
 from core.persistence.modules import recent_events as _recent_events
 from core.persistence.modules import replay as _replay
 from core.persistence.modules import retention as _retention
+from core.persistence.modules import secrets as _secrets
 from core.persistence.modules import source_state as _source_state
 from core.errors import ConsumerNotFoundError
 
@@ -108,6 +113,12 @@ class EventStore:
                         migrate_v7_to_v8(conn)
                     elif current_version == 8:
                         migrate_v8_to_v9(conn)
+                    elif current_version == 9:
+                        migrate_v9_to_v10(conn)
+                    elif current_version == 10:
+                        migrate_v10_to_v11(conn)
+                    elif current_version == 11:
+                        migrate_v11_to_v12(conn)
                     else:
                         raise RuntimeError(
                             f"unsupported schema version {current_version}; "
@@ -499,6 +510,283 @@ class EventStore:
     def db_path(self) -> str:
         return self._db_path
 
+    # ─── Encrypted secrets (v10; values are ciphertext, never plaintext) ──────
+
+    def upsert_secrets(self, provider: str,
+                       items: dict[str, tuple[str, str]]) -> None:
+        """Transactionally upsert secret rows (name -> (ciphertext, scheme)).
+
+        The caller (CredentialStore) encrypts; this layer stores opaque
+        strings and never sees plaintext.
+        """
+        conn = self._open(self._db_path)
+        try:
+            _secrets.upsert_secrets(conn, provider, items)
+        finally:
+            conn.close()
+
+    def get_secret(self, provider: str, name: str) -> tuple[str, str] | None:
+        """Return (encrypted_value, encryption_scheme) or None."""
+        conn = self._open(self._db_path)
+        try:
+            return _secrets.get_secret(conn, provider, name)
+        finally:
+            conn.close()
+
+    def has_secret(self, provider: str, name: str) -> bool:
+        conn = self._open(self._db_path)
+        try:
+            return _secrets.has_secret(conn, provider, name)
+        finally:
+            conn.close()
+
+    def has_any_secret(self) -> bool:
+        """True when any encrypted secret exists for any provider."""
+        conn = self._open(self._db_path)
+        try:
+            return _secrets.has_any_secret(conn)
+        finally:
+            conn.close()
+
+    def iter_all_secrets(self):
+        """Yield (provider, name, encrypted_value) for every stored secret."""
+        conn = self._open(self._db_path)
+        try:
+            yield from _secrets.iter_all_secrets(conn)
+        finally:
+            conn.close()
+
+    def schema_version(self) -> int:
+        """Current on-disk schema version (PRAGMA user_version)."""
+        conn = self._open(self._db_path)
+        try:
+            return get_schema_version(conn)
+        finally:
+            conn.close()
+
+    def delete_provider_secrets(self, provider: str) -> int:
+        conn = self._open(self._db_path)
+        try:
+            return _secrets.delete_provider_secrets(conn, provider)
+        finally:
+            conn.close()
+
+    # ─── Product tables: instruments / watchlists / alerts (v11) ──────────────
+
+    def replace_provider_instruments(self, provider: str,
+                                     records: list[dict[str, Any]]) -> int:
+        conn = self._open(self._db_path)
+        try:
+            return _products.replace_provider_instruments(conn, provider,
+                                                          records)
+        finally:
+            conn.close()
+
+    def search_instruments(self, **kw: Any) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.search_instruments(conn, **kw)
+        finally:
+            conn.close()
+
+    def get_instrument(self, provider: str,
+                       instrument_token: str) -> dict[str, Any] | None:
+        conn = self._open(self._db_path)
+        try:
+            return _products.get_instrument(conn, provider, instrument_token)
+        finally:
+            conn.close()
+
+    def instruments_sync_state(self) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.instruments_sync_state(conn)
+        finally:
+            conn.close()
+
+    def list_watchlists(self) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.list_watchlists(conn)
+        finally:
+            conn.close()
+
+    def create_watchlist(self, name: str) -> dict[str, Any]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.create_watchlist(conn, name)
+        finally:
+            conn.close()
+
+    def rename_watchlist(self, wl_id: int, name: str) -> bool:
+        conn = self._open(self._db_path)
+        try:
+            return _products.rename_watchlist(conn, wl_id, name)
+        finally:
+            conn.close()
+
+    def delete_watchlist(self, wl_id: int) -> bool:
+        conn = self._open(self._db_path)
+        try:
+            return _products.delete_watchlist(conn, wl_id)
+        finally:
+            conn.close()
+
+    def list_watchlist_items(self, wl_id: int) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.list_watchlist_items(conn, wl_id)
+        finally:
+            conn.close()
+
+    def add_watchlist_item(self, wl_id: int, **kw: Any) -> dict | None:
+        conn = self._open(self._db_path)
+        try:
+            return _products.add_watchlist_item(conn, wl_id, **kw)
+        finally:
+            conn.close()
+
+    def remove_watchlist_item(self, item_id: int) -> bool:
+        conn = self._open(self._db_path)
+        try:
+            return _products.remove_watchlist_item(conn, item_id)
+        finally:
+            conn.close()
+
+    def reorder_watchlist_items(self, wl_id: int,
+                                item_ids: list[int]) -> bool:
+        conn = self._open(self._db_path)
+        try:
+            return _products.reorder_watchlist_items(conn, wl_id, item_ids)
+        finally:
+            conn.close()
+
+    def create_alert(self, **kw: Any) -> dict[str, Any]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.create_alert(conn, **kw)
+        finally:
+            conn.close()
+
+    def list_alerts(self) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.list_alerts(conn)
+        finally:
+            conn.close()
+
+    def delete_alert(self, alert_id: int) -> bool:
+        conn = self._open(self._db_path)
+        try:
+            return _products.delete_alert(conn, alert_id)
+        finally:
+            conn.close()
+
+    def set_alert_enabled(self, alert_id: int, enabled: bool) -> bool:
+        conn = self._open(self._db_path)
+        try:
+            return _products.set_alert_enabled(conn, alert_id, enabled)
+        finally:
+            conn.close()
+
+    def rearm_alert(self, alert_id: int) -> bool:
+        conn = self._open(self._db_path)
+        try:
+            return _products.rearm_alert(conn, alert_id)
+        finally:
+            conn.close()
+
+    def record_trigger(self, alert_id: int) -> None:
+        conn = self._open(self._db_path)
+        try:
+            _products.record_trigger(conn, alert_id)
+        finally:
+            conn.close()
+
+    def load_enabled_alerts(self) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.load_enabled_alerts(conn)
+        finally:
+            conn.close()
+
+    # ─── Alert trigger history (durable, restart-safe audit log) ────────────
+
+    def record_alert_trigger_history(
+        self, alert_id: int, exchange: str | None,
+        instrument_token: str | None, tradingsymbol: str | None,
+        field: str | None, operator: str | None, threshold: float | None,
+        observed_value: float | None, provider: str | None,
+        triggered_at: str | None = None,
+    ) -> int:
+        """Persist one alert firing with full context. Opens/commits own txn."""
+        if triggered_at is None:
+            triggered_at = datetime.now(timezone.utc).isoformat()
+        conn = self._open(self._db_path)
+        try:
+            return _products.insert_alert_trigger_history(
+                conn, alert_id=alert_id, exchange=exchange,
+                instrument_token=instrument_token,
+                tradingsymbol=tradingsymbol, field=field, operator=operator,
+                threshold=threshold, observed_value=observed_value,
+                provider=provider, triggered_at=triggered_at)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def list_alert_trigger_history(
+        self, alert_id: int | None = None, limit: int = 50,
+        offset: int = 0, provider: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Bounded, paginated history query (newest first).
+
+        limit is clamped to [1, 500]; offset must be >= 0. Invalid values
+        fall back to safe defaults rather than raising (the API layer does
+        strict validation and returns 400 before calling this).
+        """
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = 50
+        limit = max(1, min(500, limit))
+        try:
+            offset = max(0, int(offset))
+        except (TypeError, ValueError):
+            offset = 0
+        conn = self._open(self._db_path)
+        try:
+            return _products.list_alert_trigger_history(
+                conn, alert_id=alert_id, limit=limit, offset=offset,
+                provider=provider)
+        finally:
+            conn.close()
+
+    def count_alert_trigger_history(
+        self, alert_id: int | None = None, provider: str | None = None,
+    ) -> int:
+        conn = self._open(self._db_path)
+        try:
+            return _products.count_alert_trigger_history(
+                conn, alert_id=alert_id, provider=provider)
+        finally:
+            conn.close()
+
+    def clear_alert_trigger_history(self, alert_id: int | None = None) -> int:
+        """Delete history. If alert_id given, only that alert's rows;
+        otherwise ALL history. Returns number of rows deleted."""
+        conn = self._open(self._db_path)
+        try:
+            return _products.clear_alert_trigger_history(conn, alert_id)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+
+
     # ─── Source deduplication (durable, restart-safe) ─────────────────────────
 
     def source_item_seen(self, source_name: str, external_id: str) -> bool:
@@ -632,3 +920,39 @@ class EventStore:
             return row[0] if row else 0
         finally:
             conn.close()
+
+    def option_underlyings(self, q: str | None = None,
+                           limit: int = 25) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.option_underlyings(conn, q=q, limit=limit)
+        finally:
+            conn.close()
+
+    def option_expiries(self, underlying: str) -> list[str]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.option_expiries(conn, underlying)
+        finally:
+            conn.close()
+
+    def backup_to(self, dest_path: str) -> None:
+        """Consistent online backup via the SQLite backup API.
+
+        The backup contains encrypted secrets (ciphertext) only; the
+        master key (data/master.key) is required to decrypt them and is
+        NOT included.
+        """
+        import os
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        src = self._open(self._db_path)
+        try:
+            dst = sqlite3.connect(dest_path)
+            try:
+                src.backup(dst)
+            finally:
+                dst.close()
+        finally:
+            conn_close = getattr(src, "close", None)
+            if conn_close:
+                conn_close()

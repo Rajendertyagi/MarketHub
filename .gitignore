@@ -6,7 +6,10 @@ __pycache__/
 .Python
 *.egg
 *.egg-info/
-dist/
+# Root-anchored: Python build output only. Vendored UI assets under
+# web/ui/vendor/.../dist/ are intentionally tracked (self-hosted deps,
+# reproducible via vendor_webawesome.ps1).
+/dist/
 build/
 .eggs/
 pip-wheel-metadata/
@@ -30,6 +33,7 @@ Thumbs.db
 
 # Test artifacts
 data/
+data/logs/
 data_test/
 .test_logs/
 config.json

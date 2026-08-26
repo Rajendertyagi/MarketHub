@@ -1,0 +1,39 @@
+name: soak
+
+# Long-running synthetic soak (quotes + alerts through the canonical
+# market service). Manual dispatch ONLY - deliberately separate from
+# full-regression because the suite's 300s-per-file cap cannot fit a
+# 30-minute soak. Never runs automatically.
+
+on:
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: 'Soak duration in seconds'
+        required: false
+        default: '1800'
+
+permissions:
+  contents: read
+
+jobs:
+  soak:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: "1"
+      SOAK_SECONDS: ${{ github.event.inputs.seconds }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Synthetic soak
+        run: python test/test_soak_bounded.py
