@@ -128,7 +128,9 @@ async def test_async_tools_work(runner: R) -> None:
 
 # Legacy ID: P8T8
 async def test_extensibility_proof_original_tools_present(runner: R) -> None:
-    """P8T8: extensibility proof - all original tools still present plus new market tools (27 total)."""
+    """P8T8: extensibility proof - all original tools still present plus
+    product tools (34 total: +option_chain, futures_contracts, and the
+    five market_alert_* management tools)."""
     name = "P8T8-original-tools"
     tools = await list_tools_names()
     expected_tools = [
@@ -140,6 +142,10 @@ async def test_extensibility_proof_original_tools_present(runner: R) -> None:
         "alert_create", "alert_list", "alert_get", "alert_enable", "alert_disable",
         "market_quote", "market_depth", "market_status",
         "instrument_search", "watchlists", "market_history",
+        # Product layer (R2+): derivatives discovery + AI-manageable alerts.
+        "option_chain", "futures_contracts",
+        "market_alert_create", "market_alert_list", "market_alert_enable",
+        "market_alert_disable", "market_alert_delete",
     ]
     for tool in expected_tools:
         runner.assert_in(name + f"-{tool}", tool, tools)
