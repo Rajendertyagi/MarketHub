@@ -38,6 +38,64 @@ def _path_int(request: Request, key: str) -> int | None:
         return None
 
 
+def _oi_to_dict(oi):
+    return {
+        "instrument_token": oi.instrument_token,
+        "exchange": oi.exchange,
+        "expiry": oi.expiry,
+        "spot_closing_price": oi.spot_closing_price,
+        "total_call_oi": oi.total_call_oi,
+        "total_put_oi": oi.total_put_oi,
+        "strikes": [{"strike_price": s.strike_price, "call_oi": s.call_oi, "put_oi": s.put_oi} for s in oi.strikes],
+    }
+
+
+def _oi_change_to_dict(oi_change):
+    return {
+        "instrument_token": oi_change.instrument_token,
+        "exchange": oi_change.exchange,
+        "expiry": oi_change.expiry,
+        "spot_closing_price": oi_change.spot_closing_price,
+        "total_call_change_oi": oi_change.total_call_change_oi,
+        "total_put_change_oi": oi_change.total_put_change_oi,
+        "days": oi_change.days,
+        "strikes": [{"strike_price": s.strike_price, "call_change_oi": s.call_change_oi, "put_change_oi": s.put_change_oi} for s in oi_change.strikes],
+    }
+
+
+def _max_pain_to_dict(mp):
+    return {
+        "instrument_token": mp.instrument_token,
+        "exchange": mp.exchange,
+        "expiry": mp.expiry,
+        "max_pain_strike": mp.max_pain_strike,
+        "max_pain_value": mp.max_pain_value,
+        "spot_price": mp.spot_price,
+    }
+
+
+def _pcr_to_dict(pcr):
+    return {
+        "instrument_token": pcr.instrument_token,
+        "exchange": pcr.exchange,
+        "expiry": pcr.expiry,
+        "pcr": pcr.pcr,
+        "total_put_oi": pcr.total_put_oi,
+        "total_call_oi": pcr.total_call_oi,
+        "spot_price": pcr.spot_price,
+    }
+
+
+def _news_to_dict(news):
+    return {
+        "instrument_token": news.instrument_token,
+        "total_records": news.total_records,
+        "page": news.page,
+        "page_size": news.page_size,
+        "articles": [{"heading": a.heading, "summary": a.summary, "thumbnail": a.thumbnail, "article_link": a.article_link, "published_time": a.published_time.isoformat() if a.published_time else None} for a in news.articles],
+    }
+
+
 # Fields safe to expose in the support diagnostics snapshot. Everything else
 # in a source status dict (tokens, URLs, raw errors) is deliberately dropped.
 _DIAGNOSTIC_SOURCE_FIELDS = (

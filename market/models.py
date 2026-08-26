@@ -40,6 +40,8 @@ __all__ = [
     "Instrument", "Quote", "DepthLevel", "Depth", "OptionGreeks",
     "merge_greeks", "Candle",
     "OptionContractData", "OptionStrikeRow", "OptionChainSnapshot",
+    "OIStrikeRow", "OISnapshot", "OIChangeStrikeRow", "OIChangeSnapshot",
+    "MaxPainData", "PCRData", "NewsArticle", "NewsSnapshot",
 ]
 
 # Identity field names shared by every instrument-bearing model.
@@ -57,6 +59,12 @@ def _require_identity(model: str, obj: Any) -> None:
         value = getattr(obj, field_name)
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{model}.{field_name} must be a non-empty string")
+
+
+def _require_non_empty(model: str, field_name: str, value: Any) -> None:
+    """Required string fields must be non-empty after stripping."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{model}.{field_name} must be a non-empty string")
 
 
 def _require_tz_aware(model: str, field_name: str, value: Any) -> None:
@@ -385,3 +393,104 @@ def _coerce_strike_rows(value: Any) -> tuple["OptionStrikeRow", ...]:
                 "OptionChainSnapshot.strikes must contain only "
                 "OptionStrikeRow entries")
     return items
+
+# ---------------------------------------------------------------------------
+# OI Analytics models
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class OIStrikeRow:
+    """Per-strike OI data for calls and puts."""
+    strike_price: float
+    call_oi: int | None = None
+    put_oi: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class OISnapshot:
+    """Aggregate OI data for an underlying + expiry."""
+    instrument_token: str
+    exchange: str
+    expiry: str
+    spot_closing_price: float | None = None
+    total_call_oi: int | None = None
+    total_put_oi: int | None = None
+    strikes: tuple[OIStrikeRow, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.instrument_token, str) or not self.instrument_token.strip():
+            raise ValueError("OISnapshot.instrument_token must be a non-empty string")
+        if not isinstance(self.exchange, str) or not self.exchange.strip():
+            raise ValueError("OISnapshot.exchange must be a non-empty string")
+
+
+@dataclass(frozen=True, slots=True)
+class OIChangeStrikeRow:
+    """Per-strike OI change data."""
+    strike_price: float
+    call_change_oi: int | None = None
+    put_change_oi: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class OIChangeSnapshot:
+    """OI change data for an underlying + expiry over N days."""
+    instrument_token: str
+    exchange: str
+    expiry: str
+    spot_closing_price: float | None = None
+    total_call_change_oi: int | None = None
+    total_put_change_oi: int | None = None
+    days: int | None = None
+    strikes: tuple[OIChangeStrikeRow, ...] = ()
+
+    def __post_init__(self) -> None:
+        _require_non_empty("OIChangeSnapshot", "instrument_token", self.instrument_token)
+        _require_non_empty("OIChangeSnapshot", "exchange", self.exchange)
+
+
+@dataclass(frozen=True, slots=True)
+class MaxPainData:
+    """Max pain analysis for an underlying + expiry."""
+    instrument_token: str
+    exchange: str
+    expiry: str
+    max_pain_strike: float | None = None
+    max_pain_value: float | None = None
+    spot_price: float | None = None
+    total_call_pain: float | None = None
+    total_put_pain: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PCRData:
+    """Put-Call Ratio analysis."""
+    instrument_token: str
+    exchange: str
+    expiry: str | None = None
+    pcr: float | None = None
+    total_put_oi: int | None = None
+    total_call_oi: int | None = None
+    spot_price: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class NewsArticle:
+    """News article from provider."""
+    heading: str
+    summary: str | None = None
+    thumbnail: str | None = None
+    article_link: str | None = None
+    published_time: datetime | None = None
+    source: str | None = None  # provider name
+
+
+@dataclass(frozen=True, slots=True)
+class NewsSnapshot:
+    """News for one or more instruments."""
+    instrument_token: str | None = None
+    articles: tuple[NewsArticle, ...] = ()
+    total_records: int | None = None
+    page: int | None = None
+    page_size: int | None = None

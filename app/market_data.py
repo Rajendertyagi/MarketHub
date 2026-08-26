@@ -15,6 +15,11 @@ logger = logging.getLogger("event_server")
 _HISTORY_URL = "https://api.upstox.com/v2/historical-candle"
 _INTRADAY_URL = "https://api.upstox.com/v2/historical-candle/intraday"
 _CHAIN_URL = "https://api.upstox.com/v2/option/chain"
+_OI_URL = "https://api.upstox.com/v2/market/oi"
+_OI_CHANGE_URL = "https://api.upstox.com/v2/market/change-oi"
+_MAX_PAIN_URL = "https://api.upstox.com/v2/market/max-pain"
+_PCR_URL = "https://api.upstox.com/v2/market/pcr"
+_NEWS_URL = "https://api.upstox.com/v2/news"
 
 _VALID_UNITS = {"minutes", "hours", "days", "weeks", "months"}
 _MAX_RANGE_DAYS = 400
@@ -121,4 +126,84 @@ class ProviderMarketData:
         return option_chain_from_rest(
             payload, instrument_token=instrument_key, exchange=exchange,
             tradingsymbol=tradingsymbol, expiry=expiry)
+    # -- OI analytics --------------------------------------------------------
 
+    async def oi(
+        self, *, instrument_key: str, expiry: str, provider: str = "upstox",
+    ) -> Any:
+        provider, _auth_src = self._resolve(provider)
+        if provider == "fyers":
+            raise ProviderMarketDataError("fyers OI API not yet implemented")
+        rest, creds = self._auth()
+        from market.normalize.upstox_analytics import oi_from_rest
+        payload = await rest.authenticated_request(
+            method="GET", url=_OI_URL,
+            access_token=creds.access_token,
+            params={"instrument_key": instrument_key, "expiry": expiry})
+        return oi_from_rest(payload)
+
+    async def oi_change(
+        self, *, instrument_key: str, expiry: str, interval: int = 1,
+        provider: str = "upstox",
+    ) -> Any:
+        provider, _auth_src = self._resolve(provider)
+        if provider == "fyers":
+            raise ProviderMarketDataError("fyers OI change API not yet implemented")
+        rest, creds = self._auth()
+        from market.normalize.upstox_analytics import oi_change_from_rest
+        payload = await rest.authenticated_request(
+            method="GET", url=_OI_CHANGE_URL,
+            access_token=creds.access_token,
+            params={"instrument_key": instrument_key, "expiry": expiry, "interval": interval})
+        return oi_change_from_rest(payload)
+
+    async def max_pain(
+        self, *, instrument_key: str, expiry: str, provider: str = "upstox",
+    ) -> Any:
+        provider, _auth_src = self._resolve(provider)
+        if provider == "fyers":
+            raise ProviderMarketDataError("fyers max pain API not yet implemented")
+        rest, creds = self._auth()
+        from market.normalize.upstox_analytics import max_pain_from_rest
+        payload = await rest.authenticated_request(
+            method="GET", url=_MAX_PAIN_URL,
+            access_token=creds.access_token,
+            params={"instrument_key": instrument_key, "expiry": expiry})
+        return max_pain_from_rest(payload)
+
+    async def pcr(
+        self, *, instrument_key: str, expiry: str | None = None,
+        provider: str = "upstox",
+    ) -> Any:
+        provider, _auth_src = self._resolve(provider)
+        if provider == "fyers":
+            raise ProviderMarketDataError("fyers PCR API not yet implemented")
+        rest, creds = self._auth()
+        from market.normalize.upstox_analytics import pcr_from_rest
+        params: dict[str, Any] = {"instrument_key": instrument_key}
+        if expiry:
+            params["expiry"] = expiry
+        payload = await rest.authenticated_request(
+            method="GET", url=_PCR_URL,
+            access_token=creds.access_token, params=params)
+        return pcr_from_rest(payload)
+
+    # -- News ---------------------------------------------------------------
+
+    async def news(
+        self, *, instrument_keys: list[str] | None = None,
+        category: str = "instrument_keys", provider: str = "upstox",
+    ) -> Any:
+        provider, _auth_src = self._resolve(provider)
+        if provider == "fyers":
+            raise ProviderMarketDataError("fyers news API not available")
+        rest, creds = self._auth()
+        from market.normalize.upstox_news import news_from_rest
+        params: dict[str, Any] = {"category": category}
+        if category == "instrument_keys" and instrument_keys:
+            params["instrument_keys"] = ",".join(instrument_keys[:30])  # max 30
+        payload = await rest.authenticated_request(
+            method="GET", url=_NEWS_URL,
+            access_token=creds.access_token, params=params)
+        key = instrument_keys[0] if instrument_keys else ""
+        return news_from_rest(payload, key)
