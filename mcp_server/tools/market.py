@@ -69,9 +69,23 @@ def register_market_tools(mcp, services, **kwargs) -> None:
     async def instrument_search(
         q: str,
         exchange: str | None = None,
+        expiry: str | None = None,
+        types: list[str] | None = None,
         limit: int = 10,
     ) -> dict[str, Any]:
-        """Search the canonical instrument catalog by symbol or name."""
+        """Search instruments by human query.
+
+        Understands plain symbols ('reliance'), type words ('reliance
+        future', 'nifty futures'), and option descriptors ('nifty 25000
+        ce'). Returns compact candidates with canonical instrument_key
+        usable by other market tools.
+        """
+        intel = getattr(services, "market_intel", None)
+        if intel is not None:
+            result = await asyncio.to_thread(
+                intel.search, q, types=types, exchange=exchange,
+                expiry=expiry, limit=min(max(limit, 1), 50))
+            return {"status": "ok", **result}
         catalog = getattr(services, "instrument_catalog", None)
         if catalog is None:
             return {"error": "instrument catalog not available"}

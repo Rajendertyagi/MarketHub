@@ -110,6 +110,79 @@ def build_diagnostics_routes(version: str,
     return [Route("/api/diagnostics", endpoint=_diagnostics, methods=["GET"])]
 
 
+def build_intel_routes(market_intel: Any) -> list[Route]:
+    """Unified market-intelligence routes (shared with MCP/Chat logic).
+
+    GET /api/market/search   — structured instrument search
+    GET /api/futures         — futures contracts by underlying (+expiry)
+    GET /api/options/chain   — catalog-driven chain when `underlying` is
+                               supplied (legacy provider chain keeps working
+                               when instrument_key is supplied instead)
+    """
+
+    async def _search(request: Request) -> Response:
+        qp = request.query_params
+        q = qp.get("q") or ""
+        if not q.strip():
+            return _json({"error": "q is required"}, 400)
+        if len(q) > 64:
+            return _json({"error": "q too long (max 64)"}, 400)
+        types = [t for t in (qp.get("types") or "").split(",") if t]
+        try:
+            limit = min(int(qp.get("limit", 20)), 50)
+        except ValueError:
+            return _json({"error": "limit must be an integer"}, 400)
+        result = await asyncio.to_thread(
+            market_intel.search, q, types=types or None,
+            exchange=qp.get("exchange") or None,
+            expiry=qp.get("expiry") or None, limit=limit)
+        return _json(result)
+
+    async def _futures(request: Request) -> Response:
+        underlying = request.query_params.get("underlying") or ""
+        if not underlying.strip():
+            return _json({"error": "underlying is required"}, 400)
+        result = await asyncio.to_thread(
+            market_intel.futures_contracts, underlying,
+            request.query_params.get("expiry") or None)
+        if "error" in result:
+            return _json(result, 404)
+        return _json(result)
+
+    async def _intel_chain(request: Request) -> Response:
+        qp = request.query_params
+        underlying = qp.get("underlying") or ""
+        if not underlying.strip():
+            return _json({"error": "underlying is required"}, 400)
+        window_raw = qp.get("window", "10")
+        try:
+            window = int(window_raw)
+        except ValueError:
+            return _json({"error": "window must be an integer"}, 400)
+        spot_raw = qp.get("spot")
+        spot = None
+        if spot_raw:
+            try:
+                spot = float(spot_raw)
+            except ValueError:
+                return _json({"error": "spot must be a number"}, 400)
+        result = await asyncio.to_thread(
+            market_intel.option_chain, underlying,
+            expiry=qp.get("expiry") or None, window=window, spot=spot)
+        if "error" in result:
+            status = 404 if "unknown underlying" in str(result["error"]) \
+                or "not listed" in str(result["error"]) else 400
+            return _json(result, status)
+        return _json(result)
+
+    return [
+        Route("/api/market/search", endpoint=_search, methods=["GET"]),
+        Route("/api/futures", endpoint=_futures, methods=["GET"]),
+        Route("/api/options/chain/view", endpoint=_intel_chain,
+              methods=["GET"]),
+    ]
+
+
 def build_instrument_routes(catalog: Any, store: Any = None) -> list[Route]:
     """Routes over the canonical instrument catalog."""
 
@@ -619,6 +692,11 @@ def build_api_meta_routes() -> list[Route]:
                     "GET /api/auth/fyers/login",
                     "GET /auth/fyers/callback",
                     "GET|POST|DELETE /api/settings/fyers",
+                ],
+                "intelligence": [
+                    "GET /api/market/search?q&types&exchange&expiry",
+                    "GET /api/futures?underlying&expiry",
+                    "GET /api/options/chain/view?underlying&expiry&window",
                 ],
                 "application": [
                     "GET|POST /api/settings/app (public_base_url)",

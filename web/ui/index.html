@@ -32,6 +32,7 @@
     <button class="nav-link" data-view="charts">Charts</button>
     <button class="nav-link" data-view="alerts">Alerts</button>
     <button class="nav-link" data-view="mcp">MCP</button>
+<button class="nav-link" data-view="chat">Chat</button>
     <button class="nav-link" data-view="settings">Settings</button>
   </div>
   <div class="topnav-right">
@@ -280,6 +281,23 @@
   </section>
 
   <!-- ── SETTINGS VIEW ── -->
+  <section id="view-chat" class="view">
+    <div class="panel" style="display:flex;flex-direction:column;height:calc(100vh - 130px)">
+      <div class="panel-header"><h2>Chat</h2>
+        <span id="chat-provider-chip" class="chip chip-off">AI not configured</span>
+        <button id="chat-clear" class="btn" style="margin-left:auto">New Conversation</button>
+      </div>
+      <div id="chat-messages" style="flex:1;overflow-y:auto;padding:10px"></div>
+      <div id="chat-activity" class="hint" style="min-height:18px"></div>
+      <div class="auth-row" style="border-top:1px solid var(--border);padding-top:8px">
+        <input type="text" id="chat-input" aria-label="Chat message"
+               placeholder="Ask about NIFTY, RELIANCE, option chains, alerts…"
+               class="filter-input" style="flex:1">
+        <button id="chat-send" class="btn">Send</button>
+      </div>
+      <div id="chat-error" class="hint err" style="display:none"></div>
+    </div>
+  </section>
   <section id="view-settings" class="view">
     <div class="panel">
       <div class="panel-header"><h2>Settings</h2></div>
@@ -459,6 +477,6 @@
 </footer>
 
 <script src="/ui/vendor/echarts/dist/echarts.min.js"></script>
-<script src="/ui/js/app.js?v=23"></script>
+<script src="/ui/js/app.js?v=24"></script>
 </body>
 </html>

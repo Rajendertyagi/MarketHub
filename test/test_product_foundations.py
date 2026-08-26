@@ -94,25 +94,37 @@ def test_pf1_to_pf3_upstox_parse(runner: R) -> None:
 def test_pf4_pf5_fyers_parse(runner: R) -> None:
     from app.instruments import fyers_master_records
 
-    # Dict-style rows.
-    dict_rows = [{"fyToken": "1010001", "symbol": "NSE:SBIN-EQ",
-                  "exchange": "NSE", "segment": "nse_cm",
-                  "symbolDetails": "State Bank of India",
-                  "symName": "SBIN-EQ", "tickSize": 0.05,
-                  "minLotSize": 1}]
-    recs = fyers_master_records(json.dumps(dict_rows).encode())
+    # Real Fyers masters: JSON OBJECT keyed by "EXCH:SYMBOL".
+    # Equity (CM, exInstType 0).
+    master = {"NSE:SBIN-EQ": {
+        "fyToken": "101000000010101", "exToken": 10101,
+        "exchange": 10, "segment": 10, "exInstType": 0,
+        "exSeries": "EQ", "symDetails": "State Bank of India",
+        "symTicker": "NSE:SBIN-EQ", "tickSize": 0.05, "minLotSize": 1,
+        "underSym": "SBIN", "isin": "INE062A01020"}}
+    recs = fyers_master_records(json.dumps(master).encode())
     runner.assert_eq("PF4-dict-count", len(recs), 1)
     if recs:
-        runner.assert_eq("PF4-token", recs[0]["instrument_token"], "1010001")
+        runner.assert_eq("PF4-token",
+                         recs[0]["instrument_token"], "101000000010101")
+        runner.assert_eq("PF4-type", recs[0]["instrument_type"], "EQUITY")
+        runner.assert_eq("PF4-exchange", recs[0]["exchange"], "NSE")
 
-    # Positional rows.
-    pos_rows = [["1010002", "NSE:YESBANK24JUL150CE", "NSE", "nse_fo",
-                 "Yes Bank CE", "YESBANK", 0.05, 1]]
-    recs2 = fyers_master_records(json.dumps(pos_rows).encode())
-    runner.assert_eq("PF5-positional-count", len(recs2), 1)
+    # Option (FO, exInstType 14, epoch expiry, optType CE).
+    opt_master = {"NSE:NIFTY26SEP24000CE": {
+        "fyToken": "101126099990001", "exToken": 90001,
+        "exchange": 10, "segment": 11, "exInstType": 14,
+        "expiryDate": "1790676600", "optType": "CE",
+        "strikePrice": 24000.0, "minLotSize": 75, "tickSize": 0.05,
+        "underSym": "NIFTY", "symTicker": "NSE:NIFTY26SEP24000CE",
+        "symDetails": "24 Sep 26 24000 CE"}}
+    recs2 = fyers_master_records(json.dumps(opt_master).encode())
+    runner.assert_eq("PF5-option-count", len(recs2), 1)
     if recs2:
-        runner.assert_eq("PF5-symbol", recs2[0]["provider_symbol"],
-                         "NSE:YESBANK24JUL150CE")
+        runner.assert_eq("PF5-type", recs2[0]["instrument_type"], "OPTION")
+        runner.assert_eq("PF5-expiry-iso", recs2[0]["expiry"], "2026-09-29")
+        runner.assert_eq("PF5-strike", recs2[0]["strike"], 24000.0)
+        runner.assert_eq("PF5-opt-type", recs2[0]["option_type"], "CE")
 
 
 # -- Catalog persistence / sync ----------------------------------------------------

@@ -23,6 +23,8 @@ class Services:
     replay_cfg: dict[str, Any]
     metrics: Any
     market_service: Any = None          # RuntimeMetrics
+    alert_engine: Any = None            # market alert engine (WebUI parity)
+    market_intel: Any = None            # unified search/discovery/chain
     instrument_catalog: Any = None      # canonical instrument catalog
     provider_market_data: Any = None    # history/option-chain services
 

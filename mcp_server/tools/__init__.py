@@ -12,6 +12,10 @@ from mcp_server.tools.dev import register_dev_tools
 from mcp_server.tools.alerts import register_alert_tools
 from mcp_server.tools.market import register_market_tools
 
+from mcp_server.tools.market_intel_tools import register_market_intel_tools
+
+from mcp_server.tools.market_alerts import register_market_alert_tools
+
 __all__ = [
     "register_system_tools",
     "register_event_tools",

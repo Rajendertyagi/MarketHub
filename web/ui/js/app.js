@@ -1545,6 +1545,117 @@ function initAlertPush() {
     } catch { /* silent */ }
   }
 
+// ==== Chat (AI assistant over MarketHub tools) ====
+  let chatHistory = [];   // client-side session only
+
+  function chatAppend(role, text) {
+    const box = document.getElementById("chat-messages");
+    if (!box) return null;
+    const div = document.createElement("div");
+    div.className = "hint " + (role === "user" ? "" : "ok");
+    div.style.whiteSpace = "pre-wrap";
+    div.style.marginBottom = "6px";
+    div.textContent = (role === "user" ? "You: " : "Assistant: ") + text;
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
+    return div;
+  }
+
+  function chatActivity(text) {
+    const el = document.getElementById("chat-activity");
+    if (el) el.textContent = text || "";
+  }
+
+  async function initChat() {
+    const input = document.getElementById("chat-input");
+    const send = document.getElementById("chat-send");
+    const clear = document.getElementById("chat-clear");
+    if (!input || !send) return;
+
+    try {
+      const st = await (await fetch("/api/chat/status")).json();
+      const chip = document.getElementById("chat-provider-chip");
+      if (chip) {
+        chip.textContent = st.configured
+          ? ("AI: " + st.model) : "AI not configured";
+        chip.className = "chip " + (st.configured ? "chip-on" : "chip-off");
+      }
+    } catch { /* status optional */ }
+
+    if (clear) clear.addEventListener("click", () => {
+      chatHistory = [];
+      const box = document.getElementById("chat-messages");
+      if (box) box.innerHTML = "";
+      chatActivity("");
+    });
+
+    async function sendMsg() {
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      send.disabled = true;
+      const errEl = document.getElementById("chat-error");
+      errEl.style.display = "none";
+      chatAppend("user", text);
+      let assistantText = "";
+      const live = chatAppend("assistant", "\u2026");
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: text, history: chatHistory }),
+        });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          throw new Error(d.error || ("HTTP " + res.status));
+        }
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        for (;;) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          buf += dec.decode(chunk.value, { stream: true });
+          let idx;
+          while ((idx = buf.indexOf("\n\n")) >= 0) {
+            const raw = buf.slice(0, idx); buf = buf.slice(idx + 2);
+            if (!raw.startsWith("data:")) continue;
+            let ev;
+            try { ev = JSON.parse(raw.slice(5).trim()); } catch { continue; }
+            if (ev.type === "tool_start") {
+              chatActivity("using tool: " + ev.name);
+            } else if (ev.type === "delta") {
+              assistantText += ev.text;
+              live.textContent = "Assistant: " + assistantText;
+              chatActivity("");
+            } else if (ev.type === "error") {
+              errEl.textContent = ev.message;
+              errEl.style.display = "block";
+            }
+          }
+        }
+        chatHistory.push({ role: "user", content: text });
+        if (assistantText) {
+          chatHistory.push({ role: "assistant", content: assistantText });
+        }
+        live.textContent = "Assistant: " +
+          (assistantText || "(no answer)");
+      } catch (e) {
+        live.textContent = "Assistant: (failed)";
+        errEl.textContent = String(e.message || e);
+        errEl.style.display = "block";
+      } finally {
+        send.disabled = false;
+        input.focus();
+      }
+    }
+
+    send.addEventListener("click", sendMsg);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") sendMsg();
+    });
+  }
+
 function pushAlertNotification(d) {
     const notes = $("alert-notifications");
     if (!notes) return;
@@ -1739,6 +1850,7 @@ function initBackup() {
     initBackup();
     initFyers();
     initAppSettings();
+    initChat();
     initAlertPush();
     initSourceControls();
     loadInitialQuotes();

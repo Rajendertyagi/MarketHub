@@ -73,6 +73,8 @@ from mcp_server.resources import register_resources
 from mcp_server.services import Services
 from mcp_server.tools import (
     register_alert_tools,
+    register_market_alert_tools,
+    register_market_intel_tools,
     register_background_tools,
     register_consumer_tools,
     register_dev_tools,
@@ -383,10 +385,13 @@ def _on_source_state_change(
 
 # ── Product services: instrument catalog, alerts ─────────────────────────────
 from app.instruments import InstrumentCatalog as _InstrumentCatalog
+from app.market_intel import MarketIntel as _MarketIntel
+from app.chat_tools import ChatToolRegistry as _ChatToolRegistry
 from app.alerts import AlertEngine as _AlertEngine
 from api.product_routes import (
     build_admin_routes as _build_admin_routes,
     build_api_meta_routes as _build_api_meta_routes,
+    build_intel_routes as _build_intel_routes,
     build_diagnostics_routes as _build_diagnostics_routes,
     build_instrument_routes as _build_instrument_routes,
     build_watchlist_routes as _build_watchlist_routes,
@@ -396,6 +401,7 @@ from api.product_routes import (
     build_app_settings_routes as _build_app_settings_routes,
     build_watchlist_portability_routes as _build_watchlist_portability_routes,
 )
+from api.chat_routes import build_chat_routes as _build_chat_routes
 
 _instrument_catalog = _InstrumentCatalog(_store)
 
@@ -625,7 +631,25 @@ _services = Services(
     market_service=_market_service,
     instrument_catalog=_instrument_catalog,
     provider_market_data=_provider_market_data,
+    alert_engine=_alert_engine,
 )
+
+
+# Unified market-intelligence service: ONE implementation backing WebUI
+# search, REST routes, MCP tools, and the Chat agent.
+async def _intel_spot(exchange: str, instrument_token: str):
+    return await _market_service.get_quote(exchange, instrument_token)
+
+
+_market_intel = _MarketIntel(_instrument_catalog, spot_provider=_intel_spot)
+_services.market_intel = _market_intel
+
+# Chat tool registry: same services, same semantics as REST/MCP.
+_chat_tools = _ChatToolRegistry(
+    market_intel=_market_intel,
+    market_service=_market_service,
+    store=_store,
+    alert_engine=_alert_engine)
 
 # ── Alert engine (generic, Context-free) ──────────────────────────────────────
 # Single-process MVP: the evaluator is wired to the canonical publish path via
@@ -668,6 +692,8 @@ register_source_tools(mcp, _services)
 register_background_tools(mcp, _services)
 register_dev_tools(mcp, _services)
 register_alert_tools(mcp, _services)
+register_market_intel_tools(mcp, _services)
+register_market_alert_tools(mcp, _services)
 
 # ============================================================
 # ASGI APPLICATION (top-level Starlette + Uvicorn)
@@ -763,6 +789,7 @@ app = Starlette(
         rest=_oauth_rest,
     )
     + build_settings_routes(_oauth_cfg_ref)
+    + _build_intel_routes(_market_intel)
     + _build_instrument_routes(_instrument_catalog, store=_store)
     + _build_watchlist_routes(_store, subscription=_feed_subscription)
     + _build_watchlist_portability_routes(_store)
@@ -777,6 +804,7 @@ app = Starlette(
         redirect_uri=FYERS_REDIRECT_URI,
     )
     + _build_app_settings_routes(str(CONFIG_PATH))
+    + _build_chat_routes(str(CONFIG_PATH), _credential_store, _chat_tools)
     + _build_diagnostics_routes(
         __version__,
         _store,
