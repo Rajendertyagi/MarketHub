@@ -29,6 +29,7 @@ import time
 from collections import deque
 from typing import Any, Callable
 
+from brokers.fyers.auth import USER_AGENT
 from market.normalize.fyers import (
     NormalizationError,
     quote_fields_from_symbol_update,
@@ -575,6 +576,14 @@ class FyersFeed:
                     return self._next_backoff()
                 await ws.send(self._full_subscribe_frame())
                 await self._resolve_hsm_symbols(token)
+                if not self._hsm_symbols:
+                    # Symbol resolution failed: retry next session rather
+                    # than subscribing to useless identity tokens.
+                    self._note_error("symbol_resolution_failed")
+                    await self._close_quietly(ws)
+                    self._set_state("reconnecting",
+                                    reason="symbol_resolution_failed")
+                    return self._next_backoff()
                 await ws.send(_hsm_subscribe_frame(
                     list(self._hsm_symbols.values())))
             except Exception as exc:
@@ -742,9 +751,10 @@ class FyersFeed:
         try:
             payload = await asyncio.to_thread(_convert)
         except Exception as exc:
+            # Leave _hsm_symbols EMPTY so the next session retries the
+            # lookup instead of caching a useless identity mapping.
             logger.warning("fyers feed %s: symbol-token lookup failed: %s",
                            self._name, type(exc).__name__)
-            self._hsm_symbols = {k: k for k in self._desired}
             self._hsm_by_topic = {}
             return
         valid = payload.get("validSymbol") or {}

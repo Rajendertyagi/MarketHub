@@ -304,6 +304,91 @@ def test_ff10_hsm_key_extraction(runner: R) -> None:
                      "K2")
 
 
+async def test_ff12_symbol_resolution_real_path(runner: R) -> None:
+    """_resolve_hsm_symbols must build HSM tokens via the symbol-token API.
+
+    Regression: the REST converter referenced an unimported USER_AGENT and
+    died with NameError at first live login; tests had only ever pre-seeded
+    the mapping. This drives the REAL code path with a stubbed HTTP layer.
+    """
+    import urllib.request
+    from brokers.fyers.feed import FyersFeed
+
+    calls = {}
+
+    def fake_urlopen(req, timeout=0):
+        calls["url"] = req.full_url
+        calls["headers"] = dict(req.header_items())
+        calls["body"] = json.loads(req.data.decode())
+
+        class _R:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return json.dumps({
+                    "s": "ok",
+                    "validSymbol": {"NSE:SBIN-EQ": "10100000001234"},
+                    "invalidSymbol": [],
+                }).encode()
+
+        return _R()
+
+    real_urlopen = urllib.request.urlopen
+    urllib.request.urlopen = fake_urlopen
+    try:
+        cfg = {"source_name": "fyers", "instrument_keys": ["NSE:SBIN-EQ"],
+               "app_id": "APP-1",
+               "access_token_getter": lambda: _jwt_with_hsm_key("HK"),
+               "ws_connect": lambda token: asyncio.sleep(0, result=None),
+               "utc_now_iso": lambda: ""}
+        feed = FyersFeed(config=cfg, auth=object(), market_service=None)
+        await feed._resolve_hsm_symbols(_jwt_with_hsm_key("HK"))
+    finally:
+        urllib.request.urlopen = real_urlopen
+
+    runner.assert_in("FF12-endpoint", "/data/symbol-token", calls["url"])
+    runner.assert_eq("FF12-body-symbols",
+                     calls["body"]["symbols"], ["NSE:SBIN-EQ"])
+    auth_headers = {k.lower(): v for k, v in calls["headers"].items()}
+    runner.assert_true("FF12-auth-header-present",
+                       any(v.startswith("eyJ") for v in auth_headers.values()))
+    # NSE equity fytoken 1010... -> segment nse_cm, token = fytoken[10:]
+    runner.assert_eq("FF12-hsm-token",
+                     feed._hsm_symbols.get("NSE:SBIN-EQ"),
+                     "sf|nse_cm|1234")
+    runner.assert_eq("FF12-topic-inverse",
+                     feed._hsm_by_topic.get("sf|nse_cm|1234"), "NSE:SBIN-EQ")
+
+
+async def test_ff13_resolution_failure_retries(runner: R) -> None:
+    """Failed symbol resolution must NOT cache identity tokens."""
+    import urllib.request
+    from brokers.fyers.feed import FyersFeed
+
+    def failing_urlopen(req, timeout=0):
+        raise OSError("network down")
+
+    real = urllib.request.urlopen
+    urllib.request.urlopen = failing_urlopen
+    try:
+        cfg = {"source_name": "fyers", "instrument_keys": ["NSE:X"],
+               "app_id": "A",
+               "access_token_getter": lambda: _jwt_with_hsm_key("HK"),
+               "ws_connect": lambda token: asyncio.sleep(0, result=None),
+               "utc_now_iso": lambda: ""}
+        feed = FyersFeed(config=cfg, auth=object(), market_service=None)
+        await feed._resolve_hsm_symbols(_jwt_with_hsm_key("HK"))
+    finally:
+        urllib.request.urlopen = real
+
+    runner.assert_eq("FF13-no-identity-cache",
+                     feed._hsm_symbols, {})
+
+
 async def test_ff11_terminal_outcome_no_crash(runner: R) -> None:
     """_run_session returning the _TERMINAL sentinel must exit cleanly.
 
@@ -346,6 +431,8 @@ async def main() -> bool:
     test_ff1_registry(runner)
     test_ff2_factory_requires_getter(runner)
     test_ff10_hsm_key_extraction(runner)
+    await test_ff12_symbol_resolution_real_path(runner)
+    await test_ff13_resolution_failure_retries(runner)
 
     for coro_fn in (test_ff3_to_ff5_lifecycle, test_ff6_delta_frames,
                     test_ff7_clean_stop, test_ff8_transport_failure_reconnects,
