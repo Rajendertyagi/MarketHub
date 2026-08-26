@@ -349,6 +349,37 @@ class CredentialStore:
         """Encrypt + persist Fyers App ID + Secret Key under provider 'fyers'."""
         self.save_app_credentials("fyers", app_id, app_secret)
 
+    def save_fyers_pin(self, pin: str) -> None:
+        """Encrypt + persist the Fyers account PIN (for refresh flow).
+
+        The PIN is a credential of the same class as the app secret and
+        refresh token (already stored here encrypted): without it the
+        stored refresh token cannot be used. Never logged, never returned
+        by any API.
+        """
+        if not isinstance(pin, str) or not pin.strip():
+            raise ValueError("pin must be a non-empty string")
+        enc = self._get_encryption(allow_generate=True)
+        if enc is None:
+            raise CredentialDecryptError(
+                "master key unavailable; cannot encrypt PIN")
+        self._store.upsert_secrets("fyers", {
+            "pin": (enc.encrypt(pin.strip()), ENCRYPTION_SCHEME),
+        })
+
+    def load_fyers_pin(self) -> str | None:
+        """Return the stored Fyers PIN, or None when absent/unreadable."""
+        enc = self._get_encryption(allow_generate=False)
+        if enc is None:
+            return None
+        row = self._store.get_secret("fyers", "pin")
+        if row is None:
+            return None
+        try:
+            return enc.decrypt(row[0])
+        except Exception:
+            return None
+
     def load_fyers_credentials(self) -> dict[str, str] | None:
         """Return {'app_id', 'app_secret'} or None if not configured."""
         creds = self.load_app_credentials("fyers")

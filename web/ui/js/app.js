@@ -1808,9 +1808,11 @@ function initBackup() {
       }
       saveBtn.disabled = true;
       try {
+        const pin = ($("fyers-pin") || {}).value?.trim() || "";
         const res = await fetch("/api/settings/fyers", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ app_id: appId, secret_id: secret }) });
+          body: JSON.stringify({ app_id: appId, secret_id: secret,
+                                 pin: pin }) });
         const d = await res.json();
         if (res.ok && d.configured) {
           $("fyers-app-id").value = "";

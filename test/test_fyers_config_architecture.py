@@ -208,9 +208,9 @@ def test_refresh_restore_and_failure(runner: R) -> None:
     _srv._credential_store = _store
     _srv._fyers_runtime_token["access_token"] = ""
 
-    async def _ok_refresh(self, rt):
+    async def _ok_refresh(self, rt, pin=None):
         return {"access_token": "TOK-RESTORED", "refresh_token": rt}
-    async def _bad_refresh(self, rt):
+    async def _bad_refresh(self, rt, pin=None):
         raise _fauth.FyersAuthError("refresh rejected")
 
     _orig = _fauth.FyersAuth.refresh_access_token

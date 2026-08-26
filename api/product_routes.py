@@ -771,6 +771,7 @@ def build_fyers_auth_routes(cred_store: Any,
             return _json({"error": "invalid JSON body"}, 400)
         app_id = (body or {}).get("app_id", "")
         secret_id = (body or {}).get("secret_id", "")
+        pin = (body or {}).get("pin", "")
         for label, value in (("app_id", app_id), ("secret_id", secret_id)):
             if not isinstance(value, str) or not value.strip():
                 return _json({"error": f"{label} is required"}, 400)
@@ -779,6 +780,10 @@ def build_fyers_auth_routes(cred_store: Any,
         try:
             cred_store.save_fyers_credentials(app_id.strip(),
                                              secret_id.strip())
+            # Optional PIN (encrypted): enables refresh-token session
+            # restore across restarts so daily re-login is not required.
+            if isinstance(pin, str) and pin.strip():
+                cred_store.save_fyers_pin(pin.strip())
         except Exception:
             return _json({"error": "failed to save fyers credentials"}, 500)
         return _json({"configured": True})

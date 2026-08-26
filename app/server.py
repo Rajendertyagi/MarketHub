@@ -348,9 +348,18 @@ async def _try_restore_fyers_token() -> None:
         return
     try:
         from brokers.fyers.auth import FyersAuth
+        # Include the encrypted PIN when the operator saved one — Fyers'
+        # refresh endpoint requires it; this is what makes session
+        # restore work across restarts instead of forcing daily login.
+        pin = None
+        try:
+            pin = _credential_store.load_fyers_pin()
+        except Exception:
+            pin = None
         bundle = await FyersAuth(app_id=app_id, secret_id=secret_id,
                                  redirect_uri=FYERS_REDIRECT_URI
-                                 ).refresh_access_token(refresh_token)
+                                 ).refresh_access_token(refresh_token,
+                                                        pin=pin)
         _fyers_runtime_token["access_token"] = bundle["access_token"]
         _app_logger.info("fyers access token restored from refresh token")
     except Exception as exc:

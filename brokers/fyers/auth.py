@@ -132,21 +132,26 @@ class FyersAuth:
             "expires_at": payload.get("expires_at"),
         }
 
-    async def refresh_access_token(self, refresh_token: str) -> dict[str, Any]:
-        """Refresh an access token (best-effort; official flow needs PIN).
+    async def refresh_access_token(self, refresh_token: str,
+                                   pin: str | None = None) -> dict[str, Any]:
+        """Refresh an access token using a stored refresh token.
 
-        The documented refresh endpoint requires the account PIN, which
-        MarketHub deliberately does not store; operators should treat daily
-        login as the reliable path. This call succeeds only against
-        deployments/flows where Fyers accepts a PIN-less refresh.
+        The official refresh endpoint requires the account PIN. When the
+        operator has saved their PIN (encrypted in the credential store),
+        it is included here and session restore works across restarts.
+        Without a PIN the call fails and the feed falls back to daily
+        login (safe, documented behavior).
         """
         if not isinstance(refresh_token, str) or not refresh_token.strip():
             raise FyersAuthError("refresh_token must be a non-empty string")
-        payload = await self._post_json(_REFRESH_URL, {
+        body: dict[str, Any] = {
             "grant_type": "refresh_token",
             "appIdHash": app_id_hash(self._app_id, self._secret),
             "refresh_token": refresh_token.strip(),
-        })
+        }
+        if pin:
+            body["pin"] = str(pin).strip()
+        payload = await self._post_json(_REFRESH_URL, body)
         return {
             "access_token": str(payload["access_token"]),
             "refresh_token": refresh_token.strip(),
