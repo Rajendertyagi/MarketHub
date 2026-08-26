@@ -310,7 +310,7 @@ class FyersFeed:
                     else:
                         self._note_exit("auth_required")
                     return
-                if isinstance(outcome, _TERMINAL):
+                if outcome is _TERMINAL:
                     self._note_exit(
                         f"terminal: {self._last_error or 'unknown failure'}")
                     return  # state already failed

@@ -232,6 +232,40 @@ async def test_ff9_transport_failure_reconnects(runner: R) -> None:
     runner.assert_not_eq("FF9-not-terminal", st["state"], "failed")
 
 
+async def test_ff11_terminal_outcome_no_crash(runner: R) -> None:
+    """_run_session returning the _TERMINAL sentinel must exit cleanly.
+
+    Regression: the run loop used isinstance(outcome, _TERMINAL) against a
+    sentinel INSTANCE, raising TypeError('isinstance() arg 2 must be a
+    type...') on every real connect - found during first live login.
+    """
+    from brokers.fyers.feed import FyersFeed, _TERMINAL
+
+    cfg = {"source_name": "fyers", "instrument_keys": ["NSE:X"],
+           "app_id": "A", "access_token_getter": lambda: "T",
+           "ws_connect": lambda token: asyncio.sleep(0, result=None),
+           "utc_now_iso": lambda: ""}
+    feed = FyersFeed(config=cfg, auth=object(), market_service=None)
+
+    async def _terminal_session(stop_event):
+        # Mirror the real session: terminal failures set state first.
+        feed._set_state("failed", reason="config")
+        return _TERMINAL
+
+    feed._run_session = _terminal_session
+
+    async def run():
+        stop = asyncio.Event()
+        task = asyncio.create_task(feed.run(None, stop))
+        await asyncio.wait_for(task, timeout=3)
+
+    await run()
+    st = feed.status()
+    runner.assert_eq("FF11-terminal-state", st["state"], "failed")
+    runner.assert_in("FF11-terminal-exit", "terminal",
+                     st.get("last_exit_reason") or "")
+
+
 async def test_ff10_status_safe(runner: R) -> None:
     feed, _ws = _mk_feed()
     blob = json.dumps(feed.status())
@@ -252,6 +286,7 @@ async def main() -> bool:
     for coro_fn in (test_ff3_to_ff5_lifecycle, test_ff6_depth_message,
                     test_ff7_delta_frames, test_ff8_clean_stop,
                     test_ff9_transport_failure_reconnects,
+                    test_ff11_terminal_outcome_no_crash,
                     test_ff10_status_safe):
         fn = getattr(sys.modules[__name__], coro_fn.__name__)
         await fn(runner)
