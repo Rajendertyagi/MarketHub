@@ -110,6 +110,8 @@ _TEST_FILES: dict[str, str] = {
     "auth_startup": "test_auth_startup.py",
     "source_controls": "test_source_controls.py",
     "alert_history": "test_alert_history.py",
+    "options_analytics": "test_options_analytics.py",
+    "margin_shareholdings_greeks": "test_margin_shareholdings_greeks.py",
 }
 
 # Group -> ordered list of module keys. Order matters (fast/stable first).
@@ -150,13 +152,15 @@ GROUPS: dict[str, list[str]] = {
         "alert_reliability",
         "auth_startup",
         "source_controls",
+        "options_analytics",
+        "margin_shareholdings_greeks",
     ],
     "source": ["source_lifecycle", "source_dedup", "source_controls", "alert_history", "fyers_config", "release_hardening"],
     "consumer": ["consumers", "acknowledgement"],
     "mcp": ["subscriptions", "sdk_alignment", "lifespan", "multi_client", "errors", "timeouts", "sse_stream"],
     "lifecycle": ["source_lifecycle", "reconnect"],
     "unit": ["unit_sources", "market_normalize", "market_service", "upstox_auth",
-             "upstox_rest"],
+             "upstox_rest", "options_analytics", "margin_shareholdings_greeks"],
     "performance": ["performance"],
 }
 

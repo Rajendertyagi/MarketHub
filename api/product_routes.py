@@ -775,9 +775,62 @@ def build_market_data_routes(provider_md: Any) -> list[Route]:
             "strikes": strikes,
         })
 
+    async def _margin(request: Request) -> Response:
+        try:
+            body = await request.json()
+        except Exception:
+            return _json({"error": "invalid JSON body"}, 400)
+        if not isinstance(body, dict):
+            return _json({"error": "JSON body must be an object"}, 400)
+        instruments = body.get("instruments")
+        if not isinstance(instruments, list) or not instruments:
+            return _json({"error": "instruments (non-empty list) is required"}, 400)
+        item_type = body.get("item_type", "SECURITY")
+        margin_category = body.get("margin_category", "intraday")
+        try:
+            basket = await provider_md.margin(
+                instruments=instruments, item_type=item_type,
+                margin_category=margin_category)
+        except ProviderMarketDataError as exc:
+            return _json({"error": str(exc)}, 400)
+        except Exception:
+            return _json({"error": "margin fetch failed"}, 502)
+        from market.serialization import _to_json_value
+        return _json({"status": "ok", "data": _to_json_value(basket)})
+
+    async def _shareholdings(request: Request) -> Response:
+        isin = request.query_params.get("isin", "")
+        if not isin:
+            return _json({"error": "isin is required"}, 400)
+        try:
+            sh = await provider_md.shareholdings(isin=isin)
+        except ProviderMarketDataError as exc:
+            return _json({"error": str(exc)}, 400)
+        except Exception:
+            return _json({"error": "shareholdings fetch failed"}, 502)
+        from market.serialization import _to_json_value
+        return _json({"status": "ok", "data": _to_json_value(sh)})
+
+    async def _greeks(request: Request) -> Response:
+        ik = request.query_params.get("instrument_key", "")
+        keys = [k.strip() for k in ik.split(",") if k.strip()]
+        if not keys:
+            return _json({"error": "instrument_key is required"}, 400)
+        try:
+            snap = await provider_md.option_greeks(instrument_keys=keys)
+        except ProviderMarketDataError as exc:
+            return _json({"error": str(exc)}, 400)
+        except Exception:
+            return _json({"error": "option greeks fetch failed"}, 502)
+        from market.serialization import _to_json_value
+        return _json({"status": "ok", "data": _to_json_value(snap)})
+
     return [
         Route("/api/market/history", endpoint=_history, methods=["GET"]),
         Route("/api/options/chain", endpoint=_chain, methods=["GET"]),
+        Route("/api/margin", endpoint=_margin, methods=["POST"]),
+        Route("/api/shareholdings", endpoint=_shareholdings, methods=["GET"]),
+        Route("/api/options/greeks", endpoint=_greeks, methods=["GET"]),
     ]
 
 
@@ -839,6 +892,7 @@ def build_api_meta_routes() -> list[Route]:
                     "GET /api/options/expiries?underlying",
                     "GET /api/options/chain"
                     "?instrument_key&exchange&expiry",
+                    "GET /api/options/greeks?instrument_key",
                 ],
                 "alerts": [
                     "GET|POST /api/alerts",
@@ -847,6 +901,10 @@ def build_api_meta_routes() -> list[Route]:
                     "POST /api/alerts/{id}/enabled",
                     "GET /api/alerts/history?limit&offset&provider",
                     "DELETE /api/alerts/history",
+                ],
+                "broker": [
+                    "POST /api/margin {instruments[],item_type,margin_category}",
+                    "GET /api/shareholdings?isin",
                 ],
                 "sources": [
                     "GET /api/sources/status",

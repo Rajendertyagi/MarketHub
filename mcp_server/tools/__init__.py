@@ -16,6 +16,8 @@ from mcp_server.tools.market_intel_tools import register_market_intel_tools
 
 from mcp_server.tools.market_alerts import register_market_alert_tools
 
+from mcp_server.tools.options_analytics_tools import register_options_analytics_tools
+
 __all__ = [
     "register_system_tools",
     "register_event_tools",
@@ -25,4 +27,5 @@ __all__ = [
     "register_background_tools",
     "register_dev_tools",
     "register_alert_tools",
+    "register_options_analytics_tools",
 ]

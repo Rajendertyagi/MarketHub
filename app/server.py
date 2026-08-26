@@ -75,6 +75,7 @@ from mcp_server.tools import (
     register_alert_tools,
     register_market_alert_tools,
     register_market_intel_tools,
+    register_options_analytics_tools,
     register_background_tools,
     register_consumer_tools,
     register_dev_tools,
@@ -768,6 +769,7 @@ register_background_tools(mcp, _services)
 register_dev_tools(mcp, _services)
 register_alert_tools(mcp, _services)
 register_market_intel_tools(mcp, _services)
+register_options_analytics_tools(mcp, _services)
 register_market_alert_tools(mcp, _services)
 
 # ============================================================

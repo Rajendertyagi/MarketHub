@@ -222,7 +222,25 @@ test/test_broker_extended.py     # Extend existing tests
 
 ## NOTES
 
-1. **No MCP tools** - Per directive, do not add MCP tools for new endpoints
-2. **No WebUI changes** - Keep focus on data layer only
+1. **MCP tools: scoped override (2026-08-27)** - The 17 derived options-analytics
+   tools (`compute_pcr`, `compute_max_pain`, `compute_top_oi_strikes`, `compute_atm`,
+   `compute_iv_skew`, `compute_oi_buildup`, `compute_support_resistance`,
+   `compute_straddle`, `compute_gex`, `compute_futures_basis`, `price_long_straddle`,
+   `price_long_strangle`, `price_bull_call_spread`, `price_bear_put_spread`,
+   `price_iron_condor`, `price_long_butterfly`, `analyze_option_chain`) ARE exposed
+   as MCP tools in `mcp_server/tools/options_analytics_tools.py`. This overrides the
+   blanket "no MCP changes" line for these analytics. The Margin / Shareholdings /
+   Option Greeks endpoints remain REST-only (no MCP tools), per the original
+   directive.
+2. **No WebUI changes** - Analytics surface via MCP only; WebUI unchanged.
 3. **Fyers limitations** - Clearly document what Fyers cannot provide
 4. **Provider parity** - Where possible, normalize to same canonical models
+5. **GAP 1/2/3 CLOSED (2026-08-27)** - Margin, Shareholdings, and Option Greeks are
+   fully wired: `ProviderMarketData.margin()` / `.shareholdings()` / `.option_greeks()`
+   (app/market_data.py) plus REST routes `POST /api/margin`,
+   `GET /api/shareholdings?isin`, `GET /api/options/greeks?instrument_key`
+   (api/product_routes.py). Models + normalizers were pre-existing (agent code);
+   the missing service methods + routes are now added. Route paths differ from the
+   original plan (which proposed `:isin` / market-quote paths) to match existing
+   MarketHub conventions. Verified by test/test_margin_shareholdings_greeks.py
+   (60 assertions, all pass, no live broker).

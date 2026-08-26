@@ -75,3 +75,24 @@ TOOL_MARKET_ALERT_ENABLE = "market_alert_enable"
 TOOL_MARKET_ALERT_DISABLE = "market_alert_disable"
 TOOL_MARKET_ALERT_DELETE = "market_alert_delete"
 
+# ─── Options analytics tools (derived, provider-agnostic) ────────────────────
+# Locally computed over the canonical OptionChainSnapshot — no extra broker API
+# calls. Ported from TBMCP's 17 derived-analytics tools.
+TOOL_COMPUTE_PCR = "compute_pcr"
+TOOL_COMPUTE_MAX_PAIN = "compute_max_pain"
+TOOL_COMPUTE_TOP_OI_STRIKES = "compute_top_oi_strikes"
+TOOL_COMPUTE_ATM = "compute_atm"
+TOOL_COMPUTE_IV_SKEW = "compute_iv_skew"
+TOOL_COMPUTE_OI_BUILDUP = "compute_oi_buildup"
+TOOL_COMPUTE_SUPPORT_RESISTANCE = "compute_support_resistance"
+TOOL_COMPUTE_STRADDLE = "compute_straddle"
+TOOL_COMPUTE_GEX = "compute_gex"
+TOOL_COMPUTE_FUTURES_BASIS = "compute_futures_basis"
+TOOL_PRICE_LONG_STRADDLE = "price_long_straddle"
+TOOL_PRICE_LONG_STRANGLE = "price_long_strangle"
+TOOL_PRICE_BULL_CALL_SPREAD = "price_bull_call_spread"
+TOOL_PRICE_BEAR_PUT_SPREAD = "price_bear_put_spread"
+TOOL_PRICE_IRON_CONDOR = "price_iron_condor"
+TOOL_PRICE_LONG_BUTTERFLY = "price_long_butterfly"
+TOOL_ANALYZE_OPTION_CHAIN = "analyze_option_chain"
+

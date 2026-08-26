@@ -53,6 +53,16 @@ class MarketIntel:
         self._spot_provider = spot_provider
         self._identity = identity_resolver
 
+    def resolve_underlying(self, name: str) -> dict[str, Any] | None:
+        """Public resolver: map a human underlying name ('NIFTY', 'RELIANCE') to
+        its canonical catalog row.
+
+        Returns the underlying row dict (with exchange, instrument_token,
+        tradingsymbol, underlying, ...) or None when unknown. Tools use this to
+        turn a symbol into the keys the data service needs.
+        """
+        return self._find_underlying(name)
+
     def _storage_key(self, exchange: str, token: str) -> tuple[str, str]:
         """Resolve (exchange, any-identifier) to the MarketService key.
 

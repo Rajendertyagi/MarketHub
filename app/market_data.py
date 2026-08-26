@@ -368,3 +368,74 @@ class ProviderMarketData:
             method="GET", url=f"{_COMPETITORS_URL}/{isin}/competitors",
             access_token=creds.access_token)
         return competitors_from_rest(payload)
+
+    # -- Broker data: margin / shareholdings / greeks -----------------------
+
+    async def margin(
+        self, *, instruments: list[dict[str, Any]],
+        item_type: str = "SECURITY", margin_category: str = "intraday",
+        provider: str = "upstox",
+    ) -> Any:
+        """POST /v2/charges/margin - Required margin for a basket of instruments.
+
+        ``instruments`` is a list of Upstox margin specs, e.g.::
+
+            {"exchange": "NSE", "symbol": "RELIANCE",
+             "transaction_type": "BUY", "quantity": 1, "product": "I",
+             "lot_size": 1, "price": 2500, "trigger_price": 0}
+        """
+        if provider != "upstox":
+            raise ProviderMarketDataError("margin not available from this provider")
+        if not instruments or not isinstance(instruments, list):
+            raise ProviderMarketDataError("instruments (non-empty list) is required")
+        rest, creds = self._auth()
+        from market.normalize.upstox_margins import margin_from_rest
+        payload = await rest.authenticated_request(
+            method="POST", url=_MARGIN_URL,
+            access_token=creds.access_token,
+            json_body={
+                "instruments": instruments,
+                "item_type": item_type,
+                "margin_category": margin_category,
+            })
+        return margin_from_rest(payload)
+
+    async def shareholdings(
+        self, *, isin: str, provider: str = "upstox",
+    ) -> Any:
+        """GET /fundamentals/:isin/share-holdings - Quarterly shareholding pattern."""
+        if provider != "upstox":
+            raise ProviderMarketDataError("shareholdings not available from this provider")
+        if not isin:
+            raise ProviderMarketDataError("isin is required")
+        rest, creds = self._auth()
+        from market.normalize.upstox_shareholdings import shareholdings_from_rest
+        payload = await rest.authenticated_request(
+            method="GET", url=f"{_SHAREHOLDINGS_URL}/{isin}/share-holdings",
+            access_token=creds.access_token)
+        return shareholdings_from_rest(payload, isin=isin)
+
+    async def option_greeks(
+        self, *, instrument_keys: list[str] | str, provider: str = "upstox",
+    ) -> Any:
+        """GET /v3/market-quote/option-greek - Standalone option Greeks.
+
+        Accepts a single instrument key or a list; comma-joined for the API.
+        Note: the Upstox endpoint does NOT return ``rho`` — it is always None.
+        """
+        if provider != "upstox":
+            raise ProviderMarketDataError("option greeks not available from this provider")
+        if isinstance(instrument_keys, str):
+            keys = [k.strip() for k in instrument_keys.split(",") if k.strip()] \
+                if instrument_keys else []
+        else:
+            keys = [str(k).strip() for k in instrument_keys if str(k).strip()]
+        if not keys:
+            raise ProviderMarketDataError("at least one instrument_key is required")
+        rest, creds = self._auth()
+        from market.normalize.upstox_option_greeks import option_greeks_from_rest
+        payload = await rest.authenticated_request(
+            method="GET", url=_OPTION_GREEKS_URL,
+            access_token=creds.access_token,
+            params={"instrument_key": ",".join(keys)})
+        return option_greeks_from_rest(payload)
