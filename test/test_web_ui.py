@@ -53,17 +53,15 @@ def w1_index_html(runner: R, c) -> None:
     html = res.text
     for marker in (
         'class="topnav"',                # top navigation bar
-        'data-view="dashboard"',
-        'data-view="markets"',
-        'data-view="options"',
-        'data-view="sources"',
-        'data-view="mcp"',
+    'data-view="dashboard"',
+    'data-view="markets"',
+    'data-view="options"',
+    'data-view="mcp"',
         'id="view-settings"',            # settings view section
         'id="theme-toggle"',
         ">Dashboard<",
         ">Markets<",
         ">Option Chain<",
-        ">Sources<",
         ">MCP<",
         ">Settings<",
     ):
