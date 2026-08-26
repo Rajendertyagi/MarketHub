@@ -111,6 +111,16 @@ def w3_static_js(runner: R, c) -> None:
                       "setInterval(loadAlerts", body)
     runner.assert_in(name + "-poll-alert-history",
                       "setInterval(loadAlertHistory", body)
+    # Duplicate top-level identifier declarations make the WHOLE file fail
+    # to parse (every nav link dies with a blank console error). Guard the
+    # shared helpers against ever being declared twice.
+    import re as _re
+    for _ident in ("esc", "fmt", "fmtVol", "friendlyState", "friendlyShort",
+                   "connectSSE", "switchView", "$"):
+        _decls = _re.findall(
+            r"\b(?:const|let|var|function)\s+" + _re.escape(_ident) + r"\b",
+            body)
+        runner.assert_le(name + "-single-decl:" + _ident, len(_decls), 1)
 
 
 def w4_webawesome_vendored(runner: R, c) -> None:

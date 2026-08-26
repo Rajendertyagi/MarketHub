@@ -365,7 +365,7 @@
 
   const esc = (v) => String(v ?? "—")
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
   const ACTIVE_STATES = new Set(["streaming", "connecting", "authorizing", "reconnecting"]);
 
@@ -1524,13 +1524,6 @@ function initAlertPush() {
       alertPushSource.onerror = () => { /* EventSource auto-reconnects */ };
     } catch { /* silent */ }
   }
-
-// Escape provider/user-controlled strings before innerHTML interpolation.
-function esc(v) {
-  return String(v ?? "").replace(/[&<>"']/g, (ch) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-  }[ch]));
-}
 
 function pushAlertNotification(d) {
     const notes = $("alert-notifications");
