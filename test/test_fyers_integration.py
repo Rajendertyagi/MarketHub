@@ -27,15 +27,21 @@ def test_fyers_auth_and_adapters(runner: R) -> None:
     auth = FyersAuth(app_id="APP-1", secret_id="SEC",
                      redirect_uri="http://localhost:7070/auth/fyers/callback")
     url = auth.login_url(state="S1")
-    runner.assert_in("FA-login-url", "/login/v3/authorize", url)
+    runner.assert_in("FA-login-url", "/api/v3/generate-authcode", url)
+    runner.assert_in("FA-login-host", "https://api-t1.fyers.in", url)
     runner.assert_in("FA-state-echo", "state=S1", url)
     import hashlib
     runner.assert_eq("FA-hash-algo",
                      app_id_hash("A", "B"),
                      hashlib.sha256(b"A:B").hexdigest())
 
-    async def fake_transport(form):
-        assert form["appIdHash"] == app_id_hash("APP-1", "SEC")
+    seen = {}
+
+    async def fake_transport(url, body):
+        seen["url"] = url
+        seen["body"] = body
+        assert body["appIdHash"] == app_id_hash("APP-1", "SEC")
+        assert body["code"] == "ONE-TIME"
         return 200, {"access_token": "FY-TOK",
                      "refresh_token": "FY-REF", "expires_at": 99}
 
@@ -46,6 +52,8 @@ def test_fyers_auth_and_adapters(runner: R) -> None:
     runner.assert_eq("FA-exchange-token", bundle["access_token"], "FY-TOK")
     runner.assert_eq("FA-refresh-present",
                      bundle["refresh_token"], "FY-REF")
+    runner.assert_in("FA-validate-url",
+                     "/api/v3/validate-authcode", seen["url"])
 
     # Normalizers.
     cs = candles_from_history({"s": "ok", "candles": [

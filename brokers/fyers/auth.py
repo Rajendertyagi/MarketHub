@@ -1,21 +1,24 @@
 """Fyers broker adapter (auth + market-data normalization).
 
-Auth flow (official v3):
-  1. Login URL: https://api-t1.fyers.in/login/v3/authorize
-     params: client_id (= app id "<id>-<name>"), redirect_uri,
-             response_type=code, state (optional but recommended)
+Auth flow (official v3 — per Fyers API docs / FyersDev reference):
+  1. Login URL: GET https://api-t1.fyers.in/api/v3/generate-authcode
+      params: client_id (= app id "<id>-<name>"), redirect_uri,
+              response_type=code, state (optional but recommended)
   2. Browser callback carries ?auth_code=...&s=ok  (NOTE: Fyers uses
-     ``auth_code``, not OAuth-standard ``code``)
-  3. Exchange: POST https://api-t1.fyers.in/v3/validate-authcode
-     form: grant_type=authorization_code,
-           appIdHash = sha256(f"{app_id}:{app_secret}"),
-           code, redirect_uri
-     -> {access_token, refresh_token, expires_at}
-  4. Refresh: POST /v3/validate-authcode with
-     grant_type=refresh_token, appIdHash, refresh_token
-     (refresh tokens ARE supported by Fyers — unlike Upstox)
+      ``auth_code``, not OAuth-standard ``code``)
+  3. Exchange: POST https://api-t1.fyers.in/api/v3/validate-authcode
+      JSON body: {"grant_type": "authorization_code",
+                  "appIdHash": sha256(f"{app_id}:{app_secret}"),
+                  "code": <auth_code>}
+      -> {access_token, refresh_token}
+  4. Refresh: POST https://api-t1.fyers.in/api/v3/validate-refresh-token
+      JSON body: {"grant_type": "refresh_token", "appIdHash": ...,
+                  "refresh_token": ..., "pin": <user PIN>}
+      Returns a new access_token only. NOTE: the official docs require the
+      account PIN for refresh and flag the flow as possibly discontinued;
+      MarketHub treats refresh as best-effort and falls back to daily login.
 
-Access tokens are short-lived (daily); refresh tokens last ~2 weeks.
+Access tokens are short-lived (daily); refresh tokens last ~15 days.
 """
 
 from __future__ import annotations
@@ -25,8 +28,9 @@ import hmac
 import urllib.parse
 from typing import Any
 
-_LOGIN_URL = "https://api-t1.fyers.in/login/v3/authorize"
-_VALIDATE_URL = "https://api-t1.fyers.in/v3/validate-authcode"
+_LOGIN_URL = "https://api-t1.fyers.in/api/v3/generate-authcode"
+_VALIDATE_URL = "https://api-t1.fyers.in/api/v3/validate-authcode"
+_REFRESH_URL = "https://api-t1.fyers.in/api/v3/validate-refresh-token"
 USER_AGENT = "MarketHub/1.0 (trading-terminal)"
 
 
@@ -74,35 +78,35 @@ class FyersAuth:
             params["state"] = state
         return f"{_LOGIN_URL}?{urllib.parse.urlencode(params)}"
 
-    async def _post_form(self, form: dict[str, str]) -> dict[str, Any]:
+    async def _post_json(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
         import asyncio
         if self._transport is None:
             # Default stdlib transport (User-Agent set for Cloudflare).
+            import json as _json
+
             def _sync():
                 import urllib.request
                 req = urllib.request.Request(
-                    _VALIDATE_URL,
-                    data=urllib.parse.urlencode(form).encode(),
+                    url,
+                    data=_json.dumps(body).encode(),
                     method="POST",
-                    headers={"Content-Type":
-                             "application/x-www-form-urlencoded",
+                    headers={"Content-Type": "application/json",
                              "Accept": "application/json",
                              "User-Agent": USER_AGENT})
                 try:
                     with urllib.request.urlopen(req, timeout=15) as r:
-                        import json as _json
                         return r.status, _json.loads(r.read())
                 except Exception as exc:
                     status = getattr(exc, "code", 0)
                     try:
-                        import json as _json
-                        body = _json.loads(exc.read())
+                        body_txt = exc.read()
+                        payload = _json.loads(body_txt)
                     except Exception:
-                        body = {}
-                    return status or 0, body
+                        payload = {}
+                    return status or 0, payload
             status, payload = await asyncio.to_thread(_sync)
         else:
-            status, payload = await self._transport(form)
+            status, payload = await self._transport(url, body)
         if status != 200 or not isinstance(payload, dict) \
                 or not payload.get("access_token"):
             raise FyersAuthError(
@@ -117,11 +121,10 @@ class FyersAuth:
         """
         if not isinstance(auth_code, str) or not auth_code.strip():
             raise FyersAuthError("auth_code must be a non-empty string")
-        payload = await self._post_form({
+        payload = await self._post_json(_VALIDATE_URL, {
             "grant_type": "authorization_code",
             "appIdHash": app_id_hash(self._app_id, self._secret),
             "code": auth_code.strip(),
-            "redirect_uri": self._redirect_uri,
         })
         return {
             "access_token": str(payload["access_token"]),
@@ -130,10 +133,16 @@ class FyersAuth:
         }
 
     async def refresh_access_token(self, refresh_token: str) -> dict[str, Any]:
-        """Refresh an access token (Fyers supports this, ~2-week window)."""
+        """Refresh an access token (best-effort; official flow needs PIN).
+
+        The documented refresh endpoint requires the account PIN, which
+        MarketHub deliberately does not store; operators should treat daily
+        login as the reliable path. This call succeeds only against
+        deployments/flows where Fyers accepts a PIN-less refresh.
+        """
         if not isinstance(refresh_token, str) or not refresh_token.strip():
             raise FyersAuthError("refresh_token must be a non-empty string")
-        payload = await self._post_form({
+        payload = await self._post_json(_REFRESH_URL, {
             "grant_type": "refresh_token",
             "appIdHash": app_id_hash(self._app_id, self._secret),
             "refresh_token": refresh_token.strip(),
