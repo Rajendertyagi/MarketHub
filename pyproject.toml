@@ -24,3 +24,6 @@ version = { attr = "app.__init__.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["app*", "core*", "mcp_server*", "sources*", "market*", "brokers*", "api*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
