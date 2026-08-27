@@ -24,3 +24,24 @@ from helpers.runner import R
 def runner():
     """Provide shared test runner instance."""
     return R()
+
+
+@pytest.fixture(scope="module")
+def mcp_server():
+    """Start a real subprocess MCP server for the whole module.
+
+    Module-scoped so the 12 standalone-style tests (test_sdk_alignment.py,
+    test_multi_client.py, test_sse_stream.py) that were written to run via
+    ``main()`` get a live server under pytest. Teardown reuses the existing
+    lifecycle ownership (stop subprocess, restore config, clean data_test and
+    .test_logs, release port, clear helper state).
+    """
+    import asyncio
+
+    from helpers.lifecycle import restore_environment, start_server
+
+    asyncio.run(start_server())
+    try:
+        yield
+    finally:
+        restore_environment()
