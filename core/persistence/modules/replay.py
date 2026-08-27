@@ -28,6 +28,25 @@ def get_checkpoint(conn: sqlite3.Connection, consumer_id: str) -> int:
     return row[0]
 
 
+def get_checkpoint_info(
+    conn: sqlite3.Connection, consumer_id: str
+) -> tuple[int, str]:
+    """Return (checkpoint_sequence, updated_at) for a consumer.
+
+    updated_at is the persisted ISO-8601 timestamp of the last checkpoint
+    write (registration or advance). Raises ConsumerNotFoundError if the
+    consumer has no checkpoint row.
+    """
+    row = conn.execute(
+        "SELECT last_sequence, updated_at FROM consumer_checkpoints "
+        "WHERE consumer_id = ?",
+        (consumer_id,),
+    ).fetchone()
+    if row is None:
+        raise ConsumerNotFoundError(consumer_id)
+    return row[0], row[1]
+
+
 def advance_checkpoint(conn: sqlite3.Connection, consumer_id: str) -> int:
     """
     Advance the consumer's checkpoint to the highest safe sequence.

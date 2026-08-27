@@ -51,7 +51,11 @@ from core.persistence.modules import replay as _replay
 from core.persistence.modules import retention as _retention
 from core.persistence.modules import secrets as _secrets
 from core.persistence.modules import source_state as _source_state
-from core.errors import ConsumerNotFoundError
+from core.errors import (
+    ConsumerNotFoundError,
+    EventNotFoundError,
+    EventNotRelevantError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -283,12 +287,20 @@ class EventStore:
         """
         Acknowledge an event for a consumer. Idempotent — preserves first ack time.
         Returns True if the event was acknowledged (or was already acknowledged).
-        Raises ValueError if consumer or event doesn't exist, or event is not relevant.
+        Raises ConsumerNotFoundError if the consumer doesn't exist,
+        EventNotFoundError if the event doesn't exist, or EventNotRelevantError
+        if the event is not relevant to the consumer.
         """
         conn = self._open(self._db_path)
         try:
             return _delivery.acknowledge_event(conn, consumer_id, event_id)
-        except (ValueError, sqlite3.Error, ConsumerNotFoundError):
+        except (
+            ValueError,
+            sqlite3.Error,
+            ConsumerNotFoundError,
+            EventNotFoundError,
+            EventNotRelevantError,
+        ):
             conn.rollback()
             raise
         finally:
@@ -308,6 +320,25 @@ class EventStore:
         conn = self._open(self._db_path)
         try:
             return _replay.get_checkpoint(conn, consumer_id)
+        except (ValueError, ConsumerNotFoundError):
+            raise
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def get_checkpoint_info(self, consumer_id: str) -> dict[str, Any]:
+        """Return the consumer's durable checkpoint position and last update.
+
+        Returns ``{"checkpoint": int, "updated_at": str}`` where ``updated_at``
+        is the persisted ISO-8601 timestamp of the last checkpoint write.
+        Raises ConsumerNotFoundError if the consumer has no checkpoint row.
+        """
+        conn = self._open(self._db_path)
+        try:
+            checkpoint, updated_at = _replay.get_checkpoint_info(conn, consumer_id)
+            return {"checkpoint": checkpoint, "updated_at": updated_at}
         except (ValueError, ConsumerNotFoundError):
             raise
         except Exception:

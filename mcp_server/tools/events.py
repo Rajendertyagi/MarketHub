@@ -47,6 +47,11 @@ def register_event_tools(mcp, services, **kwargs) -> None:
         """
         List recent events from the in-memory history buffer.
 
+        This is a diagnostics/observational journal of events that passed
+        through the server — it is NOT a durable replay source. It does not
+        reflect per-consumer delivery state, acknowledgements, or checkpoints.
+        For durable, per-consumer replay use consumer_event_pending_list.
+
         limit: Maximum number of events to return (default 10, max 50).
         """
         event_list = events.get_event_history(limit=limit)

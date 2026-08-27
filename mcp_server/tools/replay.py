@@ -27,9 +27,14 @@ def register_replay_tools(mcp, services, **kwargs) -> None:
         after_sequence: Annotated[StrictInt, Field(ge=0)] | None = None,
     ) -> dict[str, Any]:
         """
-        Get pending (unacknowledged) persistent events for a consumer,
-        starting from the consumer's durable checkpoint or an explicit
-        after_sequence for pagination.
+        Replay pending (unacknowledged) persistent events for a consumer.
+
+        This is the canonical durable replay tool. Events are returned in
+        sequence order starting from the consumer's durable checkpoint, or
+        from an explicit after_sequence for pagination. Replay does NOT
+        acknowledge events and does NOT advance the consumer's checkpoint —
+        call consumer_event_acknowledge only after the event has been
+        successfully processed (at-least-once delivery).
         """
         consumer_id = consumer_id.strip()
         if not consumer_id:
@@ -41,6 +46,10 @@ def register_replay_tools(mcp, services, **kwargs) -> None:
                 raise ValidationError("after_sequence must be a non-negative integer or null")
             if after_sequence < 0:
                 raise ValidationError("after_sequence must be a non-negative integer or null")
+
+        # Validate limit: positive integer (reject bool, float, string, zero, negative)
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise ValidationError("limit must be a positive integer")
 
         effective_limit = min(limit, services.replay_cfg["max_limit"])
         return await run_with_timeout(
@@ -62,11 +71,12 @@ def register_replay_tools(mcp, services, **kwargs) -> None:
         """
         Acknowledge that a consumer has successfully processed a persistent event.
 
-        Acknowledgement is idempotent — repeated calls succeed silently.
-        The first acknowledgement timestamp is preserved.
+        Call this only after the event has been fully processed — acknowledgement
+        is the commit point of at-least-once delivery. It is idempotent: repeated
+        calls succeed silently and the first acknowledgement timestamp is preserved.
 
-        After acknowledgement, the server attempts to advance the consumer's
-        durable checkpoint to the highest safe sequence.
+        After acknowledgement, the server advances the consumer's durable
+        checkpoint monotonically to the highest safe sequence.
         """
         consumer_id = consumer_id.strip()
         event_id = event_id.strip()
@@ -97,13 +107,19 @@ def register_replay_tools(mcp, services, **kwargs) -> None:
 
     @mcp.tool(name=TOOL_CONSUMER_CHECKPOINT_GET)
     async def get_consumer_checkpoint(consumer_id: str) -> dict[str, Any]:
-        """Get the current durable checkpoint for a consumer."""
+        """Get the current durable checkpoint position for a consumer.
+
+        Returns the consumer's checkpoint sequence and the persisted timestamp
+        of the last checkpoint write (registration or advance). This reports
+        the durable replay position — it does not modify anything.
+        """
         consumer_id = consumer_id.strip()
         if not consumer_id:
             raise ValidationError("consumer_id must not be empty after trimming")
 
-        cp = await asyncio.to_thread(services.store.get_checkpoint, consumer_id)
+        info = await asyncio.to_thread(services.store.get_checkpoint_info, consumer_id)
         return {
             "consumer_id": consumer_id,
-            "checkpoint": cp,
+            "checkpoint": info["checkpoint"],
+            "updated_at": info["updated_at"],
         }

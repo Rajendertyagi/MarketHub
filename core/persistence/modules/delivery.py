@@ -10,7 +10,11 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timezone
 
-from core.errors import ConsumerNotFoundError
+from core.errors import (
+    ConsumerNotFoundError,
+    EventNotFoundError,
+    EventNotRelevantError,
+)
 
 
 def mark_delivered(
@@ -39,7 +43,9 @@ def acknowledge_event(
     """
     Acknowledge an event for a consumer. Idempotent — preserves first ack time.
     Returns True if the event was acknowledged (or was already acknowledged).
-    Raises ValueError if consumer or event doesn't exist, or event is not relevant.
+    Raises ConsumerNotFoundError if the consumer doesn't exist,
+    EventNotFoundError if the event doesn't exist, or EventNotRelevantError
+    if the event is not relevant to the consumer.
     """
     now = datetime.now(timezone.utc).isoformat()
     conn.execute("BEGIN IMMEDIATE")
@@ -58,7 +64,7 @@ def acknowledge_event(
     ).fetchone()
     if not evt:
         conn.rollback()
-        raise ValueError(f"event not found: {event_id}")
+        raise EventNotFoundError(event_id)
 
     # Verify the event is in this consumer's state (relevant)
     state = conn.execute(
@@ -67,9 +73,7 @@ def acknowledge_event(
     ).fetchone()
     if not state:
         conn.rollback()
-        raise ValueError(
-            f"event {event_id} is not relevant to consumer {consumer_id}"
-        )
+        raise EventNotRelevantError(event_id, consumer_id)
 
     # Mark acknowledged — preserve first ack time
     conn.execute(

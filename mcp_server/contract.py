@@ -39,7 +39,8 @@ TOOL_EVENT_LIST = "event_list"
 
 TOOL_CONSUMER_REGISTER = "consumer_register"
 TOOL_CONSUMER_TOPIC_ADD = "consumer_topic_add"
-TOOL_CONSUMER_EVENT_LIST = "consumer_event_list"
+# NOTE: consumer_event_list was removed from the public surface in MCP-2B.3C.
+# consumer_event_pending_list(after_sequence=0) is the canonical replay tool.
 TOOL_CONSUMER_EVENT_PENDING_LIST = "consumer_event_pending_list"
 TOOL_CONSUMER_EVENT_ACKNOWLEDGE = "consumer_event_acknowledge"
 TOOL_CONSUMER_CHECKPOINT_GET = "consumer_checkpoint_get"
