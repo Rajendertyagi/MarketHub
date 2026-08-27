@@ -35,11 +35,14 @@ from helpers.lifecycle import (  # noqa: E402
 from helpers.runner import R  # noqa: E402
 from mcp_result import safe_teardown  # noqa: E402
 
-import pytest  # noqa: E402
+try:  # noqa: E402
+    import pytest  # noqa: E402
 
-# These tests were written for standalone ``main()`` execution. Under pytest
-# the subprocess server is started by the module-scoped ``mcp_server`` fixture.
-pytestmark = pytest.mark.usefixtures("mcp_server")
+    # These tests were written for standalone ``main()`` execution. Under pytest
+    # the subprocess server is started by the module-scoped ``mcp_server`` fixture.
+    pytestmark = pytest.mark.usefixtures("mcp_server")
+except ImportError:  # standalone run via run_all.py (pytest not installed)
+    pass
 
 
 # ---------------------------------------------------------------------------
