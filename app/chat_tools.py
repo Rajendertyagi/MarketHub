@@ -267,7 +267,7 @@ class ChatToolRegistry:
 
         def _create():
             exchange, token = inst["instrument_key"].split(":", 1)
-            return self._store.create_alert(
+            return self._store.create_market_alert(
                 exchange=exchange, instrument_token=token,
                 tradingsymbol=inst["symbol"], field=field,
                 operator=operator, threshold=threshold)
@@ -283,7 +283,7 @@ class ChatToolRegistry:
     async def _tool_alert_list(self, args: dict[str, Any]):
         if self._store is None:
             return {"error": "alert store not available"}
-        alerts = await asyncio.to_thread(self._store.list_alerts)
+        alerts = await asyncio.to_thread(self._store.list_market_alerts)
         return {"status": "ok", "count": len(alerts), "alerts": alerts}
 
     def _make_alert_setter(self, enabled: bool) -> Callable:

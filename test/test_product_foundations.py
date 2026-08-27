@@ -244,7 +244,7 @@ def test_pf13_to_pf17_alert_engine(runner: R) -> None:
     from app.alerts import AlertEngine
 
     env = _Env()
-    a = env.store.create_alert(exchange="NSE", instrument_token="T1",
+    a = env.store.create_market_alert(exchange="NSE", instrument_token="T1",
                                tradingsymbol="AAA", field="ltp",
                                operator="gt", threshold=105.0)
     engine = AlertEngine(env.store)
@@ -273,7 +273,7 @@ def test_pf13_to_pf17_alert_engine(runner: R) -> None:
 
     # PF13: validation at store layer.
     try:
-        env.store.create_alert(exchange="NSE", instrument_token="X",
+        env.store.create_market_alert(exchange="NSE", instrument_token="X",
                                tradingsymbol="X", field="bogus",
                                operator="gt", threshold=1)
         bad_field = False

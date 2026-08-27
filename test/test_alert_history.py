@@ -163,7 +163,7 @@ async def test_ah8_engine_integration(runner: R) -> None:
 
     p = _tmp_db()
     s = EventStore(p)
-    s.create_alert(exchange="NSE", instrument_token="INE009",
+    s.create_market_alert(exchange="NSE", instrument_token="INE009",
                    tradingsymbol="TEST9", field="ltp", operator="gt",
                    threshold=10.0)
 

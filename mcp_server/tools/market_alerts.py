@@ -80,7 +80,7 @@ def register_market_alert_tools(mcp, services, **kwargs) -> None:
         exchange, token = inst["instrument_key"].split(":", 1)
 
         def _create():
-            return store.create_alert(
+            return store.create_market_alert(
                 exchange=exchange, instrument_token=token,
                 tradingsymbol=inst["symbol"], field=field,
                 operator=operator, threshold=threshold)
@@ -98,7 +98,7 @@ def register_market_alert_tools(mcp, services, **kwargs) -> None:
         """List all configured market alerts with their state."""
         if store is None:
             return {"error": "alert store not available"}
-        alerts = await asyncio.to_thread(store.list_alerts)
+        alerts = await asyncio.to_thread(store.list_market_alerts)
         return {"status": "ok", "count": len(alerts), "alerts": alerts}
 
     @mcp.tool(name=TOOL_MARKET_ALERT_ENABLE)

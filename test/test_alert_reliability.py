@@ -118,13 +118,13 @@ def test_ar4_triggered_state_persists(runner: R) -> None:
 
     db = os.path.join(env_tmp.name, "t.db")
     store = EventStore(db)
-    store.create_alert(exchange="NSE", instrument_token="T1",
+    store.create_market_alert(exchange="NSE", instrument_token="T1",
                        tradingsymbol="AAA", field="ltp",
                        operator="crosses_above", threshold=100.0)
     engine = AlertEngine(store)
     engine.evaluate(_mk_quote(ltp=90.0))    # below threshold (no cross yet)
     engine.evaluate(_mk_quote(ltp=110.0))   # crosses above -> fires
-    alerts = store.list_alerts()
+    alerts = store.list_market_alerts()
     runner.assert_eq("AR4-state-persisted",
                      alerts[0]["state"], "triggered")
 
@@ -140,7 +140,7 @@ def test_ar5_rearm_allows_one_fire(runner: R) -> None:
     from app.alerts import AlertEngine
 
     store = EventStore(os.path.join(env_tmp.name, "t.db"))
-    a = store.create_alert(exchange="NSE", instrument_token="T1",
+    a = store.create_market_alert(exchange="NSE", instrument_token="T1",
                            tradingsymbol="AAA", field="ltp",
                            operator="crosses_above", threshold=100.0)
     engine = AlertEngine(store)

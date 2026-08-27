@@ -680,14 +680,24 @@ class EventStore:
         finally:
             conn.close()
 
-    def create_alert(self, **kw: Any) -> dict[str, Any]:
+    def create_market_alert(self, **kw: Any) -> dict[str, Any]:
+        """Market/product alert facade (market_alerts table).
+
+        Distinct name from the generic create_alert so the two alert
+        families never collide on the EventStore facade.
+        """
         conn = self._open(self._db_path)
         try:
             return _products.create_alert(conn, **kw)
         finally:
             conn.close()
 
-    def list_alerts(self) -> list[dict[str, Any]]:
+    def list_market_alerts(self) -> list[dict[str, Any]]:
+        """Market/product alert facade (market_alerts table).
+
+        Distinct name from the generic list_alerts so the two alert
+        families never collide on the EventStore facade.
+        """
         conn = self._open(self._db_path)
         try:
             return _products.list_alerts(conn)

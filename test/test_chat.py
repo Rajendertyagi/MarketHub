@@ -143,7 +143,7 @@ def test_ch3_alert_actions(runner: R) -> None:
     alert_id = created["result"]["alert"]["id"]
 
     # Persistence confirmed.
-    alerts = store.list_alerts()
+    alerts = store.list_market_alerts()
     runner.assert_eq("CH3-persisted", len(alerts), 1)
     runner.assert_eq("CH3-persisted-symbol",
                      alerts[0]["tradingsymbol"], "NSE:RELIANCE-EQ")
@@ -163,7 +163,7 @@ def test_ch3_alert_actions(runner: R) -> None:
         {"tool": "market_alert_delete", "arguments": {"alert_id": alert_id}},
     ], tool_registry=registry)
     asyncio.run(_collect(agent3))
-    runner.assert_eq("CH3-deleted", len(store.list_alerts()), 0)
+    runner.assert_eq("CH3-deleted", len(store.list_market_alerts()), 0)
 
 
 def test_ch4_no_hallucinated_data(runner: R) -> None:

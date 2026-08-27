@@ -588,7 +588,7 @@ def build_alert_routes(store: Any, engine: Any = None) -> list[Route]:
     """CRUD + control routes for market alerts."""
 
     async def _list(request: Request) -> Response:  # noqa: ARG001
-        alerts = await asyncio.to_thread(store.list_alerts)
+        alerts = await asyncio.to_thread(store.list_market_alerts)
         recent = engine.recent_notifications(10) if engine else []
         return _json({"alerts": alerts, "notifications": recent})
 
@@ -603,7 +603,7 @@ def build_alert_routes(store: Any, engine: Any = None) -> list[Route]:
         if not all(b.get(k) is not None for k in required):
             return _json({"error": f"fields required: {required}"}, 400)
         try:
-            alert = await asyncio.to_thread(store.create_alert, **{
+            alert = await asyncio.to_thread(store.create_market_alert, **{
                 k: b[k] for k in required})
         except ValueError as exc:
             return _json({"error": str(exc)}, 400)
