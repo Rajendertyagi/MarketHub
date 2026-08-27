@@ -214,7 +214,7 @@ events.configure_sse_broker(_event_broker)
 _market_event_broker = EventBroker()
 
 
-def _on_market_quote_update(quote: Quote) -> None:
+async def _on_market_quote_update(quote: Quote) -> None:
     """Post-commit MarketService hook: canonical quote -> market SSE fan-out.
 
     Single JSON encoding point: the canonical serializer produces the dict,
@@ -229,8 +229,10 @@ def _on_market_quote_update(quote: Quote) -> None:
         return
     _market_event_broker.broadcast(line)
     # Alert engine consumes the same canonical quote (never polls REST).
+    # Market-alert triggers publish canonical durable alert.triggered events
+    # through the shared event pipeline (SSE fan-out included).
     try:
-        _alert_engine.evaluate(quote)
+        await _alert_engine.evaluate(quote)
     except Exception:
         _app_logger.warning("alert evaluation failed", exc_info=True)
 
@@ -464,27 +466,7 @@ def _register_config_identities() -> None:
 _register_config_identities()
 
 
-def _on_alert_trigger(notification: dict) -> None:
-    """Push alert events through the generic low-frequency EventBroker."""
-    envelope = {
-        "type": "alert.triggered",
-        "data": {
-            "alert_id": notification.get("alert_id"),
-            "tradingsymbol": notification.get("tradingsymbol"),
-            "field": notification.get("field"),
-            "operator": notification.get("operator"),
-            "threshold": notification.get("threshold"),
-            "observed_value": notification.get("value"),
-            "triggered_at": notification.get("ts"),
-        },
-    }
-    try:
-        _event_broker.broadcast(json.dumps(envelope, ensure_ascii=False))
-    except Exception:
-        _app_logger.warning("alert event broadcast failed", exc_info=True)
-
-
-_alert_engine = _AlertEngine(_store, on_trigger=_on_alert_trigger)
+_alert_engine = _AlertEngine(_store, bus=_subscription_bus)
 
 from app.market_data import ProviderMarketData as _ProviderMarketData
 from api.product_routes import (

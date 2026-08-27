@@ -7,7 +7,10 @@ fields. State machine per alert:
     inactive --condition met--> triggered  (notification recorded once)
     triggered --operator re-arm--> inactive (manual, via API)
 
-No trading execution. No external notification channels.
+Each trigger records alert state + trigger history AND publishes exactly
+one canonical durable ``alert.triggered`` event through the shared event
+pipeline (broadcast, routing=None). No trading execution. No external
+notification channels.
 """
 
 from __future__ import annotations
@@ -17,6 +20,9 @@ import threading
 import time
 from datetime import datetime, timezone
 from typing import Any
+
+from core import events
+from core.alert_events import ALERT_ENGINE_SOURCE, build_alert_triggered_data
 
 logger = logging.getLogger("event_server")
 
@@ -36,9 +42,9 @@ _ALL_OPERATORS = frozenset({"gt", "lt"}) | _CROSSING_OPERATORS
 class AlertEngine:
     """Evaluates enabled alerts against live canonical quotes."""
 
-    def __init__(self, store: Any, on_trigger: Any = None) -> None:
+    def __init__(self, store: Any, bus: Any = None) -> None:
         self._store = store
-        self._on_trigger = on_trigger   # push hook (generic EventBroker)
+        self._bus = bus   # MCP subscription bus (optional; resource notify)
         self._lock = threading.Lock()
         self._rules: dict[int, dict[str, Any]] = {}
         self._notifications: list[dict[str, Any]] = []
@@ -55,7 +61,7 @@ class AlertEngine:
         with self._lock:
             self._rules = {r["id"]: r for r in rules}
 
-    def evaluate(self, quote: Any) -> list[dict[str, Any]]:
+    async def evaluate(self, quote: Any) -> list[dict[str, Any]]:
         """Check one canonical Quote against all matching active rules.
 
         Returns newly-fired notifications (already persisted as
@@ -117,6 +123,39 @@ class AlertEngine:
             except Exception as exc:
                 logger.warning("alert trigger history persist failed: %s",
                                type(exc).__name__)
+            # Canonical durable event publication — exactly one per trigger.
+            # routing=None = broadcast to all registered consumers. Failure
+            # here must NEVER break the trigger notification itself.
+            try:
+                await events.publish_event(
+                    event_type="alert.triggered",
+                    source=ALERT_ENGINE_SOURCE,
+                    data=build_alert_triggered_data(
+                        alert_family="market",
+                        alert_id=rule["id"],
+                        consumer_id=None,
+                        condition={
+                            "field": rule.get("field"),
+                            "operator": rule.get("operator"),
+                            "threshold": rule.get("threshold"),
+                        },
+                        observed={"value": value},
+                        instrument={
+                            "exchange": rule.get("exchange"),
+                            "instrument_token": rule.get("instrument_token"),
+                            "tradingsymbol": rule.get("tradingsymbol"),
+                        },
+                        one_shot=False,
+                        metadata={},
+                    ),
+                    persistent=True,
+                    routing=None,
+                    store=self._store,
+                    bus=self._bus,
+                )
+            except Exception as exc:
+                logger.warning("alert trigger event publish failed: %s",
+                               type(exc).__name__)
             with self._lock:
                 if rule["id"] in self._rules:
                     self._rules[rule["id"]]["state"] = "triggered"
@@ -131,12 +170,6 @@ class AlertEngine:
             }
             fired.append(notification)
             self.add_notification(notification)
-            if self._on_trigger is not None:
-                try:
-                    self._on_trigger(notification)
-                except Exception as exc:
-                    logger.warning("alert push failed: %s",
-                                   type(exc).__name__)
         return fired
 
     def add_notification(self, n: dict[str, Any]) -> None:
