@@ -40,6 +40,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
 
 from mcp_result import reserve_free_port, safe_teardown
+from .urls import build_mcp_url
 
 
 # ---------------------------------------------------------------------------
@@ -65,10 +66,20 @@ _atexit_registered = False
 
 
 def get_server_url() -> str:
+    if not _server_url:
+        raise RuntimeError(
+            "No MCP server is running. Call start_server() first or use the "
+            "'mcp_server' fixture."
+        )
     return _server_url
 
 
 def get_server_port() -> int:
+    if not _server_port:
+        raise RuntimeError(
+            "No MCP server is running. Call start_server() first or use the "
+            "'mcp_server' fixture."
+        )
     return _server_port
 
 
@@ -246,7 +257,7 @@ async def start_server(
 
     port = reserve_free_port()
     host = "127.0.0.1"
-    url = f"http://{host}:{port}/mcp"
+    url = build_mcp_url(host, port)
 
     # Capture ORIGINAL config bytes ONCE before any test modifies config.json
     if _server_original_config is None:
@@ -309,7 +320,7 @@ async def start_server(
     actual_port = _detect_server_port(err_path, port)
     if actual_port != port:
         port = actual_port
-        url = f"http://{host}:{port}/mcp"
+        url = build_mcp_url(host, port)
         _server_url = url
         _server_port = port
 
