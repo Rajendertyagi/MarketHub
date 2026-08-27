@@ -51,7 +51,7 @@ from helpers.lifecycle import (  # noqa: E402
     stop_server,
     restore_environment,
 )
-from helpers.mcp import call  # noqa: E402
+from helpers.mcp_client import call  # noqa: E402
 from helpers.mock_http import MockHandler, start_mock  # noqa: E402
 from helpers.runner import R  # noqa: E402
 from helpers.wait import wait_for_value, wait_until  # noqa: E402

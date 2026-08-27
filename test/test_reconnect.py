@@ -35,7 +35,7 @@ from helpers.lifecycle import (  # noqa: E402
     get_server_url,
     wait_mcp_ready,
 )
-from helpers.mcp import (  # noqa: E402
+from helpers.mcp_client import (  # noqa: E402
     call,
     read_res,
     list_tools_names,

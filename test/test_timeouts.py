@@ -32,7 +32,7 @@ from helpers.lifecycle import (  # noqa: E402
     start_server,
     stop_server,
 )
-from helpers.mcp import (  # noqa: E402
+from helpers.mcp_client import (  # noqa: E402
     call,
     wait_source_ready,
 )

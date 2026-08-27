@@ -26,7 +26,7 @@ from helpers.lifecycle import (  # noqa: E402
     restore_environment,
     start_server,
 )
-from helpers.mcp import (  # noqa: E402
+from helpers.mcp_client import (  # noqa: E402
     call,
     read_res,
 )

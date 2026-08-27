@@ -9,11 +9,6 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-# Add test helpers to path
-_HELPERS_PATH = Path(__file__).parent / "helpers"
-if str(_HELPERS_PATH) not in sys.path:
-    sys.path.insert(0, str(_HELPERS_PATH))
-
 
 def pytest_configure(config):
     """Register test markers."""

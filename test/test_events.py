@@ -38,7 +38,7 @@ for _p in (_PROJECT_DIR, _TEST_DIR):
         sys.path.insert(0, _p)
 
 from helpers.lifecycle import start_server, stop_server, restore_environment, get_server_url  # noqa: E402
-from helpers.mcp import call, read_res, list_tools_names, wait_source_ready, wait_for_event_count  # noqa: E402
+from helpers.mcp_client import call, read_res, list_tools_names, wait_source_ready, wait_for_event_count  # noqa: E402
 from helpers.runner import R  # noqa: E402
 from core.persistence.store import EventStore  # noqa: E402
 
