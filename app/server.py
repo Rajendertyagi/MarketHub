@@ -76,12 +76,9 @@ from mcp_server.tools import (
     register_market_alert_tools,
     register_market_intel_tools,
     register_options_analytics_tools,
-    register_background_tools,
     register_consumer_tools,
-    register_dev_tools,
     register_event_tools,
     register_replay_tools,
-    register_source_tools,
     register_system_tools,
     register_market_tools,
 )
@@ -764,9 +761,6 @@ register_market_tools(mcp, _services)
 register_event_tools(mcp, _services)
 register_consumer_tools(mcp, _services)
 register_replay_tools(mcp, _services)
-register_source_tools(mcp, _services)
-register_background_tools(mcp, _services)
-register_dev_tools(mcp, _services)
 register_alert_tools(mcp, _services)
 register_market_intel_tools(mcp, _services)
 register_options_analytics_tools(mcp, _services)

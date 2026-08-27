@@ -18,7 +18,7 @@ from __future__ import annotations
 # ─── Contract version ─────────────────────────────────────────────────────────
 # Bumps only when the MCP tool/resource/event contract changes in a breaking way.
 # Distinct from MCP spec version, app version, Python version, and SDK version.
-CONTRACT_VERSION = "1.2.0"
+CONTRACT_VERSION = "2.0.0"
 
 # ─── Resource URIs ─────────────────────────────────────────────────────────────
 # mcp-event:// is an APPLICATION-PRIVATE URI scheme. It is NOT an official
@@ -51,14 +51,10 @@ TOOL_ALERT_GET = "alert_get"
 TOOL_ALERT_ENABLE = "alert_enable"
 TOOL_ALERT_DISABLE = "alert_disable"
 
-# ─── Dev/test tool names ───────────────────────────────────────────────────────
-TOOL_DEV_PROGRESS_TEST = "dev_progress_test"
-TOOL_DEV_LONG_RUNNING_TEST = "dev_long_running_test"
-TOOL_DEV_BACKGROUND_PUBLISH_TEST = "dev_background_publish_test"
-TOOL_DEV_TASK_LIST = "dev_task_list"
-TOOL_DEV_SOURCE_START = "dev_source_start"
-TOOL_DEV_SOURCE_FAIL = "dev_source_fail"
-TOOL_DEV_SOURCE_STOP = "dev_source_stop"
+# ─── Dev/test tool names (REMOVED from public contract in v2.0.0) ──────────────
+# These tools were internal testing helpers and pollute the public tool surface.
+# Removed: dev_progress_test, dev_long_running_test, dev_background_publish_test,
+#          dev_task_list, dev_source_start, dev_source_fail, dev_source_stop
 
 # ─── Market data tools (read-only) ─────────────────────────────────────────
 TOOL_MARKET_QUOTE = "market_quote"

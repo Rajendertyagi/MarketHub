@@ -26,13 +26,16 @@ def register_market_intel_tools(mcp, services, **kwargs) -> None:
         expiry: str | None = None,
         window: int = 10,
     ) -> dict[str, Any]:
-        """Option chain for an underlying (e.g. 'NIFTY', 'RELIANCE').
+        """Return the option chain for an underlying (e.g. 'NIFTY', 'RELIANCE').
 
-        Returns spot (with freshness basis), the ATM strike (nearest
-        ACTUAL listed strike), and ATM±window rows pairing CE and PE
-        contracts with canonical identity and live fields (ltp/OI/volume/
-        bid/ask) when market state has them. window defaults to 10;
-        analytics cover the loaded window only.
+        Returns the current spot price, ATM strike (nearest listed strike
+        to spot), and ATM +/- window rows pairing CE and PE contracts.
+        Each row includes canonical identity and live fields (ltp, OI,
+        volume, bid/ask) when available.
+
+        window controls how many strikes above/below ATM to include
+        (default 10). Analytics are computed over the loaded window only.
+        Expiry defaults to the nearest available expiry if not specified.
         """
         if intel is None:
             return {"error": "market intelligence service not available"}
@@ -47,10 +50,12 @@ def register_market_intel_tools(mcp, services, **kwargs) -> None:
         underlying: str,
         expiry: str | None = None,
     ) -> dict[str, Any]:
-        """List futures contracts for an underlying.
+        """List available futures contracts for an underlying.
 
-        Returns the underlying's identity, all listed expiries, and the
-        contracts (optionally filtered to one expiry) with lot size.
+        Returns all listed expiries and the contracts (optionally filtered
+        to one expiry) with lot size and canonical instrument identity.
+        Useful for discovering which derivative contracts are available
+        before fetching quotes or building strategies.
         """
         if intel is None:
             return {"error": "market intelligence service not available"}

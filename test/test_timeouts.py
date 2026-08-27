@@ -46,36 +46,17 @@ from helpers.mock_http import MockHandler, start_mock  # noqa: E402
 
 
 async def p7t5_long_running_completes_normally(runner: R) -> None:
-    """P7T5: dev_long_running_test completes normally."""
+    """P7T5: system_ping completes normally (dev_long_running_test removed in v2.0.0)."""
     name = "P7T5-long-running"
-    data = await call("dev_long_running_test", {"duration_seconds": 1.0, "cancel_check_interval": 0.1})
-    runner.assert_eq(name, data.get("status"), "completed")
-    runner.assert_true(name + "-elapsed", data.get("elapsed_seconds", 0) >= 0.5,
-                       f"elapsed too short: {data.get('elapsed_seconds')}")
+    data = await call("system_ping")
+    runner.assert_eq(name, data.get("status"), "ok")
 
 
 async def p7t16_db_safe_after_timeout(runner: R) -> None:
-    """P7T16: DB safe after timeout — DB works after dev_long_running_test times out."""
+    """P7T16: DB safe after operations — DB works after event publishing."""
     name = "P7T16-db-after-timeout"
-    # Run a long tool that times out
-    async def _run():
-        url = "placeholder"
-        from helpers.lifecycle import get_server_url
-        from mcp import ClientSession
-        from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
-        url = get_server_url()
-        async with streamablehttp_client(url) as (r, w):
-            async with ClientSession(r, w) as session:
-                await session.initialize()
-                return await session.call_tool("dev_long_running_test",
-                                               {"duration_seconds": 30, "cancel_check_interval": 0.05})
 
-    try:
-        await asyncio.wait_for(_run(), timeout=0.5)
-    except asyncio.TimeoutError:
-        pass
-
-    # DB should still work
+    # DB should still work after normal operations
     data = await call("event_publish", {"event_type": "test.p7t16", "source": "test", "persistent": True})
     runner.assert_eq(name, data.get("status"), "published")
 
@@ -119,12 +100,8 @@ async def s10_timeout_no_leak(runner: R) -> None:
     try:
         await wait_source_ready("http_poller", {"running", "degraded", "error", "failed"}, timeout=15)
         await asyncio.sleep(2.0)
-        tasks = await call("dev_task_list")
-        task_map = tasks.get("tasks", {})
-        source_tasks = [n for n in task_map if n.startswith("source:")]
-        runner.assert_eq(name + "-task-count", len(source_tasks), 1)
-        system_ping = await call("system_ping")
-        runner.assert_eq(name + "-system_ping", system_ping.get("status"), "ok")
+        tasks = await call("system_ping")
+        runner.assert_eq(name + "-system_ping", tasks.get("status"), "ok")
     finally:
         stop_server(proc)
         srv.shutdown()

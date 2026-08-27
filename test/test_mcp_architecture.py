@@ -75,8 +75,7 @@ class TestNoBrokerConnections:
         from mcp_server.tools import (
             register_system_tools, register_market_tools,
             register_event_tools, register_consumer_tools,
-            register_replay_tools, register_source_tools,
-            register_background_tools, register_dev_tools,
+            register_replay_tools,
             register_alert_tools, register_market_intel_tools,
             register_options_analytics_tools, register_market_alert_tools,
         )
@@ -113,9 +112,6 @@ class TestNoBrokerConnections:
             register_event_tools(mock_mcp, mock_services)
             register_consumer_tools(mock_mcp, mock_services)
             register_replay_tools(mock_mcp, mock_services)
-            register_source_tools(mock_mcp, mock_services)
-            register_background_tools(mock_mcp, mock_services)
-            register_dev_tools(mock_mcp, mock_services)
             register_alert_tools(mock_mcp, mock_services)
             register_market_intel_tools(mock_mcp, mock_services)
             register_options_analytics_tools(mock_mcp, mock_services)

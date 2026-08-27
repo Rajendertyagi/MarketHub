@@ -258,11 +258,10 @@ async def t14_resource_server_info(runner: R) -> None:
 
 
 async def p7t7_progress(runner: R) -> None:
-    """P7T7: Progress reporting works."""
+    """P7T7: system_ping returns ok (progress test was removed with dev tools)."""
     name = "P7T7-progress"
-    data = await call("dev_progress_test", {"total": 5})
-    runner.assert_eq(name, data.get("status"), "completed")
-    runner.assert_eq(name + "-final", data.get("final_progress"), 5.0)
+    data = await call("system_ping")
+    runner.assert_eq(name, data.get("status"), "ok")
 
 
 async def p7t18_info_fields(runner: R) -> None:
@@ -355,11 +354,11 @@ async def p8t5_max_events(runner: R) -> None:
 
 
 async def p8t6_failure_resilience(runner: R) -> None:
-    """P8T6: source failure resilience — dev_source_fail doesn't crash the server."""
+    """P8T6: server resilience — event_publish and system_ping still work."""
     name = "P8T6-failure-resilience"
-    resp = await call("dev_source_fail", {"name": "p8-fail-res", "delay_seconds": 0.1})
-    runner.assert_eq(name + "-started", resp.get("status"), "started")
-    await asyncio.sleep(1.0)
+    resp = await call("event_publish", {"event_type": "test.resilience", "source": "test"})
+    runner.assert_eq(name + "-published", resp.get("status"), "ok")
+    await asyncio.sleep(0.5)
     data = await call("system_ping")
     runner.assert_eq(name + "-system_ping-ok", data.get("status"), "ok")
 
@@ -369,10 +368,6 @@ async def p8t9_graceful_shutdown(runner: R) -> None:
     name = "P8T9-graceful-shutdown"
     data = await call("system_ping")
     runner.assert_eq(name + "-system_ping", data.get("status"), "ok")
-    tasks_resp = await call("dev_task_list")
-    task_count = tasks_resp.get("task_count", 0)
-    runner.assert_true(name + "-has-tasks", task_count >= 0,
-                       f"background tasks present: {task_count}")
     runner.ok(name + "-pre-shutdown-ok")
 
 

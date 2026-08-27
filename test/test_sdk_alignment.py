@@ -129,16 +129,14 @@ async def test_async_tools_work(runner: R) -> None:
 # Legacy ID: P8T8
 async def test_extensibility_proof_original_tools_present(runner: R) -> None:
     """P8T8: extensibility proof - all original tools still present plus
-    product tools (34 total: +option_chain, futures_contracts, and the
-    five market_alert_* management tools)."""
+    product tools (44 total: +option_chain, futures_contracts, market_alert_*
+    management tools, +analytics/strategy pricing tools)."""
     name = "P8T8-original-tools"
     tools = await list_tools_names()
     expected_tools = [
         "system_ping", "event_publish", "event_list", "consumer_register",
         "consumer_topic_add", "consumer_event_list", "consumer_event_pending_list",
-        "consumer_event_acknowledge", "consumer_checkpoint_get", "dev_progress_test",
-        "dev_long_running_test", "dev_background_publish_test", "dev_task_list",
-        "dev_source_start", "dev_source_fail", "dev_source_stop",
+        "consumer_event_acknowledge", "consumer_checkpoint_get",
         "alert_create", "alert_list", "alert_get", "alert_enable", "alert_disable",
         "market_quote", "market_depth", "market_status",
         "instrument_search", "watchlists", "market_history",
@@ -146,6 +144,13 @@ async def test_extensibility_proof_original_tools_present(runner: R) -> None:
         "option_chain", "futures_contracts",
         "market_alert_create", "market_alert_list", "market_alert_enable",
         "market_alert_disable", "market_alert_delete",
+        # Product layer: options analytics + strategy pricing.
+        "compute_pcr", "compute_max_pain", "compute_top_oi_strikes",
+        "compute_atm", "compute_iv_skew", "compute_oi_buildup",
+        "compute_support_resistance", "compute_straddle", "compute_gex",
+        "compute_futures_basis", "price_long_straddle", "price_long_strangle",
+        "price_bull_call_spread", "price_bear_put_spread", "price_iron_condor",
+        "price_long_butterfly", "analyze_option_chain",
     ]
     for tool in expected_tools:
         runner.assert_in(name + f"-{tool}", tool, tools)

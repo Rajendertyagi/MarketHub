@@ -164,8 +164,20 @@ def _mcp_tools(svc):
 
     from mcp_server.tools.market import register_market_tools
 
+    class _Catalog:
+        """Minimal catalog mock for the KEY used in tests.
+
+        _parse_instrument_ref queries the catalog first. The catalog maps
+        the pipe-formatted KEY to the original storage key.
+        """
+        def search(self, q, exchange=None, limit=10):
+            if q == KEY:
+                return [{"exchange": "NSE", "instrument_token": KEY}]
+            return []
+
     class _Services:
         market_service = svc
+        instrument_catalog = _Catalog()
 
     fake = _FakeMCP()
     register_market_tools(fake, _Services())
@@ -248,8 +260,7 @@ async def test_ce1_to_ce5_end_to_end(runner: R) -> None:
 
     # CE4: MCP market_quote complete.
     tools = _mcp_tools(svc)
-    mcp_resp = await tools["market_quote"](exchange="NSE",
-                                           instrument_token=KEY)
+    mcp_resp = await tools["market_quote"](instrument_ref=KEY)
     runner.assert_eq("CE4-mcp-keys",
                      set(mcp_resp["quote"].keys()), set(d.keys()))
 
@@ -259,7 +270,7 @@ async def test_ce1_to_ce5_end_to_end(runner: R) -> None:
     runner.assert_eq("CE5-orders-int", md["bids"][0]["orders"], 12)
     runner.assert_eq("CE5-orders-null-preserved",
                      md["bids"][1]["orders"], None)
-    mcp_d = await tools["market_depth"](exchange="NSE", instrument_token=KEY)
+    mcp_d = await tools["market_depth"](instrument_ref=KEY)
     runner.assert_eq("CE5-mcp-asks", len(mcp_d["depth"]["asks"]), 1)
 
 
