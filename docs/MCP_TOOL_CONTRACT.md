@@ -309,9 +309,15 @@ These tools are registered in the MCP server but NOT part of the MCP-1 public co
 |------|----------|--------|
 | `alert_create`, `alert_list`, `alert_get`, `alert_enable`, `alert_disable` | Generic alerts | DEFERRED |
 | `event_publish`, `event_list` | Event pub/sub | DEFERRED |
-| `consumer_register`, `consumer_topic_add`, `consumer_event_list` | Consumer management | DEFERRED |
+| `consumer_register`, `consumer_topic_add` | Consumer management | DEFERRED |
 | `consumer_event_pending_list`, `consumer_event_acknowledge`, `consumer_checkpoint_get` | Replay/checkpoint | DEFERRED |
 | `market_alert_create`, `market_alert_list`, `market_alert_enable`, `market_alert_disable`, `market_alert_delete` | Market alerts | DEFERRED |
+
+> **MCP-2B.3C compatibility note:** `consumer_event_list` was removed from the
+> public MCP surface. Use `consumer_event_pending_list(after_sequence=0)` for
+> the same from-beginning replay of a consumer's relevant persistent events.
+> The underlying store query (`list_relevant_events`) remains available to
+> internal code and tests.
 
 ---
 
@@ -323,3 +329,4 @@ These tools are registered in the MCP server but NOT part of the MCP-1 public co
 | 1.1.0 | 2026-08 | Added alert tools, market_alert tools |
 | 1.2.0 | 2026-08 | Added options analytics, strategy pricing, analyze_option_chain |
 | **2.0.0** | **2026-08-27** | **MCP-1: Removed 7 dev tools, simplified instrument_ref schemas, removed provider leak from market_history, fixed asyncio import, polished descriptions** |
+| **2.1.0** | **2026-08-27** | **MCP-2B.3C: Removed `consumer_event_list` (44→43 visible tools); `consumer_event_pending_list` is the canonical replay tool; normalized `market_alert_*` errors to shared domain exceptions; `consumer_checkpoint_get` now reports persisted `updated_at`** |

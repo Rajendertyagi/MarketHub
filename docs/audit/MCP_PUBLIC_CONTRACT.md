@@ -27,7 +27,7 @@
 
 ---
 
-## 2. Production Tools (14)
+## 2. Production Tools (13)
 
 These are the tools the broker project should depend on.
 
@@ -38,8 +38,7 @@ These are the tools the broker project should depend on.
 | `event_list` | `limit` (int, default 10) | Returns recent in-memory events from history buffer (max 50). | **FREEZE** |
 | `consumer_register` | `consumer_id` (str) | Register a durable consumer identity. Idempotent. Also creates checkpoint at 0. | **FREEZE** |
 | `consumer_topic_add` | `consumer_id` (str), `topic` (str) | Assign a topic to a consumer for topic-based routing. | **FREEZE** |
-| `consumer_event_list` | `consumer_id` (str), `after_sequence` (int, optional), `limit` (int, default 50) | List persistent events relevant to a consumer, ordered by sequence ASC. Marks delivery. | **FREEZE** |
-| `consumer_event_pending_list` | `consumer_id` (str), `limit` (int, default 50), `after_sequence` (int|null, optional) | Replay unacknowledged persistent events from consumer's checkpoint (or from explicit `after_sequence` for pagination). Primary reconnect tool. Returns `next_after_sequence` for paging. | **FREEZE** + **v1.2.0-candidate** |
+| `consumer_event_pending_list` | `consumer_id` (str), `limit` (int, default 50), `after_sequence` (int\|null, optional) | Replay unacknowledged persistent events from consumer's checkpoint (or from explicit `after_sequence` for pagination). Primary reconnect tool. Returns `next_after_sequence` for paging. Does NOT acknowledge and does NOT advance the checkpoint. | **FREEZE** + **v1.2.0-candidate** |
 | `consumer_event_acknowledge` | `consumer_id` (str), `event_id` (str) | ACK an event for a consumer. Idempotent. Advances checkpoint. | **FREEZE** |
 | `consumer_checkpoint_get` | `consumer_id` (str) | Get the consumer's current durable checkpoint sequence. | **FREEZE** |
 | `alert_create` | `consumer_id` (str), `source` (str), `field_path` (str), `operator` (str), `value` (JSON scalar), `name` (str, optional), `event_type` (str, optional), `one_shot` (bool, default True) | Create a generic alert definition. Fires when a `source` event satisfies `field_path <operator> value`. | **v1.1.0-candidate** |
@@ -166,7 +165,7 @@ Routing metadata is **frozen at publication time**. It is never recomputed from 
 
 | Aspect | Rule |
 |--------|------|
-| `delivered_at` | First time the event was retrieved via `consumer_event_list` or `consumer_event_pending_list` for this consumer |
+| `delivered_at` | First time the event was retrieved via `consumer_event_pending_list` for this consumer |
 | Preserved | First delivery time is preserved on subsequent replays (CASE WHEN NULL) |
 | NOT delivery | `ResourceUpdated` notification, publication, or SQLite write alone does NOT count as delivery |
 | Idempotent | Repeated calls to `mark_delivered` for same (consumer, event) pair preserve first timestamp |
@@ -183,8 +182,8 @@ Routing metadata is **frozen at publication time**. It is never recomputed from 
 | Does NOT delete | The persistent event remains in `persistent_events` after ACK |
 | Checkpoint advance | After ACK, `advance_checkpoint` may advance the consumer's durable cursor |
 | Unknown consumer | Raises `ConsumerNotFoundError` (internal application exception) → SDK wraps as `CallToolResult(is_error=True)`; client sees semantic message `consumer not found: <consumer_id>` |
-| Unknown event | Raises `ValueError("event not found: ...")` → SDK wraps as error |
-| Irrelevant event | Raises `ValueError("event ... is not relevant to consumer ...")` → SDK wraps as error |
+| Unknown event | Raises `EventNotFoundError` → SDK wraps as error |
+| Irrelevant event | Raises `EventNotRelevantError` → SDK wraps as error |
 
 ---
 
@@ -199,6 +198,7 @@ Routing metadata is **frozen at publication time**. It is never recomputed from 
 | Gap-tolerant | Irrelevant events (not in consumer's `consumer_event_state`) do NOT block advancement |
 | Initial value | 0 (created at `consumer_register`) |
 | Advance trigger | Called after `consumer_event_acknowledge`; can also be called independently |
+| `consumer_checkpoint_get` | Reports `{consumer_id, checkpoint, updated_at}` — `updated_at` is the persisted ISO-8601 timestamp of the last checkpoint write (registration or advance) |
 
 ---
 
@@ -214,7 +214,7 @@ Routing metadata is **frozen at publication time**. It is never recomputed from 
 | Max limit | 500 (`MAX_REPLAY_LIMIT`) |
 | Semantics | At-least-once — events may be returned multiple times if not ACKed |
 | Delivery marking | Returned events are marked as delivered (preserving first delivery time) |
-| Unknown consumer | Returns `{"status": "error", "message": "consumer not found: ..."}` |
+| Unknown consumer | Raises `ConsumerNotFoundError` → SDK wraps as `CallToolResult(is_error=True)` |
 
 ---
 
@@ -242,7 +242,9 @@ Routing metadata is **frozen at publication time**. It is never recomputed from 
 | Consumer not found | Raises `ConsumerNotFoundError` (internal application exception) → SDK wraps as `CallToolResult(is_error=True)`; client sees semantic message `consumer not found: <consumer_id>` |
 | Protocol error | Reserved for `MCPError` (genuine protocol-level failures only) |
 
-**Unknown-consumer policy (v1.0.0):** All five production operations that require an existing consumer — `consumer_topic_add`, `consumer_event_list`, `consumer_event_pending_list`, `consumer_event_acknowledge`, `consumer_checkpoint_get` — raise `ConsumerNotFoundError` for an unregistered consumer. The MCP SDK exposes this as `CallToolResult(is_error=True)` with the semantic message `consumer not found: <consumer_id>`. `consumer_register` remains an idempotent create/register operation. `ConsumerNotFoundError` is an **internal application/domain exception**, not a public MCP protocol type; broker clients must depend on `is_error=True` and the semantic message, not on Python exception class names.
+**Unknown-consumer policy (v1.0.0):** All four production operations that require an existing consumer — `consumer_topic_add`, `consumer_event_pending_list`, `consumer_event_acknowledge`, `consumer_checkpoint_get` — raise `ConsumerNotFoundError` for an unregistered consumer. The MCP SDK exposes this as `CallToolResult(is_error=True)` with the semantic message `consumer not found: <consumer_id>`. `consumer_register` remains an idempotent create/register operation. `ConsumerNotFoundError` is an **internal application/domain exception**, not a public MCP protocol type; broker clients must depend on `is_error=True` and the semantic message, not on Python exception class names.
+
+**MCP-2B.3C compatibility note:** `consumer_event_list` was removed from the public MCP surface (visible tool count 44→43). Use `consumer_event_pending_list(after_sequence=0)` for the same from-beginning replay of a consumer's relevant persistent events. The underlying store query (`list_relevant_events`) remains available to internal code and tests.
 
 ---
 
