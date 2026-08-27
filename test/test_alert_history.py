@@ -174,7 +174,7 @@ async def test_ah8_engine_integration(runner: R) -> None:
         provider = "upstox"
 
     engine = AlertEngine(s)
-    fired = engine.evaluate(_Quote())
+    fired = await engine.evaluate(_Quote())
     runner.assert_eq("AH8-fired", len(fired), 1)
     rows = s.list_alert_trigger_history()
     runner.assert_eq("AH8-history-recorded", len(rows), 1)
@@ -182,7 +182,7 @@ async def test_ah8_engine_integration(runner: R) -> None:
     runner.assert_eq("AH8-tradingsymbol", rows[0]["tradingsymbol"], "TEST9")
     runner.assert_eq("AH8-provider", rows[0]["provider"], "upstox")
     # Re-evaluate same quote: already triggered -> no duplicate history.
-    engine.evaluate(_Quote())
+    await engine.evaluate(_Quote())
     runner.assert_eq("AH8-no-dup", s.count_alert_trigger_history(), 1)
 
 

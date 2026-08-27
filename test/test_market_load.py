@@ -193,6 +193,9 @@ async def test_ld8_alert_throughput(runner: R) -> None:
     from market.models import Quote
 
     class _Store:
+        def __init__(self):
+            self._seq = 0
+
         def load_enabled_alerts(self):
             return [{"id": 1, "exchange": "NSE", "instrument_token": "T1",
                      "tradingsymbol": "AAA", "field": "ltp",
@@ -205,13 +208,22 @@ async def test_ld8_alert_throughput(runner: R) -> None:
         def record_alert_trigger_history(self, **kwargs):
             return 1
 
+        def save(self, event_id, event_type, source, timestamp, data, routing=None):
+            # Mirror the EventStore persistence surface so the engine's
+            # canonical publish path completes without spurious warnings.
+            self._seq += 1
+            return self._seq
+
+        def append_recent_event(self, event, capacity):
+            pass
+
     engine = AlertEngine(_Store())
     fired_total = 0
     for i in range(2000):
         q = Quote(instrument_token="T1", exchange="NSE",
                   tradingsymbol="AAA", received_ts=_ts(),
                   ltp=40.0 + (i % 30))
-        fired_total += len(engine.evaluate(q))
+        fired_total += len(await engine.evaluate(q))
     # Only values > 50 fire, and only once until re-arm.
     runner.assert_le("LD8-bounded-fires", fired_total, 1)
     runner.assert_eq("LD8-notification-history-bounded",

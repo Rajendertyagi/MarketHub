@@ -250,7 +250,7 @@ async def test_ce1_to_ce5_end_to_end(runner: R) -> None:
     original = server_mod._market_event_broker.broadcast
     server_mod._market_event_broker.broadcast = captured.append
     try:
-        server_mod._on_market_quote_update(await svc.get_quote("NSE", KEY))
+        await server_mod._on_market_quote_update(await svc.get_quote("NSE", KEY))
     finally:
         server_mod._market_event_broker.broadcast = original
     runner.assert_eq("CE3-sse-one-line", len(captured), 1)

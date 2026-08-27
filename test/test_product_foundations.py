@@ -240,7 +240,7 @@ def _mk_quote(**overrides):
     return Quote(**base)
 
 
-def test_pf13_to_pf17_alert_engine(runner: R) -> None:
+async def test_pf13_to_pf17_alert_engine(runner: R) -> None:
     from app.alerts import AlertEngine
 
     env = _Env()
@@ -249,26 +249,26 @@ def test_pf13_to_pf17_alert_engine(runner: R) -> None:
                                operator="gt", threshold=105.0)
     engine = AlertEngine(env.store)
 
-    fired = engine.evaluate(_mk_quote(ltp=100.0))
+    fired = await engine.evaluate(_mk_quote(ltp=100.0))
     runner.assert_eq("PF14-below-no-fire", fired, [])
 
-    fired = engine.evaluate(_mk_quote(ltp=110.0))
+    fired = await engine.evaluate(_mk_quote(ltp=110.0))
     runner.assert_eq("PF14-triggered", len(fired), 1)
 
     # PF15: repeated ticks do NOT re-fire until re-arm.
-    runner.assert_eq("PF15-no-spam", engine.evaluate(
+    runner.assert_eq("PF15-no-spam", await engine.evaluate(
         _mk_quote(ltp=120.0)), [])
 
     # PF16: manual re-arm allows firing again.
     env.store.rearm_alert(a["id"])
     engine.reload()
-    fired = engine.evaluate(_mk_quote(ltp=130.0))
+    fired = await engine.evaluate(_mk_quote(ltp=130.0))
     runner.assert_eq("PF16-rearm-fires", len(fired), 1)
 
     # PF17: disabled alerts never fire.
     env.store.set_alert_enabled(a["id"], False)
     engine.reload()
-    runner.assert_eq("PF17-disabled-inert", engine.evaluate(
+    runner.assert_eq("PF17-disabled-inert", await engine.evaluate(
         _mk_quote(ltp=999.0)), [])
 
     # PF13: validation at store layer.
@@ -368,7 +368,7 @@ async def main() -> bool:
     test_pf6_pf7_catalog(runner)
     test_pf8_pf9_sync_service(runner)
     test_pf10_to_pf12_watchlists(runner)
-    test_pf13_to_pf17_alert_engine(runner)
+    await test_pf13_to_pf17_alert_engine(runner)
     await test_pf18_to_pf20_rest_endpoints(runner)
 
     return runner.summary()

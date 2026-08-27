@@ -46,6 +46,7 @@ def _mk_quote(ltp):
 class _Store:
     def __init__(self):
         self.triggered = []
+        self._seq = 0
 
     def load_enabled_alerts(self):
         return [{"id": 1, "exchange": "NSE", "instrument_token": "T1",
@@ -64,11 +65,20 @@ class _Store:
         self.triggered.append(("history", kwargs.get("alert_id")))
         return 1
 
+    def save(self, event_id, event_type, source, timestamp, data, routing=None):
+        # Mirror the EventStore persistence surface so the engine's canonical
+        # publish path completes without spurious warnings.
+        self._seq += 1
+        return self._seq
+
+    def append_recent_event(self, event, capacity):
+        pass
+
 
 # -- alert reliability -----------------------------------------------------------
 
 
-def test_ar1_no_false_cross_on_first(runner: R) -> None:
+async def test_ar1_no_false_cross_on_first(runner: R) -> None:
     """First quote after restart must NOT fire a crossing alert even if
     its value is already beyond the threshold (no prior to cross FROM)."""
     from app.alerts import AlertEngine
@@ -76,11 +86,11 @@ def test_ar1_no_false_cross_on_first(runner: R) -> None:
     store = _Store()
     store.state = "inactive"
     engine = AlertEngine(store)
-    fired = engine.evaluate(_mk_quote(ltp=150.0))
+    fired = await engine.evaluate(_mk_quote(ltp=150.0))
     runner.assert_eq("AR1-first-quote-no-cross", fired, [])
 
 
-def test_ar2_equal_threshold_deterministic(runner: R) -> None:
+async def test_ar2_equal_threshold_deterministic(runner: R) -> None:
     """Value EQUAL to threshold is not 'above' it — deterministic no-fire."""
     from app.alerts import AlertEngine
 
@@ -88,29 +98,29 @@ def test_ar2_equal_threshold_deterministic(runner: R) -> None:
     store.state = "inactive"
     engine = AlertEngine(store)
     runner.assert_eq("AR2-equal-no-fire",
-                     engine.evaluate(_mk_quote(ltp=100.0)), [])
+                     await engine.evaluate(_mk_quote(ltp=100.0)), [])
     # Crossing requires prev <= threshold AND now > threshold.
     runner.assert_eq("AR2-cross-after-equal",
-                     len(engine.evaluate(_mk_quote(ltp=100.5))), 1)
+                     len(await engine.evaluate(_mk_quote(ltp=100.5))), 1)
 
 
-def test_ar3_reconnect_no_double_trigger(runner: R) -> None:
+async def test_ar3_reconnect_no_double_trigger(runner: R) -> None:
     """Triggered state survives feed reconnects — no second notification."""
     from app.alerts import AlertEngine
 
     store = _Store()
     store.state = "inactive"
     engine = AlertEngine(store)
-    engine.evaluate(_mk_quote(ltp=90.0))
-    engine.evaluate(_mk_quote(ltp=110.0))            # fires once
+    await engine.evaluate(_mk_quote(ltp=90.0))
+    await engine.evaluate(_mk_quote(ltp=110.0))            # fires once
     # Simulate reconnect: fresh quotes keep arriving beyond threshold.
     runner.assert_eq("AR3-reconnect-no-double",
-                     engine.evaluate(_mk_quote(ltp=120.0)), [])
+                     await engine.evaluate(_mk_quote(ltp=120.0)), [])
     runner.assert_eq("AR3-reconnect-again",
-                     engine.evaluate(_mk_quote(ltp=130.0)), [])
+                     await engine.evaluate(_mk_quote(ltp=130.0)), [])
 
 
-def test_ar4_triggered_state_persists(runner: R) -> None:
+async def test_ar4_triggered_state_persists(runner: R) -> None:
     """record_trigger persists; a restarted engine sees state=triggered."""
     env_tmp = tempfile.TemporaryDirectory()
     from core.persistence.store import EventStore
@@ -122,8 +132,8 @@ def test_ar4_triggered_state_persists(runner: R) -> None:
                        tradingsymbol="AAA", field="ltp",
                        operator="crosses_above", threshold=100.0)
     engine = AlertEngine(store)
-    engine.evaluate(_mk_quote(ltp=90.0))    # below threshold (no cross yet)
-    engine.evaluate(_mk_quote(ltp=110.0))   # crosses above -> fires
+    await engine.evaluate(_mk_quote(ltp=90.0))    # below threshold (no cross yet)
+    await engine.evaluate(_mk_quote(ltp=110.0))   # crosses above -> fires
     alerts = store.list_market_alerts()
     runner.assert_eq("AR4-state-persisted",
                      alerts[0]["state"], "triggered")
@@ -131,10 +141,10 @@ def test_ar4_triggered_state_persists(runner: R) -> None:
     # Restarted engine loads the triggered rule and does NOT re-fire.
     engine2 = AlertEngine(store)
     runner.assert_eq("AR4-restart-no-refire",
-                     engine2.evaluate(_mk_quote(ltp=150.0)), [])
+                     await engine2.evaluate(_mk_quote(ltp=150.0)), [])
 
 
-def test_ar5_rearm_allows_one_fire(runner: R) -> None:
+async def test_ar5_rearm_allows_one_fire(runner: R) -> None:
     env_tmp = tempfile.TemporaryDirectory()
     from core.persistence.store import EventStore
     from app.alerts import AlertEngine
@@ -144,15 +154,15 @@ def test_ar5_rearm_allows_one_fire(runner: R) -> None:
                            tradingsymbol="AAA", field="ltp",
                            operator="crosses_above", threshold=100.0)
     engine = AlertEngine(store)
-    engine.evaluate(_mk_quote(ltp=110.0))
+    await engine.evaluate(_mk_quote(ltp=110.0))
     store.rearm_alert(a["id"])
     engine.reload()
-    fired = engine.evaluate(_mk_quote(ltp=105.0))
+    fired = await engine.evaluate(_mk_quote(ltp=105.0))
     # No crossing occurred (value went 110 -> 105, still above): no fire.
     runner.assert_eq("AR5-rearm-no-false-fire", fired, [])
     # Drop below then cross above again -> fires once.
-    engine.evaluate(_mk_quote(ltp=95.0))
-    fired = engine.evaluate(_mk_quote(ltp=101.0))
+    await engine.evaluate(_mk_quote(ltp=95.0))
+    fired = await engine.evaluate(_mk_quote(ltp=101.0))
     runner.assert_eq("AR5-rearm-fires-once", len(fired), 1)
 
 
@@ -231,11 +241,11 @@ async def test_ar7_ar8_backpressure(runner: R) -> None:
 async def main() -> bool:
     runner = R()
 
-    test_ar1_no_false_cross_on_first(runner)
-    test_ar2_equal_threshold_deterministic(runner)
-    test_ar3_reconnect_no_double_trigger(runner)
-    test_ar4_triggered_state_persists(runner)
-    test_ar5_rearm_allows_one_fire(runner)
+    await test_ar1_no_false_cross_on_first(runner)
+    await test_ar2_equal_threshold_deterministic(runner)
+    await test_ar3_reconnect_no_double_trigger(runner)
+    await test_ar4_triggered_state_persists(runner)
+    await test_ar5_rearm_allows_one_fire(runner)
     await test_ar6_stale_never_reaches_engine(runner)
     await test_ar7_ar8_backpressure(runner)
 

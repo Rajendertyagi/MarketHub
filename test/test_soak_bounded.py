@@ -74,6 +74,7 @@ async def main() -> bool:
 
         def __init__(self):
             self.fired = 0
+            self._seq = 0
 
         def load_enabled_alerts(self):
             return [{"id": 1, "exchange": "NSE", "instrument_token": "S0",
@@ -88,6 +89,15 @@ async def main() -> bool:
             self.fired += 1
             return 1
 
+        def save(self, event_id, event_type, source, timestamp, data, routing=None):
+            # Mirror the EventStore persistence surface so the engine's
+            # canonical publish path completes without spurious warnings.
+            self._seq += 1
+            return self._seq
+
+        def append_recent_event(self, event, capacity):
+            pass
+
     store = _SoakStore()
     alerts = AlertEngine(store)
     service = MarketService()
@@ -97,7 +107,7 @@ async def main() -> bool:
         cb_count["n"] += 1
         # Exercise the alert engine against every Nth tick.
         if cb_count["n"] % 50 == 0:
-            alerts.evaluate(q)
+            await alerts.evaluate(q)
 
     service._on_quote_update = on_quote
 
