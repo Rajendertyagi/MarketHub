@@ -5,12 +5,12 @@ Covers core SDK contract checks that must hold regardless of feature phase:
 
   * T1        Server init — list_tools returns >= 15 tools
   * T2        Sync tool — system_ping returns status ok
-  * T3        event_publish publishes event with an ID
+  * T3        publish_event seeds event with an ID via canonical pipeline
   * T4        Tool schemas are valid JSON Schema
   * P7T1      Schema v5 — checkpoints table exists, FK works
   * P7T3      Sync tool works (system_ping)
-  * P7T4      Async tools work (event_publish)
-  * P8T8      Extensibility proof — all original tools plus market tools (24 total) still present
+  * P7T4      Async tools work (publish_event internal pipeline)
+  * P8T8      Extensibility proof — all original tools plus market tools (42 total) still present
 
 Each test is independently runnable and starts/stops its own server instance.
 
@@ -42,6 +42,7 @@ from helpers.lifecycle import (  # noqa: E402
 from helpers.mcp_client import (  # noqa: E402
     call,
     list_tools_names,
+    publish_event,
 )
 from helpers.runner import R  # noqa: E402
 from mcp_result import safe_teardown  # noqa: E402
@@ -78,9 +79,9 @@ async def test_ping_returns_ok(runner: R) -> None:
 
 # Legacy ID: T3
 async def test_generate_event_has_id(runner: R) -> None:
-    """T3: event_publish publishes event with an ID."""
+    """T3: publish_event seeds event with an ID via canonical pipeline."""
     name = "T3-generate-event"
-    data = await call("event_publish", {"event_type": "test.t3", "source": "test", "persistent": True})
+    data = await publish_event("test.t3", source="test", persistent=True)
     runner.assert_eq(name, data.get("status"), "published")
     evt = data.get("event", {})
     runner.assert_true(name + "-has-id", bool(evt.get("id")), "no event id")
@@ -129,21 +130,21 @@ async def test_sync_tool_works(runner: R) -> None:
 
 # Legacy ID: P7T4
 async def test_async_tools_work(runner: R) -> None:
-    """P7T4: Async tools work (event_publish)."""
+    """P7T4: Async tools work (publish_event internal pipeline)."""
     name = "P7T4-async"
-    data = await call("event_publish", {"event_type": "test.p7t4", "source": "test"})
+    data = await publish_event("test.p7t4", source="test")
     runner.assert_eq(name, data.get("status"), "published")
 
 
 # Legacy ID: P8T8
 async def test_extensibility_proof_original_tools_present(runner: R) -> None:
     """P8T8: extensibility proof - all original tools still present plus
-    product tools (43 total: +option_chain, futures_contracts, market_alert_*
-    management tools, +analytics/strategy pricing tools)."""
+    product tools (42 total: +alert/market-alert/consumer/replay tools,
+    +analytics/strategy pricing tools; event_publish removed in MCP-2B.3D)."""
     name = "P8T8-original-tools"
     tools = await list_tools_names()
     expected_tools = [
-        "system_ping", "event_publish", "event_list", "consumer_register",
+        "system_ping", "event_list", "consumer_register",
         "consumer_topic_add", "consumer_event_pending_list",
         "consumer_event_acknowledge", "consumer_checkpoint_get",
         "alert_create", "alert_list", "alert_get", "alert_enable", "alert_disable",

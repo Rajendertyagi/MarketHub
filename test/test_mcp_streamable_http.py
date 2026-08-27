@@ -5,7 +5,7 @@ These tests exercise the REAL subprocess server over REAL TCP using the MCP
 SDK client against the actual ``/mcp`` endpoint. They prove:
 
   * initialize / protocol negotiation
-  * tools/list returns exactly the 43 visible tools (26 frozen + 17 deferred,
+  * tools/list returns exactly the 42 visible tools (26 frozen + 16 MCP-2B,
     0 dev_*)
   * representative success calls (system_ping, instrument_search)
   * well-formed error contract for data-dependent tools when the subprocess
@@ -72,8 +72,8 @@ FROZEN_MCP1_TOOLS: list[str] = [
 DEFERRED_TOOLS: list[str] = [
     # 5 generic alerts
     "alert_create", "alert_list", "alert_get", "alert_enable", "alert_disable",
-    # 2 event pub/sub
-    "event_publish", "event_list",
+    # 1 event diagnostics tool (event_publish removed in MCP-2B.3D)
+    "event_list",
     # 2 consumer management
     "consumer_register", "consumer_topic_add",
     # 3 replay/checkpoint
@@ -132,8 +132,8 @@ async def test_initialize_succeeds_over_real_http() -> None:
 # TEST 5.2 — tools/list returns exactly 43 visible tools
 # ---------------------------------------------------------------------------
 
-async def test_tools_list_exactly_43_visible() -> None:
-    """tools/list: 26 frozen + 17 deferred + 0 dev_* = 43 visible tools."""
+async def test_tools_list_exactly_42_visible() -> None:
+    """tools/list: 26 frozen + 16 MCP-2B + 0 dev_* = 42 visible tools."""
     ctx, session = await _open_session()
     try:
         await session.initialize()
@@ -142,13 +142,13 @@ async def test_tools_list_exactly_43_visible() -> None:
     finally:
         await _close_session(ctx, session)
 
-    assert len(names) == 43, f"expected 43 visible tools, got {len(names)}"
+    assert len(names) == 42, f"expected 42 visible tools, got {len(names)}"
 
     missing_frozen = [t for t in FROZEN_MCP1_TOOLS if t not in names]
     assert not missing_frozen, f"frozen MCP-1 tools missing: {missing_frozen}"
 
     missing_deferred = [t for t in DEFERRED_TOOLS if t not in names]
-    assert not missing_deferred, f"deferred tools missing: {missing_deferred}"
+    assert not missing_deferred, f"MCP-2B tools missing: {missing_deferred}"
 
     dev_tools = [n for n in names if n.startswith("dev_")]
     assert not dev_tools, f"dev_* tools re-registered: {dev_tools}"
@@ -270,7 +270,7 @@ async def test_session_lifecycle() -> None:
     try:
         await session.initialize()
         tools = await session.list_tools()
-        assert len(tools.tools) == 43
+        assert len(tools.tools) == 42
         result = await session.call_tool("system_ping", {})
         payload = to_payload(result)
         assert payload.get("status") == "ok"
@@ -304,7 +304,7 @@ async def test_three_concurrent_clients() -> None:
 
     results = await asyncio.gather(*[_client(i) for i in range(3)])
     for r in results:
-        assert r["tool_count"] == 43, f"client {r['idx']} saw {r['tool_count']} tools"
+        assert r["tool_count"] == 42, f"client {r['idx']} saw {r['tool_count']} tools"
         assert r["status"] == "ok", f"client {r['idx']} ping failed: {r}"
 
 
@@ -374,7 +374,7 @@ async def test_restart_proof() -> None:
             f"fresh server ping failed after restart: {payload}"
         )
         tools = await session.list_tools()
-        assert len(tools.tools) == 43
+        assert len(tools.tools) == 42
     finally:
         await _close_session(ctx, session)
 

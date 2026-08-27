@@ -32,6 +32,7 @@ from helpers.lifecycle import (  # noqa: E402
     restore_environment,
     get_server_url,
 )
+from helpers.mcp_client import publish_event  # noqa: E402
 from helpers.runner import R  # noqa: E402
 from mcp_result import safe_teardown  # noqa: E402
 
@@ -92,15 +93,8 @@ async def test_concurrent_generate_and_ping(runner: R) -> None:
 
     async def _event_client() -> dict:
         suffix = int(time.time() * 1000)
-        async with streamablehttp_client(url) as (r, w):
-            async with ClientSession(r, w) as session:
-                await session.initialize()
-                result = await session.call_tool(
-                    "event_publish",
-                    {"event_type": f"test.multiclient.{suffix}", "source": "test"},
-                )
-                from mcp_result import to_payload  # noqa: E402
-                return to_payload(result)
+        result = await publish_event(f"test.multiclient.{suffix}", source="test")
+        return result
 
     ping_result, event_result = await asyncio.gather(_ping_client(), _event_client())
     runner.assert_eq(name + "-system_ping", ping_result.get("status"), "ok")

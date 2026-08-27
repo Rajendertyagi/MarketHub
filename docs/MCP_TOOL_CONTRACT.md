@@ -1,6 +1,6 @@
-# MCP-1 Market-Data Tool Contract (v2.0.0)
+# MCP-1 Market-Data Tool Contract (v2.2.0)
 
-> Frozen reference document for the MCP-1 public tool surface.
+> Frozen reference document for the MCP public tool surface.
 > Any change to tool names, inputs, or output shapes requires a contract version bump.
 
 ---
@@ -15,8 +15,9 @@
 | **Options Analytics** | 10 | PCR, max pain, OI, IV, GEX, basis, etc. |
 | **Strategy Pricing** | 6 | Straddle, strangle, spreads, condor, butterfly |
 | **Composite** | 1 | Full option-chain analysis (bundled) |
-| **Total Public** | **26** | |
-| **Deferred** | 18 | Alerts, events, consumers, replay (registered, not public contract) |
+| **MCP-2B Public** | 16 | Alerts, events, consumers, replay |
+| **Total Public** | **42** | |
+| **Deferred / Internal** | 0 | All previously deferred tools are now finalized |
 
 ---
 
@@ -76,7 +77,9 @@ Resolution priority:
 
 ---
 
-## Public Tool Reference
+## Public Tool Reference (26 MCP-1 Frozen + 16 MCP-2B Finalized)
+
+### Frozen MCP-1 Tools (26)
 
 ### system_ping
 
@@ -301,23 +304,54 @@ Resolution priority:
 
 ---
 
-## Deferred Tools (Registered, Not in Public Contract)
+## Finalized MCP-2B Tools (16)
 
-These tools are registered in the MCP server but NOT part of the MCP-1 public contract. They may be promoted in MCP-2.
+These tools were previously deferred but are now finalized as part of the public MCP contract (MCP-2B.3D).
+
+### Generic Alerts (5)
 
 | Tool | Category | Status |
 |------|----------|--------|
-| `alert_create`, `alert_list`, `alert_get`, `alert_enable`, `alert_disable` | Generic alerts | DEFERRED |
-| `event_publish`, `event_list` | Event pub/sub | DEFERRED |
-| `consumer_register`, `consumer_topic_add` | Consumer management | DEFERRED |
-| `consumer_event_pending_list`, `consumer_event_acknowledge`, `consumer_checkpoint_get` | Replay/checkpoint | DEFERRED |
-| `market_alert_create`, `market_alert_list`, `market_alert_enable`, `market_alert_disable`, `market_alert_delete` | Market alerts | DEFERRED |
+| `alert_create`, `alert_list`, `alert_get`, `alert_enable`, `alert_disable` | Generic alerts | **FINALIZED** |
 
-> **MCP-2B.3C compatibility note:** `consumer_event_list` was removed from the
-> public MCP surface. Use `consumer_event_pending_list(after_sequence=0)` for
-> the same from-beginning replay of a consumer's relevant persistent events.
-> The underlying store query (`list_relevant_events`) remains available to
-> internal code and tests.
+### Event Inspection (1)
+
+| Tool | Category | Status |
+|------|----------|--------|
+| `event_list` | Event diagnostics | **FINALIZED** — diagnostics/observational journal only; NOT durable replay |
+
+### Consumer / Replay (6)
+
+| Tool | Category | Status |
+|------|----------|--------|
+| `consumer_register`, `consumer_topic_add` | Consumer management | **FINALIZED** |
+| `consumer_event_pending_list`, `consumer_event_acknowledge`, `consumer_checkpoint_get` | Replay/checkpoint | **FINALIZED** |
+
+### Market Alerts (5)
+
+| Tool | Category | Status |
+|------|----------|--------|
+| `market_alert_create`, `market_alert_list`, `market_alert_enable`, `market_alert_disable`, `market_alert_delete` | Market alerts | **FINALIZED** |
+
+---
+
+## Removed Tools
+
+### event_publish (removed in MCP-2B.3D)
+
+| | |
+|---|---|
+| **Status** | REMOVED from public MCP registry |
+| **Reason** | Manual/test-oriented; arbitrary JSON injection surface; no established external-AI production need |
+| **Internal pipeline** | `core.events.publish_event()` remains the canonical internal publication path |
+| **Replacement** | None — sources publish via the internal pipeline; consumers replay via `consumer_event_pending_list` |
+
+### consumer_event_list (removed in MCP-2B.3C)
+
+| | |
+|---|---|
+| **Status** | REMOVED from public MCP registry |
+| **Replacement** | `consumer_event_pending_list(after_sequence=0)` for from-beginning replay |
 
 ---
 
@@ -330,3 +364,4 @@ These tools are registered in the MCP server but NOT part of the MCP-1 public co
 | 1.2.0 | 2026-08 | Added options analytics, strategy pricing, analyze_option_chain |
 | **2.0.0** | **2026-08-27** | **MCP-1: Removed 7 dev tools, simplified instrument_ref schemas, removed provider leak from market_history, fixed asyncio import, polished descriptions** |
 | **2.1.0** | **2026-08-27** | **MCP-2B.3C: Removed `consumer_event_list` (44→43 visible tools); `consumer_event_pending_list` is the canonical replay tool; normalized `market_alert_*` errors to shared domain exceptions; `consumer_checkpoint_get` now reports persisted `updated_at`** |
+| **2.2.0** | **2026-08-28** | **MCP-2B.3D: Removed `event_publish` from public registry (43→42 visible tools); froze 16 MCP-2B tools as final public surface; `event_list` documented as diagnostics-only; at-least-once replay contract frozen; live notification deferred to MCP-2B.4** |

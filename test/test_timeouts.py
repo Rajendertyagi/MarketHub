@@ -34,6 +34,7 @@ from helpers.lifecycle import (  # noqa: E402
 )
 from helpers.mcp_client import (  # noqa: E402
     call,
+    publish_event,
     wait_source_ready,
 )
 from helpers.runner import R  # noqa: E402
@@ -57,7 +58,7 @@ async def p7t16_db_safe_after_timeout(runner: R) -> None:
     name = "P7T16-db-after-timeout"
 
     # DB should still work after normal operations
-    data = await call("event_publish", {"event_type": "test.p7t16", "source": "test", "persistent": True})
+    data = await publish_event("test.p7t16", source="test", persistent=True)
     runner.assert_eq(name, data.get("status"), "published")
 
 

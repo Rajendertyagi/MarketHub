@@ -38,7 +38,7 @@ for _p in (_PROJECT_DIR, _TEST_DIR):
         sys.path.insert(0, _p)
 
 from helpers.lifecycle import start_server, stop_server, restore_environment, get_server_url  # noqa: E402
-from helpers.mcp_client import call, read_res, list_tools_names, wait_source_ready, wait_for_event_count  # noqa: E402
+from helpers.mcp_client import call, read_res, list_tools_names, wait_source_ready, wait_for_event_count, publish_event  # noqa: E402
 from helpers.runner import R  # noqa: E402
 from core.persistence.store import EventStore  # noqa: E402
 
@@ -58,9 +58,9 @@ async def t2_ping(runner: R) -> None:
 
 
 async def t3_generate_event(runner: R) -> None:
-    """T3: event_publish publishes event with an ID."""
+    """T3: publish_event seeds event with an ID via canonical pipeline."""
     name = "T3-generate-event"
-    data = await call("event_publish", {"event_type": "test.t3", "source": "test", "persistent": True})
+    data = await publish_event("test.t3", source="test", persistent=True)
     runner.assert_eq(name, data.get("status"), "published")
     evt = data.get("event", {})
     runner.assert_true(name + "-has-id", bool(evt.get("id")), "no event id")
@@ -98,12 +98,10 @@ async def t7_topic_filter(runner: R) -> None:
     await call("consumer_register", {"consumer_id": cid_nomatch})
     await call("consumer_topic_add", {"consumer_id": cid_match, "topic": "alpha"})
 
-    resp = await call("event_publish", {
-        "event_type": "test.t7",
-        "source": "test",
-        "persistent": True,
-        "routing": {"topics": ["alpha"]},
-    })
+    resp = await publish_event(
+        "test.t7", source="test", persistent=True,
+        routing={"topics": ["alpha"]},
+    )
     eid = resp["event"]["id"]
 
     pending_m = await call("consumer_event_pending_list", {"consumer_id": cid_match})
@@ -117,7 +115,7 @@ async def t7_topic_filter(runner: R) -> None:
 async def t8_transient(runner: R) -> None:
     """T8: Transient — new consumer doesn't see old transient events."""
     name = "T8-transient"
-    await call("event_publish", {"event_type": "test.t8", "source": "test", "persistent": False})
+    await publish_event("test.t8", source="test", persistent=False)
 
     prefix = f"t8-{int(time.time() * 1000)}"
     cid = f"{prefix}-consumer"
@@ -138,11 +136,9 @@ async def t9_replay_order(runner: R) -> None:
 
     seqs = []
     for i in range(5):
-        resp = await call("event_publish", {
-            "event_type": "test.t9",
-            "source": "test",
-            "persistent": True,
-        })
+        resp = await publish_event(
+            "test.t9", source="test", persistent=True,
+        )
         seqs.append(resp["event"]["sequence"])
 
     pending = await call("consumer_event_pending_list", {"consumer_id": cid})
@@ -164,12 +160,10 @@ async def t11_topic_targeted(runner: R) -> None:
     await call("consumer_topic_add", {"consumer_id": cid_x, "topic": "gpu"})
     await call("consumer_topic_add", {"consumer_id": cid_y, "topic": "cpu"})
 
-    resp = await call("event_publish", {
-        "event_type": "test.t11",
-        "source": "test",
-        "persistent": True,
-        "routing": {"topics": ["gpu"]},
-    })
+    resp = await publish_event(
+        "test.t11", source="test", persistent=True,
+        routing={"topics": ["gpu"]},
+    )
     eid = resp["event"]["id"]
 
     pending_x = await call("consumer_event_pending_list", {"consumer_id": cid_x})
@@ -187,11 +181,9 @@ async def t12_ack_clears(runner: R) -> None:
     cid = f"{prefix}-consumer"
     await call("consumer_register", {"consumer_id": cid})
 
-    resp = await call("event_publish", {
-        "event_type": "test.t12",
-        "source": "test",
-        "persistent": True,
-    })
+    resp = await publish_event(
+        "test.t12", source="test", persistent=True,
+    )
     eid = resp["event"]["id"]
 
     pending_before = await call("consumer_event_pending_list", {"consumer_id": cid})
@@ -219,11 +211,9 @@ async def t12b_ack_advances_checkpoint(runner: R) -> None:
     cid = f"{prefix}-consumer"
     await call("consumer_register", {"consumer_id": cid})
 
-    resp = await call("event_publish", {
-        "event_type": "test.t12b",
-        "source": "test",
-        "persistent": True,
-    })
+    resp = await publish_event(
+        "test.t12b", source="test", persistent=True,
+    )
     eid = resp["event"]["id"]
     seq = resp["event"]["sequence"]
 
@@ -240,9 +230,12 @@ async def t12b_ack_advances_checkpoint(runner: R) -> None:
 
 
 async def t13_resource_event_latest(runner: R) -> None:
-    """T13: Resource mcp-event://events/latest returns data."""
+    """T13: Resource mcp-event://events/latest returns data from test_source tick."""
     name = "T13-resource-event-latest"
-    await call("event_publish", {"event_type": "test.t13", "source": "test"})
+    # Wait for a test_source tick to appear in the in-memory buffer, then read latest.
+    # (Direct publish_event bypasses the server's in-memory buffer; test_source ticks flow
+    # through the full server pipeline including _latest_event.)
+    await wait_source_ready("test_source", {"running", "completed"}, timeout=15)
     data = await read_res("mcp-event://events/latest")
     runner.assert_true(name, isinstance(data, dict), f"expected dict, got {type(data)}")
     runner.assert_true(name + "-id", bool(data.get("id")), "no id in latest event")
@@ -354,9 +347,9 @@ async def p8t5_max_events(runner: R) -> None:
 
 
 async def p8t6_failure_resilience(runner: R) -> None:
-    """P8T6: server resilience — event_publish and system_ping still work."""
+    """P8T6: server resilience — publish_event and system_ping still work."""
     name = "P8T6-failure-resilience"
-    resp = await call("event_publish", {"event_type": "test.resilience", "source": "test"})
+    resp = await publish_event("test.resilience", source="test")
     runner.assert_eq(name + "-published", resp.get("status"), "published")
     await asyncio.sleep(0.5)
     data = await call("system_ping")

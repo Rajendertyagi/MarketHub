@@ -1,10 +1,9 @@
 # MCP Event Server — Public Contract
 
-**Version:** 1.0.0 (FROZEN) · 1.1.0-candidate (alert engine) · 1.2.0-candidate (metrics + recent + pagination, NOT FROZEN)
-**MCP Spec:** 2026-07-28
-**Status:** FROZEN (v1.0.0); v1.1.0-candidate additive — pending independent verification
-**Last reviewed:** 2026-08-18
-**Frozen:** 2026-08-18 — frozen only after independent naming-migration verification (verdict: PUBLIC MCP NAMING MIGRATION v1 VERIFIED — READY TO FREEZE)
+**Version:** 2.2.0 (FINALIZED) · MCP Spec: 2026-07-28
+**Status:** FINALIZED — 42-tool public surface frozen (MCP-2B.3D)
+**Last reviewed:** 2026-08-28
+**Frozen:** 2026-08-28 — frozen after MCP-2B.3D finalization (42-tool surface, 16 MCP-2B tools, zero dev_*)
 
 ---
 
@@ -12,12 +11,12 @@
 
 | Item | Value | Classification |
 |------|-------|---------------|
-| Transport | `streamable-http` | **FREEZE** |
-| Path | `/mcp` | **FREEZE** |
+| Transport | `streamable-http` | **FROZEN** |
+| Path | `/mcp` | **FROZEN** |
 | Host | Configurable (`config.json` → `host`) | Runtime config — not protocol |
 | Port | Configurable (`config.json` → `port`) | Runtime config — not protocol |
-| `stateless_http` | `True` | **FREEZE** |
-| `json_response` | `True` | **FREEZE** |
+| `stateless_http` | `True` | **FROZEN** |
+| `json_response` | `True` | **FROZEN** |
 | `max_request_body_size` | From config (`max_request_body_size_mb * 1024 * 1024`) | Runtime config |
 | `transport_security` | Explicit `TransportSecuritySettings` (DNS rebinding protection enabled; localhost-only allowed hosts/origins) | Runtime config — constructed from `config.json` keys `enable_dns_rebinding_protection`, `allowed_hosts`, `allowed_origins` |
 
@@ -27,41 +26,101 @@
 
 ---
 
-## 2. Production Tools (13)
+## 2. Public Tool Surface (42 tools)
 
-These are the tools the broker project should depend on.
+### Frozen MCP-1 Tools (26)
+
+These tools form the core market-data read layer. They are provider-agnostic and read-only.
 
 | Tool | Parameters | Description | Status |
 |------|-----------|-------------|--------|
-| `system_ping` | *(none)* | Health check. Returns `{"status": "ok", "message": "...", "timestamp": "..."}` | **FREEZE** |
-| `event_publish` | `event_type` (str), `source` (str), `data` (dict, optional), `persistent` (bool, default False), `routing` (dict, optional) | Publish an event. If `persistent=True`, stores to SQLite and returns `sequence`. | **FREEZE** |
-| `event_list` | `limit` (int, default 10) | Returns recent in-memory events from history buffer (max 50). | **FREEZE** |
-| `consumer_register` | `consumer_id` (str) | Register a durable consumer identity. Idempotent. Also creates checkpoint at 0. | **FREEZE** |
-| `consumer_topic_add` | `consumer_id` (str), `topic` (str) | Assign a topic to a consumer for topic-based routing. | **FREEZE** |
-| `consumer_event_pending_list` | `consumer_id` (str), `limit` (int, default 50), `after_sequence` (int\|null, optional) | Replay unacknowledged persistent events from consumer's checkpoint (or from explicit `after_sequence` for pagination). Primary reconnect tool. Returns `next_after_sequence` for paging. Does NOT acknowledge and does NOT advance the checkpoint. | **FREEZE** + **v1.2.0-candidate** |
-| `consumer_event_acknowledge` | `consumer_id` (str), `event_id` (str) | ACK an event for a consumer. Idempotent. Advances checkpoint. | **FREEZE** |
-| `consumer_checkpoint_get` | `consumer_id` (str) | Get the consumer's current durable checkpoint sequence. | **FREEZE** |
-| `alert_create` | `consumer_id` (str), `source` (str), `field_path` (str), `operator` (str), `value` (JSON scalar), `name` (str, optional), `event_type` (str, optional), `one_shot` (bool, default True) | Create a generic alert definition. Fires when a `source` event satisfies `field_path <operator> value`. | **v1.1.0-candidate** |
-| `alert_list` | `consumer_id` (str), `enabled` (bool, optional) | List alert definitions owned by a consumer. | **v1.1.0-candidate** |
-| `alert_get` | `consumer_id` (str), `alert_id` (str) | Get a single alert definition (ownership-checked). Raises `AlertNotFoundError` if missing. | **v1.1.0-candidate** |
-| `alert_enable` | `consumer_id` (str), `alert_id` (str) | Enable a disabled alert. Returns `changed=true` only if it was disabled. | **v1.1.0-candidate** |
-| `alert_disable` | `consumer_id` (str), `alert_id` (str) | Disable an alert (stops evaluation, no deletion). Returns `changed=true` only if it was enabled. | **v1.1.0-candidate** |
+| `system_ping` | *(none)* | Health check. Returns `{"status": "ok", "message": "...", "timestamp": "..."}` | **FROZEN** |
+| `market_quote` | `instrument_ref: str` | Latest canonical quote | **FROZEN** |
+| `market_depth` | `instrument_ref: str` | Latest L2 order book | **FROZEN** |
+| `market_status` | *(none)* | MarketService diagnostic counters | **FROZEN** |
+| `instrument_search` | `q: str`, optional filters | Search instruments | **FROZEN** |
+| `watchlists` | *(none)* | List persistent watchlists | **FROZEN** |
+| `market_history` | `instrument_ref`, `unit`, `interval`, `from_date`, `to_date` | Historical OHLCV candles | **FROZEN** |
+| `option_chain` | `underlying`, optional `expiry`, `window` | Option chain | **FROZEN** |
+| `futures_contracts` | `underlying`, optional `expiry` | Futures contracts | **FROZEN** |
+| `compute_pcr` | `underlying`, optional `expiry` | Put-Call Ratio | **FROZEN** |
+| `compute_max_pain` | `underlying`, optional `expiry` | Max pain strike | **FROZEN** |
+| `compute_top_oi_strikes` | `underlying`, optional `expiry`, `n` | Top OI strikes | **FROZEN** |
+| `compute_atm` | `underlying`, optional `expiry` | ATM strike | **FROZEN** |
+| `compute_iv_skew` | `underlying`, optional `expiry` | IV skew | **FROZEN** |
+| `compute_oi_buildup` | `underlying`, optional `expiry` | OI buildup count | **FROZEN** |
+| `compute_support_resistance` | `underlying`, optional `expiry` | Support/resistance strikes | **FROZEN** |
+| `compute_straddle` | `underlying`, optional `expiry` | Straddle cost | **FROZEN** |
+| `compute_gex` | `underlying`, optional `expiry` | Gamma Exposure proxy | **FROZEN** |
+| `compute_futures_basis` | `underlying` | Futures basis | **FROZEN** |
+| `price_long_straddle` | `underlying`, optional `expiry`, `strike` | Long straddle price | **FROZEN** |
+| `price_long_strangle` | `underlying`, `call_strike`, `put_strike`, optional `expiry` | Long strangle price | **FROZEN** |
+| `price_bull_call_spread` | `underlying`, `lower_strike`, `higher_strike`, optional `expiry` | Bull call spread price | **FROZEN** |
+| `price_bear_put_spread` | `underlying`, `higher_strike`, `lower_strike`, optional `expiry` | Bear put spread price | **FROZEN** |
+| `price_iron_condor` | `underlying`, `put_sell_strike`, `put_buy_strike`, `call_buy_strike`, `call_sell_strike`, optional `expiry` | Iron condor price | **FROZEN** |
+| `price_long_butterfly` | `underlying`, `lower_strike`, `middle_strike`, `upper_strike`, optional `expiry` | Long butterfly price | **FROZEN** |
+| `analyze_option_chain` | `underlying`, optional `expiry`, `max_strikes` | Bundled chain analysis | **FROZEN** |
+
+### Finalized MCP-2B Tools (16)
+
+These tools were previously deferred and are now finalized as part of the public contract.
+
+#### Generic Alerts (5)
+
+| Tool | Parameters | Description | Status |
+|------|-----------|-------------|--------|
+| `alert_create` | `consumer_id`, `source`, `field_path`, `operator`, `value`, optional `name`, `event_type`, `one_shot` | Create a generic alert definition | **FROZEN** |
+| `alert_list` | `consumer_id`, optional `enabled` | List alert definitions | **FROZEN** |
+| `alert_get` | `consumer_id`, `alert_id` | Get a single alert definition | **FROZEN** |
+| `alert_enable` | `consumer_id`, `alert_id` | Enable a disabled alert | **FROZEN** |
+| `alert_disable` | `consumer_id`, `alert_id` | Disable an alert | **FROZEN** |
+
+#### Event Inspection (1)
+
+| Tool | Parameters | Description | Status |
+|------|-----------|-------------|--------|
+| `event_list` | `limit` (int, default 10) | **DIAGNOSTICS/OSERVATIONAL ONLY** — returns recent in-memory events from the server's history buffer. Does NOT reflect per-consumer delivery state, acknowledgements, or checkpoints. For durable per-consumer replay use `consumer_event_pending_list`. | **FROZEN** |
+
+#### Consumer / Replay (6)
+
+| Tool | Parameters | Description | Status |
+|------|-----------|-------------|--------|
+| `consumer_register` | `consumer_id` (str) | Register a durable consumer identity. Idempotent. Creates checkpoint at 0. | **FROZEN** |
+| `consumer_topic_add` | `consumer_id` (str), `topic` (str) | Assign a topic to a consumer for topic-based routing. Useful only where publishers route by topic. | **FROZEN** |
+| `consumer_event_pending_list` | `consumer_id` (str), `limit` (int, default 50), `after_sequence` (int\|null, optional) | Canonical durable replay tool. Returns unacknowledged persistent events from consumer's checkpoint (or from explicit `after_sequence` for pagination). Primary reconnect tool. Returns `next_after_sequence` for paging. Does NOT acknowledge and does NOT advance the checkpoint. | **FROZEN** |
+| `consumer_event_acknowledge` | `consumer_id` (str), `event_id` (str) | ACK an event for a consumer. Idempotent. Advances checkpoint. | **FROZEN** |
+| `consumer_checkpoint_get` | `consumer_id` (str) | Get the consumer's current durable checkpoint sequence. | **FROZEN** |
+
+#### Market Alerts (5)
+
+| Tool | Parameters | Description | Status |
+|------|-----------|-------------|--------|
+| `market_alert_create` | `consumer_id`, `symbol`, `exchange`, `operator` (gt/lt/crosses_above/crosses_below), `value`, optional fields (ltp/change_percent/volume/oi_change_percent) | Create a market-data alert | **FROZEN** |
+| `market_alert_list` | `consumer_id`, optional `enabled` | List market alerts | **FROZEN** |
+| `market_alert_enable` | `consumer_id`, `alert_id` | Re-arm a triggered market alert (restores to inactive state) | **FROZEN** |
+| `market_alert_disable` | `consumer_id`, `alert_id` | Disable a market alert | **FROZEN** |
+| `market_alert_delete` | `consumer_id`, `alert_id` | Delete a market alert | **FROZEN** |
 
 ---
 
-## 3. Dev/Test Tools (7)
+## 3. Removed Tools
 
-These are available but intended for development and testing. The broker project **should not depend on these**.
+### event_publish (removed in MCP-2B.3D)
 
-| Tool | Parameters | Description | Status |
-|------|-----------|-------------|--------|
-| `dev_progress_test` | `total` (int) | Demonstrates progress reporting via MCP Context. | **DEV ONLY** |
-| `dev_long_running_test` | `duration_seconds` (float), `cancel_check_interval` (float) | Cancellable long-running operation for timeout/cancellation testing. | **DEV ONLY** |
-| `dev_background_publish_test` | `event_type` (str), `persistent` (bool), `routing` (dict, optional) | Publishes an event from background context (no tool request). | **DEV ONLY** |
-| `dev_task_list` | *(none)* | Lists background task names and statuses. | **DEV ONLY** |
-| `dev_source_start` | `name` (str), `event_type` (str), `persistent` (bool), `delay_seconds` (float) | Starts a background coroutine that publishes after a delay. | **DEV ONLY** |
-| `dev_source_fail` | `name` (str), `delay_seconds` (float) | Starts a background coroutine that raises RuntimeError. | **DEV ONLY** |
-| `dev_source_stop` | `name` (str) | Stops a background test source. | **DEV ONLY** |
+| | |
+|---|---|
+| **Status** | REMOVED from public MCP registry |
+| **Reason** | Manual/test-oriented tool with arbitrary JSON injection surface; no established external-AI production need |
+| **Internal pipeline** | `core.events.publish_event()` remains the canonical internal publication path (used by sources, alert engine, internal code) |
+| **Replacement** | None — sources publish via the internal pipeline; consumers replay via `consumer_event_pending_list` |
+
+### consumer_event_list (removed in MCP-2B.3C)
+
+| | |
+|---|---|
+| **Status** | REMOVED from public MCP registry |
+| **Replacement** | `consumer_event_pending_list(after_sequence=0)` for from-beginning replay |
+| **Note** | Acknowledged events are NOT resurrected by `after_sequence=0` |
 
 ---
 
@@ -232,6 +291,78 @@ Routing metadata is **frozen at publication time**. It is never recomputed from 
 
 ---
 
+## 12a. Final Delivery Model (MCP-2B.3D)
+
+```
+alert triggers
+    → persistent alert.triggered event
+    → durable event store (SQLite)
+    → consumer_event_pending_list (replay)
+    → external AI consumer processes event
+    → consumer_event_acknowledge (ACK)
+    → checkpoint advances monotonically
+```
+
+**Current guaranteed delivery:** Durable replay via MCP tool calls (`consumer_event_pending_list` → `consumer_event_acknowledge`).
+
+**Future planned live delivery:** Streamable MCP live notification/subscription work belongs to MCP-2B.4. Not yet implemented. Do NOT claim live unsolicited MCP alert delivery.
+
+---
+
+## 12b. Reconnect Workflow
+
+```
+consumer_register(consumer_id)
+    ↓
+create alert (optional)
+    ↓
+disconnect (client goes offline)
+    ↓
+alert triggers and persists (alert.triggered → SQLite)
+    ↓
+reconnect (client returns)
+    ↓
+consumer_event_pending_list(consumer_id)  ← replay pending events
+    ↓
+process event (external AI)
+    ↓
+consumer_event_acknowledge(consumer_id, event_id)
+    ↓
+consumer_checkpoint_get(consumer_id)  ← verify checkpoint advanced
+```
+
+This is the current guaranteed solution for at-least-once event delivery with reconnect support.
+
+---
+
+## 12c. At-Least-Once Semantics (FROZEN)
+
+| Aspect | Rule |
+|--------|------|
+| Persistent events remain pending | Until explicitly acknowledged via `consumer_event_acknowledge` |
+| Replay may return same event again | Yes — if not ACKed, subsequent replays return it again |
+| Replay does not imply processing success | A returned event may have failed downstream processing |
+| Replay does not advance checkpoint | Only `acknowledge` + internal `advance_checkpoint` advances the cursor |
+| Acknowledge advances checkpoint monotonically | `MAX(current, candidate)` — never regresses |
+| **NOT exactly-once** | No exactly-once delivery guarantee exists or is claimed |
+
+---
+
+## 12d. Live Notification Status (Roadmap)
+
+| Item | Status |
+|------|--------|
+| `event_publish` public tool | REMOVED (MCP-2B.3D) |
+| MCP subscription resources | NOT implemented |
+| `stateless_http` change | NOT changed |
+| GET SSE MCP streams | NOT added |
+| Server-initiated notification code | NOT added |
+| Live unsolicited alert delivery | **FUTURE — MCP-2B.4** |
+
+Live notification/subscription work is deferred to a future phase (MCP-2B.4) after existing MCP completion. The current architecture supports it (subscription bus exists), but no subscription resources, SSE MCP streams, or server-initiated notification code have been added.
+
+---
+
 ## 13. Error Contract
 
 | Pattern | Behavior |
@@ -245,6 +376,8 @@ Routing metadata is **frozen at publication time**. It is never recomputed from 
 **Unknown-consumer policy (v1.0.0):** All four production operations that require an existing consumer — `consumer_topic_add`, `consumer_event_pending_list`, `consumer_event_acknowledge`, `consumer_checkpoint_get` — raise `ConsumerNotFoundError` for an unregistered consumer. The MCP SDK exposes this as `CallToolResult(is_error=True)` with the semantic message `consumer not found: <consumer_id>`. `consumer_register` remains an idempotent create/register operation. `ConsumerNotFoundError` is an **internal application/domain exception**, not a public MCP protocol type; broker clients must depend on `is_error=True` and the semantic message, not on Python exception class names.
 
 **MCP-2B.3C compatibility note:** `consumer_event_list` was removed from the public MCP surface (visible tool count 44→43). Use `consumer_event_pending_list(after_sequence=0)` for the same from-beginning replay of a consumer's relevant persistent events. The underlying store query (`list_relevant_events`) remains available to internal code and tests.
+
+**MCP-2B.3D compatibility note:** `event_publish` was removed from the public MCP surface (visible tool count 43→42). The canonical internal `core.events.publish_event()` pipeline remains intact for sources and the alert engine. External clients use `consumer_event_pending_list` for durable replay and `consumer_event_acknowledge` for acknowledgment.
 
 ---
 
@@ -504,9 +637,9 @@ consumer_event_pending_list(
 | Section | Status |
 |---------|--------|
 | Endpoint & Transport | ✅ FROZEN |
-| Production Tools (14) | ✅ FROZEN (9) + **v1.1.0-candidate** (5 alert) |
-| Dev/Test Tools (7) | ✅ IDENTIFIED — not for broker dependency |
-| Resources (4 + 2 candidate) | ⚠️ 4 FROZEN + 2 CANDIDATE |
+| Public Tools (42) | ✅ FROZEN (26 MCP-1 + 16 MCP-2B) |
+| Dev/Test Tools | ✅ NONE (removed in v2.0.0, zero dev_* present) |
+| Resources | ✅ FROZEN |
 | Event Schema | ✅ FROZEN |
 | Routing | ✅ FROZEN |
 | Consumer Identity | ✅ FROZEN |
@@ -514,39 +647,43 @@ consumer_event_pending_list(
 | ACK | ✅ FROZEN |
 | Checkpoint | ✅ FROZEN |
 | Replay | ✅ FROZEN |
-| Subscription/Notification | ✅ FROZEN |
+| At-Least-Once Semantics | ✅ FROZEN |
 | Error Contract | ✅ FROZEN |
 | Source Contract | ✅ FROZEN |
 | Versioning Policy | ✅ FROZEN |
-| Generic Alert Engine (5 tools) | ⚠️ v1.1.0-candidate — NOT FROZEN |
-| Observability / Metrics (1 resource) | ⚠️ v1.2.0-candidate — NOT FROZEN |
-| Durable Recent History (1 resource) | ⚠️ v1.2.0-candidate — NOT FROZEN |
-| Replay Pagination (`after_sequence`) | ⚠️ v1.2.0-candidate — NOT FROZEN |
+| Live Notification | 📋 DEFERRED to MCP-2B.4 |
+| Generic Alert Engine | ✅ FROZEN (5 tools) |
+| Market Alert Engine | ✅ FROZEN (5 tools) |
+| Observability / Metrics | ⚠️ v1.2.0-candidate — NOT FROZEN |
+| Durable Recent History | ⚠️ v1.2.0-candidate — NOT FROZEN |
+| Replay Pagination | ⚠️ v1.2.0-candidate — NOT FROZEN |
 
 ---
 
 ## 22. Verdict
 
 ```text
-PUBLIC MCP CONTRACT v1.0.0 — FROZEN
+PUBLIC MCP CONTRACT v2.2.0 — FINALIZED
 ```
 
-**Frozen:** 2026-08-18 — frozen only after independent naming-migration verification (verdict: PUBLIC MCP NAMING MIGRATION v1 VERIFIED — READY TO FREEZE).
+**Finalized:** 2026-08-28 — MCP-2B.3D public contract finalization (42-tool surface frozen).
 
-**Resolved before freeze:**
-- `alerts://pending` → `mcp-event://events/pending` (old URI removed)
-- `persistent_alert_count` → `persistent_event_count`
-- Unknown-consumer policy normalized: all five consumer-requiring tools raise `ConsumerNotFoundError` → `is_error=True` with `consumer not found: <id>`
+**Frozen surface:**
+- 26 frozen MCP-1 tools (market data, analytics, strategy pricing)
+- 16 finalized MCP-2B tools (alerts, event diagnostics, consumer/replay, market alerts)
+- 0 dev_* tools
 
-**Non-blocking items tracked separately (do NOT affect the frozen contract):**
-- Empirical `json_response=True` + background notification acceptance test (architecture supports it; not a contract blocker)
-- Test harness teardown port-race (WinError 10048/10053) discovered during verification — harness defect, not a contract defect
+**Removed tools (documented):**
+- `consumer_event_list` → replaced by `consumer_event_pending_list(after_sequence=0)` (MCP-2B.3C)
+- `event_publish` → removed from public registry; internal `publish_event()` pipeline unchanged (MCP-2B.3D)
 
-**Compatibility policy (post-freeze):** Renaming/removing tools or resources, changing required parameters, event-field semantics, routing semantics, consumer identity, ACK/checkpoint/replay semantics requires an explicit breaking/versioned contract decision. Additive tools, resources, and optional event fields remain backward-compatible where appropriate.
+**Deferred (not implemented):**
+- Live MCP notification/subscription (roadmap: MCP-2B.4)
 
-**CONTRACT_VERSION is `1.2.0-candidate` — not frozen.**
-
-Historical frozen baseline is `1.0.0`. The v1.1.0-candidate alert engine and v1.2.0-candidate
-observability features (metrics, recent-events journal, replay pagination) are additive and
-not yet frozen. The production tool surface is 14 tools (9 original frozen + 5 alert candidate)
-plus 6 resources (4 frozen + 2 candidate).
+**Historical frozen baselines:**
+- v1.0.0 — initial MCP-0 foundation
+- v1.1.0-candidate — alert engine (now frozen)
+- v1.2.0-candidate — observability features (still candidate)
+- v2.0.0 — MCP-1 cleanup (removed 7 dev tools)
+- v2.1.0 — MCP-2B.3C (removed consumer_event_list)
+- **v2.2.0 — MCP-2B.3D (removed event_publish, finalized 16 MCP-2B tools)**

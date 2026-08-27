@@ -18,7 +18,7 @@ from __future__ import annotations
 # ─── Contract version ─────────────────────────────────────────────────────────
 # Bumps only when the MCP tool/resource/event contract changes in a breaking way.
 # Distinct from MCP spec version, app version, Python version, and SDK version.
-CONTRACT_VERSION = "2.0.0"
+CONTRACT_VERSION = "2.2.0"
 
 # ─── Resource URIs ─────────────────────────────────────────────────────────────
 # mcp-event:// is an APPLICATION-PRIVATE URI scheme. It is NOT an official
@@ -34,6 +34,9 @@ RESOURCE_EVENTS_RECENT = "mcp-event://events/recent"
 # ─── Production tool names ─────────────────────────────────────────────────────
 TOOL_SYSTEM_PING = "system_ping"
 
+# Tool names retained in the public contract (internal constants for docs/tests).
+# event_publish was removed from the public MCP registry in MCP-2B.3D; the
+# constant remains here for documentation and test-audit purposes only.
 TOOL_EVENT_PUBLISH = "event_publish"
 TOOL_EVENT_LIST = "event_list"
 

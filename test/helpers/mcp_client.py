@@ -3,7 +3,9 @@
 Shared MCP call helpers for the event-server test suite.
 
 Provides one-shot tool calls, resource reads, and source-readiness probes
-using only public MCP client APIs.
+using only public MCP client APIs. Also provides a direct-publish helper
+for tests that need to seed events through the canonical internal pipeline
+(bypassing the removed public event_publish tool — MCP-2B.3D).
 
 Every network-touching call is bounded by ``MCP_CALL_TIMEOUT`` via
 ``asyncio.wait_for`` so a stalled transport can never hang a test run for
@@ -14,6 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import sys
 import time
 from typing import Any
 
@@ -21,7 +25,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
 
 from mcp_result import normalize_tool_result, observe_structured_output, to_payload
-from .lifecycle import get_server_url
+from .lifecycle import get_server_url, get_server_port
 
 # Hard cap for any single MCP tool call / resource read. Tune as needed.
 MCP_CALL_TIMEOUT = 30.0
@@ -134,3 +138,59 @@ async def wait_for_event_count(
             return count
         await asyncio.sleep(0.2)
     return count
+
+
+# ---------------------------------------------------------------------------
+# Direct-publish helper (MCP-2B.3D)
+# ---------------------------------------------------------------------------
+
+async def publish_event(
+    event_type: str,
+    source: str = "manual-test",
+    data: dict[str, Any] | None = None,
+    persistent: bool = False,
+    routing: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Seed an event directly through the canonical internal pipeline.
+
+    This is the replacement for ``call("event_publish", ...)`` now that
+    ``event_publish`` has been removed from the public MCP registry
+    (MCP-2B.3D). It publishes through ``core.events.publish_event()`` against
+    the shared SQLite store, preserving durable-pipeline coverage without
+    going through the (now-removed) MCP tool boundary.
+
+    Note: This publishes into the DB but does NOT update the server process's
+    in-memory ``_event_history`` / ``_latest_event`` buffers. Tests that need
+    those buffers must use server-side sources (e.g. test_source ticks) instead.
+    """
+    _PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    if _PROJECT_DIR not in sys.path:
+        sys.path.insert(0, _PROJECT_DIR)
+
+    from core.persistence.store import EventStore  # noqa: E402
+    from core import events as events_mod  # noqa: E402
+
+    # Access data_dir dynamically (not at import time) to get the current
+    # server state set by helpers/lifecycle.start_server().
+    from . import lifecycle as _lc  # noqa: E402
+    actual_data_dir = getattr(_lc, "_server_data_dir", "") or "data_test"
+    db_path = os.path.join(_PROJECT_DIR, actual_data_dir, "events.db")
+
+    store = EventStore(db_path)
+    try:
+        result = await events_mod.publish_event(
+            event_type=event_type,
+            source=source,
+            data=data or {},
+            persistent=persistent,
+            routing=routing,
+            store=store,
+            bus=None,
+        )
+        return {
+            "status": "published",
+            "event": result,
+        }
+    finally:
+        if hasattr(store, "close"):
+            store.close()

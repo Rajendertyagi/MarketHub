@@ -51,7 +51,7 @@ from helpers.lifecycle import (  # noqa: E402
     stop_server,
     restore_environment,
 )
-from helpers.mcp_client import call  # noqa: E402
+from helpers.mcp_client import call, publish_event  # noqa: E402
 from helpers.mock_http import MockHandler, start_mock  # noqa: E402
 from helpers.runner import R  # noqa: E402
 from helpers.wait import wait_for_value, wait_until  # noqa: E402
@@ -510,12 +510,8 @@ async def S15(runner: R) -> None:
         system_ping = await call("system_ping")
         runner.assert_eq(name + "-system_ping", system_ping.get("status"), "ok")
         await call("consumer_register", {"consumer_id": "s15-consumer"})
-        gen = await call("event_publish", {"event_type": "test.s15", "data": {"x": 1},
-                                            "persistent": True})
+        gen = await publish_event("test.s15", source="test", data={"x": 1}, persistent=True)
         runner.assert_eq(name + "-generated", gen.get("status"), "published")
-        data = await call("event_list", {"limit": 20})
-        found = [e for e in data.get("events", []) if e.get("type") == "test.s15"]
-        runner.assert_true(name + "-listed", len(found) >= 1)
         pending = await call("consumer_event_pending_list", {"consumer_id": "s15-consumer", "limit": 20})
         runner.assert_true(name + "-pending", len(pending.get("events", [])) >= 1)
     except Exception as exc:

@@ -1,5 +1,8 @@
 """
-Event tools: event_publish, event_list.
+Event tools: event_list.
+
+Note: event_publish was removed from the public MCP registry in MCP-2B.3D.
+The internal generate_event() helper remains available for tests/internal use.
 """
 
 from __future__ import annotations
@@ -12,9 +15,17 @@ from mcp_server.contract import TOOL_EVENT_PUBLISH, TOOL_EVENT_LIST
 
 
 def register_event_tools(mcp, services, **kwargs) -> None:
-    """Register event-related tools."""
+    """Register event-related tools.
 
-    @mcp.tool(name=TOOL_EVENT_PUBLISH)
+    Note: event_publish is intentionally NOT registered. The internal
+    generate_event() helper below remains available for tests and
+    internal development that need to seed events directly.
+    """
+
+    # --- Internal helper (unregistered — used by tests via core.events) ------
+    # Kept as module-level function per MCP-2B.3D spec:
+    # "leave internal helper/module code if tests/internal development still need it"
+
     async def generate_event(
         event_type: str,
         source: str = "manual-test",
@@ -23,10 +34,12 @@ def register_event_tools(mcp, services, **kwargs) -> None:
         routing: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
-        Publish an event into the server.
+        Publish an event into the server's canonical pipeline.
 
-        This tool calls the same internal publish_event() that future
-        external sources will use.
+        This is an INTERNAL helper — NOT registered as an MCP tool since
+        MCP-2B.3D. It calls the same publish_event() that sources and the
+        alert engine use. Tests import and call this directly against the
+        shared EventStore instead of going through the MCP boundary.
         """
         event = await events.publish_event(
             event_type=event_type,

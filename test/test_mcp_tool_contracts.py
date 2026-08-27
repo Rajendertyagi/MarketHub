@@ -97,7 +97,12 @@ class TestContractCompleteness:
         _register_all(fake, services)
 
         registered = set(fake.tools.keys())
+        # event_publish was removed from public registration in MCP-2B.3D;
+        # the constant remains for docs/test-audit but is intentionally unregistered.
+        exempt = {"event_publish"}
         for tool_name in tool_values:
+            if tool_name in exempt:
+                continue
             assert tool_name in registered, (
                 f"TOOL constant '{tool_name}' not registered in any tool module"
             )
@@ -108,6 +113,96 @@ class TestContractCompleteness:
         dev_attrs = [attr for attr in dir(contract) if attr.startswith("TOOL_DEV_")]
         assert not dev_attrs, (
             f"Dev tool constants still present in contract.py: {dev_attrs}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Exact tool-name snapshot tests (MCP-2B.3D)
+# ---------------------------------------------------------------------------
+
+_MCP1_FROZEN_TOOLS: set[str] = {
+    "system_ping",
+    "market_quote", "market_depth", "market_status",
+    "instrument_search", "watchlists", "market_history",
+    "option_chain", "futures_contracts",
+    "compute_pcr", "compute_max_pain", "compute_top_oi_strikes",
+    "compute_atm", "compute_iv_skew", "compute_oi_buildup",
+    "compute_support_resistance", "compute_straddle", "compute_gex",
+    "compute_futures_basis",
+    "price_long_straddle", "price_long_strangle",
+    "price_bull_call_spread", "price_bear_put_spread",
+    "price_iron_condor", "price_long_butterfly",
+    "analyze_option_chain",
+}
+
+_MCP2B_TOOLS: set[str] = {
+    # 5 generic alerts
+    "alert_create", "alert_list", "alert_get", "alert_enable", "alert_disable",
+    # 1 event diagnostics tool
+    "event_list",
+    # 2 consumer management
+    "consumer_register", "consumer_topic_add",
+    # 3 replay/checkpoint
+    "consumer_event_pending_list", "consumer_event_acknowledge",
+    "consumer_checkpoint_get",
+    # 5 market alerts
+    "market_alert_create", "market_alert_list", "market_alert_enable",
+    "market_alert_disable", "market_alert_delete",
+}
+
+EXPECTED_MCP_TOOL_NAMES: set[str] = _MCP1_FROZEN_TOOLS | _MCP2B_TOOLS
+
+
+class TestMcpToolSnapshot:
+    """Exact 42-tool name set + 16 MCP-2B subset + zero dev_* (MCP-2B.3D)."""
+
+    def test_exact_42_tool_names(self) -> None:
+        fake = _FakeMCP()
+        services = _MockServices()
+        _register_all(fake, services)
+        registered = set(fake.tools.keys())
+        assert registered == EXPECTED_MCP_TOOL_NAMES, (
+            f"Tool name mismatch.\n"
+            f"  Missing: {EXPECTED_MCP_TOOL_NAMES - registered}\n"
+            f"  Extra:   {registered - EXPECTED_MCP_TOOL_NAMES}"
+        )
+
+    def test_mcp2b_subset_exact_16(self) -> None:
+        fake = _FakeMCP()
+        services = _MockServices()
+        _register_all(fake, services)
+        registered = set(fake.tools.keys())
+        # Filter to MCP-2B subset from the full registration.
+        mcp2b_registered = registered & _MCP2B_TOOLS
+        assert mcp2b_registered == _MCP2B_TOOLS, (
+            f"MCP-2B subset mismatch.\n"
+            f"  Missing: {_MCP2B_TOOLS - mcp2b_registered}\n"
+            f"  Extra:   {mcp2b_registered - _MCP2B_TOOLS}"
+        )
+
+    def test_no_dev_tools_in_snapshot(self) -> None:
+        fake = _FakeMCP()
+        services = _MockServices()
+        _register_all(fake, services)
+        dev = [n for n in fake.tools if n.startswith("dev_")]
+        assert not dev, f"dev_* tools found: {dev}"
+
+    def test_event_publish_not_registered(self) -> None:
+        """event_publish must NOT appear in the public tool registration."""
+        fake = _FakeMCP()
+        services = _MockServices()
+        _register_all(fake, services)
+        assert "event_publish" not in fake.tools, (
+            "event_publish is still registered as a public tool"
+        )
+
+    def test_consumer_event_list_not_registered(self) -> None:
+        """consumer_event_list was removed in MCP-2B.3C; must not be registered."""
+        fake = _FakeMCP()
+        services = _MockServices()
+        _register_all(fake, services)
+        assert "consumer_event_list" not in fake.tools, (
+            "consumer_event_list is still registered"
         )
 
 

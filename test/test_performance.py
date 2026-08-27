@@ -29,6 +29,7 @@ from helpers.lifecycle import (  # noqa: E402
 from helpers.mcp_client import (  # noqa: E402
     call,
     read_res,
+    publish_event,
 )
 from helpers.runner import R  # noqa: E402
 from mcp import ClientSession  # noqa: E402
@@ -46,7 +47,7 @@ async def perf1_publish_storm(runner: R) -> None:
     name = "PERF1-publish-storm"
     start = time.monotonic()
     for i in range(50):
-        resp = await call("event_publish", {"event_type": f"test.perf{i}", "source": "test"})
+        resp = await publish_event(f"test.perf{i}", source="test")
     elapsed = time.monotonic() - start
     runner.assert_true(name, elapsed < 30.0, f"50 events took {elapsed:.2f}s (>30s)")
 
@@ -57,7 +58,7 @@ async def perf2_resource_during_load(runner: R) -> None:
     # Publish some events in background
     async def _publish():
         for i in range(10):
-            await call("event_publish", {"event_type": f"test.perf2bg{i}", "source": "test"})
+            await publish_event(f"test.perf2bg{i}", source="test")
     task = asyncio.create_task(_publish())
     # Read resource concurrently
     data = await read_res("mcp-event://system/info")

@@ -39,6 +39,7 @@ from helpers.mcp_client import (  # noqa: E402
     call,
     read_res,
     list_tools_names,
+    publish_event,
 )
 from helpers.runner import R  # noqa: E402
 from mcp_result import reserve_free_port, safe_teardown  # noqa: E402
@@ -80,11 +81,9 @@ async def T10(runner: R) -> None:
         cid = _uid("t10")
         await call("consumer_register", {"consumer_id": cid})
 
-        resp = await call("event_publish", {
-            "event_type": "test.t10",
-            "source": "test",
-            "persistent": True,
-        })
+        resp = await publish_event(
+            "test.t10", source="test", persistent=True,
+        )
         eid = resp["event"]["id"]
         seq = resp["event"]["sequence"]
 
@@ -114,11 +113,9 @@ async def P7T13(runner: R) -> None:
         proc = await start_server()
         cid = _uid("p7t13")
         await call("consumer_register", {"consumer_id": cid})
-        resp = await call("event_publish", {
-            "event_type": "test.p7t13",
-            "source": "test",
-            "persistent": True,
-        })
+        resp = await publish_event(
+            "test.p7t13", source="test", persistent=True,
+        )
         eid = resp["event"]["id"]
 
         # Restart using the helper (stops the running server first).
