@@ -26,13 +26,10 @@ import logging
 from typing import Any
 
 from core import events
+from core.alert_events import ALERT_ENGINE_SOURCE, build_alert_triggered_data
 from core.errors import AlertNotFoundError, ConsumerNotFoundError, ValidationError
 
 logger = logging.getLogger(__name__)
-
-# Stable generic source-instance identifier owned by the alert engine.
-# The trigger event is produced BY the alert engine, not by the matched source.
-ALERT_ENGINE_SOURCE = "alert_engine"
 
 # Supported comparison operators (MVP only).
 SUPPORTED_OPERATORS = ("eq", "ne", "gt", "gte", "lt", "lte")
@@ -162,24 +159,8 @@ def alert_matches(alert: dict[str, Any], event: dict[str, Any]) -> bool:
 
 
 # ─── Trigger event construction ──────────────────────────────────────────────
-
-def build_trigger_data(alert: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
-    """Construct the data payload for an alert.triggered event."""
-    data: dict[str, Any] = {
-        "alert_id": alert["alert_id"],
-        "consumer_id": alert["consumer_id"],
-        "matched_event_id": event.get("id"),
-        "matched_event_type": event.get("type"),
-        "matched_source": event.get("source"),
-        "field_path": alert["field_path"],
-        "operator": alert["operator"],
-        "expected_value": alert["value"],
-        "observed_value": resolve_field_path(event.get("data") or {}, alert["field_path"]),
-        "one_shot": alert["one_shot"],
-    }
-    if alert.get("name"):
-        data["name"] = alert["name"]
-    return data
+# The canonical alert.triggered payload is built by the shared builder in
+# core.alert_events (single source of truth for both alert engines).
 
 
 # ─── Evaluator ────────────────────────────────────────────────────────────────
@@ -251,7 +232,29 @@ class AlertEvaluator:
                 await events.publish_event(
                     event_type="alert.triggered",
                     source=ALERT_ENGINE_SOURCE,
-                    data=build_trigger_data(fresh, event),
+                    data=build_alert_triggered_data(
+                        alert_family="generic",
+                        alert_id=fresh["alert_id"],
+                        consumer_id=fresh["consumer_id"],
+                        condition={
+                            "field": fresh["field_path"],
+                            "operator": fresh["operator"],
+                            "threshold": fresh["value"],
+                        },
+                        observed={
+                            "value": resolve_field_path(
+                                event.get("data") or {}, fresh["field_path"]
+                            ),
+                            "matched_event_id": event.get("id"),
+                            "matched_event_type": event.get("type"),
+                            "matched_source": event.get("source"),
+                        },
+                        instrument=None,
+                        one_shot=fresh["one_shot"],
+                        metadata=(
+                            {"name": fresh["name"]} if fresh.get("name") else {}
+                        ),
+                    ),
                     persistent=True,
                     routing={"targets": [fresh["consumer_id"]]},
                     store=self._store,

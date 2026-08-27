@@ -21,7 +21,7 @@ from mcp_server.contract import (
     TOOL_MARKET_ALERT_LIST,
 )
 
-_ALLOWED_FIELDS = ("ltp", "change_percent", "volume")
+_ALLOWED_FIELDS = ("ltp", "change_percent", "volume", "oi_change_percent")
 _ALLOWED_OPERATORS = ("gt", "lt", "crosses_above", "crosses_below")
 
 
