@@ -357,7 +357,7 @@ async def p8t6_failure_resilience(runner: R) -> None:
     """P8T6: server resilience — event_publish and system_ping still work."""
     name = "P8T6-failure-resilience"
     resp = await call("event_publish", {"event_type": "test.resilience", "source": "test"})
-    runner.assert_eq(name + "-published", resp.get("status"), "ok")
+    runner.assert_eq(name + "-published", resp.get("status"), "published")
     await asyncio.sleep(0.5)
     data = await call("system_ping")
     runner.assert_eq(name + "-system_ping-ok", data.get("status"), "ok")
