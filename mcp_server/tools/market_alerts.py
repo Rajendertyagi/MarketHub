@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from core.errors import AlertNotFoundError, StorageError, ValidationError
 from mcp_server.contract import (
     TOOL_MARKET_ALERT_CREATE,
     TOOL_MARKET_ALERT_DELETE,
@@ -62,21 +63,23 @@ def register_market_alert_tools(mcp, services, **kwargs) -> None:
         returning.
         """
         if store is None or intel is None:
-            return {"error": "alert services not available"}
+            raise StorageError("alert services not available")
         operator = (operator or "").strip()
         field = (field or "ltp").strip().lower()
         if operator not in _ALLOWED_OPERATORS:
-            return {"error": f"operator must be one of "
-                             f"{list(_ALLOWED_OPERATORS)}"}
+            raise ValidationError(
+                f"operator must be one of {list(_ALLOWED_OPERATORS)}")
         if field not in _ALLOWED_FIELDS:
-            return {"error": f"field must be one of {list(_ALLOWED_FIELDS)}"}
+            raise ValidationError(
+                f"field must be one of {list(_ALLOWED_FIELDS)}")
         try:
             threshold = float(threshold)
         except (TypeError, ValueError):
-            return {"error": "threshold must be a number"}
+            raise ValidationError("threshold must be a number")
         inst = await _resolve(instrument_query)
         if inst is None:
-            return {"error": f"no instrument matches '{instrument_query}'"}
+            raise ValidationError(
+                f"no instrument matches '{instrument_query}'")
         exchange, token = inst["instrument_key"].split(":", 1)
 
         def _create():
@@ -88,7 +91,7 @@ def register_market_alert_tools(mcp, services, **kwargs) -> None:
         try:
             alert = await asyncio.to_thread(_create)
         except ValueError as exc:
-            return {"error": str(exc)}
+            raise ValidationError(str(exc)) from exc
         _reload_engine()
         return {"status": "created", "alert": alert,
                 "instrument": inst}
@@ -97,7 +100,7 @@ def register_market_alert_tools(mcp, services, **kwargs) -> None:
     async def market_alert_list() -> dict[str, Any]:
         """List all configured market alerts with their state."""
         if store is None:
-            return {"error": "alert store not available"}
+            raise StorageError("alert store not available")
         alerts = await asyncio.to_thread(store.list_market_alerts)
         return {"status": "ok", "count": len(alerts), "alerts": alerts}
 
@@ -105,41 +108,44 @@ def register_market_alert_tools(mcp, services, **kwargs) -> None:
     async def market_alert_enable(alert_id: int) -> dict[str, Any]:
         """Enable a disabled market alert by id."""
         if store is None:
-            return {"error": "alert store not available"}
+            raise StorageError("alert store not available")
 
         def _set():
             return store.set_alert_enabled(int(alert_id), True)
 
         ok = await asyncio.to_thread(_set)
+        if not ok:
+            raise AlertNotFoundError(str(alert_id))
         _reload_engine()
-        return {"status": "enabled" if ok else "not found",
-                "ok": bool(ok), "alert_id": int(alert_id)}
+        return {"status": "enabled", "ok": True, "alert_id": int(alert_id)}
 
     @mcp.tool(name=TOOL_MARKET_ALERT_DISABLE)
     async def market_alert_disable(alert_id: int) -> dict[str, Any]:
         """Disable a market alert by id (it stops evaluating)."""
         if store is None:
-            return {"error": "alert store not available"}
+            raise StorageError("alert store not available")
 
         def _set():
             return store.set_alert_enabled(int(alert_id), False)
 
         ok = await asyncio.to_thread(_set)
+        if not ok:
+            raise AlertNotFoundError(str(alert_id))
         _reload_engine()
-        return {"status": "disabled" if ok else "not found",
-                "ok": bool(ok), "alert_id": int(alert_id)}
+        return {"status": "disabled", "ok": True, "alert_id": int(alert_id)}
 
     @mcp.tool(name=TOOL_MARKET_ALERT_DELETE)
     async def market_alert_delete(alert_id: int) -> dict[str, Any]:
         """Delete a market alert by id. Historical trigger records are
         preserved (deleting an alert never erases its past firings)."""
         if store is None:
-            return {"error": "alert store not available"}
+            raise StorageError("alert store not available")
 
         def _del():
             return store.delete_alert(int(alert_id))
 
         ok = await asyncio.to_thread(_del)
+        if not ok:
+            raise AlertNotFoundError(str(alert_id))
         _reload_engine()
-        return {"status": "deleted" if ok else "not found",
-                "ok": bool(ok), "alert_id": int(alert_id)}
+        return {"status": "deleted", "ok": True, "alert_id": int(alert_id)}
