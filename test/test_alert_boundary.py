@@ -294,20 +294,20 @@ async def test_market_delete(runner: R) -> None:
     listed = await fake.tools["market_alert_list"]()
     runner.assert_eq("MA-delete-gone", listed["count"], 0)
 
-    e = await fake.tools["market_alert_enable"](alert_id=alert_id)
-    runner.assert_eq("MA-delete-not-addressable", e["status"], "not found")
+    await _raises_async(runner, "MA-delete-not-addressable", AlertNotFoundError,
+                        fake.tools["market_alert_enable"], alert_id=alert_id)
 
 
 async def test_market_invalid_alert_id(runner: R) -> None:
-    """MA-G: invalid alert_id gives current shared error behavior."""
+    """MA-G: invalid alert_id raises the shared AlertNotFoundError."""
     _tmp, _store, fake, _services = _mk_market_env()
 
-    e = await fake.tools["market_alert_enable"](alert_id=999999)
-    runner.assert_eq("MA-invalid-enable", e["status"], "not found")
-    d = await fake.tools["market_alert_disable"](alert_id=999999)
-    runner.assert_eq("MA-invalid-disable", d["status"], "not found")
-    x = await fake.tools["market_alert_delete"](alert_id=999999)
-    runner.assert_eq("MA-invalid-delete", x["status"], "not found")
+    await _raises_async(runner, "MA-invalid-enable", AlertNotFoundError,
+                        fake.tools["market_alert_enable"], alert_id=999999)
+    await _raises_async(runner, "MA-invalid-disable", AlertNotFoundError,
+                        fake.tools["market_alert_disable"], alert_id=999999)
+    await _raises_async(runner, "MA-invalid-delete", AlertNotFoundError,
+                        fake.tools["market_alert_delete"], alert_id=999999)
 
 
 # ── Table isolation regression ───────────────────────────────────────────────

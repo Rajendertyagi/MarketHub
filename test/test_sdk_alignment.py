@@ -138,13 +138,13 @@ async def test_async_tools_work(runner: R) -> None:
 # Legacy ID: P8T8
 async def test_extensibility_proof_original_tools_present(runner: R) -> None:
     """P8T8: extensibility proof - all original tools still present plus
-    product tools (44 total: +option_chain, futures_contracts, market_alert_*
+    product tools (43 total: +option_chain, futures_contracts, market_alert_*
     management tools, +analytics/strategy pricing tools)."""
     name = "P8T8-original-tools"
     tools = await list_tools_names()
     expected_tools = [
         "system_ping", "event_publish", "event_list", "consumer_register",
-        "consumer_topic_add", "consumer_event_list", "consumer_event_pending_list",
+        "consumer_topic_add", "consumer_event_pending_list",
         "consumer_event_acknowledge", "consumer_checkpoint_get",
         "alert_create", "alert_list", "alert_get", "alert_enable", "alert_disable",
         "market_quote", "market_depth", "market_status",
