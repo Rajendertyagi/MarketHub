@@ -102,3 +102,46 @@ Runtime proofs use the real subprocess over real TCP because:
   differs under `ASGITransport`
 - `ASGITransport` does not run the app lifespan the same way
 - MCP-2A is specifically verifying the real Streamable HTTP runtime
+
+## 12. Live consumer inbox notifications (MCP-2B.4B)
+
+Persistent events additionally wake the per-consumer inbox resource
+`mcp-event://consumers/{consumer_id}/events` over the modern 2026-07-28
+`subscriptions/listen` path. The global `mcp-event://events/latest` resource
+is unchanged.
+
+Flow (persistent event only):
+
+```
+event persisted (store.save succeeds)
+    -> relevant durable consumers computed (same predicate as materialization)
+    -> ResourceUpdated(uri=mcp-event://consumers/{cid}/events) per relevant consumer
+    -> modern AI client listen() wakes
+    -> AI reads the inbox resource (compact status) and calls
+       consumer_event_pending_list for the durable replay
+```
+
+Routing mirrors durable materialization exactly:
+
+- routing absent (broadcast) -> all registered consumers
+- `routing.targets` -> only the listed consumers
+- `routing.topics` -> only consumers with intersecting topics
+
+Transient events (`persistent=False`) never notify a consumer inbox — they
+only fire the global `mcp-event://events/latest`.
+
+The inbox resource is a wake-up/status resource. It returns compact status
+`{"consumer_id", "checkpoint", "pending_count", "latest_sequence"}` — never
+the replay backlog. The durable replay (`consumer_event_pending_list`) is the
+source of truth; the live notification is best-effort and level-triggered.
+
+Guarantees:
+
+- Notification happens only AFTER successful persistence.
+- A notification failure never fails the already-persisted event.
+- No exactly-once delivery: a client that disconnects or a server that
+  restarts loses no durable state — re-listen and read the pending list.
+- No per-session delivery state; multiple clients on the same consumer may
+  all receive the same wake-up.
+- The `ResourceUpdated` carries resource identity only — never event payload,
+  alert condition, or credentials.
