@@ -347,6 +347,29 @@ class EventStore:
         finally:
             conn.close()
 
+    def get_consumer_inbox_status(self, consumer_id: str) -> dict[str, Any]:
+        """Return compact inbox status for a consumer.
+
+        Returns ``{"consumer_id", "checkpoint", "pending_count",
+        "latest_sequence"}`` where ``pending_count`` is the number of
+        unacknowledged relevant events after the checkpoint and
+        ``latest_sequence`` is the highest sequence among them (None when
+        there are none). This is a wake-up/status resource — it never returns
+        the replay backlog itself.
+
+        Raises ConsumerNotFoundError if the consumer is not registered.
+        """
+        conn = self._open(self._db_path)
+        try:
+            return _replay.get_consumer_inbox_status(conn, consumer_id)
+        except (ValueError, ConsumerNotFoundError):
+            raise
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def advance_checkpoint(self, consumer_id: str) -> int:
         """
         Advance the consumer's checkpoint to the highest safe sequence.
@@ -416,6 +439,25 @@ class EventStore:
         """
         return _events.is_event_relevant(
             event.get("routing"), consumer_id, consumer_topics)
+
+    def list_relevant_consumers(
+        self, routing: dict[str, Any] | None
+    ) -> list[str]:
+        """
+        Return the registered consumers for whom ``routing`` makes an event
+        relevant.
+
+        Mirrors the durable materialization predicate exactly (same consumer
+        set, same topic map, same relevance check), so the live notification
+        set always matches the durable materialized set. Used post-persistence
+        to decide which consumer inboxes receive a live wake-up notification.
+        """
+        conn = self._open(self._db_path)
+        try:
+            return _events.list_relevant_consumers(
+                conn, routing, self.is_event_relevant_internal)
+        finally:
+            conn.close()
 
     # ─── Alert definitions (generic alert engine) ────────────────────────────
 

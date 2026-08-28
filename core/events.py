@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from mcp.shared.subscriptions import ResourceUpdated
-from mcp_server.contract import RESOURCE_EVENT_LATEST
+from mcp_server.contract import RESOURCE_EVENT_LATEST, consumer_events_uri
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +176,58 @@ async def _notify_subscribers_async(
             "failed to broadcast resource update for %s: %s", resource_uri, exc
         )
         _metric("record_notification_failed")
+
+
+async def _notify_relevant_consumer_inboxes(
+    event: dict[str, Any],
+    store: Any,  # EventStore — typed externally
+    bus: Any,    # InMemorySubscriptionBus — typed externally
+) -> None:
+    """
+    Publish a ResourceUpdated wake-up for each durable consumer inbox the
+    event is relevant to.
+
+    Persistent events only. The relevant-consumer set mirrors the durable
+    materialization predicate exactly (same consumer set, same topic map,
+    same relevance check), so the live notification set always matches the
+    set of consumers for whom the event is durably relevant.
+
+    Best-effort by design: a notification failure must never undo the
+    already-persisted event. Each inbox is notified independently so one
+    failing publish cannot suppress the others.
+    """
+    if bus is None or store is None:
+        return
+    if not event.get("persistent"):
+        return
+
+    routing = event.get("routing")
+    try:
+        consumer_ids = await asyncio.to_thread(
+            store.list_relevant_consumers, routing
+        )
+    except Exception as exc:
+        logger.error(
+            "failed to compute relevant consumers for event %s: %s",
+            event.get("id"),
+            exc,
+        )
+        _metric("record_notification_failed")
+        return
+
+    for consumer_id in consumer_ids:
+        try:
+            uri = consumer_events_uri(consumer_id)
+            _metric("record_notification_attempted")
+            await bus.publish(ResourceUpdated(uri=uri))
+        except Exception as exc:
+            logger.error(
+                "failed to notify consumer inbox %s for event %s: %s",
+                consumer_id,
+                event.get("id"),
+                exc,
+            )
+            _metric("record_notification_failed")
 
 
 # ─── Publish ──────────────────────────────────────────────────────────────────
@@ -357,6 +409,13 @@ async def publish_event(
 
     # ── Live notification ───────────────────────────────────────────────────
     await _notify_subscribers_async(RESOURCE_EVENT_LATEST, bus)
+
+    # ── Per-consumer inbox live wake-up (persistent events only) ────────────
+    # Mirrors durable routing: broadcast -> all registered consumers,
+    # targets -> listed consumers, topics -> intersecting consumers only.
+    # Best-effort — the event is already persisted; a notification failure
+    # must never fail the publication.
+    await _notify_relevant_consumer_inboxes(event, store, bus)
 
     # ── SSE fan-out (fire-and-forget, failure-isolated) ─────────────────────
     if _event_broker is not None:

@@ -21,6 +21,8 @@ from mcp_server.contract import (
     RESOURCE_SOURCES_STATUS,
     RESOURCE_SYSTEM_METRICS,
     RESOURCE_EVENTS_RECENT,
+    RESOURCE_CONSUMER_EVENTS_PREFIX,
+    consumer_events_uri,
 )
 
 
@@ -84,6 +86,7 @@ def register_resources(mcp, services: "Services", constants: dict[str, str]) -> 
                 "background_runtime": True,
                 "structured_errors": True,
                 "source_connectors": True,
+                "live_consumer_notifications": True,
             },
             "limits": {
                 "replay_default_limit": REPLAY_CFG["default_limit"],
@@ -135,3 +138,16 @@ def register_resources(mcp, services: "Services", constants: dict[str, str]) -> 
             newest_first=True,
         )
         return json.dumps(recent_events, ensure_ascii=False)
+
+    @mcp.resource("mcp-event://consumers/{consumer_id}/events")
+    def consumer_inbox(consumer_id: str) -> str:
+        """Return compact inbox status for a consumer (wake-up/status resource).
+
+        Returns ``{"consumer_id", "checkpoint", "pending_count",
+        "latest_sequence"}``. This is a wake-up/status resource — it never
+        returns the replay backlog itself; use ``consumer_event_pending_list``
+        for the durable replay. Raises ConsumerNotFoundError for an
+        unregistered consumer.
+        """
+        status = services.store.get_consumer_inbox_status(consumer_id)
+        return json.dumps(status, ensure_ascii=False)

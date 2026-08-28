@@ -47,6 +47,45 @@ def get_checkpoint_info(
     return row[0], row[1]
 
 
+def get_consumer_inbox_status(
+    conn: sqlite3.Connection, consumer_id: str
+) -> dict[str, Any]:
+    """Return compact inbox status for a consumer.
+
+    Returns ``{"consumer_id", "checkpoint", "pending_count", "latest_sequence"}``
+    where ``pending_count`` is the number of unacknowledged relevant events
+    after the checkpoint (the same set ``consumer_event_pending_list`` would
+    return) and ``latest_sequence`` is the highest sequence among them (None
+    when there are none). This is a wake-up/status resource — it never returns
+    the replay backlog itself.
+
+    Raises ConsumerNotFoundError if the consumer is not registered.
+    """
+    consumer = conn.execute(
+        "SELECT 1 FROM consumers WHERE consumer_id = ?", (consumer_id,)
+    ).fetchone()
+    if not consumer:
+        raise ConsumerNotFoundError(consumer_id)
+
+    checkpoint, _ = get_checkpoint_info(conn, consumer_id)
+
+    row = conn.execute("""
+        SELECT COUNT(*) AS pending_count, MAX(pe.sequence) AS latest_sequence
+        FROM consumer_event_state ces
+        JOIN persistent_events pe ON ces.event_id = pe.id
+        WHERE ces.consumer_id = ?
+          AND pe.sequence > ?
+          AND ces.acknowledged_at IS NULL
+    """, (consumer_id, checkpoint)).fetchone()
+
+    return {
+        "consumer_id": consumer_id,
+        "checkpoint": checkpoint,
+        "pending_count": row[0] if row else 0,
+        "latest_sequence": row[1] if row else None,
+    }
+
+
 def advance_checkpoint(conn: sqlite3.Connection, consumer_id: str) -> int:
     """
     Advance the consumer's checkpoint to the highest safe sequence.

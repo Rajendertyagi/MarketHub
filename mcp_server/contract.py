@@ -30,6 +30,10 @@ RESOURCE_SYSTEM_INFO = "mcp-event://system/info"
 RESOURCE_SOURCES_STATUS = "mcp-event://sources/status"
 RESOURCE_SYSTEM_METRICS = "mcp-event://system/metrics"
 RESOURCE_EVENTS_RECENT = "mcp-event://events/recent"
+# Per-consumer inbox resource template (MCP-2B.4B). The template
+# mcp-event://consumers/{consumer_id}/events is registered as a resource
+# template; consumer_events_uri() builds concrete instance URIs.
+RESOURCE_CONSUMER_EVENTS_PREFIX = "mcp-event://consumers/"
 
 # ─── Production tool names ─────────────────────────────────────────────────────
 TOOL_SYSTEM_PING = "system_ping"
@@ -95,4 +99,21 @@ TOOL_PRICE_BEAR_PUT_SPREAD = "price_bear_put_spread"
 TOOL_PRICE_IRON_CONDOR = "price_iron_condor"
 TOOL_PRICE_LONG_BUTTERFLY = "price_long_butterfly"
 TOOL_ANALYZE_OPTION_CHAIN = "analyze_option_chain"
+
+
+def consumer_events_uri(consumer_id: str) -> str:
+    """Build the per-consumer inbox resource URI.
+
+    Returns ``mcp-event://consumers/{consumer_id}/events`` with the
+    consumer_id percent-encoded so arbitrary client-chosen identifiers
+    remain valid URI path segments. The SDK's UriTemplate percent-decodes
+    the extracted parameter, so ``match(expand(cid)) == cid`` round-trips.
+
+    Raises ValueError for a missing/empty consumer_id.
+    """
+    from urllib.parse import quote
+
+    if not consumer_id or not isinstance(consumer_id, str):
+        raise ValueError("consumer_id must be a non-empty string")
+    return f"{RESOURCE_CONSUMER_EVENTS_PREFIX}{quote(consumer_id, safe='')}/events"
 

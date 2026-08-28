@@ -200,3 +200,38 @@ def is_event_relevant_internal(
 ) -> bool:
     """Internal relevance check used during materialization."""
     return is_event_relevant(routing, consumer_id, consumer_topics)
+
+
+def list_relevant_consumers(
+    conn: sqlite3.Connection,
+    routing: dict[str, Any] | None,
+    is_relevant_fn,
+) -> list[str]:
+    """
+    Return the registered consumers for whom ``routing`` makes an event relevant.
+
+    Mirrors ``materialize_event_state``'s relevance computation exactly (same
+    consumer set, same topic map, same predicate), so the live notification set
+    always matches the durable materialized set. Used post-persistence to decide
+    which consumer inboxes receive a live wake-up notification.
+    """
+    consumers = conn.execute(
+        "SELECT consumer_id FROM consumers ORDER BY consumer_id"
+    ).fetchall()
+
+    if not consumers:
+        return []
+
+    consumer_topics_map: dict[str, set[str]] = {}
+    topic_rows = conn.execute(
+        "SELECT consumer_id, topic FROM consumer_topics"
+    ).fetchall()
+    for cid, topic in topic_rows:
+        consumer_topics_map.setdefault(cid, set()).add(topic)
+
+    relevant: list[str] = []
+    for (cid,) in consumers:
+        topics = consumer_topics_map.get(cid, set())
+        if is_relevant_fn(routing, cid, topics):
+            relevant.append(cid)
+    return relevant
