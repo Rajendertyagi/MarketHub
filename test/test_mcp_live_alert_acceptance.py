@@ -1191,8 +1191,8 @@ async def scenario_v(runner: R) -> None:
     name = "V-resource-status-read"
     proc = None
     try:
-        # Short-lived source so we can drain all events during ack.
-        proc = await start_server(_test_source_cfg(max_events=5, interval=1.0,
+        # Single event + one-shot alert: deterministic, no race.
+        proc = await start_server(_test_source_cfg(max_events=1, interval=1.0,
                                                    initial_delay=6.0))
         await wait_source_ready("test_source", {"running", "completed"}, timeout=15)
         cid = _uid("v")
@@ -1205,7 +1205,7 @@ async def scenario_v(runner: R) -> None:
         runner.assert_eq(name + "-before-checkpoint", before.get("checkpoint"), 0)
 
         # After trigger: pending_count > 0.
-        await _create_generic_alert(cid)
+        await _create_generic_alert(cid, one_shot=True)
         count = await _wait_alert_count(cid, 1)
         runner.assert_ge(name + "-fired", count, 1)
         after = await _read_inbox(c1_uri)
