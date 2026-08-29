@@ -1216,7 +1216,13 @@ async def scenario_v(runner: R) -> None:
         e1 = evts[0]
         # Ack ALL events so pending goes to 0.
         await _ack_all(cid)
-        after_ack = await _read_inbox(c1_uri)
+        # Settle: new events may fire during ack; wait until inbox is clean.
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            after_ack = await _read_inbox(c1_uri)
+            if after_ack.get("pending_count", 0) == 0:
+                break
+            await asyncio.sleep(0.3)
         runner.assert_eq(name + "-after-ack-pending", after_ack.get("pending_count"), 0)
         cp_after = after_ack.get("checkpoint", 0)
         runner.assert_ge(name + "-after-ack-checkpoint", cp_after, 1)
