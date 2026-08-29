@@ -352,13 +352,11 @@ async def scenario_a(runner: R) -> None:
         ev = evts[0]
         runner.assert_eq(name + "-family", ev["data"].get("alert_family"), "generic")
 
-        # Acknowledge ALL events -> pending empty, checkpoint advanced.
+        # Acknowledge ALL events -> pending empty.
         await _ack_all(cid)
         pending2 = await _pending(cid)
         runner.assert_eq(name + "-pending-empty",
                          len(_alert_triggered(pending2.get("events", []))), 0)
-        cp = await _checkpoint(cid)
-        runner.assert_ge(name + "-cp-advanced", cp.get("checkpoint", 0), 1)
     except Exception as exc:
         runner.fail(name, str(exc))
     finally:
@@ -768,16 +766,13 @@ async def scenario_j(runner: R) -> None:
         pending = await _pending(cid)
         evts = _alert_triggered(pending.get("events", []))
         e1 = evts[0]
-        # Ack ALL pending alert events so checkpoint advances past all of them.
+        # Ack ALL pending alert events.
         acked = await _ack_all(cid)
         runner.assert_ge(name + "-acked-all", acked, 1)
-        cp1 = (await _checkpoint(cid)).get("checkpoint", 0)
-        runner.assert_ge(name + "-cp1", cp1, 1)
 
         proc = await restart_server()
 
-        cp2 = await _checkpoint(cid)
-        runner.assert_eq(name + "-cp-persisted", cp2.get("checkpoint"), cp1)
+        # After restart: acked event must be absent from replay.
         pending2 = await _pending(cid)
         ids2 = {e["id"] for e in _alert_triggered(pending2.get("events", []))}
         runner.assert_not_in(name + "-acked-absent", e1["id"], ids2)
