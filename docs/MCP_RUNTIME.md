@@ -145,3 +145,100 @@ Guarantees:
   all receive the same wake-up.
 - The `ResourceUpdated` carries resource identity only — never event payload,
   alert condition, or credentials.
+
+## 13. Live + offline alert delivery (MCP-2B.4C)
+
+The alert system provides **at-least-once** delivery with **durable replay** as
+the source of truth. Two evidence classes exist:
+
+### 13.1 Generic alerts — real MCP E2E
+
+```
+test_source tick (real subprocess)
+    -> server AlertEvaluator.evaluate(event)
+    -> publish_event(alert.triggered, routing={"targets":[consumer_id]}, persistent=True)
+    -> store.save() succeeds
+    -> InMemorySubscriptionBus.publish(ResourceUpdated(uri=inbox_uri))
+    -> modern MCP Client.listen() receives ResourceUpdated
+    -> consumer_event_pending_list returns the durable event
+    -> consumer_event_acknowledge clears it
+```
+
+Proven by scenarios A, C, E, F, G, H, K, L, M, N, O, P, Q, T, W.
+
+### 13.2 Market alerts — split proof
+
+**Part A — REAL MCP DURABLE PATH** (scenarios B-PART-A, D-PART-A):
+
+```
+market_alert_create (real MCP) -> persists to SQLite
+    -> in-process AlertEngine.evaluate(Quote) against shared DB
+    -> publish_event(alert.triggered, routing=None, persistent=True)
+    -> store.save() succeeds
+    -> consumer_event_pending_list (real MCP) returns the event
+    -> consumer_event_acknowledge (real MCP) clears it
+    -> checkpoint advances
+```
+
+**Part B — PRODUCTION IN-PROCESS LIVE-WAKE PATH** (scenarios B-PART-B, D-PART-B):
+
+```
+EventStore + AlertEngine(store, bus=RecordingBus)
+    -> evaluate(canonical_Quote)
+    -> publish_event(alert.triggered, routing=None, persistent=True, bus=recording_bus)
+    -> _notify_relevant_consumer_inboxes() calls bus.publish(ResourceUpdated(uri))
+    -> RecordingBus captures each URI
+```
+
+Proves: persist-before-notify, broadcast to all consumers, notification-failure
+durability, exactly-one durable row per trigger.
+
+### 13.3 Intentionally untested
+
+The live broker → MarketService → server-owned AlertEngine → subscriptions/listen
+network path is **not exercised** in this offline acceptance phase. There are no
+broker credentials and no test-only quote-injection surface was added. The
+production code path is verified at the in-process boundary (Part B); the
+upstream feed ingress is left for online integration testing.
+
+### 13.4 Fallback behaviors proven
+
+| Scenario | Behavior | Evidence class |
+|----------|----------|----------------|
+| E | Client offline when alert fires | REAL MCP E2E |
+| F | Disconnect during live period | REAL MCP E2E |
+| G | Wake received but not acked | REAL MCP E2E |
+| H | Ack before disconnect | REAL MCP E2E |
+| I | Restart with pending alert | REAL MCP E2E |
+| J | Restart after ack | REAL MCP E2E |
+| K | Re-subscribe required after restart | REAL MCP E2E |
+| L | Existing pending does not block new wake | REAL MCP E2E |
+| M | Burst/coalescing | REAL MCP E2E |
+| N | Multiple clients same consumer | REAL MCP E2E |
+| O | Multiple consumers independent | REAL MCP E2E |
+| P | Topic routing isolation | REAL MCP E2E |
+| Q | Transient event (no inbox wake) | REAL MCP E2E |
+| R | Persistence failure (no notify) | SDK-UNIT |
+| S | Notification failure (event persists) | SDK-UNIT |
+| T | Legacy client fallback | REAL MCP E2E |
+| U | Modern capability discovery | REAL MCP E2E |
+| V | Inbox resource read is non-mutating | REAL MCP E2E |
+| W | Global resource still fires | REAL MCP E2E |
+| X | Exact 42-tool surface preserved | REAL MCP E2E |
+
+### 13.5 Architecture invariants
+
+- **Persist before notify**: `store.save()` completes before any
+  `bus.publish(ResourceUpdated)` call. Verified by recording bus asserting
+  `pending_count >= 1` at notification time.
+- **Best-effort notifications**: Each consumer inbox publish is wrapped in
+  try/except — one failing publish cannot suppress others.
+- **Durable replay is source of truth**: Even if all live notifications are
+  missed, `consumer_event_pending_list` returns all unacknowledged events.
+- **Idempotent ack**: Repeated acknowledges succeed silently; first ack time
+  is preserved.
+- **Checkpoint monotonic**: `advance_checkpoint` never regresses.
+- **Broadcast semantics**: `routing=None` (market alerts) notifies all
+  registered consumers; `routing.targets=[...]` (generic alerts) notifies
+  only listed consumers.
+- **Topic routing**: `routing.topics=[...]` intersects with consumer topics.
