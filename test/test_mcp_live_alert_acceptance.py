@@ -1191,7 +1191,9 @@ async def scenario_v(runner: R) -> None:
     name = "V-resource-status-read"
     proc = None
     try:
-        proc = await start_server(_test_source_cfg())
+        # Short-lived source so we can drain all events during ack.
+        proc = await start_server(_test_source_cfg(max_events=5, interval=1.0,
+                                                   initial_delay=6.0))
         await wait_source_ready("test_source", {"running", "completed"}, timeout=15)
         cid = _uid("v")
         await call("consumer_register", {"consumer_id": cid})
