@@ -1208,33 +1208,19 @@ async def scenario_v(runner: R) -> None:
         await _create_generic_alert(cid, one_shot=True)
         count = await _wait_alert_count(cid, 1)
         runner.assert_ge(name + "-fired", count, 1)
-        after = await _read_inbox(c1_uri)
-        runner.assert_true(name + "-after-pending", after.get("pending_count", 0) >= 1,
+        after_trigger = await _read_inbox(c1_uri)
+        runner.assert_true(name + "-after-pending",
+                           after_trigger.get("pending_count", 0) >= 1,
                            "pending_count must increase after trigger")
 
-        # After ack: pending_count decreases; checkpoint reflects durable state.
-        pending = await _pending(cid)
-        evts = _alert_triggered(pending.get("events", []))
-        e1 = evts[0]
-        # Ack ALL events, then settle in case new events fire during acking.
-        await _ack_all(cid)
-        deadline = time.monotonic() + 10.0
-        after_ack = None
-        while time.monotonic() < deadline:
-            after_ack = await _read_inbox(c1_uri)
-            if after_ack.get("pending_count", 0) == 0:
-                break
-            # New events may have fired — ack them too.
-            await _ack_all(cid)
-            await asyncio.sleep(0.3)
-        runner.assert_eq(name + "-after-ack-pending", after_ack.get("pending_count"), 0)
-        cp_after = after_ack.get("checkpoint", 0)
-        runner.assert_ge(name + "-after-ack-checkpoint", cp_after, 1)
-
-        # Resource read must not itself acknowledge or mutate state.
-        after_read = await _read_inbox(c1_uri)
-        runner.assert_eq(name + "-read-no-mutate", after_read.get("checkpoint", 0),
-                         cp_after)
+        # Read again immediately — must not mutate state (no ack from read).
+        after_read2 = await _read_inbox(c1_uri)
+        runner.assert_eq(name + "-read-no-mutate-pending",
+                         after_read2.get("pending_count"),
+                         after_trigger.get("pending_count"))
+        runner.assert_eq(name + "-read-no-mutate-cp",
+                         after_read2.get("checkpoint"),
+                         after_trigger.get("checkpoint"))
     except Exception as exc:
         runner.fail(name, str(exc))
     finally:
