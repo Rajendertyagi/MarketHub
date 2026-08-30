@@ -53,7 +53,7 @@ class _FakeQuote:
         self.greeks = None
 
 def _mk_quote(ltp, **kw):
-    return _FakeQuote(ltp, instrument_token="2885", **kw)
+    return _FakeQuote(ltp, **kw)
 
 def _create_alert(store, *, consumer_id="consumer-1", canonical_id="NSE:EQUITY:INE002A01018",
                   metric="ltp", operator="gt", threshold=25000.0,
