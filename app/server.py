@@ -14,7 +14,6 @@ MCP contract/tools/resources live under mcp_server/.
 from __future__ import annotations
 
 import asyncio
-
 import json
 import logging
 import os
@@ -24,73 +23,30 @@ from datetime import datetime, timezone
 from typing import Any
 
 import uvicorn
-from sse_starlette import EventSourceResponse, ServerSentEvent
-from starlette.applications import Starlette
-from starlette.requests import Request
-from starlette.responses import JSONResponse, RedirectResponse, Response
-from starlette.staticfiles import StaticFiles
-from starlette.routing import Route, Mount
-
 from mcp.server.mcpserver import MCPServer
 from mcp.server.subscriptions import InMemorySubscriptionBus
 from mcp.server.transport_security import TransportSecuritySettings
+from sse_starlette import EventSourceResponse
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse, RedirectResponse, Response
+from starlette.routing import Mount, Route
+from starlette.staticfiles import StaticFiles
 
-from app.config import (
-    ConfigError,
-    load_config,
-    validate_config,
-    get_public_base_url,
-    oauth_callback_url,
-)
-from app.lifecycle import print_banner, print_shutdown
-from app.paths import CONFIG_PATH, PROJECT_ROOT
-from app import __version__
-from core import events
-from core import runtime
-from core.alerts import AlertEvaluator
-from core.errors import (
-    ConsumerNotFoundError,
-    EventNotRelevantError,
-    EventNotFoundError,
-    MCPEventServerError,
-    OperationTimeoutError,
-    StorageError,
-    ValidationError,
-)
-from core.runtime import BackgroundTaskManager
-from core.sse_broker import EventBroker
-from mcp_server.contract import (
-    CONTRACT_VERSION,
-    RESOURCE_EVENT_LATEST,
-    RESOURCE_EVENTS_PENDING,
-    RESOURCE_SYSTEM_INFO,
-    RESOURCE_SOURCES_STATUS,
-    RESOURCE_SYSTEM_METRICS,
-    RESOURCE_EVENTS_RECENT,
-)
-from mcp_server.metrics import RuntimeMetrics
-from mcp_server.resources import register_resources
-from mcp_server.services import Services
-from mcp_server.tools import (
-    register_alert_tools,
-    register_market_alert_tools,
-    register_market_intel_tools,
-    register_options_analytics_tools,
-    register_consumer_tools,
-    register_event_tools,
-    register_replay_tools,
-    register_system_tools,
-    register_market_tools,
-)
-from sources import SourceManager, build_source_manager, SourceConfigError
-from api.routes import (  # noqa: F401  (build_settings_routes wired below)
-    build_market_routes,
+from api.routes import (
     build_auth_routes,
+    build_market_routes,
     build_source_control_routes,
 )
-from market.models import Quote
-from market.serialization import quote_to_dict
-from market.service import MarketService
+from app import __version__
+from app.config import (
+    ConfigError,
+    get_public_base_url,
+    load_config,
+    oauth_callback_url,
+    validate_config,
+)
+from app.lifecycle import print_banner, print_shutdown
 
 # ---------------------------------------------------------------------------
 # SDK responsibility vs. application responsibility
@@ -108,15 +64,44 @@ from market.service import MarketService
 # The SDK wraps them into CallToolResult(is_error=True) automatically.
 # MCPError is reserved for genuine protocol-level failures only.
 # ---------------------------------------------------------------------------
-
 # ============================================================
 # LOGGING (centralized: console preserved + rotating file)
 # ============================================================
 # Single owner of handler configuration: app.logging_setup. Console output
 # is preserved; everything INFO+ is also persisted to data/logs/markethub.log
 # so an incident's final event survives the console window closing.
-
-from app.logging_setup import setup_logging, log_startup_diagnostics
+from app.logging_setup import log_startup_diagnostics, setup_logging
+from app.paths import CONFIG_PATH, PROJECT_ROOT
+from core import events, runtime
+from core.alerts import AlertEvaluator
+from core.sse_broker import EventBroker
+from market.models import Quote
+from market.serialization import quote_to_dict
+from market.service import MarketService
+from mcp_server.contract import (
+    CONTRACT_VERSION,
+    RESOURCE_EVENT_LATEST,
+    RESOURCE_EVENTS_PENDING,
+    RESOURCE_EVENTS_RECENT,
+    RESOURCE_SOURCES_STATUS,
+    RESOURCE_SYSTEM_INFO,
+    RESOURCE_SYSTEM_METRICS,
+)
+from mcp_server.metrics import RuntimeMetrics
+from mcp_server.resources import register_resources
+from mcp_server.services import Services
+from mcp_server.tools import (
+    register_alert_tools,
+    register_consumer_tools,
+    register_event_tools,
+    register_market_alert_tools,
+    register_market_intel_tools,
+    register_market_tools,
+    register_options_analytics_tools,
+    register_replay_tools,
+    register_system_tools,
+)
+from sources import SourceConfigError, SourceManager, build_source_manager
 
 _LOG_FILE = setup_logging(PROJECT_ROOT)  # never raises; may degrade console-only
 
@@ -137,7 +122,7 @@ try:
     _config = load_config(str(CONFIG_PATH))
     validate_config(_config)
 except ConfigError as exc:
-    print("ERROR: Configuration error — {0}".format(exc), file=sys.stderr)
+    print(f"ERROR: Configuration error — {exc}", file=sys.stderr)
     print("Fix config.json and restart.", file=sys.stderr)
     sys.exit(1)
 
@@ -182,6 +167,7 @@ _app_logger.info("event store: %s", _store.db_path)
 
 # ── Startup: restore durable recent history ──────────────────────────────────
 from core import events as _events_mod
+
 _recent = _store.get_recent_events(
     limit=_events_mod.RECENT_HISTORY_CAPACITY,
     newest_first=False,
@@ -235,6 +221,14 @@ async def _on_market_quote_update(quote: Quote) -> None:
         await _alert_engine.evaluate(quote)
     except Exception:
         _app_logger.warning("alert evaluation failed", exc_info=True)
+    # B2: market_condition alert engine — same canonical quote, provider-
+    # neutral identity resolution, atomic trigger persistence. Error-isolated
+    # so a condition-engine failure never breaks the market-alert path.
+    try:
+        await _condition_alert_engine.evaluate(quote)
+    except Exception:
+        _app_logger.warning(
+            "condition alert evaluation failed", exc_info=True)
 
 
 _market_service = MarketService(on_quote_update=_on_market_quote_update)
@@ -393,25 +387,47 @@ def _on_source_state_change(
 
 
 # ── Product services: instrument catalog, alerts ─────────────────────────────
-from app.instruments import InstrumentCatalog as _InstrumentCatalog
-from app.market_intel import MarketIntel as _MarketIntel
-from app.instrument_identity import InstrumentIdentityRegistry as _IdentityRegistry
-from app.chat_tools import ChatToolRegistry as _ChatToolRegistry
-from app.alerts import AlertEngine as _AlertEngine
+from api.chat_routes import build_chat_routes as _build_chat_routes
 from api.product_routes import (
     build_admin_routes as _build_admin_routes,
-    build_api_meta_routes as _build_api_meta_routes,
-    build_intel_routes as _build_intel_routes,
-    build_diagnostics_routes as _build_diagnostics_routes,
-    build_instrument_routes as _build_instrument_routes,
-    build_watchlist_routes as _build_watchlist_routes,
-    build_alert_routes as _build_alert_routes,
+)
+from api.product_routes import (
     build_alert_history_routes as _build_alert_history_routes,
-    build_fyers_auth_routes as _build_fyers_auth_routes,
+)
+from api.product_routes import (
+    build_alert_routes as _build_alert_routes,
+)
+from api.product_routes import (
+    build_api_meta_routes as _build_api_meta_routes,
+)
+from api.product_routes import (
     build_app_settings_routes as _build_app_settings_routes,
+)
+from api.product_routes import (
+    build_diagnostics_routes as _build_diagnostics_routes,
+)
+from api.product_routes import (
+    build_fyers_auth_routes as _build_fyers_auth_routes,
+)
+from api.product_routes import (
+    build_instrument_routes as _build_instrument_routes,
+)
+from api.product_routes import (
+    build_intel_routes as _build_intel_routes,
+)
+from api.product_routes import (
     build_watchlist_portability_routes as _build_watchlist_portability_routes,
 )
-from api.chat_routes import build_chat_routes as _build_chat_routes
+from api.product_routes import (
+    build_watchlist_routes as _build_watchlist_routes,
+)
+from app.alerts import AlertEngine as _AlertEngine
+from app.chat_tools import ChatToolRegistry as _ChatToolRegistry
+from app.condition_alerts import ConditionAlertEngine as _ConditionAlertEngine
+from app.instrument_identity import InstrumentIdentityRegistry as _IdentityRegistry
+from app.instruments import InstrumentCatalog as _InstrumentCatalog
+from app.market_identity import MarketInstrumentIdentityResolver as _IdentityResolver
+from app.market_intel import MarketIntel as _MarketIntel
 
 _instrument_catalog = _InstrumentCatalog(_store)
 
@@ -468,10 +484,24 @@ _register_config_identities()
 
 _alert_engine = _AlertEngine(_store, bus=_subscription_bus)
 
-from app.market_data import ProviderMarketData as _ProviderMarketData
+# ── B2: market_condition alert engine + provider-neutral identity resolver ──
+# The resolver maps every catalog row to a canonical instrument id so a
+# condition alert defined once evaluates identically across providers.
+# The condition engine is instrument-indexed (canonical_id -> alert ids) and
+# evaluates only the alerts registered for a quote's resolved identity.
+_identity_resolver = _IdentityResolver()
+try:
+    _identity_resolver.register_catalog_rows(_store.list_all_instruments())
+except Exception:
+    _app_logger.warning(
+        "condition identity resolver population failed", exc_info=True)
+_condition_alert_engine = _ConditionAlertEngine(
+    _store, resolver=_identity_resolver, bus=_subscription_bus)
+
 from api.product_routes import (
     build_market_data_routes as _build_market_data_routes,
 )
+from app.market_data import ProviderMarketData as _ProviderMarketData
 
 
 def _upstox_auth_context():
@@ -529,11 +559,13 @@ _feed_subscription = _FeedSubscription()
 # The secret NEVER reaches the browser, API responses, or logs. The mutable
 # _oauth_cfg_ref dict is shared with the settings routes so saving new
 # credentials in the WebUI enables OAuth at runtime — no restart needed.
+from api.routes import build_settings_routes
 from app.secrets_store import (
-    CredentialStore as _CredentialStore,
     CredentialDecryptError as _CredentialDecryptError,
 )
-from api.routes import build_settings_routes
+from app.secrets_store import (
+    CredentialStore as _CredentialStore,
+)
 
 _credential_store = _CredentialStore(
     _store, data_dir=PROJECT_ROOT / DATA_DIR)
@@ -640,6 +672,7 @@ async def _restart_upstox_source() -> None:
 # Created unconditionally: OAuth may become available at runtime when the
 # operator saves credentials in Settings.
 from brokers.upstox.rest import UpstoxRest as _UpstoxRest
+
 _oauth_rest: Any = _UpstoxRest()
 
 # ── Lifespan ─────────────────────────────────────────────────────────────────
@@ -768,7 +801,7 @@ mcp_asgi_app = mcp.streamable_http_app(
 async def _root_redirect(request: Request) -> Response:
     return RedirectResponse(url="/ui/", status_code=302)
 
-async def _health_check(request: Request) -> JSONResponse:  # noqa: ARG001
+async def _health_check(request: Request) -> JSONResponse:
     """Minimal liveness probe — returns 200 without requiring MCP init."""
     return JSONResponse({"status": "ok"})
 
@@ -799,7 +832,7 @@ async def _event_stream(request: Request) -> Response:
 
 
 @asynccontextmanager
-async def _lifespan(app: Starlette) -> None:  # noqa: ARG001
+async def _lifespan(app: Starlette) -> None:
     """
     Top-level lifespan owner.
 
@@ -914,7 +947,7 @@ def main() -> None:
         print_shutdown()
         sys.exit(0)
     except Exception as exc:
-        _app_logger.error("unexpected error during server run: {0}".format(exc), exc)
+        _app_logger.error(f"unexpected error during server run: {exc}", exc)
         print_shutdown()
         sys.exit(1)
 
