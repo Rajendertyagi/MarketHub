@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from mcp.shared.subscriptions import ResourceUpdated
+
 from mcp_server.contract import RESOURCE_EVENT_LATEST, consumer_events_uri
 
 logger = logging.getLogger(__name__)
@@ -367,6 +368,31 @@ async def publish_event(
             ) from exc
         event["sequence"] = sequence
 
+    # ── Post-persistence finalization (in-memory state, journal, notify) ────
+    await finalize_persisted_event(event, store, bus)
+
+    return event
+
+
+async def finalize_persisted_event(
+    event: dict[str, Any],
+    store: Any = None,  # EventStore — typed externally
+    bus: Any = None,    # InMemorySubscriptionBus — typed externally
+) -> None:
+    """Run the post-persistence notification/fanout for an already-persisted event.
+
+    Shared by the canonical ``publish_event`` path and the condition alert
+    engine (B2): the engine persists a trigger ATOMICALLY (runtime state +
+    alert row + event + consumer materialization in ONE transaction) and then
+    calls this helper for the live wake-up WITHOUT re-inserting the event.
+
+    Steps (all failure-isolated after the event is durably committed):
+      in-memory latest/history -> metrics -> recent journal -> resource
+      notification -> per-consumer inbox wake-up -> SSE fan-out -> alert
+      evaluation (skipped for alert.triggered).
+    """
+    global _latest_event, _published_event_count
+
     # ── Update in-memory state ──────────────────────────────────────────────
     _latest_event = event
     _published_event_count += 1
@@ -377,17 +403,17 @@ async def publish_event(
             _event_history.pop(0)
 
     # ── Metrics: successful authoritative acceptance ─────────────────────────
-    _metric("record_event_published", persistent)
+    _metric("record_event_published", True)
     if event["type"] == "alert.triggered":
         _metric("record_alert_triggered")
 
     logger.info(
         "event  id=%s  type=%s  source=%s  persistent=%s  seq=%s",
-        event_id,
-        event["type"],
-        event["source"],
-        persistent,
-        sequence,
+        event.get("id"),
+        event.get("type"),
+        event.get("source"),
+        event.get("persistent"),
+        event.get("sequence"),
     )
 
     # ── Durable recent observational journal (failure-isolated) ──────────────
@@ -433,8 +459,6 @@ async def publish_event(
 
     # ── Alert evaluation (post-publish hook, Context-free) ───────────────────
     await _maybe_evaluate_alerts(event)
-
-    return event
 
 
 def restore_recent_history(events_list: list[dict[str, Any]]) -> None:
