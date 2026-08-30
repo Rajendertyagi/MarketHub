@@ -303,7 +303,9 @@ async def test_write_amplification_crossing(runner):
         for _ in range(1000):
             await engine.evaluate(q1)
         state = store.load_condition_runtime_state()
-        runner.assert_in("S11-state-below", state[aid]["crossing_side"], ["below_or_equal"])
+        runner.assert_in("S11-state-below",
+                         next(iter(state[aid].values()))["crossing_side"],
+                         ["below_or_equal"])
     finally:
         import shutil; shutil.rmtree(tmp, ignore_errors=True)
 

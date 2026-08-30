@@ -125,6 +125,7 @@ _TEST_FILES: dict[str, str] = {
     "condition_alert_engine": "test_condition_alert_engine.py",
     "condition_alert_atomicity": "test_condition_alert_atomicity.py",
     "condition_alert_live_delivery": "test_condition_alert_live_delivery.py",
+    "condition_groups": "test_condition_groups.py",
 }
 
 # Group -> ordered list of module keys. Order matters (fast/stable first).
@@ -177,6 +178,7 @@ GROUPS: dict[str, list[str]] = {
         "condition_alert_engine",
         "condition_alert_atomicity",
         "condition_alert_live_delivery",
+        "condition_groups",
     ],
     "source": ["source_lifecycle", "source_dedup", "source_controls", "alert_history", "fyers_config", "release_hardening"],
     "consumer": ["consumers", "acknowledgement"],

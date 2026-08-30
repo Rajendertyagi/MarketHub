@@ -173,18 +173,24 @@ def test_ca6_runtime_state(runner: R) -> None:
         alert_id = store.create_condition_alert(
             consumer_id="consumer-1", name="x", trigger_mode="repeat",
             condition_json=_condition())
-        store.save_condition_runtime_state(
-            alert_id=alert_id, condition_id="cond-1",
-            last_result="false", crossing_side="unknown")
+        # Use batch API: states keyed by condition_id (or root-*)
+        store.save_condition_runtime_states(
+            alert_id=alert_id,
+            states={"cond-1": {"last_result": "false",
+                                "crossing_side": "unknown"}})
         st = store.load_condition_runtime_state()
-        runner.assert_eq("CA6-state", st[alert_id]["last_result"], "false")
+        runner.assert_eq("CA6-state",
+                         st[alert_id]["cond-1"]["last_result"], "false")
         # Upsert overwrites.
-        store.save_condition_runtime_state(
-            alert_id=alert_id, condition_id="cond-1",
-            last_result="true", crossing_side="unknown")
+        store.save_condition_runtime_states(
+            alert_id=alert_id,
+            states={"cond-1": {"last_result": "true",
+                                "crossing_side": "unknown"}})
         st = store.load_condition_runtime_state()
-        runner.assert_eq("CA6-upsert", st[alert_id]["last_result"], "true")
-        runner.assert_eq("CA6-condition_id", st[alert_id]["condition_id"], "cond-1")
+        runner.assert_eq("CA6-upsert",
+                         st[alert_id]["cond-1"]["last_result"], "true")
+        runner.assert_eq("CA6-condition_id",
+                         list(st[alert_id].keys()), ["cond-1"])
     finally:
         tmp.cleanup()
 
@@ -197,15 +203,17 @@ def test_ca7_atomic_trigger(runner: R) -> None:
             consumer_id="consumer-1", name="x", trigger_mode="repeat",
             condition_json=_condition())
         seq = store.save_condition_trigger(
-            alert_id=alert_id, condition_id="cond-1",
+            alert_id=alert_id,
             consumer_id="consumer-1", event_id="evt-1",
             event_type="alert.triggered", source="alert_engine",
             timestamp="2026-08-30T00:00:00+00:00",
             data={"version": 1, "alert_family": "market_condition"},
             routing={"targets": ["consumer-1"]},
-            last_result="true", crossing_side="unknown",
             enabled=True, trigger_count=1,
-            last_triggered_at="2026-08-30T00:00:00+00:00")
+            last_triggered_at="2026-08-30T00:00:00+00:00",
+            state_updates={
+                "root-" + alert_id: {"last_result": "true",
+                                      "crossing_side": "unknown"}})
         runner.assert_eq("CA7-seq", seq, 1)
         # Alert row updated.
         a = store.get_condition_alert(alert_id)
@@ -214,7 +222,9 @@ def test_ca7_atomic_trigger(runner: R) -> None:
                          "2026-08-30T00:00:00+00:00")
         # Runtime state updated.
         st = store.load_condition_runtime_state()
-        runner.assert_eq("CA7-state", st[alert_id]["last_result"], "true")
+        runner.assert_eq("CA7-state",
+                         st[alert_id]["root-" + alert_id]["last_result"],
+                         "true")
         # Persistent event + consumer inbox materialized.
         pending = store.list_relevant_events("consumer-1", None, 10)
         runner.assert_eq("CA7-pending", len(pending), 1)
@@ -232,15 +242,17 @@ def test_ca8_once_disables_in_txn(runner: R) -> None:
             consumer_id="consumer-1", name="x", trigger_mode="once",
             condition_json=_condition())
         store.save_condition_trigger(
-            alert_id=alert_id, condition_id="cond-1",
+            alert_id=alert_id,
             consumer_id="consumer-1", event_id="evt-1",
             event_type="alert.triggered", source="alert_engine",
             timestamp="2026-08-30T00:00:00+00:00",
             data={"version": 1, "alert_family": "market_condition"},
             routing={"targets": ["consumer-1"]},
-            last_result="true", crossing_side="unknown",
             enabled=False, trigger_count=1,
-            last_triggered_at="2026-08-30T00:00:00+00:00")
+            last_triggered_at="2026-08-30T00:00:00+00:00",
+            state_updates={
+                "root-" + alert_id: {"last_result": "true",
+                                      "crossing_side": "unknown"}})
         a = store.get_condition_alert(alert_id)
         runner.assert_eq("CA8-disabled", a["enabled"], False)
         runner.assert_eq("CA8-load-enabled-empty",

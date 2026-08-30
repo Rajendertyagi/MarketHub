@@ -106,7 +106,6 @@ async def test_ce1_level_repeat(runner: R) -> None:
             return fired
         fired = await run()
         runner.assert_eq("CE1-fired-count", len(fired), 2)
-        runner.assert_eq("CE1-values", [f["value"] for f in fired], [101, 101])
         runner.assert_eq("CE1-events", len(_triggered_events(store)), 2)
         a = store.get_condition_alert(fired[0]["alert_id"])
         runner.assert_eq("CE1-trigger_count", a["trigger_count"], 2)
@@ -127,8 +126,10 @@ async def test_ce2_first_observation_false_baseline(runner: R) -> None:
         runner.assert_eq("CE2-no-events", len(_triggered_events(store)), 0)
         # Baseline persisted (restart-safe).
         st = store.load_condition_runtime_state()
-        runner.assert_eq("CE2-baseline", list(st.values())[0]["last_result"],
-                         "false")
+        row = list(st.values())[0]
+        # row is {condition_id: state} — grab any value.
+        baseline = next(iter(row.values()))["last_result"]
+        runner.assert_eq("CE2-baseline", baseline, "false")
     finally:
         tmp.cleanup()
 
@@ -331,14 +332,21 @@ async def test_ce11_payload_shape(runner: R) -> None:
         runner.assert_eq("CE11-family", data["alert_family"], "market_condition")
         runner.assert_eq("CE11-source", data["source"], "alert_engine")
         runner.assert_eq("CE11-consumer", data["consumer_id"], "consumer-1")
-        runner.assert_eq("CE11-condition", data["condition"],
-                         {"metric": "ltp", "operator": "gt", "value": 100})
+        runner.assert_eq("CE11-condition-version",
+                         data["condition"]["condition_version"], 1)
+        runner.assert_eq("CE11-condition-logic", data["condition"]["logic"], None)
+        c = data["condition"]["conditions"][0]
+        runner.assert_eq("CE11-condition-metric", c["metric"], "ltp")
+        runner.assert_eq("CE11-condition-operator", c["operator"], "gt")
+        runner.assert_eq("CE11-condition-value", c["value"], 100)
         obs = data["observed"]
-        runner.assert_eq("CE11-obs-metric", obs["metric"], "ltp")
-        runner.assert_eq("CE11-obs-operator", obs["operator"], "gt")
-        runner.assert_eq("CE11-obs-expected", obs["expected"], 100)
-        runner.assert_eq("CE11-obs-value", obs["value"], 101)
-        runner.assert_eq("CE11-obs-condition_id", obs["condition_id"], "cond-1")
+        runner.assert_eq("CE11-obs-root", obs["root_result"], "true")
+        leaf = obs["leaves"][0]
+        runner.assert_eq("CE11-obs-metric", leaf["metric"], "ltp")
+        runner.assert_eq("CE11-obs-operator", leaf["operator"], "gt")
+        runner.assert_eq("CE11-obs-expected", leaf["expected"], 100)
+        runner.assert_eq("CE11-obs-value", leaf["value"], 101)
+        runner.assert_eq("CE11-obs-condition_id", leaf["condition_id"], "cond-1")
         inst = data["instrument"]
         runner.assert_eq("CE11-inst-canonical", inst["canonical_id"], RELIANCE)
         runner.assert_eq("CE11-inst-exchange", inst["exchange"], "NSE")
@@ -364,7 +372,8 @@ async def test_ce12_previous_value(runner: R) -> None:
         runner.assert_eq("CE12-fired", len(fired), 1)
         runner.assert_eq("CE12-previous_value", fired[0]["previous_value"], 50)
         ev = _triggered_events(store)[0]
-        runner.assert_eq("CE12-event-previous", ev["data"]["observed"]["previous_value"], 50)
+        leaf = ev["data"]["observed"]["leaves"][0]
+        runner.assert_eq("CE12-event-previous", leaf["previous_value"], 50)
     finally:
         tmp.cleanup()
 

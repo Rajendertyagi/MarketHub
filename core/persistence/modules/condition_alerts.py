@@ -1,24 +1,20 @@
 """
 Condition alert persistence (schema v13) — advanced market_condition alerts.
 
-Two new tables, added by the v12→v13 migration:
+Tables:
+    condition_alerts          definition rows (consumer-owned)
+    condition_runtime_state   per-node restart-safe evaluation state
 
-    condition_alerts          definition rows (consumer-owned, one condition each)
-    condition_runtime_state   minimal restart-safe evaluation state
-
-The runtime state is deliberately minimal (B2 frozen decision):
-    last_result    unknown | false | true          (LEVEL operators)
-    crossing_side  unknown | below_or_equal | above (CROSSING operators)
-
-``armed`` is NOT persisted: ONCE disables via ``enabled=0`` after a trigger;
-REPEAT LEVEL re-arms via ``last_result``; CROSSING re-arms via the persisted
-side. ``previous_value`` is NOT persisted for correctness — the side of the
-threshold is sufficient because condition definitions are immutable in B2.
+Runtime state is keyed by condition_id:
+    - For v1 (single leaf): one row keyed by the leaf's condition_id
+    - For v2 (group): one row per leaf + one synthetic "root-{alert_id}" row
 
 The atomic trigger transaction (``save_condition_trigger``) persists runtime
 state + alert row + the canonical ``alert.triggered`` event + consumer
 materialization in ONE ``BEGIN IMMEDIATE ... COMMIT``. A lost trigger is
-forbidden: any failure rolls back everything.
+forbidden.
+
+B4 adds condition_version=2 support with structured ALL/ANY groups.
 """
 
 from __future__ import annotations
@@ -35,7 +31,12 @@ from market.condition_metrics import METRIC_SET
 
 logger = logging.getLogger(__name__)
 
-CONDITION_VERSION = 1
+CONDITION_VERSION_V1 = 1
+CONDITION_VERSION_V2 = 2
+
+# Max nesting depth and max leaf count for v2 groups.
+MAX_CONDITION_DEPTH = 8
+MAX_CONDITION_LEAVES = 64
 
 VALID_OPERATORS = frozenset({
     "eq", "ne", "gt", "gte", "lt", "lte",
@@ -45,6 +46,7 @@ CROSSING_OPERATORS = frozenset({"crosses_above", "crosses_below"})
 LEVEL_OPERATORS = VALID_OPERATORS - CROSSING_OPERATORS
 
 VALID_TRIGGER_MODES = frozenset({"once", "repeat"})
+VALID_LOGIC_OPERATORS = frozenset({"all", "any"})
 
 # Runtime state values.
 LAST_RESULT_UNKNOWN = "unknown"
@@ -54,13 +56,16 @@ CROSSING_UNKNOWN = "unknown"
 CROSSING_BELOW_OR_EQUAL = "below_or_equal"
 CROSSING_ABOVE = "above"
 
+# Synthetic condition_id prefix for root group state.
+ROOT_CONDITION_ID_PREFIX = "root-"
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 # ---------------------------------------------------------------------------
-# Schema (v13)
+# Schema (v13) — unchanged, v2 reuses existing tables
 # ---------------------------------------------------------------------------
 
 
@@ -116,49 +121,55 @@ def migrate_v12_to_v13(conn: sqlite3.Connection) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Condition JSON validation (strict, deterministic)
+# Condition tree validation (v1 leaf + v2 groups)
 # ---------------------------------------------------------------------------
 
 
-def validate_condition_json(condition_json: Any) -> dict[str, Any]:
-    """Validate a condition definition; returns the normalized condition dict.
-
-    Rejects: ``condition_version != 1``, unknown metric/operator, non-numeric
-    (or bool) threshold, missing canonical_id, and any AND/OR group payload
-    (``logic`` / ``conditions`` / nested groups are not supported in B2).
-    """
-    if not isinstance(condition_json, dict):
-        raise ConditionValidationError("condition must be a JSON object")
-    if "logic" in condition_json or "conditions" in condition_json:
+def _validate_leaf(
+    node: Any, *, depth: int, leaf_count: list[int],
+    expected_canonical_id: str | None,
+) -> dict[str, Any]:
+    """Validate a single leaf node. Returns normalized leaf dict."""
+    if not isinstance(node, dict):
+        raise ConditionValidationError("leaf must be a JSON object")
+    if "logic" in node or "conditions" in node:
         raise ConditionValidationError(
-            "AND/OR groups are not supported in B2 (single condition only)")
-    version = condition_json.get("condition_version")
-    if version != CONDITION_VERSION:
+            "leaf must not contain logic/conditions (use a group node)")
+    version = node.get("condition_version")
+    if version is not None and version != CONDITION_VERSION_V1:
         raise ConditionValidationError(
-            f"unsupported condition_version: {version!r}")
-    condition_id = condition_json.get("condition_id")
+            f"leaf condition_version must be 1 (got {version!r})")
+    condition_id = node.get("condition_id")
     if not isinstance(condition_id, str) or not condition_id.strip():
         raise ConditionValidationError(
             "condition_id must be a non-empty string")
-    metric = condition_json.get("metric")
+    metric = node.get("metric")
     if metric not in METRIC_SET:
         raise ConditionValidationError(f"unknown metric: {metric!r}")
-    operator = condition_json.get("operator")
+    operator = node.get("operator")
     if operator not in VALID_OPERATORS:
         raise ConditionValidationError(f"unknown operator: {operator!r}")
-    value = condition_json.get("value")
+    value = node.get("value")
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ConditionValidationError(
             "value must be numeric (bool is not numeric)")
-    instrument = condition_json.get("instrument")
+    instrument = node.get("instrument")
     if not isinstance(instrument, dict):
         raise ConditionValidationError("instrument must be an object")
     canonical_id = instrument.get("canonical_id")
     if not isinstance(canonical_id, str) or not canonical_id.strip():
         raise ConditionValidationError(
             "instrument.canonical_id must be a non-empty string")
+    if expected_canonical_id is not None and canonical_id != expected_canonical_id:
+        raise ConditionValidationError(
+            f"same-instrument required: expected {expected_canonical_id!r}, "
+            f"got {canonical_id!r}")
+    leaf_count[0] += 1
+    if leaf_count[0] > MAX_CONDITION_LEAVES:
+        raise ConditionValidationError(
+            f"too many leaves (max {MAX_CONDITION_LEAVES})")
     return {
-        "condition_version": CONDITION_VERSION,
+        "condition_version": CONDITION_VERSION_V1,
         "condition_id": condition_id,
         "metric": metric,
         "operator": operator,
@@ -167,8 +178,86 @@ def validate_condition_json(condition_json: Any) -> dict[str, Any]:
     }
 
 
+def _get_canonical_id(node: dict[str, Any]) -> str | None:
+    """Extract canonical_id from a normalized condition node (leaf or group)."""
+    if node.get("condition_version") == CONDITION_VERSION_V1:
+        return node.get("instrument", {}).get("canonical_id")
+    # Group: recurse into first child.
+    children = node.get("conditions", [])
+    if children:
+        return _get_canonical_id(children[0])
+    return None
+
+
+def validate_condition_tree(
+    condition_json: Any,
+    *,
+    depth: int = 0,
+    leaf_count: list[int] | None = None,
+    expected_canonical_id: str | None = None,
+) -> dict[str, Any]:
+    """Validate a condition definition (v1 leaf or v2 group tree).
+
+    Returns the normalized tree dict. Raises ConditionValidationError on
+    any violation.
+    """
+    if leaf_count is None:
+        leaf_count = [0]
+    if not isinstance(condition_json, dict):
+        raise ConditionValidationError("condition must be a JSON object")
+
+    version = condition_json.get("condition_version")
+    if version is None:
+        # Implicit v1 leaf inside a v2 group.
+        version = CONDITION_VERSION_V1
+    if version == CONDITION_VERSION_V1:
+        # v1 leaf — delegate to legacy validator (without group rejection)
+        return _validate_leaf(
+            condition_json, depth=depth, leaf_count=leaf_count,
+            expected_canonical_id=expected_canonical_id)
+    elif version == CONDITION_VERSION_V2:
+        if depth >= MAX_CONDITION_DEPTH:
+            raise ConditionValidationError(
+                f"max condition depth ({MAX_CONDITION_DEPTH}) exceeded")
+        logic = condition_json.get("logic")
+        if logic not in VALID_LOGIC_OPERATORS:
+            raise ConditionValidationError(
+                f"invalid logic: {logic!r} (expected 'all' or 'any')")
+        conditions = condition_json.get("conditions")
+        if not isinstance(conditions, list) or len(conditions) == 0:
+            raise ConditionValidationError(
+                "conditions must be a non-empty array")
+        if len(conditions) > MAX_CONDITION_LEAVES:
+            raise ConditionValidationError(
+                f"too many children ({len(conditions)}), max {MAX_CONDITION_LEAVES}")
+        normalized_conditions = []
+        expected_canonical_id = None
+        for child in conditions:
+            nv = validate_condition_tree(
+                child, depth=depth + 1, leaf_count=leaf_count,
+                expected_canonical_id=expected_canonical_id)
+            # Derive expected_canonical_id from the first child.
+            if expected_canonical_id is None:
+                expected_canonical_id = _get_canonical_id(nv)
+            # Enforce same-instrument across siblings.
+            child_canonical = _get_canonical_id(nv)
+            if child_canonical != expected_canonical_id:
+                raise ConditionValidationError(
+                    f"same-instrument required within group: "
+                    f"{expected_canonical_id!r} != {child_canonical!r}")
+            normalized_conditions.append(nv)
+        return {
+            "condition_version": CONDITION_VERSION_V2,
+            "logic": logic,
+            "conditions": normalized_conditions,
+        }
+    else:
+        raise ConditionValidationError(
+            f"unsupported condition_version: {version!r}")
+
+
 # ---------------------------------------------------------------------------
-# Definition CRUD (internal APIs — not public MCP tools in B2)
+# Definition CRUD (internal APIs)
 # ---------------------------------------------------------------------------
 
 
@@ -190,9 +279,14 @@ def create_condition_alert(
     if trigger_mode not in VALID_TRIGGER_MODES:
         raise ConditionValidationError(
             f"invalid trigger_mode: {trigger_mode!r}")
-    condition = validate_condition_json(condition_json)
+    condition = validate_condition_tree(condition_json)
     alert_id = uuid.uuid4().hex
     now = _now()
+    # Extract canonical_instrument_id from the tree.
+    canonical_id = _get_canonical_id(condition)
+    if canonical_id is None:
+        raise ConditionValidationError(
+            "invalid market_condition: no instrument found in condition tree")
     conn.execute(
         "INSERT INTO condition_alerts "
         "(alert_id, consumer_id, name, enabled, trigger_mode, condition_json, "
@@ -201,7 +295,7 @@ def create_condition_alert(
         "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, NULL, 0)",
         (alert_id, consumer_id, name, trigger_mode,
          json.dumps(condition, ensure_ascii=False),
-         condition["instrument"]["canonical_id"],
+         canonical_id,
          json.dumps(metadata or {}, ensure_ascii=False),
          now, now),
     )
@@ -296,23 +390,55 @@ def load_enabled_condition_alerts(
 
 def load_condition_runtime_state(
     conn: sqlite3.Connection,
-) -> dict[str, dict[str, str]]:
-    """Return runtime state keyed by alert_id."""
+) -> dict[str, dict[str, dict[str, str]]]:
+    """Return runtime state keyed by alert_id → condition_id → state.
+
+    Each alert maps to a dict of {condition_id: {last_result, crossing_side}}.
+    The root state uses condition_id ``root-{alert_id}``.
+    """
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute(
             "SELECT alert_id, condition_id, last_result, crossing_side "
             "FROM condition_runtime_state").fetchall()
-        return {
-            r["alert_id"]: {
-                "condition_id": r["condition_id"],
+        result: dict[str, dict[str, dict[str, str]]] = {}
+        for r in rows:
+            aid = r["alert_id"]
+            if aid not in result:
+                result[aid] = {}
+            result[aid][r["condition_id"]] = {
                 "last_result": r["last_result"],
                 "crossing_side": r["crossing_side"],
             }
-            for r in rows
-        }
+        return result
     finally:
         conn.row_factory = None
+
+
+def save_condition_runtime_states(
+    conn: sqlite3.Connection,
+    *,
+    alert_id: str,
+    states: dict[str, dict[str, str]],
+    updated_at: str,
+) -> None:
+    """Batch upsert runtime state for multiple condition_ids of one alert."""
+    if not states:
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    for condition_id, state in states.items():
+        conn.execute(
+            "INSERT INTO condition_runtime_state "
+            "(condition_id, alert_id, last_result, crossing_side, updated_at) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(condition_id) DO UPDATE SET "
+            "alert_id=excluded.alert_id, "
+            "last_result=excluded.last_result, "
+            "crossing_side=excluded.crossing_side, "
+            "updated_at=excluded.updated_at",
+            (condition_id, alert_id,
+             state["last_result"], state["crossing_side"], updated_at))
+    conn.commit()
 
 
 def save_condition_runtime_state(
@@ -324,23 +450,17 @@ def save_condition_runtime_state(
     crossing_side: str,
     updated_at: str,
 ) -> None:
-    """Upsert runtime state for one condition (standalone state write)."""
-    conn.execute("BEGIN IMMEDIATE")
-    conn.execute(
-        "INSERT INTO condition_runtime_state "
-        "(condition_id, alert_id, last_result, crossing_side, updated_at) "
-        "VALUES (?, ?, ?, ?, ?) "
-        "ON CONFLICT(condition_id) DO UPDATE SET "
-        "alert_id=excluded.alert_id, "
-        "last_result=excluded.last_result, "
-        "crossing_side=excluded.crossing_side, "
-        "updated_at=excluded.updated_at",
-        (condition_id, alert_id, last_result, crossing_side, updated_at))
-    conn.commit()
+    """Upsert runtime state for one condition (backward-compat wrapper)."""
+    save_condition_runtime_states(
+        conn, alert_id=alert_id,
+        states={condition_id: {"last_result": last_result,
+                               "crossing_side": crossing_side}},
+        updated_at=updated_at,
+    )
 
 
 # ---------------------------------------------------------------------------
-# Atomic trigger transaction (B2 §38/§46)
+# Atomic trigger transaction (B2 §38/§46, extended for v2 groups)
 # ---------------------------------------------------------------------------
 
 
@@ -348,7 +468,6 @@ def save_condition_trigger(
     conn: sqlite3.Connection,
     *,
     alert_id: str,
-    condition_id: str,
     consumer_id: str,
     event_id: str,
     event_type: str,
@@ -356,17 +475,16 @@ def save_condition_trigger(
     timestamp: str,
     data: dict[str, Any],
     routing: dict[str, Any] | None,
-    last_result: str,
-    crossing_side: str,
     enabled: bool,
     trigger_count: int,
     last_triggered_at: str,
+    state_updates: dict[str, dict[str, str]],
     materialize_fn,
 ) -> int:
     """Atomically persist a condition trigger in ONE transaction.
 
     Order inside the single ``BEGIN IMMEDIATE ... COMMIT``:
-      1. condition_runtime_state update
+      1. condition_runtime_state updates (batch: leaves + root)
       2. condition_alerts update (enabled if once, trigger_count,
          last_triggered_at, updated_at)
       3. persistent ``alert.triggered`` INSERT
@@ -382,18 +500,20 @@ def save_condition_trigger(
     )
 
     conn.execute("BEGIN IMMEDIATE")
-    # 1. Runtime state.
-    conn.execute(
-        "INSERT INTO condition_runtime_state "
-        "(condition_id, alert_id, last_result, crossing_side, updated_at) "
-        "VALUES (?, ?, ?, ?, ?) "
-        "ON CONFLICT(condition_id) DO UPDATE SET "
-        "alert_id=excluded.alert_id, "
-        "last_result=excluded.last_result, "
-        "crossing_side=excluded.crossing_side, "
-        "updated_at=excluded.updated_at",
-        (condition_id, alert_id, last_result, crossing_side,
-         last_triggered_at))
+    # 1. Runtime state (batch upsert).
+    for condition_id, state in state_updates.items():
+        conn.execute(
+            "INSERT INTO condition_runtime_state "
+            "(condition_id, alert_id, last_result, crossing_side, updated_at) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(condition_id) DO UPDATE SET "
+            "alert_id=excluded.alert_id, "
+            "last_result=excluded.last_result, "
+            "crossing_side=excluded.crossing_side, "
+            "updated_at=excluded.updated_at",
+            (condition_id, alert_id,
+             state["last_result"], state["crossing_side"],
+             last_triggered_at))
     # 2. Alert row.
     conn.execute(
         "UPDATE condition_alerts SET "

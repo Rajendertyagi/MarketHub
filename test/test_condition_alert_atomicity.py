@@ -58,25 +58,35 @@ def _snapshot(store, alert_id):
     st = store.load_condition_runtime_state()
     events = [e for e in store.list_pending(100)
               if e["type"] == "alert.triggered"]
+    state = st.get(alert_id)
+    # Normalize: extract root state for compatibility.
+    root_key = "root-" + alert_id
+    if state and root_key in state:
+        norm_state = state[root_key]
+    elif state:
+        norm_state = next(iter(state.values())) if state else None
+    else:
+        norm_state = None
     return {
         "trigger_count": a["trigger_count"],
         "enabled": a["enabled"],
-        "state": st.get(alert_id),
+        "state": norm_state,
         "events": len(events),
     }
 
 
 def _trigger_kwargs(alert_id, **over):
     kw = dict(
-        alert_id=alert_id, condition_id="cond-1", consumer_id="consumer-1",
+        alert_id=alert_id, consumer_id="consumer-1",
         event_id="evt-1", event_type="alert.triggered",
         source="alert_engine", timestamp="2026-08-30T00:00:00+00:00",
         data={"version": 1, "alert_family": "market_condition"},
         routing={"targets": ["consumer-1"]},
-        last_result="true", crossing_side="unknown",
         enabled=True, trigger_count=1,
         last_triggered_at="2026-08-30T00:00:00+00:00",
-    )
+        state_updates={
+            "root-" + alert_id: {"last_result": "true",
+                                  "crossing_side": "unknown"}})
     kw.update(over)
     return kw
 

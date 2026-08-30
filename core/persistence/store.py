@@ -889,11 +889,30 @@ class EventStore:
         finally:
             conn.close()
 
-    def load_condition_runtime_state(self) -> dict[str, dict[str, str]]:
-        """Return runtime state keyed by alert_id."""
+    def load_condition_runtime_state(
+        self) -> dict[str, dict[str, dict[str, str]]]:
+        """Return runtime state keyed by alert_id → condition_id → state."""
         conn = self._open(self._db_path)
         try:
             return _condition_alerts.load_condition_runtime_state(conn)
+        finally:
+            conn.close()
+
+    def save_condition_runtime_states(
+        self,
+        *,
+        alert_id: str,
+        states: dict[str, dict[str, str]],
+    ) -> None:
+        """Batch upsert runtime state for multiple nodes of one alert."""
+        conn = self._open(self._db_path)
+        try:
+            _condition_alerts.save_condition_runtime_states(
+                conn, alert_id=alert_id, states=states,
+                updated_at=_condition_alerts._now())
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 
@@ -918,7 +937,6 @@ class EventStore:
         self,
         *,
         alert_id: str,
-        condition_id: str,
         consumer_id: str,
         event_id: str,
         event_type: str,
@@ -926,24 +944,23 @@ class EventStore:
         timestamp: str,
         data: dict[str, Any],
         routing: dict[str, Any] | None,
-        last_result: str,
-        crossing_side: str,
         enabled: bool,
         trigger_count: int,
         last_triggered_at: str,
+        state_updates: dict[str, dict[str, str]],
     ) -> int:
         """Atomically persist a condition trigger in ONE transaction.
 
-        Runtime state + alert row + persistent ``alert.triggered`` event +
-        consumer materialization commit together; any failure rolls back
-        everything (a lost trigger is forbidden). Returns the event sequence.
+        Runtime state (batch) + alert row + persistent ``alert.triggered``
+        event + consumer materialization commit together; any failure rolls
+        back everything (a lost trigger is forbidden). Returns the event
+        sequence.
         """
         conn = self._open(self._db_path)
         try:
             return _condition_alerts.save_condition_trigger(
                 conn,
                 alert_id=alert_id,
-                condition_id=condition_id,
                 consumer_id=consumer_id,
                 event_id=event_id,
                 event_type=event_type,
@@ -951,11 +968,10 @@ class EventStore:
                 timestamp=timestamp,
                 data=data,
                 routing=routing,
-                last_result=last_result,
-                crossing_side=crossing_side,
                 enabled=enabled,
                 trigger_count=trigger_count,
                 last_triggered_at=last_triggered_at,
+                state_updates=state_updates,
                 materialize_fn=lambda c, eid, seq, rt: _events.materialize_event_state(
                     c, eid, seq, rt, self.is_event_relevant_internal),
             )
