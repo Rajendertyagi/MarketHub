@@ -41,6 +41,13 @@ class AlertNotFoundError(ValidationError):
         super().__init__(f"alert not found: {alert_id}")
 
 
+class ConditionValidationError(ValidationError):
+    """A market_condition definition failed strict validation (B2)."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(f"invalid market_condition: {message}")
+
+
 class EventNotRelevantError(MCPEventServerError):
     """The event exists but is not relevant to the consumer."""
 
