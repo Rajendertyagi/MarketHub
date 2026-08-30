@@ -9,11 +9,10 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 def get_schema_version(conn: sqlite3.Connection) -> int:
@@ -113,6 +112,9 @@ def create_v7_schema(conn: sqlite3.Connection) -> None:
     # v12: alert trigger history (durable per-trigger audit log).
     from core.persistence.modules.products import create_alert_trigger_history_table
     create_alert_trigger_history_table(conn)
+    # v13: advanced market_condition alerts (definitions + runtime state).
+    from core.persistence.modules.condition_alerts import create_condition_alert_tables
+    create_condition_alert_tables(conn)
 
 
 def create_alerts_table(conn: sqlite3.Connection) -> None:

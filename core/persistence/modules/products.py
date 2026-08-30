@@ -255,6 +255,17 @@ def instruments_sync_state(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         conn.row_factory = None
 
 
+def list_all_instruments(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """All catalog rows (used to populate the B2 identity resolver)."""
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(
+            f"SELECT {', '.join(_INSTRUMENT_COLUMNS)} FROM instruments "
+            "ORDER BY provider, tradingsymbol")]
+    finally:
+        conn.row_factory = None
+
+
 # ---------------------------------------------------------------------------
 # Watchlists
 # ---------------------------------------------------------------------------

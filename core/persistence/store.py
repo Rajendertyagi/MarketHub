@@ -24,8 +24,26 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from core.errors import (
+    ConsumerNotFoundError,
+    EventNotFoundError,
+    EventNotRelevantError,
+)
+from core.persistence.modules import alerts as _alerts
+from core.persistence.modules import condition_alerts as _condition_alerts
+from core.persistence.modules import consumers as _consumers
+from core.persistence.modules import delivery as _delivery
+from core.persistence.modules import events as _events
+from core.persistence.modules import products as _products
+from core.persistence.modules import recent_events as _recent_events
+from core.persistence.modules import replay as _replay
+from core.persistence.modules import retention as _retention
+from core.persistence.modules import secrets as _secrets
+from core.persistence.modules import source_state as _source_state
+from core.persistence.modules.products import migrate_v10_to_v11, migrate_v11_to_v12
+from core.persistence.modules.condition_alerts import migrate_v12_to_v13
 from core.persistence.modules.schema import (
-    create_v3_schema_partial,
+    SCHEMA_VERSION,
     create_v7_schema,
     get_schema_version,
     migrate_v1_to_v3,
@@ -36,26 +54,8 @@ from core.persistence.modules.schema import (
     migrate_v6_to_v7,
     migrate_v7_to_v8,
     migrate_v8_to_v9,
-    SCHEMA_VERSION,
 )
-from core.persistence.modules.products import migrate_v10_to_v11
-from core.persistence.modules.products import migrate_v11_to_v12
 from core.persistence.modules.secrets import migrate_v9_to_v10
-from core.persistence.modules import alerts as _alerts
-from core.persistence.modules import consumers as _consumers
-from core.persistence.modules import delivery as _delivery
-from core.persistence.modules import events as _events
-from core.persistence.modules import products as _products
-from core.persistence.modules import recent_events as _recent_events
-from core.persistence.modules import replay as _replay
-from core.persistence.modules import retention as _retention
-from core.persistence.modules import secrets as _secrets
-from core.persistence.modules import source_state as _source_state
-from core.errors import (
-    ConsumerNotFoundError,
-    EventNotFoundError,
-    EventNotRelevantError,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +123,8 @@ class EventStore:
                         migrate_v10_to_v11(conn)
                     elif current_version == 11:
                         migrate_v11_to_v12(conn)
+                    elif current_version == 12:
+                        migrate_v12_to_v13(conn)
                     else:
                         raise RuntimeError(
                             f"unsupported schema version {current_version}; "
@@ -696,6 +698,14 @@ class EventStore:
         finally:
             conn.close()
 
+    def list_all_instruments(self) -> list[dict[str, Any]]:
+        """All catalog rows (used to populate the B2 identity resolver)."""
+        conn = self._open(self._db_path)
+        try:
+            return _products.list_all_instruments(conn)
+        finally:
+            conn.close()
+
     def list_watchlists(self) -> list[dict[str, Any]]:
         conn = self._open(self._db_path)
         try:
@@ -809,6 +819,149 @@ class EventStore:
         conn = self._open(self._db_path)
         try:
             return _products.load_enabled_alerts(conn)
+        finally:
+            conn.close()
+
+    # ─── Condition alerts (advanced market_condition, schema v13) ────────────
+    # Internal APIs only — NOT public MCP tools in B2. The 42-tool surface
+    # and CONTRACT_VERSION are frozen.
+
+    def create_condition_alert(
+        self, *, consumer_id: str, name: str | None = None,
+        trigger_mode: str = "repeat",
+        condition_json: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        """Create a condition alert; returns the new alert_id (UUID hex)."""
+        conn = self._open(self._db_path)
+        try:
+            return _condition_alerts.create_condition_alert(
+                conn, consumer_id=consumer_id, name=name,
+                trigger_mode=trigger_mode, condition_json=condition_json,
+                metadata=metadata)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def list_condition_alerts(
+        self, consumer_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _condition_alerts.list_condition_alerts(conn, consumer_id)
+        finally:
+            conn.close()
+
+    def get_condition_alert(self, alert_id: str) -> dict[str, Any] | None:
+        conn = self._open(self._db_path)
+        try:
+            return _condition_alerts.get_condition_alert(conn, alert_id)
+        finally:
+            conn.close()
+
+    def set_condition_alert_enabled(self, alert_id: str, enabled: bool) -> None:
+        conn = self._open(self._db_path)
+        try:
+            _condition_alerts.set_condition_alert_enabled(
+                conn, alert_id, enabled)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def delete_condition_alert(self, alert_id: str) -> None:
+        conn = self._open(self._db_path)
+        try:
+            _condition_alerts.delete_condition_alert(conn, alert_id)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def load_enabled_condition_alerts(self) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _condition_alerts.load_enabled_condition_alerts(conn)
+        finally:
+            conn.close()
+
+    def load_condition_runtime_state(self) -> dict[str, dict[str, str]]:
+        """Return runtime state keyed by alert_id."""
+        conn = self._open(self._db_path)
+        try:
+            return _condition_alerts.load_condition_runtime_state(conn)
+        finally:
+            conn.close()
+
+    def save_condition_runtime_state(
+        self, *, alert_id: str, condition_id: str,
+        last_result: str, crossing_side: str,
+    ) -> None:
+        """Upsert runtime state for one condition (standalone state write)."""
+        conn = self._open(self._db_path)
+        try:
+            _condition_alerts.save_condition_runtime_state(
+                conn, alert_id=alert_id, condition_id=condition_id,
+                last_result=last_result, crossing_side=crossing_side,
+                updated_at=datetime.now(timezone.utc).isoformat())
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def save_condition_trigger(
+        self,
+        *,
+        alert_id: str,
+        condition_id: str,
+        consumer_id: str,
+        event_id: str,
+        event_type: str,
+        source: str,
+        timestamp: str,
+        data: dict[str, Any],
+        routing: dict[str, Any] | None,
+        last_result: str,
+        crossing_side: str,
+        enabled: bool,
+        trigger_count: int,
+        last_triggered_at: str,
+    ) -> int:
+        """Atomically persist a condition trigger in ONE transaction.
+
+        Runtime state + alert row + persistent ``alert.triggered`` event +
+        consumer materialization commit together; any failure rolls back
+        everything (a lost trigger is forbidden). Returns the event sequence.
+        """
+        conn = self._open(self._db_path)
+        try:
+            return _condition_alerts.save_condition_trigger(
+                conn,
+                alert_id=alert_id,
+                condition_id=condition_id,
+                consumer_id=consumer_id,
+                event_id=event_id,
+                event_type=event_type,
+                source=source,
+                timestamp=timestamp,
+                data=data,
+                routing=routing,
+                last_result=last_result,
+                crossing_side=crossing_side,
+                enabled=enabled,
+                trigger_count=trigger_count,
+                last_triggered_at=last_triggered_at,
+                materialize_fn=lambda c, eid, seq, rt: _events.materialize_event_state(
+                    c, eid, seq, rt, self.is_event_relevant_internal),
+            )
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 
