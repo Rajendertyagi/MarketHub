@@ -24,7 +24,6 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
 
 from helpers.runner import R
 
-
 # ---------------------------------------------------------------------------
 # P6: public_base_url / OAuth callback edge cases
 # ---------------------------------------------------------------------------
@@ -82,9 +81,12 @@ def _make_v12_store(db_path):
 
 
 def _downgrade(db_path, target_version):
-    """Turn a v12 DB into a realistic older one by removing later additions."""
+    """Turn a current-schema DB into a realistic older one by removing later additions."""
     conn = sqlite3.connect(db_path)
     try:
+        if target_version <= 12:
+            conn.execute("DROP TABLE IF EXISTS condition_runtime_state")
+            conn.execute("DROP TABLE IF EXISTS condition_alerts")
         if target_version <= 11:
             conn.execute("DROP TABLE IF EXISTS alert_trigger_history")
         if target_version <= 10:
@@ -114,7 +116,7 @@ def test_migration_matrix(runner: R) -> None:
     _tables = {r[0] for r in _conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}
     _conn.close()
-    runner.assert_eq("MM-fresh-version", _ver, 12)
+    runner.assert_eq("MM-fresh-version", _ver, 13)
     for _t in ("alert_trigger_history", "watchlists", "market_alerts",
                "instruments", "consumer_event_state"):
         runner.assert_true("MM-fresh-table:" + _t, _t in _tables)
@@ -129,7 +131,7 @@ def test_migration_matrix(runner: R) -> None:
     _names = [r[0] for r in _conn.execute(
         "SELECT name FROM watchlists")]
     _conn.close()
-    runner.assert_eq("MM-v11-version", _ver, 12)
+    runner.assert_eq("MM-v11-version", _ver, 13)
     runner.assert_in("MM-v11-watchlist-preserved", "hardening-wl", _names)
 
     # realistic v10 -> v12 (product tables rebuilt empty, no data loss error)
@@ -142,7 +144,7 @@ def test_migration_matrix(runner: R) -> None:
     _tables = {r[0] for r in _conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}
     _conn.close()
-    runner.assert_eq("MM-v10-version", _ver, 12)
+    runner.assert_eq("MM-v10-version", _ver, 13)
     for _t in ("watchlists", "instruments", "alert_trigger_history"):
         runner.assert_true("MM-v10-table:" + _t, _t in _tables)
 
@@ -192,7 +194,7 @@ def test_migration_failure_safety(runner: R) -> None:
     _conn = sqlite3.connect(_db)
     _ver = _conn.execute("PRAGMA user_version").fetchone()[0]
     _conn.close()
-    runner.assert_eq("MF-recovers", _ver, 12)
+    runner.assert_eq("MF-recovers", _ver, 13)
 
 
 # ---------------------------------------------------------------------------
@@ -201,8 +203,10 @@ def test_migration_failure_safety(runner: R) -> None:
 
 def test_backup_from_v12(runner: R) -> None:
     from pathlib import Path
+
     from starlette.applications import Starlette
     from starlette.testclient import TestClient
+
     from api.product_routes import build_admin_routes
 
     _tmp = tempfile.mkdtemp()
@@ -239,7 +243,7 @@ def test_backup_from_v12(runner: R) -> None:
     _hist = _bconn.execute(
         "SELECT COUNT(*) FROM alert_trigger_history").fetchone()[0]
     _bconn.close()
-    runner.assert_eq("BK-schema-version", _ver, 12)
+    runner.assert_eq("BK-schema-version", _ver, 13)
     runner.assert_in("BK-watchlist-present", "hardening-wl", _wl_names)
     runner.assert_eq("BK-history-present", _hist, 1)
 
@@ -260,8 +264,8 @@ def test_backup_from_v12(runner: R) -> None:
 # ---------------------------------------------------------------------------
 
 def test_master_key_safety(runner: R) -> None:
-    from core.persistence.store import EventStore
     from app.secrets_store import CredentialStore
+    from core.persistence.store import EventStore
 
     _tmp = tempfile.mkdtemp()
 
@@ -337,11 +341,13 @@ def test_store_error_surfaced_by_api(runner: R) -> None:
     when ciphertext exists but the key cannot decrypt it."""
     import shutil
     from pathlib import Path
+
     from starlette.applications import Starlette
     from starlette.testclient import TestClient
-    from core.persistence.store import EventStore
-    from app.secrets_store import CredentialStore
+
     from api.product_routes import build_fyers_auth_routes
+    from app.secrets_store import CredentialStore
+    from core.persistence.store import EventStore
 
     _tmp = tempfile.mkdtemp()
     _db = os.path.join(_tmp, "events.db")
@@ -447,11 +453,12 @@ def test_log_redaction(runner: R) -> None:
 def test_diagnostics_endpoint(runner: R) -> None:
     from starlette.applications import Starlette
     from starlette.testclient import TestClient
+
     from api.product_routes import build_diagnostics_routes
 
     class _Store:
         def schema_version(self):
-            return 12
+            return 13
 
     _status = [{
         "name": "fyers", "type": "fyers_feed", "state": "auth_required",
@@ -469,7 +476,7 @@ def test_diagnostics_endpoint(runner: R) -> None:
         lambda: "http://localhost:7070"))
     _body = TestClient(_app).get("/api/diagnostics").json()
     runner.assert_eq("DG-version", _body["version"], "0.0.0-test")
-    runner.assert_eq("DG-schema", _body["schema_version"], 12)
+    runner.assert_eq("DG-schema", _body["schema_version"], 13)
     runner.assert_eq("DG-base",
                      _body["public_base_url"], "http://localhost:7070")
     _src = _body["sources"][0]
@@ -488,6 +495,7 @@ def test_diagnostics_endpoint(runner: R) -> None:
 
 def test_api_contract_safety(runner: R) -> None:
     from starlette.testclient import TestClient
+
     import app.server as _srv
 
     _c = TestClient(_srv.app)

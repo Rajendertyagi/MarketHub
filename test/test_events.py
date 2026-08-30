@@ -21,14 +21,12 @@ Run:
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import shutil
 import sqlite3
 import sys
 import tempfile
 import time
-from typing import Any
 
 # Add project root and test dir to path
 _PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -37,10 +35,22 @@ for _p in (_PROJECT_DIR, _TEST_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers.lifecycle import start_server, stop_server, restore_environment, get_server_url  # noqa: E402
-from helpers.mcp_client import call, read_res, list_tools_names, wait_source_ready, wait_for_event_count, publish_event  # noqa: E402
-from helpers.runner import R  # noqa: E402
-from core.persistence.store import EventStore  # noqa: E402
+from helpers.lifecycle import (
+    get_server_url,
+    restore_environment,
+    start_server,
+)
+from helpers.mcp_client import (
+    call,
+    list_tools_names,
+    publish_event,
+    read_res,
+    wait_for_event_count,
+    wait_source_ready,
+)
+from helpers.runner import R
+
+from core.persistence.store import EventStore
 
 
 async def t1_list_tools(runner: R) -> None:
@@ -71,21 +81,22 @@ async def t4_tool_schemas(runner: R) -> None:
     """T4: Tool schemas are valid JSON Schema."""
     name = "T4-tool-schemas"
     from mcp import ClientSession
-    from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
+    from mcp.client.streamable_http import (
+        streamable_http_client as streamablehttp_client,
+    )
 
     url = get_server_url()
-    async with streamablehttp_client(url) as (r, w):
-        async with ClientSession(r, w) as session:
-            await session.initialize()
-            result = await session.list_tools()
-            errors = []
-            for tool in result.tools:
-                schema = tool.input_schema if hasattr(tool, "input_schema") else None
-                if schema is None:
-                    errors.append(f"{tool.name}: no inputSchema")
-                elif not isinstance(schema, dict):
-                    errors.append(f"{tool.name}: inputSchema is not a dict")
-            runner.assert_true(name, len(errors) == 0, "; ".join(errors) if errors else "")
+    async with streamablehttp_client(url) as (r, w), ClientSession(r, w) as session:
+        await session.initialize()
+        result = await session.list_tools()
+        errors = []
+        for tool in result.tools:
+            schema = tool.input_schema if hasattr(tool, "input_schema") else None
+            if schema is None:
+                errors.append(f"{tool.name}: no inputSchema")
+            elif not isinstance(schema, dict):
+                errors.append(f"{tool.name}: inputSchema is not a dict")
+        runner.assert_true(name, len(errors) == 0, "; ".join(errors) if errors else "")
 
 
 async def t7_topic_filter(runner: R) -> None:
@@ -306,7 +317,7 @@ async def p8t3_schema_v9(runner: R) -> None:
             runner.assert_true(name + f"-table-{tbl}", row is not None,
                                f"table {tbl} missing")
         ver = conn.execute("PRAGMA user_version").fetchone()[0]
-        runner.assert_eq(name + "-version", ver, 12)
+        runner.assert_eq(name + "-version", ver, 13)
         conn.close()
     except Exception as exc:
         runner.fail(name, str(exc))

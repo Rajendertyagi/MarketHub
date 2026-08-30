@@ -118,6 +118,12 @@ _TEST_FILES: dict[str, str] = {
     "alert_history": "test_alert_history.py",
     "options_analytics": "test_options_analytics.py",
     "margin_shareholdings_greeks": "test_margin_shareholdings_greeks.py",
+    "condition_metrics": "test_condition_metrics.py",
+    "market_identity_resolver": "test_market_identity_resolver.py",
+    "condition_alert_store": "test_condition_alert_store.py",
+    "condition_alert_engine": "test_condition_alert_engine.py",
+    "condition_alert_atomicity": "test_condition_alert_atomicity.py",
+    "condition_alert_live_delivery": "test_condition_alert_live_delivery.py",
 }
 
 # Group -> ordered list of module keys. Order matters (fast/stable first).
@@ -163,6 +169,12 @@ GROUPS: dict[str, list[str]] = {
         "source_controls",
         "options_analytics",
         "margin_shareholdings_greeks",
+        "condition_metrics",
+        "market_identity_resolver",
+        "condition_alert_store",
+        "condition_alert_engine",
+        "condition_alert_atomicity",
+        "condition_alert_live_delivery",
     ],
     "source": ["source_lifecycle", "source_dedup", "source_controls", "alert_history", "fyers_config", "release_hardening"],
     "consumer": ["consumers", "acknowledgement"],
