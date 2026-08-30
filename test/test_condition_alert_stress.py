@@ -53,7 +53,7 @@ class _FakeQuote:
         self.greeks = None
 
 def _mk_quote(ltp, **kw):
-    return _FakeQuote(ltp, **kw)
+    return _FakeQuote(ltp, instrument_token="2885", **kw)
 
 def _create_alert(store, *, consumer_id="consumer-1", canonical_id="NSE:EQUITY:INE002A01018",
                   metric="ltp", operator="gt", threshold=25000.0,
@@ -385,7 +385,7 @@ async def test_identity_resolver_stress(runner):
     resolver = MarketInstrumentIdentityResolver()
     # Register catalog rows like a real store would
     for provider in ["upstox", "fyers", "test"]:
-        row = {"provider": provider, "exchange": "NSE", "type": "EQUITY",
+        row = {"provider": provider, "exchange": "NSE", "instrument_type": "EQUITY",
                "isin": "INE002A01018", "tradingsymbol": "RELIANCE-EQ",
                "instrument_token": f"{provider}-token",
                "name": "Reliance", "segment": "NSE"}
