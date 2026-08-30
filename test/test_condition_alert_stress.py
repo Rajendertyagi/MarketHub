@@ -182,7 +182,7 @@ async def test_multi_instrument_concurrency(runner):
         engine.reload()
         q_rel = _mk_quote(26000.0)
         f_rel = await engine.evaluate(q_rel)
-        q_inf = _mk_quote(1520.0, tradingsymbol="INFY")
+        q_inf = _mk_quote(1520.0, tradingsymbol="INFY", instrument_token="4078")
         f_inf = await engine.evaluate(q_inf)
         runner.assert_eq("S6-reliance-fired", len(f_rel), 20)
         runner.assert_eq("S6-infy-fired", len(f_inf), 20)
