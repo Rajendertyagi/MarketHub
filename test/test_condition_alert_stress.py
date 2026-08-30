@@ -57,14 +57,14 @@ def _mk_quote(ltp, **kw):
 
 def _create_alert(store, *, consumer_id="consumer-1", canonical_id="NSE:EQUITY:INE002A01018",
                   metric="ltp", operator="gt", threshold=25000.0,
-                  trigger_mode="repeat"):
+                  trigger_mode="repeat", condition_id=None):
     return store.create_condition_alert(
         consumer_id=consumer_id,
         name=f"test-{canonical_id[:10]}-{operator}-{threshold}",
         trigger_mode=trigger_mode,
         condition_json={
             "condition_version": 1,
-            "condition_id": "cond-" + consumer_id,
+            "condition_id": condition_id or f"cond-{uuid.uuid4().hex[:8]}",
             "metric": metric,
             "operator": operator,
             "value": threshold,
