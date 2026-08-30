@@ -78,6 +78,7 @@ async def test_100_alerts_one_instrument(runner):
     try:
         resolver = _make_resolver(store)
         engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
+        engine.reload()
         alert_ids = [_create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", threshold=25000.0+i) for i in range(100)]
         engine.reload()
         assert len(engine._index.get("NSE:EQUITY:INE002A01018", set())) == 100
@@ -98,6 +99,7 @@ async def test_500_alerts_one_instrument(runner):
     try:
         resolver = _make_resolver(store)
         engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
+        engine.reload()
         alert_ids = [_create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", threshold=20000.0+i*10) for i in range(500)]
         engine.reload()
         assert len(engine._index.get("NSE:EQUITY:INE002A01018", set())) == 500
@@ -115,6 +117,7 @@ async def test_1000_alerts_indexed(runner):
     try:
         resolver = _make_resolver(store)
         engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
+        engine.reload()
         reliance_ids = [_create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", threshold=25000.0+i) for i in range(10)]
         other_ids = [_create_alert(store, canonical_id="NSE:EQUITY:INE009A01021", threshold=1500.0+i) for i in range(990)]
         engine.reload()
@@ -135,6 +138,7 @@ async def test_burst_duplicate_race(runner):
     try:
         resolver = _make_resolver(store)
         engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
+        engine.reload()
         aid = _create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", operator="gt", threshold=25000.0, trigger_mode="repeat")
         engine.reload()
         quote = _mk_quote(26000.0)
@@ -152,6 +156,7 @@ async def test_multi_alert_concurrency(runner):
     try:
         resolver = _make_resolver(store)
         engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
+        engine.reload()
         alert_ids = [_create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", threshold=20000.0+i*100) for i in range(50)]
         engine.reload()
         quote = _mk_quote(25000.0)
@@ -171,6 +176,7 @@ async def test_multi_instrument_concurrency(runner):
     try:
         resolver = _make_resolver(store)
         engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
+        engine.reload()
         ids_rel = [_create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", threshold=25000.0+i) for i in range(20)]
         ids_infy = [_create_alert(store, canonical_id="NSE:EQUITY:INE009A01021", threshold=1500.0+i) for i in range(20)]
         engine.reload()
@@ -195,6 +201,7 @@ async def test_level_repeat_under_load(runner):
     try:
         resolver = _make_resolver(store)
         engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
+        engine.reload()
         aid = _create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", operator="gt", threshold=25000.0, trigger_mode="repeat")
         engine.reload()
         seq = [24000, 26000, 26000, 24000, 26000]
@@ -214,6 +221,7 @@ async def test_unknown_no_rearm(runner):
     try:
         resolver = _make_resolver(store)
         engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
+        engine.reload()
         aid = _create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", operator="gt", threshold=25000.0, trigger_mode="repeat")
         engine.reload()
         q1 = _mk_quote(26000.0)
@@ -236,7 +244,11 @@ async def test_crossing_under_load(runner):
     try:
         resolver = _make_resolver(store)
         engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
-        aid = _create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", operator="crosses_above", threshold=25000.0, trigger_mode="repeat")
+        engine.reload()
+        # crosses_above alert
+        aid_above = _create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", operator="crosses_above", threshold=25000.0, trigger_mode="repeat")
+        # crosses_below alert
+        aid_below = _create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", operator="crosses_below", threshold=25000.0, trigger_mode="repeat")
         engine.reload()
         q1 = _mk_quote(24000.0)
         fired1 = await engine.evaluate(q1)
@@ -250,8 +262,10 @@ async def test_crossing_under_load(runner):
         q4 = _mk_quote(24000.0)
         fired4 = await engine.evaluate(q4)
         runner.assert_eq("S9-cross-below", len(fired4), 1)
-        a = store.get_condition_alert(aid)
-        runner.assert_eq("S9-trigger_count", a["trigger_count"], 2)
+        a = store.get_condition_alert(aid_above)
+        runner.assert_eq("S9-trigger_count_above", a["trigger_count"], 1)
+        b = store.get_condition_alert(aid_below)
+        runner.assert_eq("S9-trigger_count_below", b["trigger_count"], 1)
     finally:
         import shutil; shutil.rmtree(tmp, ignore_errors=True)
 
@@ -261,6 +275,7 @@ async def test_write_amplification_level(runner):
     try:
         resolver = _make_resolver(store)
         engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
+        engine.reload()
         aid = _create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", operator="gt", threshold=25000.0, trigger_mode="repeat")
         engine.reload()
         q = _mk_quote(26000.0)
@@ -280,6 +295,7 @@ async def test_write_amplification_crossing(runner):
     try:
         resolver = _make_resolver(store)
         engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
+        engine.reload()
         aid = _create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", operator="crosses_above", threshold=25000.0, trigger_mode="repeat")
         engine.reload()
         q1 = _mk_quote(24000.0)
@@ -296,18 +312,28 @@ async def test_restart_stress(runner):
     store, tmp = _mk_store()
     try:
         resolver = _make_resolver(store)
-        level_ids = [_create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", operator="gt", threshold=25000.0+i, trigger_mode="repeat") for i in range(50)]
-        engine1 = ConditionAlertEngine(store, resolver=resolver, bus=None)
+        # Create 50 alerts all on same instrument with same threshold
+        level_ids = [_create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", operator="gt", threshold=25000.0, trigger_mode="repeat") for _ in range(50)]
+        engine1 = ConditionAlertEngine(store, resolver=resolver)
         engine1.reload()
-        for i in range(25):
-            q = _mk_quote(float(26000+i))
-            await engine1.evaluate(q)
-        engine2 = ConditionAlertEngine(store, resolver=resolver, bus=None)
+        # Fire all 50 with one quote
+        q = _mk_quote(26000.0)
+        fired = await engine1.evaluate(q)
+        runner.assert_eq("S12-fired-count", len(fired), 50)
+        # Verify all have trigger_count=1
+        for aid in level_ids:
+            a = store.get_condition_alert(aid)
+            runner.assert_eq(f"S12-count-{aid[:6]}", a["trigger_count"], 1)
+        # Simulate restart
+        engine2 = ConditionAlertEngine(store, resolver=resolver)
         engine2.reload()
-        for i in range(25):
-            q = _mk_quote(float(26000+i))
-            fired = await engine2.evaluate(q)
-            runner.assert_eq(f"S12-no-dup-{i}", len(fired), 0)
+        # Re-evaluate same quote — no duplicate fires (TRUE→TRUE)
+        fired2 = await engine2.evaluate(q)
+        runner.assert_eq("S12-no-dup-after-restart", len(fired2), 0)
+        # Verify counts unchanged
+        for aid in level_ids:
+            a = store.get_condition_alert(aid)
+            runner.assert_eq(f"S12-count-after-restart-{aid[:6]}", a["trigger_count"], 1)
     finally:
         import shutil; shutil.rmtree(tmp, ignore_errors=True)
 
@@ -317,6 +343,7 @@ async def test_enable_disable_delete_index(runner):
     try:
         resolver = _make_resolver(store)
         engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
+        engine.reload()
         aid = _create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", operator="gt", threshold=25000.0, trigger_mode="repeat")
         engine.reload()
         assert aid in engine._index.get("NSE:EQUITY:INE002A01018", set())
@@ -347,6 +374,7 @@ async def test_malformed_row_startup(runner):
         conn.commit(); conn.close()
         engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
         engine.reload()
+        engine.reload()
         runner.assert_true("S14-valid-loaded", aid in engine._index.get("NSE:EQUITY:INE002A01018", set()))
         runner.assert_true("S14-bad-skipped", not any(bad_id in a2 for a2 in engine._index.get("NSE:EQUITY:INE002A01018", set())))
     finally:
@@ -355,11 +383,17 @@ async def test_malformed_row_startup(runner):
 
 async def test_identity_resolver_stress(runner):
     resolver = MarketInstrumentIdentityResolver()
+    # Register catalog rows like a real store would
     for provider in ["upstox", "fyers", "test"]:
-        row = {"provider": provider, "exchange": "NSE", "type": "EQUITY", "isin": "INE002A01018", "tradingsymbol": "RELIANCE-EQ", "instrument_token": f"{provider}-token"}
+        row = {"provider": provider, "exchange": "NSE", "type": "EQUITY",
+               "isin": "INE002A01018", "tradingsymbol": "RELIANCE-EQ",
+               "instrument_token": f"{provider}-token",
+               "name": "Reliance", "segment": "NSE"}
         cid = resolver.canonical_id_for_row(row)
-        resolver.register(cid, [row["provider"], row["tradingsymbol"], row["instrument_token"]])
-    for alias in ["upstox", "RELIANCE-EQ", "upstox-token", "fyers", "fyers-token", "test", "test-token"]:
+        resolver.register(cid, [row["provider"], row["tradingsymbol"],
+                                row["instrument_token"]])
+    for alias in ["upstox", "RELIANCE-EQ", "upstox-token",
+                  "fyers", "fyers-token", "test", "test-token"]:
         resolved = resolver.resolve(alias)
         runner.assert_eq(f"S15-resolve-{alias}", resolved, "NSE:EQUITY:INE002A01018")
 
@@ -369,6 +403,7 @@ async def test_single_event_per_transition(runner):
     try:
         resolver = _make_resolver(store)
         engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
+        engine.reload()
         aid = _create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", operator="gt", threshold=25000.0, trigger_mode="repeat")
         engine.reload()
         q = _mk_quote(26000.0)
@@ -389,6 +424,7 @@ async def test_rapid_enable_disable(runner):
     try:
         resolver = _make_resolver(store)
         engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
+        engine.reload()
         aid = _create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", operator="gt", threshold=25000.0, trigger_mode="repeat")
         engine.reload()
         for _ in range(50):
