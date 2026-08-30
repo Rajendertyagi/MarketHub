@@ -19,3 +19,7 @@ websockets>=17.0,<18.0
 # app credentials stored in the SQLite `secrets` table (app/secrets_store.py).
 # Lower bound: stable Fernet API present since 42; upper bound: next major.
 cryptography>=44.0,<51
+
+# Test dependencies (required by test/run_all.py and individual test files)
+pytest>=8.0.0
+pytest-asyncio>=1.0.0
