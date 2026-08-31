@@ -95,7 +95,7 @@ from mcp_server.contract import (
 GLOBAL_URI = RESOURCE_EVENT_LATEST
 INBOX_TEMPLATE = "mcp-event://consumers/{consumer_id}/events"
 
-# The frozen 42-tool public surface (MCP-2B.4C must not change it).
+# The frozen 47-tool public surface (MCP-2B.4C + B5 must not change it).
 EXPECTED_TOOLS = {
     "system_ping",
     "market_quote", "market_depth", "market_status", "instrument_search",
@@ -114,6 +114,8 @@ EXPECTED_TOOLS = {
     "analyze_option_chain",
     "market_alert_create", "market_alert_list", "market_alert_enable",
     "market_alert_disable", "market_alert_delete",
+    "condition_alert_create", "condition_alert_list", "condition_alert_get",
+    "condition_alert_set_enabled", "condition_alert_delete",
 }
 
 
@@ -1255,11 +1257,11 @@ async def scenario_w(runner: R) -> None:
 
 
 # ===================================================================
-# Scenario X — exact 42 tools (REAL MCP E2E)
+# Scenario X — exact 47 tools (REAL MCP E2E)
 # ===================================================================
 
 async def scenario_x(runner: R) -> None:
-    name = "X-42-tools"
+    name = "X-47-tools"
     proc = None
     try:
         proc = await start_server(_test_source_cfg())
@@ -1269,7 +1271,7 @@ async def scenario_x(runner: R) -> None:
             async with Client(get_server_url()) as client:
                 result = await client.list_tools()
             names = {t.name for t in result.tools}
-            runner.assert_eq(name + "-" + tag + "-count", len(names), 42)
+            runner.assert_eq(name + "-" + tag + "-count", len(names), 47)
             runner.assert_eq(name + "-" + tag + "-set", names, EXPECTED_TOOLS)
             runner.assert_true(name + "-" + tag + "-no-dev",
                                not any(n.startswith("dev_") for n in names),
@@ -1281,10 +1283,10 @@ async def scenario_x(runner: R) -> None:
 
         await _snapshot("before")
 
-        # Reconnect (fresh session) -> still 42.
+        # Reconnect (fresh session) -> still 47.
         await _snapshot("after-reconnect")
 
-        # Restart -> still 42.
+        # Restart -> still 47.
         proc = await restart_server()
         await _snapshot("after-restart")
     except Exception as exc:
