@@ -49,7 +49,8 @@ def _mk_store() -> tuple[EventStore, tempfile.TemporaryDirectory]:
 def _condition(**over) -> dict:
     c = dict(condition_version=1, condition_id="cond-1", metric="ltp",
              operator="gt", value=25000,
-             instrument={"canonical_id": RELIANCE})
+             instrument={"canonical_id": RELIANCE},
+             _dependency_key=f"quote:{RELIANCE}")
     c.update(over)
     return c
 
