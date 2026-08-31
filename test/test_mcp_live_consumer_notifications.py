@@ -26,7 +26,7 @@ the modern 2026-07-28 ``subscriptions/listen`` protocol:
   * L12 legacy subscribe_resource fallback -> MCPError
   * L13 global latest regression
   * L14 3E reconnect/restart regression
-  * L15 exact 42-tool snapshot
+  * L15 exact 47-tool snapshot
 
 NO FIXED SLEEPS: every wait is a bounded async wait (asyncio.wait_for /
 deadline loops).
@@ -77,7 +77,7 @@ from mcp_server.contract import (  # noqa: E402
 GLOBAL_URI = RESOURCE_EVENT_LATEST
 INBOX_TEMPLATE = "mcp-event://consumers/{consumer_id}/events"
 
-# The frozen 42-tool public surface (MCP-2B.4B must not change it).
+# The frozen 47-tool public surface (MCP-2B.4B + B5 must not change it).
 EXPECTED_TOOLS = {
     "system_ping",
     "market_quote", "market_depth", "market_status", "instrument_search",
@@ -96,6 +96,8 @@ EXPECTED_TOOLS = {
     "analyze_option_chain",
     "market_alert_create", "market_alert_list", "market_alert_enable",
     "market_alert_disable", "market_alert_delete",
+    "condition_alert_create", "condition_alert_list", "condition_alert_get",
+    "condition_alert_set_enabled", "condition_alert_delete",
 }
 
 
@@ -382,12 +384,12 @@ async def l12_legacy_fallback(runner: R) -> None:
                 runner.ok("L12-error")
 
 
-async def l15_42_tool_snapshot(runner: R) -> None:
-    """L15: the public tool surface is exactly the frozen 42 tools."""
+async def l15_47_tool_snapshot(runner: R) -> None:
+    """L15: the public tool surface is exactly the frozen 47 tools."""
     async with Client(get_server_url()) as client:
         result = await client.list_tools()
     names = {t.name for t in result.tools}
-    runner.assert_eq("L15-count", len(names), 42)
+    runner.assert_eq("L15-count", len(names), 47)
     runner.assert_eq("L15-set", names, EXPECTED_TOOLS)
 
 
@@ -590,7 +592,7 @@ async def main() -> bool:
             await l2_resource_read(runner)
             await l3_resource_read_unknown(runner)
             await l12_legacy_fallback(runner)
-            await l15_42_tool_snapshot(runner)
+            await l15_47_tool_snapshot(runner)
         finally:
             stop_server(proc)
 
