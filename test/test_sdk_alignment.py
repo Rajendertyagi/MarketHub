@@ -10,7 +10,7 @@ Covers core SDK contract checks that must hold regardless of feature phase:
   * P7T1      Schema v5 — checkpoints table exists, FK works
   * P7T3      Sync tool works (system_ping)
   * P7T4      Async tools work (publish_event internal pipeline)
-  * P8T8      Extensibility proof — all original tools plus market tools (42 total) still present
+  * P8T8      Extensibility proof — all original tools plus market tools (47 total) still present
 
 Each test is independently runnable and starts/stops its own server instance.
 
@@ -21,9 +21,7 @@ Run:
 from __future__ import annotations
 
 import asyncio
-import json
 import os
-import subprocess
 import sys
 import time
 
@@ -34,21 +32,21 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers.lifecycle import (  # noqa: E402
-    start_server,
-    restore_environment,
+from helpers.lifecycle import (
     get_server_url,
+    restore_environment,
+    start_server,
 )
-from helpers.mcp_client import (  # noqa: E402
+from helpers.mcp_client import (
     call,
     list_tools_names,
     publish_event,
 )
-from helpers.runner import R  # noqa: E402
-from mcp_result import safe_teardown  # noqa: E402
+from helpers.runner import R
+from mcp_result import safe_teardown
 
-try:  # noqa: E402
-    import pytest  # noqa: E402
+try:
+    import pytest
 
     # These tests were written for standalone ``main()`` execution. Under pytest
     # the subprocess server is started by the module-scoped ``mcp_server`` fixture.
@@ -93,19 +91,20 @@ async def test_tool_schemas_are_valid_json_schema(runner: R) -> None:
     """T4: Tool schemas are valid JSON Schema."""
     name = "T4-tool-schemas"
     url = get_server_url()
-    from mcp import ClientSession  # noqa: E402
-    from mcp.client.streamable_http import streamable_http_client as streamablehttp_client  # noqa: E402
-    async with streamablehttp_client(url) as (r, w):
-        async with ClientSession(r, w) as session:
-            await session.initialize()
-            result = await session.list_tools()
-            errors = []
-            for tool in result.tools:
-                schema = getattr(tool, "input_schema", None)
-                if schema is None:
-                    errors.append(f"{tool.name}: no inputSchema")
-                elif not isinstance(schema, dict):
-                    errors.append(f"{tool.name}: inputSchema is not a dict")
+    from mcp import ClientSession
+    from mcp.client.streamable_http import (
+        streamable_http_client as streamablehttp_client,
+    )
+    async with streamablehttp_client(url) as (r, w), ClientSession(r, w) as session:
+        await session.initialize()
+        result = await session.list_tools()
+        errors = []
+        for tool in result.tools:
+            schema = getattr(tool, "input_schema", None)
+            if schema is None:
+                errors.append(f"{tool.name}: no inputSchema")
+            elif not isinstance(schema, dict):
+                errors.append(f"{tool.name}: inputSchema is not a dict")
     runner.assert_true(name, len(errors) == 0, "; ".join(errors) if errors else "")
 
 
@@ -139,8 +138,8 @@ async def test_async_tools_work(runner: R) -> None:
 # Legacy ID: P8T8
 async def test_extensibility_proof_original_tools_present(runner: R) -> None:
     """P8T8: extensibility proof - all original tools still present plus
-    product tools (42 total: +alert/market-alert/consumer/replay tools,
-    +analytics/strategy pricing tools; event_publish removed in MCP-2B.3D)."""
+    product tools (47 total: +alert/market-alert/consumer/replay/condition-alert
+    tools, +analytics/strategy pricing tools; event_publish removed in MCP-2B.3D)."""
     name = "P8T8-original-tools"
     tools = await list_tools_names()
     expected_tools = [
@@ -158,9 +157,12 @@ async def test_extensibility_proof_original_tools_present(runner: R) -> None:
         "compute_pcr", "compute_max_pain", "compute_top_oi_strikes",
         "compute_atm", "compute_iv_skew", "compute_oi_buildup",
         "compute_support_resistance", "compute_straddle", "compute_gex",
-        "compute_futures_basis", "price_long_straddle", "price_long_strangle",
+        "compute_futures_basis",         "price_long_straddle", "price_long_strangle",
         "price_bull_call_spread", "price_bear_put_spread", "price_iron_condor",
         "price_long_butterfly", "analyze_option_chain",
+        # B5: advanced condition-alert tools (market_condition family).
+        "condition_alert_create", "condition_alert_list", "condition_alert_get",
+        "condition_alert_set_enabled", "condition_alert_delete",
     ]
     for tool in expected_tools:
         runner.assert_in(name + f"-{tool}", tool, tools)
