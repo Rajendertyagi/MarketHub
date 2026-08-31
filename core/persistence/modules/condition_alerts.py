@@ -164,15 +164,20 @@ def _validate_leaf(
     if leaf_count[0] > MAX_CONDITION_LEAVES:
         raise ConditionValidationError(
             f"too many leaves (max {MAX_CONDITION_LEAVES})")
-    # B7: reconstruct dependency key from metric + instrument.
-    is_analytics = METRIC_SOURCE.get(metric) == "analytics"
-    dep_key: str | None = None
-    if is_analytics:
-        expiry = instrument.get("expiry")
-        if expiry:
-            dep_key = f"analytics:{canonical_id}:{expiry}"
+    # B7: preserve existing _dependency_key if already set (re-validation),
+    # otherwise reconstruct from metric + instrument.
+    existing_dep = node.get("_dependency_key")
+    if existing_dep:
+        dep_key = existing_dep
     else:
-        dep_key = f"quote:{canonical_id}"
+        is_analytics = METRIC_SOURCE.get(metric) == "analytics"
+        dep_key = None
+        if is_analytics:
+            expiry = instrument.get("expiry")
+            if expiry:
+                dep_key = f"analytics:{canonical_id}:{expiry}"
+        else:
+            dep_key = f"quote:{canonical_id}"
     return {
         "condition_version": CONDITION_VERSION_V1,
         "condition_id": condition_id,
