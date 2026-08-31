@@ -81,7 +81,7 @@ async def test_100_alerts_one_instrument(runner):
         engine.reload()
         alert_ids = [_create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", threshold=25000.0+i) for i in range(100)]
         engine.reload()
-        assert len(engine._index.get("NSE:EQUITY:INE002A01018", set())) == 100
+        assert len(engine._dep_index.get(f"quote:NSE:EQUITY:INE002A01018", set())) == 100
         quote = _mk_quote(26000.0)
         fired = await engine.evaluate(quote)
         runner.assert_eq("S1-100-fired", len(fired), 100)
@@ -102,7 +102,7 @@ async def test_500_alerts_one_instrument(runner):
         engine.reload()
         alert_ids = [_create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", threshold=20000.0+i*10) for i in range(500)]
         engine.reload()
-        assert len(engine._index.get("NSE:EQUITY:INE002A01018", set())) == 500
+        assert len(engine._dep_index.get(f"quote:NSE:EQUITY:INE002A01018", set())) == 500
         quote = _mk_quote(25000.0)
         fired = await engine.evaluate(quote)
         runner.assert_eq("S2-fired", len(fired), 500)
@@ -121,8 +121,8 @@ async def test_1000_alerts_indexed(runner):
         reliance_ids = [_create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", threshold=25000.0+i) for i in range(10)]
         other_ids = [_create_alert(store, canonical_id="NSE:EQUITY:INE009A01021", threshold=1500.0+i) for i in range(990)]
         engine.reload()
-        assert len(engine._index.get("NSE:EQUITY:INE002A01018", set())) == 10
-        assert len(engine._index.get("NSE:EQUITY:INE009A01021", set())) == 990
+        assert len(engine._dep_index.get(f"quote:NSE:EQUITY:INE002A01018", set())) == 10
+        assert len(engine._dep_index.get(f"quote:NSE:EQUITY:INE009A01021", set())) == 990
         quote = _mk_quote(26000.0)
         fired = await engine.evaluate(quote)
         runner.assert_eq("S3-reliance-fired", len(fired), 10)
@@ -348,16 +348,16 @@ async def test_enable_disable_delete_index(runner):
         engine.reload()
         aid = _create_alert(store, canonical_id="NSE:EQUITY:INE002A01018", operator="gt", threshold=25000.0, trigger_mode="repeat")
         engine.reload()
-        assert aid in engine._index.get("NSE:EQUITY:INE002A01018", set())
+        assert aid in engine._dep_index.get(f"quote:NSE:EQUITY:INE002A01018", set())
         store.set_condition_alert_enabled(aid, False)
         engine.reload()
-        runner.assert_true("S13-disabled-not-indexed", aid not in engine._index.get("NSE:EQUITY:INE002A01018", set()))
+        runner.assert_true("S13-disabled-not-indexed", aid not in engine._dep_index.get(f"quote:NSE:EQUITY:INE002A01018", set()))
         store.set_condition_alert_enabled(aid, True)
         engine.reload()
-        runner.assert_true("S13-re-enabled-indexed", aid in engine._index.get("NSE:EQUITY:INE002A01018", set()))
+        runner.assert_true("S13-re-enabled-indexed", aid in engine._dep_index.get(f"quote:NSE:EQUITY:INE002A01018", set()))
         store.delete_condition_alert(aid)
         engine.reload()
-        runner.assert_true("S13-deleted-not-indexed", not any(aid in v for v in engine._index.values()))
+        runner.assert_true("S13-deleted-not-indexed", not any(aid in v for v in engine._dep_index.values()))
     finally:
         import shutil; shutil.rmtree(tmp, ignore_errors=True)
 
@@ -377,8 +377,8 @@ async def test_malformed_row_startup(runner):
         engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
         engine.reload()
         engine.reload()
-        runner.assert_true("S14-valid-loaded", aid in engine._index.get("NSE:EQUITY:INE002A01018", set()))
-        runner.assert_true("S14-bad-skipped", not any(bad_id in a2 for a2 in engine._index.get("NSE:EQUITY:INE002A01018", set())))
+        runner.assert_true("S14-valid-loaded", aid in engine._dep_index.get(f"quote:NSE:EQUITY:INE002A01018", set()))
+        runner.assert_true("S14-bad-skipped", not any(bad_id in a2 for a2 in engine._dep_index.get(f"quote:NSE:EQUITY:INE002A01018", set())))
     finally:
         import shutil; shutil.rmtree(tmp, ignore_errors=True)
 
@@ -434,7 +434,7 @@ async def test_rapid_enable_disable(runner):
             engine.reload()
             store.set_condition_alert_enabled(aid, True)
             engine.reload()
-        runner.assert_true("S17-still-indexed", aid in engine._index.get("NSE:EQUITY:INE002A01018", set()))
+        runner.assert_true("S17-still-indexed", aid in engine._dep_index.get(f"quote:NSE:EQUITY:INE002A01018", set()))
     finally:
         import shutil; shutil.rmtree(tmp, ignore_errors=True)
 

@@ -16,7 +16,7 @@ Covers the condition group engine behaviors:
   * CG11 restart safety — state reloaded; no duplicate fire
   * CG12 max depth enforcement — depth 9 rejected
   * CG13 max leaves enforcement — 65 leaves rejected
-  * CG14 same-instrument enforcement within group
+   * CG14 multi-instrument group accepted (B7)
   * CG15 malformed tree rejected
   * CG16 concurrent evaluation — per-alert lock, no double-fire
   * CG17 write amplification — no state write when leaf unchanged
@@ -557,9 +557,10 @@ async def test_cg13_max_leaves(runner: R) -> None:
         tmp.cleanup()
 
 
-# ── CG14: Same-instrument enforcement ───────────────────────────────────
+# ── CG14: Multi-instrument group accepted (B7) ─────────────────────────
 
-async def test_cg14_same_instrument(runner: R) -> None:
+async def test_cg14_multi_instrument(runner: R) -> None:
+    """CG14: multi-instrument group accepted (B7 removed restriction)."""
     store, tmp = _mk_store()
     try:
         store.register_consumer("consumer-1")
@@ -573,13 +574,11 @@ async def test_cg14_same_instrument(runner: R) -> None:
         ]
         tree = {"condition_version": 2, "logic": "all", "conditions": conditions}
 
-        try:
-            store.create_condition_alert(
-                consumer_id="consumer-1", name="multi-inst",
-                trigger_mode="repeat", condition_json=tree)
-            runner.fail("CG14", "expected ConditionValidationError")
-        except ConditionValidationError:
-            runner.ok("CG14-multi-inst-rejected")
+        aid = store.create_condition_alert(
+            consumer_id="consumer-1", name="multi-inst",
+            trigger_mode="repeat", condition_json=tree)
+        runner.ok("CG14-multi-inst-accepted")
+        runner.assert_ge("CG14-aid-length", len(aid), 1)
     finally:
         tmp.cleanup()
 

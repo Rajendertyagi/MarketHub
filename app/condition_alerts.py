@@ -144,7 +144,10 @@ class ConditionAlertEngine:
         self._analytics = analytics_service
         self._lock = threading.Lock()
         self._alerts: dict[str, dict[str, Any]] = {}
-        self._index: dict[str, set[str]] = {}
+        # dependency_key → set of alert_ids (B7: multi-target routing)
+        self._dep_index: dict[str, set[str]] = {}
+        # alert_id → set of dependency_keys
+        self._alert_deps: dict[str, set[str]] = {}
         # alert_id → {"leaves": {cond_id: state}, "root": state}
         self._state: dict[str, dict[str, Any]] = {}
         self._last_values: dict[str, float] = {}
@@ -169,7 +172,8 @@ class ConditionAlertEngine:
             return
         with self._lock:
             self._alerts = {}
-            self._index = {}
+            self._dep_index = {}
+            self._alert_deps = {}
             self._state = {}
             for alert in alerts:
                 try:
@@ -183,8 +187,11 @@ class ConditionAlertEngine:
                 alert["_condition"] = condition
                 alert_id = alert["alert_id"]
                 self._alerts[alert_id] = alert
-                canonical_id = self._get_canonical_id(condition)
-                self._index.setdefault(canonical_id, set()).add(alert_id)
+                # B7: Build multi-target dependency index.
+                dep_keys = self._get_dependency_keys(condition)
+                self._alert_deps[alert_id] = dep_keys
+                for dk in dep_keys:
+                    self._dep_index.setdefault(dk, set()).add(alert_id)
                 # Build per-alert state from DB rows.
                 alert_rows = raw_state.get(alert_id, {})
                 leaves: dict[str, dict[str, str]] = {}
@@ -217,22 +224,39 @@ class ConditionAlertEngine:
     # ── Helpers ─────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _get_canonical_id(condition: dict[str, Any]) -> str:
-        """Return the chain key for an alert's condition tree.
+    def _get_dependency_keys(condition: dict[str, Any]) -> set[str]:
+        """Return all dependency keys for a condition tree (B7 multi-target).
 
-        For quote metrics: returns the canonical instrument id.
-        For analytics metrics: returns ``canonical_id:expiry``.
+        Quote deps: "quote:<canonical_id>"
+        Analytics deps: "analytics:<canonical_id>:<expiry>"
         """
-        if condition.get("condition_version") == CONDITION_VERSION_V1:
-            inst = condition.get("instrument", {})
-            cid = inst.get("canonical_id", "")
-            expiry = inst.get("expiry")
-            if expiry:
-                return f"{cid}:{expiry}"
-            return cid
+        keys: set[str] = set()
+        version = condition.get("condition_version")
+        if version == CONDITION_VERSION_V1:
+            dep = condition.get("_dependency_key")
+            if dep:
+                keys.add(dep)
+            elif "expiry" in condition.get("instrument", {}):
+                cid = condition.get("instrument", {}).get("canonical_id", "")
+                keys.add(f"analytics:{cid}:{condition['instrument']['expiry']}")
+            else:
+                cid = condition.get("instrument", {}).get("canonical_id", "")
+                if cid:
+                    keys.add(f"quote:{cid}")
+        elif version == CONDITION_VERSION_V2:
+            for child in condition.get("conditions", []):
+                keys |= ConditionAlertEngine._get_dependency_keys(child)
+        return keys
+
+    @staticmethod
+    def _first_canonical_id(condition: dict[str, Any]) -> str:
+        """Return the canonical_id of the first leaf in the tree."""
+        version = condition.get("condition_version")
+        if version == CONDITION_VERSION_V1:
+            return condition.get("instrument", {}).get("canonical_id", "")
         children = condition.get("conditions", [])
         if children:
-            return ConditionAlertEngine._get_canonical_id(children[0])
+            return ConditionAlertEngine._first_canonical_id(children[0])
         return ""
 
     def _get_alert_and_state(
@@ -252,12 +276,15 @@ class ConditionAlertEngine:
         """Check one canonical Quote against its resolved condition alerts.
 
         Returns newly-fired trigger records (already persisted atomically).
+        B7: uses dependency index — only evaluates alerts that depend on
+        this quote's canonical identity.
         """
         canonical_id = self._resolver.resolve_quote(quote)
         if canonical_id is None:
             return []
+        dep_key = f"quote:{canonical_id}"
         with self._lock:
-            alert_ids = list(self._index.get(canonical_id, ()))
+            alert_ids = list(self._dep_index.get(dep_key, ()))
         fired: list[dict[str, Any]] = []
         for alert_id in alert_ids:
             lock = self._alert_locks.setdefault(alert_id, asyncio.Lock())
@@ -298,7 +325,7 @@ class ConditionAlertEngine:
         # Analytics metrics are evaluated against the cached snapshot,
         # not per-quote. Quote is ignored for analytics-backed leaves.
         if METRIC_SOURCE.get(metric) == "analytics" and self._analytics is not None:
-            value = self._extract_analytics_value(alert, metric)
+            value = self._extract_analytics_value(alert, condition, metric)
         else:
             value = extract_metric(quote, metric)
         leaf_state = state["leaves"].get(
@@ -369,7 +396,11 @@ class ConditionAlertEngine:
                 metric = child["metric"]
                 operator = child["operator"]
                 threshold = child["value"]
-                value = extract_metric(quote, metric)
+                if (METRIC_SOURCE.get(metric) == "analytics"
+                        and self._analytics is not None):
+                    value = self._extract_analytics_value(alert, child, metric)
+                else:
+                    value = extract_metric(quote, metric)
                 prev_leaf_state = state["leaves"].get(
                     cid,
                     {"last_result": LAST_RESULT_UNKNOWN,
@@ -445,7 +476,7 @@ class ConditionAlertEngine:
         return leaves[cid]
 
     def _extract_analytics_value(
-        self, alert: dict[str, Any], metric: str
+        self, alert: dict[str, Any], leaf: dict[str, Any], metric: str
     ) -> float | None:
         """Extract an analytics metric value from the cached snapshot.
 
@@ -453,9 +484,8 @@ class ConditionAlertEngine:
         """
         if self._analytics is None:
             return None
-        # Determine chain key from the alert's condition tree.
-        condition = alert["_condition"]
-        chain_key = self._chain_key_from_condition(condition)
+        # Determine chain key from the specific leaf.
+        chain_key = self._chain_key_from_leaf(leaf)
         if chain_key is None:
             return None
         snap = self._analytics.get_snapshot(chain_key)
@@ -467,20 +497,16 @@ class ConditionAlertEngine:
             return None
 
     @staticmethod
-    def _chain_key_from_condition(condition: dict[str, Any]) -> str | None:
-        """Extract chain_key (canonical_id:expiry) from a condition tree."""
-        version = condition.get("condition_version")
-        if version == CONDITION_VERSION_V1:
-            inst = condition.get("instrument", {})
-            cid = inst.get("canonical_id")
-            expiry = inst.get("expiry")
-            if cid and expiry:
-                return f"{cid}:{expiry}"
-            return None
-        if version == CONDITION_VERSION_V2:
-            children = condition.get("conditions", [])
-            if children:
-                return ConditionAlertEngine._chain_key_from_condition(children[0])
+    def _chain_key_from_leaf(leaf: dict[str, Any]) -> str | None:
+        """Extract chain key from a single leaf condition."""
+        dep = leaf.get("_dependency_key")
+        if dep:
+            return dep
+        inst = leaf.get("instrument", {})
+        cid = inst.get("canonical_id")
+        expiry = inst.get("expiry")
+        if cid and expiry:
+            return f"analytics:{cid}:{expiry}"
         return None
 
     async def _evaluate_subgroup(
@@ -508,7 +534,7 @@ class ConditionAlertEngine:
                 if (METRIC_SOURCE.get(metric) == "analytics"
                         and self._analytics is not None
                         and alert is not None):
-                    value = self._extract_analytics_value(alert, metric)
+                    value = self._extract_analytics_value(alert, sub_child, metric)
                 else:
                     value = extract_metric(quote, metric)
                 prev = self._get_subgroup_state(state, sub_cid)
@@ -684,8 +710,10 @@ class ConditionAlertEngine:
             alert["last_triggered_at"] = last_triggered_at
             if one_shot:
                 alert["enabled"] = False
-                canonical_id = self._get_canonical_id(condition)
-                self._index.get(canonical_id, set()).discard(alert_id)
+                # B7: remove from all dependency sets.
+                for dk in self._alert_deps.get(alert_id, ()):
+                    self._dep_index.get(dk, set()).discard(alert_id)
+                self._alert_deps.pop(alert_id, None)
 
         try:
             await events.finalize_persisted_event(event, self._store, self._bus)
@@ -737,10 +765,11 @@ class ConditionAlertEngine:
         self, alert: dict[str, Any], quote: Any
     ) -> dict[str, Any]:
         condition = alert["_condition"]
-        canonical_id = self._get_canonical_id(condition)
-        context = self._resolver.context_for(canonical_id)
+        # Extract primary canonical_id for context lookup (first leaf).
+        cid = self._first_canonical_id(condition)
+        context = self._resolver.context_for(cid or "")
         payload: dict[str, Any] = {
-            "canonical_id": canonical_id,
+            "canonical_id": cid,
             "exchange": quote.exchange,
             "instrument_type": context.get("instrument_type"),
             "tradingsymbol": quote.tradingsymbol,

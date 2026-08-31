@@ -160,10 +160,6 @@ def _validate_leaf(
     if not isinstance(canonical_id, str) or not canonical_id.strip():
         raise ConditionValidationError(
             "instrument.canonical_id must be a non-empty string")
-    if expected_canonical_id is not None and canonical_id != expected_canonical_id:
-        raise ConditionValidationError(
-            f"same-instrument required: expected {expected_canonical_id!r}, "
-            f"got {canonical_id!r}")
     leaf_count[0] += 1
     if leaf_count[0] > MAX_CONDITION_LEAVES:
         raise ConditionValidationError(
@@ -231,20 +227,10 @@ def validate_condition_tree(
             raise ConditionValidationError(
                 f"too many children ({len(conditions)}), max {MAX_CONDITION_LEAVES}")
         normalized_conditions = []
-        expected_canonical_id = None
         for child in conditions:
             nv = validate_condition_tree(
                 child, depth=depth + 1, leaf_count=leaf_count,
-                expected_canonical_id=expected_canonical_id)
-            # Derive expected_canonical_id from the first child.
-            if expected_canonical_id is None:
-                expected_canonical_id = _get_canonical_id(nv)
-            # Enforce same-instrument across siblings.
-            child_canonical = _get_canonical_id(nv)
-            if child_canonical != expected_canonical_id:
-                raise ConditionValidationError(
-                    f"same-instrument required within group: "
-                    f"{expected_canonical_id!r} != {child_canonical!r}")
+                expected_canonical_id=None)
             normalized_conditions.append(nv)
         return {
             "condition_version": CONDITION_VERSION_V2,

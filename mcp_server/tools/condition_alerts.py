@@ -11,11 +11,13 @@ identity internally — callers never need broker tokens.
 Condition schema:
   * v1 (condition_version=1): a single leaf
       {condition_version:1, metric, operator, value, instrument:{...}}
-  * v2 (condition_version=2): a same-instrument nested all/any group
+  * v2 (condition_version=2): a nested all/any group
       {condition_version:2, logic:"all"|"any", conditions:[...]}
 
-Metrics and operators are fixed enums (see the module constants). No PCR /
-Max Pain and no multi-instrument groups yet (B6/B7).
+Metrics and operators are fixed enums (see the module constants).
+Supports multi-instrument, multi-chain analytics, and mixed quote/analytics groups.
+Instrument references are human/canonical (exchange+symbol,
+exchange+underlying+expiry, ...) — no broker tokens required.
 """
 
 from __future__ import annotations
@@ -170,9 +172,7 @@ def _tree_canonical_id(node: dict[str, Any]) -> str | None:
 
 
 def _normalize_leaf(services: Any, node: dict[str, Any], *,
-                    leaf_count: list[int],
-                    expected_canonical_id: str | None,
-                    expected_expiry: str | None = None) -> dict[str, Any]:
+                    leaf_count: list[int]) -> dict[str, Any]:
     if "logic" in node or "conditions" in node:
         raise ConditionValidationError(
             "leaf must not contain logic/conditions (use a group node)")
@@ -193,49 +193,26 @@ def _normalize_leaf(services: Any, node: dict[str, Any], *,
     is_analytics = METRIC_SOURCE.get(metric) == "analytics"
 
     if is_analytics:
-        # Analytics metrics require expiry in the instrument reference.
         expiry = (instrument.get("expiry") or "").strip()
         if not expiry:
             raise ConditionValidationError(
                 "analytics metric requires instrument.expiry (YYYY-MM-DD)")
-        # For analytics, resolve the underlying to get canonical_id.
-        # The expiry is part of the chain identity, not the instrument identity.
         ref_without_expiry = {k: v for k, v in instrument.items()
                               if k != "expiry"}
         resolved = _resolve_public_instrument(services, ref_without_expiry)
         canonical_id = resolved["canonical_id"]
-        # Validate expiry format.
         try:
             from datetime import datetime
             datetime.strptime(expiry, "%Y-%m-%d")
         except (ValueError, TypeError):
             raise ConditionValidationError(
                 f"instrument.expiry must be YYYY-MM-DD (got {expiry!r})")
-        chain_key = f"{canonical_id}:{expiry}"
-        if expected_canonical_id is not None:
-            if canonical_id != expected_canonical_id:
-                raise ConditionValidationError(
-                    f"same-chain required: expected canonical {expected_canonical_id!r}, "
-                    f"got {canonical_id!r}")
-            if expiry != expected_expiry:
-                raise ConditionValidationError(
-                    f"same-chain required: expected expiry {expected_expiry!r}, "
-                    f"got {expiry!r}")
+        chain_key = f"analytics:{canonical_id}:{expiry}"
     else:
-        # Quote metric: resolve via catalog, no expiry required.
         resolved = _resolve_public_instrument(services, instrument)
         canonical_id = resolved["canonical_id"]
-        if expected_canonical_id is not None and canonical_id != expected_canonical_id:
-            raise ConditionValidationError(
-                f"same-instrument required: expected {expected_canonical_id!r}, "
-                f"got {canonical_id!r}")
-        # Reject mixed-source groups.
-        if expected_expiry is not None:
-            raise ConditionValidationError(
-                "quote metric in analytics group not supported (B7)")
-        chain_key = canonical_id
+        chain_key = f"quote:{canonical_id}"
 
-    # Unsupported metric for instrument (public-layer soft check).
     if metric in _GREEKS_METRICS and resolved["instrument_type"] != "OPTION":
         raise ConditionValidationError(
             f"metric {metric!r} is only supported on OPTION instruments")
@@ -250,17 +227,15 @@ def _normalize_leaf(services: Any, node: dict[str, Any], *,
         "operator": operator,
         "value": value,
         "instrument": {"canonical_id": canonical_id},
+        "_dependency_key": chain_key,
     }
     if is_analytics:
         result["instrument"]["expiry"] = expiry
-        result["_chain_key"] = chain_key
     return result
 
 
 def _normalize_group(services: Any, node: dict[str, Any], *,
-                     depth: int, leaf_count: list[int],
-                     expected_canonical_id: str | None,
-                     expected_expiry: str | None = None) -> dict[str, Any]:
+                     depth: int, leaf_count: list[int]) -> dict[str, Any]:
     if depth >= MAX_CONDITION_DEPTH:
         raise ConditionValidationError(
             f"max condition depth ({MAX_CONDITION_DEPTH}) exceeded")
@@ -275,33 +250,14 @@ def _normalize_group(services: Any, node: dict[str, Any], *,
         raise ConditionValidationError(
             f"too many children ({len(conditions)}), max {MAX_CONDITION_LEAVES}")
     normalized: list[dict[str, Any]] = []
-    expected = expected_canonical_id
-    expected_exp = expected_expiry
     for child in conditions:
         if not isinstance(child, dict):
             raise ConditionValidationError("each condition must be an object")
         if child.get("condition_version") == CONDITION_VERSION_V2:
             nv = _normalize_group(services, child, depth=depth + 1,
-                                  leaf_count=leaf_count,
-                                  expected_canonical_id=expected,
-                                  expected_expiry=expected_exp)
+                                  leaf_count=leaf_count)
         else:
-            nv = _normalize_leaf(services, child, leaf_count=leaf_count,
-                                 expected_canonical_id=expected,
-                                 expected_expiry=expected_exp)
-        child_canonical = _tree_canonical_id(nv)
-        child_expiry = nv.get("instrument", {}).get("expiry")
-        if expected is None:
-            expected = child_canonical
-            expected_exp = child_expiry
-        if child_canonical != expected:
-            raise ConditionValidationError(
-                f"same-chain required within group: "
-                f"{expected!r} != {child_canonical!r}")
-        if expected_exp is not None and child_expiry != expected_exp:
-            raise ConditionValidationError(
-                f"same-chain required within group: "
-                f"expiry {expected_exp!r} != {child_expiry!r}")
+            nv = _normalize_leaf(services, child, leaf_count=leaf_count)
         normalized.append(nv)
     return {"condition_version": CONDITION_VERSION_V2, "logic": logic,
             "conditions": normalized}
@@ -312,8 +268,8 @@ def _normalize_public_condition(services: Any,
     """Convert a public condition (v1 leaf or v2 group) to the internal tree.
 
     Assigns condition_ids, resolves instrument references to canonical ids,
-    and enforces depth/leaf/same-instrument limits. Raises
-    ConditionValidationError on any violation.
+    and enforces depth/leaf limits. Multi-instrument and mixed-source groups
+    are supported. Raises ConditionValidationError on any violation.
     """
     if not isinstance(condition, dict):
         raise ConditionValidationError("condition must be a JSON object")
@@ -323,10 +279,9 @@ def _normalize_public_condition(services: Any,
             f"condition_version must be 1 or 2 (got {version!r})")
     leaf_count: list[int] = [0]
     if version == CONDITION_VERSION_V1:
-        return _normalize_leaf(services, condition, leaf_count=leaf_count,
-                               expected_canonical_id=None)
+        return _normalize_leaf(services, condition, leaf_count=leaf_count)
     return _normalize_group(services, condition, depth=0,
-                            leaf_count=leaf_count, expected_canonical_id=None)
+                            leaf_count=leaf_count)
 
 
 # ---------------------------------------------------------------------------
@@ -389,16 +344,29 @@ def register_condition_alert_tools(mcp, services, **kwargs) -> None:
         return alert
 
     def _extract_analytics_chains(condition: dict[str, Any]) -> set[str]:
-        """Extract chain keys from a normalized condition tree."""
+        """Extract analytics chain keys from a normalized condition tree."""
         keys: set[str] = set()
         version = condition.get("condition_version")
         if version == CONDITION_VERSION_V1:
-            chain_key = condition.get("_chain_key")
-            if chain_key:
-                keys.add(chain_key)
+            dep = condition.get("_dependency_key")
+            if dep:
+                keys.add(dep)
         elif version == CONDITION_VERSION_V2:
             for child in condition.get("conditions", []):
                 keys |= _extract_analytics_chains(child)
+        return keys
+
+    def _extract_all_deps(condition: dict[str, Any]) -> set[str]:
+        """Extract all dependency keys (quote + analytics) from a normalized condition tree."""
+        keys: set[str] = set()
+        version = condition.get("condition_version")
+        if version == CONDITION_VERSION_V1:
+            dep = condition.get("_dependency_key")
+            if dep:
+                keys.add(dep)
+        elif version == CONDITION_VERSION_V2:
+            for child in condition.get("conditions", []):
+                keys |= _extract_all_deps(child)
         return keys
 
     def _register_chains_for_alert(alert: dict[str, Any]) -> None:
@@ -432,9 +400,9 @@ def register_condition_alert_tools(mcp, services, **kwargs) -> None:
         """Create a consumer-owned advanced market-condition alert.
 
         condition_version=1 is a single leaf; condition_version=2 is a
-        same-instrument nested all/any group. Metrics and operators are fixed
-        enums. No PCR/Max Pain and no multi-instrument yet. Instrument
-        references are human/canonical (exchange+symbol,
+        nested all/any group supporting multi-instrument and mixed
+        quote/analytics targets. Metrics and operators are fixed enums.
+        Instrument references are human/canonical (exchange+symbol,
         exchange+underlying+expiry, ...) — no broker tokens required.
         """
         if store is None:

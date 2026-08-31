@@ -1,4 +1,4 @@
-# MCP-1 Market-Data Tool Contract (v2.4.0)
+# MCP-1 Market-Data Tool Contract (v2.5.0)
 
 > Frozen reference document for the MCP public tool surface.
 > Any change to tool names, inputs, or output shapes requires a contract version bump.
@@ -18,6 +18,7 @@
 | **MCP-2B Public** | 16 | Alerts, events, consumers, replay |
 | **B5 Advanced Alerts** | 5 | condition_alert_* (public MCP exposure of market_condition engine) |
 | **B6 Analytics Metrics** | 4 | pcr_oi, pcr_volume, max_pain, iv_skew (analytics-backed condition metrics) |
+| **B7 Multi-Target** | 0 new tools | Remove same-instrument/same-chain/mixed-source restrictions; multi-target dependency routing |
 | **Total Public** | **47** | |
 | **Deferred / Internal** | 0 | All previously deferred tools are now finalized |
 

@@ -232,8 +232,7 @@ async def test_ba_m3_different_chain_rejected(runner: R) -> None:
                 ],
             },
         )
-        runner.assert_in("BA-M3-error", "error", result)
-        runner.assert_in("BA-M3-msg", "same-chain", result["error"].lower())
+        runner.assert_eq("BA-M3-diff-chain-ok", result["status"], "created")
     finally:
         tmp.cleanup()
 
