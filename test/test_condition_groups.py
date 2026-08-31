@@ -790,7 +790,7 @@ async def main() -> bool:
     await test_cg11_restart_safety(runner)
     await test_cg12_max_depth(runner)
     await test_cg13_max_leaves(runner)
-    await test_cg14_same_instrument(runner)
+    await test_cg14_multi_instrument(runner)
     await test_cg15_malformed(runner)
     await test_cg16_concurrent(runner)
     await test_cg17_write_amplification(runner)

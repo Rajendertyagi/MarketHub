@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core.errors import ConditionValidationError, ConsumerNotFoundError
-from market.condition_metrics import METRIC_SET
+from market.condition_metrics import METRIC_SET, METRIC_SOURCE
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +164,15 @@ def _validate_leaf(
     if leaf_count[0] > MAX_CONDITION_LEAVES:
         raise ConditionValidationError(
             f"too many leaves (max {MAX_CONDITION_LEAVES})")
+    # B7: reconstruct dependency key from metric + instrument.
+    is_analytics = METRIC_SOURCE.get(metric) == "analytics"
+    dep_key: str | None = None
+    if is_analytics:
+        expiry = instrument.get("expiry")
+        if expiry:
+            dep_key = f"analytics:{canonical_id}:{expiry}"
+    else:
+        dep_key = f"quote:{canonical_id}"
     return {
         "condition_version": CONDITION_VERSION_V1,
         "condition_id": condition_id,
@@ -171,6 +180,7 @@ def _validate_leaf(
         "operator": operator,
         "value": value,
         "instrument": {"canonical_id": canonical_id},
+        "_dependency_key": dep_key,
     }
 
 

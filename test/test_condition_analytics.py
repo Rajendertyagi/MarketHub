@@ -310,11 +310,11 @@ async def test_ba_m4_same_chain_accepted(runner: R) -> None:
 
 
 # ---------------------------------------------------------------------------
-# BA-M5: Mixed quote + analytics rejection
+# BA-M5: Mixed quote + analytics accepted (B7)
 # ---------------------------------------------------------------------------
 
-async def test_ba_m5_mixed_source_rejected(runner: R) -> None:
-    """BA-M5: quote metric + analytics metric in same group → rejected."""
+async def test_ba_m5_mixed_source_accepted(runner: R) -> None:
+    """BA-M5: quote metric + analytics metric in same group → accepted (B7)."""
     store, tmp = _mk_store()
     try:
         store.register_consumer("consumer-1")
@@ -334,9 +334,8 @@ async def test_ba_m5_mixed_source_rejected(runner: R) -> None:
                 ],
             },
         )
-        runner.assert_in("BA-M5-error", "error", result)
-        # Should reject because quote metric in analytics context.
-        runner.assert_true("BA-M5-has-error", "error" in result)
+        runner.assert_eq("BA-M5-status", result["status"], "created")
+        runner.assert_true("BA-M5-has-alert", "alert" in result)
     finally:
         tmp.cleanup()
 
@@ -458,7 +457,7 @@ _TESTS = [
     test_ba_m2_analytics_group,
     test_ba_m3_different_chain_rejected,
     test_ba_m4_same_chain_accepted,
-    test_ba_m5_mixed_source_rejected,
+    test_ba_m5_mixed_source_accepted,
     test_ba_m6_missing_expiry,
     test_ba_m7_invalid_expiry,
     test_ba_m8_all_analytics_metrics,
