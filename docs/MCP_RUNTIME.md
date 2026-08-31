@@ -291,9 +291,9 @@ in-memory evaluator backed by SQLite for durability and restart safety.
 | **Acknowledge** | Existing `consumer_event_acknowledge` |
 | **Creation tool** | **None** — internal only in B2; public MCP contract in B5 |
 
-### 14.3 `condition_version = 1` (frozen)
+### 14.3 `condition_version = 1` (leaf)
 
-Version 1 conditions are **leaf-only**:
+Version 1 conditions are **single leaves**:
 
 ```json
 {
@@ -303,19 +303,50 @@ Version 1 conditions are **leaf-only**:
   "operator": "gt",
   "value": 25000,
   "instrument": {
-    "canonical_id": "NSE_EQ:RELIANCE"
+    "canonical_id": "NSE:EQUITY:INE002A01018"
   }
 }
 ```
 
-**Not supported in B2** (rejected at creation):
+### 14.3b `condition_version = 2` (nested groups — B4)
 
-- `logic` field — no AND/OR composition
-- `conditions[]` array — no nested groups
-- Any nested tree structure
+Version 2 conditions support **nested ALL/ANY groups** with a
+**same-instrument restriction**: all leaves in a group must resolve to the
+same canonical instrument.
 
-These are future B4/B5 work. Version != 1 is rejected with
-`ConditionValidationError`.
+- `logic: "all"` — all children must be TRUE for the group to be TRUE
+- `logic: "any"` — any child TRUE makes the group TRUE
+- Nesting depth max: 8
+- Max leaves per group: 64
+
+**Supported** (same instrument, mixed metrics):
+
+```json
+{
+  "condition_version": 2,
+  "logic": "all",
+  "conditions": [
+    {"condition_version": 1, "metric": "ltp", "operator": "gt",
+     "value": 1500,
+     "instrument": {"exchange": "NSE", "symbol": "RELIANCE"}},
+    {"condition_version": 1, "metric": "volume", "operator": "gt",
+     "value": 1000000,
+     "instrument": {"exchange": "NSE", "symbol": "RELIANCE"}}
+  ]
+}
+```
+
+**NOT supported** (B7 — multi-instrument groups):
+
+```json
+{
+  // This would be rejected at creation:
+  "conditions": [
+    {"instrument": {"exchange": "NSE", "symbol": "RELIANCE"}},
+    {"instrument": {"exchange": "NSE", "symbol": "INFY"}}
+  ]
+}
+```
 
 ### 14.4 Metric registry (27 metrics)
 
@@ -545,39 +576,93 @@ The identity resolver is canonical and provider-neutral. However:
 Do **not** claim every provider supplies every metric. The engine
 handles missing data gracefully via the UNKNOWN path.
 
-### 14.13 B2 non-goals (explicitly out of scope)
+### 14.13 B2–B5 non-goals (explicitly out of scope)
 
 | Item | Status |
 |------|--------|
-| AND/OR composition (`logic` field) | Not supported — B4 work |
-| Nested condition groups (`conditions[]`) | Not supported — B4 work |
+| AND/OR composition (`logic` field) | **Supported in B4** (v2 groups) |
+| Nested condition groups (`conditions[]`) | **Supported in B4** (v2, max depth 8, max 64 leaves) |
 | PCR (Put-Call Ratio) analytics | Out of scope — B6 work |
 | Max Pain analytics | Out of scope — B6 work |
 | GEX (Gamma Exposure) analytics | Out of scope — B6 work |
 | IV skew analytics | Out of scope — B6 work |
 | Historical indicator conditions | Out of scope — future work |
 | Market status conditions | Out of scope — future work |
-| Public `condition_alert_*` MCP tools | **Not added** — B5 work |
-| Cross-instrument expressions | Out of scope — future work |
+| Public `condition_alert_*` MCP tools | **Added in B5** (5 tools, CONTRACT_VERSION 2.3.0) |
+| Cross-instrument expressions | Out of scope — B7 work |
+| Multi-instrument v2 groups | Out of scope — B7 work (same-instrument enforced) |
 | WebUI condition management | Out of scope — future work |
 
-### 14.14 Public MCP availability statement
+### 14.14 Public MCP availability (B5)
 
-**The advanced `market_condition` alert engine is an INTERNAL component
-in B2.**
+**As of B5, the advanced `market_condition` alert engine is exposed via
+5 public MCP tools:**
 
-- The engine **exists** and runs inside the server process.
-- Delivery uses the **existing** `alert.triggered` event path + MCP
-  event/replay infrastructure (`consumer_event_pending_list`,
-  `consumer_event_acknowledge`).
-- There is **NO public MCP tool** to create, list, enable, or delete
-  `market_condition` alerts in B2.
-- The public tool contract for condition management is reserved for
-  **B5**.
+- `condition_alert_create` — create v1 leaf or v2 nested group alerts
+- `condition_alert_list` — list consumer-owned alerts (with enabled filter + limit)
+- `condition_alert_get` — get single alert (ownership enforced)
+- `condition_alert_set_enabled` — enable/disable with re-arm semantics
+- `condition_alert_delete` — delete alert (ownership enforced, history preserved)
 
-Do not imply that external AI can create advanced conditions through
-MCP today. The contract version remains `2.2.0` and the tool surface
-remains exactly 42 tools.
+**Contract version is now `2.3.0` with 47 public tools.**
+
+The same production `ConditionAlertEngine` and `EventStore` are reused —
+no second engine or store was added. Delivery uses the existing
+`alert.triggered` event path + MCP replay/wake infrastructure unchanged.
+
+**v2 group support (B4):** Conditions may use `condition_version: 2` with
+nested ALL/ANY groups. All leaves in a group must resolve to the **same
+canonical instrument** (same-instrument restriction enforced at creation).
+
+```json
+{
+  "condition_version": 2,
+  "logic": "all",
+  "conditions": [
+    {"condition_version": 1, "metric": "ltp", "operator": "gt",
+     "value": 1500, "instrument": {"exchange": "NSE", "symbol": "RELIANCE"}},
+    {"condition_version": 1, "metric": "volume", "operator": "gt",
+     "value": 1000000, "instrument": {"exchange": "NSE", "symbol": "RELIANCE"}}
+  ]
+}
+```
+
+**Public instrument references** (no broker tokens required):
+
+| Instrument type | Reference shape |
+|----------------|-----------------|
+| EQUITY / ETF | `{exchange, symbol}` |
+| INDEX | `{exchange, symbol}` |
+| FUTURE | `{exchange, underlying, expiry}` |
+| OPTION | `{exchange, underlying, expiry, strike, option_type}` |
+
+**Re-enable semantics:** Enabling a disabled alert calls
+`reset_condition_runtime_state(alert_id)` which deletes runtime-state
+rows. On the next `engine.reload()`, the alert starts from UNKNOWN
+(baseline), allowing a `once` alert to fire again.
+
+**UNKNOWN semantics:** Missing metric data → UNKNOWN (not FALSE).
+UNKNOWN ≠ FALSE. UNKNOWN does not fake re-arm.
+
+| Transition | LEVEL | CROSSING |
+|------------|-------|----------|
+| UNKNOWN → TRUE | FIRE | N/A |
+| UNKNOWN → FALSE | No fire | First observation establishes side |
+| FALSE → TRUE | FIRE | N/A |
+| TRUE → TRUE | No fire | N/A |
+| TRUE → FALSE | Re-arm (no fire) | N/A |
+| TRUE → UNKNOWN | Retain TRUE | N/A |
+| FALSE → UNKNOWN | Retain FALSE | N/A |
+
+**CROSSING-group semantics:** A crossing leaf's TRUE is ephemeral — it is
+TRUE only on the crossing evaluation tick. Crossing side is restart-safe.
+An old crossing does NOT remain TRUE waiting for another leaf later.
+In an ALL group: `crosses_above 25000 AND volume > 1M` fires only when
+BOTH are TRUE on the **same** evaluation tick.
+
+**Ownership:** Every condition alert is consumer-owned. `get`,
+`set_enabled`, and `delete` enforce ownership — cross-owner access
+returns not-found (same pattern as market alerts).
 
 ---
 

@@ -1,4 +1,4 @@
-# MCP-1 Market-Data Tool Contract (v2.2.0)
+# MCP-1 Market-Data Tool Contract (v2.3.0)
 
 > Frozen reference document for the MCP public tool surface.
 > Any change to tool names, inputs, or output shapes requires a contract version bump.
@@ -16,7 +16,8 @@
 | **Strategy Pricing** | 6 | Straddle, strangle, spreads, condor, butterfly |
 | **Composite** | 1 | Full option-chain analysis (bundled) |
 | **MCP-2B Public** | 16 | Alerts, events, consumers, replay |
-| **Total Public** | **42** | |
+| **B5 Advanced Alerts** | 5 | condition_alert_* (public MCP exposure of market_condition engine) |
+| **Total Public** | **47** | |
 | **Deferred / Internal** | 0 | All previously deferred tools are now finalized |
 
 ---
@@ -335,6 +336,110 @@ These tools were previously deferred but are now finalized as part of the public
 
 ---
 
+## B5: Advanced Market Condition Alerts (Public MCP)
+
+> **Phase:** B5 — public MCP exposure of the B2/B4 `market_condition` engine
+>
+> **Contract version:** 2.3.0
+>
+> **Tool count change:** 42 → 47 (+5)
+>
+> These tools expose the existing production `ConditionAlertEngine` to
+> external AI clients. No engine logic is duplicated. Instrument references
+> are human/canonical — callers never supply broker tokens.
+
+### condition_alert_create
+
+| | |
+|---|---|
+| **Purpose** | Create a consumer-owned advanced market-condition alert |
+| **Inputs** | `consumer_id: str` (required), `condition: dict` (required), `trigger_mode: str` (default `"repeat"`), `name: str | None` (optional), `metadata: dict | None` (optional) |
+| **Output** | `{"status": "created", "alert": {alert_id, consumer_id, name, enabled, trigger_mode, condition, metadata, created_at, updated_at, trigger_count, last_triggered_at}}` |
+| **Backing** | EventStore → ConditionAlertEngine.reload() |
+
+**condition schema:**
+
+- `condition_version: 1` — single leaf:
+  ```json
+  {"condition_version": 1, "metric": "ltp", "operator": "gt", "value": 25000,
+   "instrument": {"exchange": "NSE", "symbol": "RELIANCE"}}
+  ```
+- `condition_version: 2` — nested ALL/ANY group (same-instrument only):
+  ```json
+  {"condition_version": 2, "logic": "all",
+   "conditions": [
+     {"condition_version": 1, "metric": "ltp", "operator": "gt", "value": 1500,
+      "instrument": {"exchange": "NSE", "symbol": "RELIANCE"}},
+     {"condition_version": 1, "metric": "volume", "operator": "gt", "value": 1000000,
+      "instrument": {"exchange": "NSE", "symbol": "RELIANCE"}}
+   ]}
+  ```
+
+**Public instrument references (no broker tokens):**
+
+| Type | Required fields | Example |
+|------|----------------|---------|
+| EQUITY / ETF | `exchange`, `symbol` | `{"exchange": "NSE", "symbol": "RELIANCE"}` |
+| INDEX | `exchange`, `symbol` | `{"exchange": "NSE", "symbol": "NIFTY"}` |
+| FUTURE | `exchange`, `underlying`, `expiry` | `{"exchange": "NSE", "underlying": "NIFTY", "expiry": "2026-09-25"}` |
+| OPTION | `exchange`, `underlying`, `expiry`, `strike`, `option_type` | `{"exchange": "NSE", "underlying": "NIFTY", "expiry": "2026-09-25", "strike": 25000, "option_type": "CE"}` |
+
+**Limits:** max depth 8, max leaves 64, same-instrument enforced within v2 groups.
+
+**Metrics (27):** `ltp, open, high, low, close, change, change_percent, avg_trade_price, last_traded_qty, volume, total_buy_qty, total_sell_qty, open_interest, previous_oi, oi_change, oi_change_percent, best_bid, best_ask, spread, upper_circuit, lower_circuit, greeks.delta, greeks.gamma, greeks.theta, greeks.vega, greeks.rho, greeks.iv`
+
+**Operators (8):** `eq, ne, gt, gte, lt, lte, crosses_above, crosses_below`
+
+**trigger_mode:** `once` (fires once then disables) or `repeat` (re-arms on state transitions).
+
+**Errors normalized:** `ConditionValidationError` (bad metric/operator/version/structure), `ValidationError` (bad trigger_mode/consumer_id), `AlertNotFoundError` (not found), `StorageError` (internal failure). No raw Python exceptions leak.
+
+### condition_alert_list
+
+| | |
+|---|---|
+| **Purpose** | List condition alerts owned by a consumer |
+| **Inputs** | `consumer_id: str` (required), `enabled: bool | None` (optional filter), `limit: int | None` (optional, default 50, max 200) |
+| **Output** | `{"status": "ok", "count": int, "alerts": [{alert_id, consumer_id, name, enabled, trigger_mode, condition, metadata, created_at, updated_at, trigger_count, last_triggered_at}]}` |
+
+### condition_alert_get
+
+| | |
+|---|---|
+| **Purpose** | Get one condition alert by id (ownership enforced) |
+| **Inputs** | `consumer_id: str` (required), `alert_id: str` (required) |
+| **Output** | `{"status": "ok", "alert": {alert_id, consumer_id, name, enabled, trigger_mode, condition, metadata, created_at, updated_at, trigger_count, last_triggered_at}}` |
+| **Ownership** | Cross-owner access returns not-found (same as missing alert) |
+
+### condition_alert_set_enabled
+
+| | |
+|---|---|
+| **Purpose** | Enable or disable a condition alert (ownership enforced) |
+| **Inputs** | `consumer_id: str` (required), `alert_id: str` (required), `enabled: bool` (required) |
+| **Output** | `{"status": "enabled"|"disabled", "ok": true, "alert_id": str, "enabled": bool}` |
+| **Re-arm semantics** | Enabling a disabled alert **resets runtime state to UNKNOWN** so the alert re-arms fresh. For LEVEL operators this means a new FALSE→TRUE transition can fire. For CROSSING operators the first valid observation re-establishes the crossing side baseline. |
+
+### condition_alert_delete
+
+| | |
+|---|---|
+| **Purpose** | Delete a condition alert (ownership enforced) |
+| **Inputs** | `consumer_id: str` (required), `alert_id: str` (required) |
+| **Output** | `{"status": "deleted", "ok": true, "alert_id": str}` |
+| **History** | Deletes the alert definition and runtime state. Historical `alert.triggered` events are **preserved** in the durable event store. |
+| **Ownership** | Cross-owner access returns not-found. |
+
+### B5 invariants
+
+- **No provider tokens** in any input or output
+- **Same-instrument restriction**: all leaves in a v2 group must resolve to the same canonical instrument
+- **Atomic trigger**: engine evaluates against live quotes; a fire persists runtime state + alert row + event + consumer materialization in one SQLite transaction
+- **Delivery**: trigger event flows through the existing `alert.triggered` → `consumer_event_pending_list` → `consumer_event_acknowledge` path
+- **B6/B7/B8 exclusions**: no PCR, no Max Pain, no multi-instrument groups, no quote-injection tool, no analytics-layer calls
+
+---
+
 ## Removed Tools
 
 ### event_publish (removed in MCP-2B.3D)
@@ -365,3 +470,4 @@ These tools were previously deferred but are now finalized as part of the public
 | **2.0.0** | **2026-08-27** | **MCP-1: Removed 7 dev tools, simplified instrument_ref schemas, removed provider leak from market_history, fixed asyncio import, polished descriptions** |
 | **2.1.0** | **2026-08-27** | **MCP-2B.3C: Removed `consumer_event_list` (44→43 visible tools); `consumer_event_pending_list` is the canonical replay tool; normalized `market_alert_*` errors to shared domain exceptions; `consumer_checkpoint_get` now reports persisted `updated_at`** |
 | **2.2.0** | **2026-08-28** | **MCP-2B.3D: Removed `event_publish` from public registry (43→42 visible tools); froze 16 MCP-2B tools as final public surface; `event_list` documented as diagnostics-only; at-least-once replay contract frozen; live notification deferred to MCP-2B.4** |
+| **2.3.0** | **2026-08-31** | **B5: Added 5 public `condition_alert_*` tools (42→47 tools); `CONTRACT_VERSION` bumped to 2.3.0; v1 leaf + v2 same-instrument ALL/ANY groups exposed via MCP; human/canonical instrument references (no broker tokens); re-arm on enable; ownership enforcement on get/set_enabled/delete** |
