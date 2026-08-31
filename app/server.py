@@ -92,6 +92,7 @@ from mcp_server.resources import register_resources
 from mcp_server.services import Services
 from mcp_server.tools import (
     register_alert_tools,
+    register_condition_alert_tools,
     register_consumer_tools,
     register_event_tools,
     register_market_alert_tools,
@@ -718,6 +719,8 @@ _services = Services(
     instrument_catalog=_instrument_catalog,
     provider_market_data=_provider_market_data,
     alert_engine=_alert_engine,
+    condition_alert_engine=_condition_alert_engine,
+    condition_identity_resolver=_identity_resolver,
 )
 
 
@@ -780,6 +783,7 @@ register_alert_tools(mcp, _services)
 register_market_intel_tools(mcp, _services)
 register_options_analytics_tools(mcp, _services)
 register_market_alert_tools(mcp, _services)
+register_condition_alert_tools(mcp, _services)
 
 # ============================================================
 # ASGI APPLICATION (top-level Starlette + Uvicorn)

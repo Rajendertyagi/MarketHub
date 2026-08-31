@@ -15,6 +15,8 @@ from mcp_server.tools.market_alerts import register_market_alert_tools
 
 from mcp_server.tools.options_analytics_tools import register_options_analytics_tools
 
+from mcp_server.tools.condition_alerts import register_condition_alert_tools
+
 __all__ = [
     "register_system_tools",
     "register_event_tools",
@@ -22,4 +24,5 @@ __all__ = [
     "register_replay_tools",
     "register_alert_tools",
     "register_options_analytics_tools",
+    "register_condition_alert_tools",
 ]
