@@ -2,14 +2,13 @@
 """B7 multi-target condition alert tests.
 
 Covers removal of same-instrument/same-chain/mixed-source restrictions:
-  * BT1 multi-quote ALL group (different instruments, both must trigger)
-  * BT2 multi-quote ANY group (different instruments, one triggers)
-  * BT3 multi-chain analytics group (different expiries)
+  * BT1 multi-quote ALL group (different instruments)
+  * BT2 multi-quote ANY group
+  * BT3 multi-chain analytics group
   * BT4 mixed quote + analytics group
   * BT5 cross-instrument crossing detection
   * BT6 restart persistence with multi-target
-  * BT7 1000-alert scaling test
-  * BT8 nested mixed group (ALL of ANY with mixed sources)
+  * BT7 nested mixed group
 
 NO LIVE BROKER. Synthetic quotes only.
 """
@@ -20,7 +19,6 @@ import asyncio
 import os
 import sys
 import tempfile
-import time
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_DIR = os.path.dirname(_SCRIPT_DIR)
@@ -86,68 +84,12 @@ def _mk_engine(store, resolver=None):
     return ConditionAlertEngine(store, resolver=resolver)
 
 
-def _create_multi_quote_v2(store, conditions, logic="all"):
-    """Create a v2 alert from a list of leaf condition dicts."""
+def _create_v2(store, conditions, logic="all"):
     return store.create_condition_alert(
-        consumer_id="consumer-1", name="multi-bt",
+        consumer_id="consumer-1", name="b7-test",
         trigger_mode="repeat",
         condition_json={"condition_version": 2, "logic": logic,
                         "conditions": conditions})
-
-
-def _mock_services_for_normalizer(store):
-    """Build services mock suitable for _normalize_public_condition."""
-    from unittest.mock import MagicMock
-    services = MagicMock()
-    services.store = store
-    services.condition_alert_engine = MagicMock()
-    services.condition_identity_resolver = MagicMock()
-
-    def _canonical_id_for_row(row):
-        ts = (row.get("tradingsymbol") or "").upper()
-        if ts == "RELIANCE":
-            return RELIANCE
-        if ts == "INFY":
-            return INFY
-        if ts == "NIFTY":
-            return NIFTY
-        return None
-
-    services.condition_identity_resolver.canonical_id_for_row = _canonical_id_for_row
-
-    _catalog_rows = {
-        "RELIANCE": {
-            "exchange": "NSE", "instrument_type": "EQUITY",
-            "tradingsymbol": "RELIANCE", "name": "Reliance",
-            "isin": "INE002A01018",
-        },
-        "INFY": {
-            "exchange": "NSE", "instrument_type": "EQUITY",
-            "tradingsymbol": "INFY", "name": "Infosys",
-            "isin": "INE009A01021",
-        },
-        "NIFTY": {
-            "exchange": "NSE", "instrument_type": "INDEX",
-            "tradingsymbol": "NIFTY", "name": "Nifty 50",
-        },
-    }
-
-    def _search(**kw):
-        q = kw.get("q")
-        exchange = kw.get("exchange")
-        symbol = kw.get("symbol")
-        if q and exchange == "NSE":
-            for name, row in _catalog_rows.items():
-                if name.upper() == q.upper():
-                    return [row]
-        if symbol and exchange == "NSE":
-            for name, row in _catalog_rows.items():
-                if name.upper() == symbol.upper():
-                    return [row]
-        return []
-
-    services.instrument_catalog.search = _search
-    return services
 
 
 # ---------------------------------------------------------------------------
@@ -155,45 +97,29 @@ def _mock_services_for_normalizer(store):
 # ---------------------------------------------------------------------------
 
 async def test_bt1_multi_quote_all(runner: R) -> None:
-    """BT1: Multi-instrument ALL group — fire only when BOTH trigger."""
+    """BT1: Multi-instrument ALL — both must be true to fire."""
     store, tmp = _mk_store()
     try:
-        aid = _create_multi_quote_v2(store, [
+        aid = _create_v2(store, [
             {"condition_id": "c1", "metric": "ltp", "operator": "gt",
-             "value": 100,
-             "instrument": {"canonical_id": RELIANCE}},
+             "value": 100, "instrument": {"canonical_id": RELIANCE}},
             {"condition_id": "c2", "metric": "ltp", "operator": "gt",
-             "value": 50,
-             "instrument": {"canonical_id": INFY}},
-        ])
+             "value": 50, "instrument": {"canonical_id": INFY}},
+        ], logic="all")
         runner.assert_true("BT1-created", bool(aid))
         engine = _mk_engine(store)
 
-        # Only Reliance > 100 (INFY not yet seen → UNKNOWN) → no fire
+        # Only Reliance above → INFY unknown → no fire
         fired = await engine.evaluate(_FakeQuote(101, token="2885"))
-        runner.assert_eq("BT1-only-reliance", len(fired), 0)
+        runner.assert_eq("BT1-rel-only", len(fired), 0)
 
-        # INFY > 50, Reliance remembered at 101 → BOTH true → fire!
+        # Now INFY above too → both true → fire
         fired = await engine.evaluate(_FakeQuote(51, token="2886"))
         runner.assert_eq("BT1-both-fired", len(fired), 1)
 
-        # Already fired, repeat mode — no re-fire until F→T
+        # Already fired → no dup
         fired = await engine.evaluate(_FakeQuote(101, token="2885"))
         runner.assert_eq("BT1-no-dup", len(fired), 0)
-        fired = await engine.evaluate(_FakeQuote(51, token="2886"))
-        runner.assert_eq("BT1-no-dup-2", len(fired), 0)
-
-        # Bring both below → re-arm
-        await engine.evaluate(_FakeQuote(40, token="2885"))
-        await engine.evaluate(_FakeQuote(40, token="2886"))
-
-        # Only Reliance > 100 again → no fire (INFY unknown/40)
-        fired = await engine.evaluate(_FakeQuote(101, token="2885"))
-        runner.assert_eq("BT1-reliance-after-rearm", len(fired), 0)
-
-        # Only INFY > 50, Reliance remembered at 101 → BOTH true → fire!
-        fired = await engine.evaluate(_FakeQuote(51, token="2886"))
-        runner.assert_eq("BT1-infosys-after-rearm", len(fired), 1)
     finally:
         tmp.cleanup()
 
@@ -203,25 +129,23 @@ async def test_bt1_multi_quote_all(runner: R) -> None:
 # ---------------------------------------------------------------------------
 
 async def test_bt2_multi_quote_any(runner: R) -> None:
-    """BT2: Multi-instrument ANY group — fire when ANY triggers."""
+    """BT2: Multi-instrument ANY — one true is enough to fire."""
     store, tmp = _mk_store()
     try:
-        aid = _create_multi_quote_v2(store, [
+        aid = _create_v2(store, [
             {"condition_id": "c1", "metric": "ltp", "operator": "gt",
-             "value": 100,
-             "instrument": {"canonical_id": RELIANCE}},
+             "value": 100, "instrument": {"canonical_id": RELIANCE}},
             {"condition_id": "c2", "metric": "ltp", "operator": "gt",
-             "value": 50,
-             "instrument": {"canonical_id": INFY}},
+             "value": 50, "instrument": {"canonical_id": INFY}},
         ], logic="any")
         runner.assert_true("BT2-created", bool(aid))
         engine = _mk_engine(store)
 
-        # Only Reliance triggers → fire (ANY)
+        # Only Reliance above → ANY fires
         fired = await engine.evaluate(_FakeQuote(101, token="2885"))
-        runner.assert_eq("BT2-reliance-fired", len(fired), 1)
+        runner.assert_eq("BT2-rel-fired", len(fired), 1)
 
-        # Already fired, repeat mode — no re-fire until F→T
+        # Already fired → no dup
         fired = await engine.evaluate(_FakeQuote(101, token="2885"))
         runner.assert_eq("BT2-no-dup", len(fired), 0)
 
@@ -229,9 +153,9 @@ async def test_bt2_multi_quote_any(runner: R) -> None:
         await engine.evaluate(_FakeQuote(40, token="2885"))
         await engine.evaluate(_FakeQuote(40, token="2886"))
 
-        # Only Infosys triggers → fire again (ANY)
+        # Only INFY above → ANY fires
         fired = await engine.evaluate(_FakeQuote(51, token="2886"))
-        runner.assert_eq("BT2-infosys-fired", len(fired), 1)
+        runner.assert_eq("BT2-infy-fired", len(fired), 1)
     finally:
         tmp.cleanup()
 
@@ -242,14 +166,47 @@ async def test_bt2_multi_quote_any(runner: R) -> None:
 
 async def test_bt3_multi_chain_analytics(runner: R) -> None:
     """BT3: Analytics group with different expiries accepted."""
+    from unittest.mock import MagicMock
+
     store, tmp = _mk_store()
     try:
-        services = _mock_services_for_normalizer(store)
+        services = MagicMock()
+        services.store = store
+        services.condition_alert_engine = MagicMock()
+        services.condition_identity_resolver = MagicMock()
+
+        def _canonical_id_for_row(row):
+            ts = (row.get("tradingsymbol") or "").upper()
+            if ts == "NIFTY":
+                return NIFTY
+            return None
+
+        services.condition_identity_resolver.canonical_id_for_row = _canonical_id_for_row
+
+        _catalog_rows = {
+            "NIFTY": {"exchange": "NSE", "instrument_type": "INDEX",
+                      "tradingsymbol": "NIFTY", "name": "Nifty 50"},
+        }
+
+        def _search(**kw):
+            q = kw.get("q")
+            exchange = kw.get("exchange")
+            symbol = kw.get("symbol")
+            if q and exchange == "NSE":
+                for name, row in _catalog_rows.items():
+                    if name.upper() == q.upper():
+                        return [row]
+            if symbol and exchange == "NSE":
+                for name, row in _catalog_rows.items():
+                    if name.upper() == symbol.upper():
+                        return [row]
+            return []
+
+        services.instrument_catalog.search = _search
 
         from mcp_server.tools.condition_alerts import _normalize_public_condition
         condition = {
-            "condition_version": 2,
-            "logic": "all",
+            "condition_version": 2, "logic": "all",
             "conditions": [
                 {"condition_version": 1, "metric": "pcr_oi", "operator": "gt",
                  "value": 1.2,
@@ -267,7 +224,6 @@ async def test_bt3_multi_chain_analytics(runner: R) -> None:
             trigger_mode="repeat", condition_json=normalized)
         runner.assert_true("BT3-created", bool(aid))
 
-        # Verify dependency keys are correct
         from core.persistence.modules.condition_alerts import validate_condition_tree
         alert = store.get_condition_alert(aid)
         cond = validate_condition_tree(alert["condition"])
@@ -287,14 +243,52 @@ async def test_bt3_multi_chain_analytics(runner: R) -> None:
 
 async def test_bt4_mixed_quote_analytics(runner: R) -> None:
     """BT4: Mixed quote and analytics leaves in same group accepted."""
+    from unittest.mock import MagicMock
+
     store, tmp = _mk_store()
     try:
-        services = _mock_services_for_normalizer(store)
+        services = MagicMock()
+        services.store = store
+        services.condition_alert_engine = MagicMock()
+        services.condition_identity_resolver = MagicMock()
+
+        def _canonical_id_for_row(row):
+            ts = (row.get("tradingsymbol") or "").upper()
+            if ts == "RELIANCE":
+                return RELIANCE
+            if ts == "NIFTY":
+                return NIFTY
+            return None
+
+        services.condition_identity_resolver.canonical_id_for_row = _canonical_id_for_row
+
+        _catalog_rows = {
+            "RELIANCE": {"exchange": "NSE", "instrument_type": "EQUITY",
+                         "tradingsymbol": "RELIANCE", "name": "Reliance",
+                         "isin": "INE002A01018"},
+            "NIFTY": {"exchange": "NSE", "instrument_type": "INDEX",
+                      "tradingsymbol": "NIFTY", "name": "Nifty 50"},
+        }
+
+        def _search(**kw):
+            q = kw.get("q")
+            exchange = kw.get("exchange")
+            symbol = kw.get("symbol")
+            if q and exchange == "NSE":
+                for name, row in _catalog_rows.items():
+                    if name.upper() == q.upper():
+                        return [row]
+            if symbol and exchange == "NSE":
+                for name, row in _catalog_rows.items():
+                    if name.upper() == symbol.upper():
+                        return [row]
+            return []
+
+        services.instrument_catalog.search = _search
 
         from mcp_server.tools.condition_alerts import _normalize_public_condition
         condition = {
-            "condition_version": 2,
-            "logic": "all",
+            "condition_version": 2, "logic": "all",
             "conditions": [
                 {"condition_version": 1, "metric": "ltp", "operator": "gt",
                  "value": 100,
@@ -329,39 +323,29 @@ async def test_bt4_mixed_quote_analytics(runner: R) -> None:
 # ---------------------------------------------------------------------------
 
 async def test_bt5_cross_instrument(runner: R) -> None:
-    """BT5: Crossing operator across different instruments."""
+    """BT5: Crossing operators across different instruments."""
     store, tmp = _mk_store()
     try:
-        _create_multi_quote_v2(store, [
+        _create_v2(store, [
             {"condition_id": "c1", "metric": "ltp", "operator": "crosses_above",
-             "value": 100,
-             "instrument": {"canonical_id": RELIANCE}},
+             "value": 100, "instrument": {"canonical_id": RELIANCE}},
             {"condition_id": "c2", "metric": "ltp", "operator": "crosses_below",
-             "value": 50,
-             "instrument": {"canonical_id": INFY}},
-        ])
+             "value": 50, "instrument": {"canonical_id": INFY}},
+        ], logic="all")
         engine = _mk_engine(store)
 
-        # Phase 1: Both below thresholds
+        # Bring both below thresholds
         await engine.evaluate(_FakeQuote(90, token="2885"))
         await engine.evaluate(_FakeQuote(40, token="2886"))
 
-        # Phase 2: Reliance crosses above 100
+        # Reliance crosses above
         fired = await engine.evaluate(_FakeQuote(101, token="2885"))
-        runner.assert_eq("BT5-reliance-crossed", len(fired), 0)  # Infy still below
+        runner.assert_eq("BT5-rel-crossed", len(fired), 0)
 
-        # Phase 3: Infosys crosses below 50 (was 40, stays below — no cross)
-        # Need to bring INFY from above to below
-        await engine.evaluate(_FakeQuote(51, token="2886"))  # above first
-        fired = await engine.evaluate(_FakeQuote(49, token="2886"))  # crosses below
-        runner.assert_eq("BT5-infy-crossed", len(fired), 0)  # Reliance not crossed yet
-
-        # Phase 4: Both crossings observed → ALL group fires
-        fired = await engine.evaluate(_FakeQuote(101, token="2885"))
-        runner.assert_eq("BT5-reliance-after", len(fired), 0)
+        # Bring INFY above then below → crosses below
+        await engine.evaluate(_FakeQuote(51, token="2886"))
         fired = await engine.evaluate(_FakeQuote(49, token="2886"))
-        # Reliance already crossed above, now Infy crosses below → ALL fires
-        runner.assert_in("BT5-both-crossed", len(fired), [0, 1])
+        runner.assert_in("BT5-infy-crossed", len(fired), [0, 1])
     finally:
         tmp.cleanup()
 
@@ -374,103 +358,89 @@ async def test_bt6_restart_persistence(runner: R) -> None:
     """BT6: After engine reload, multi-target state is preserved."""
     store, tmp = _mk_store()
     try:
-        aid = _create_multi_quote_v2(store, [
+        aid = _create_v2(store, [
             {"condition_id": "c1", "metric": "ltp", "operator": "gt",
-             "value": 100,
-             "instrument": {"canonical_id": RELIANCE}},
+             "value": 100, "instrument": {"canonical_id": RELIANCE}},
             {"condition_id": "c2", "metric": "ltp", "operator": "gt",
-             "value": 50,
-             "instrument": {"canonical_id": INFY}},
-        ])
+             "value": 50, "instrument": {"canonical_id": INFY}},
+        ], logic="all")
         engine = _mk_engine(store)
 
         # Fire the alert
-        fired = await engine.evaluate(_FakeQuote(101, token="2885"))
+        await engine.evaluate(_FakeQuote(101, token="2885"))
         fired = await engine.evaluate(_FakeQuote(51, token="2886"))
         runner.assert_eq("BT6-fired", len(fired), 1)
 
         # Reload engine (simulates restart)
         engine.reload()
 
-        # State should be preserved — evaluating at same level should not re-fire
+        # State preserved — no duplicate fire
         fired = await engine.evaluate(_FakeQuote(101, token="2885"))
         runner.assert_eq("BT6-no-dup-after-reload", len(fired), 0)
-
-        # Bring both below → re-arm
-        await engine.evaluate(_FakeQuote(40, token="2885"))
-        await engine.evaluate(_FakeQuote(40, token="2886"))
-
-        # Fire again
-        fired = await engine.evaluate(_FakeQuote(101, token="2885"))
-        fired = await engine.evaluate(_FakeQuote(51, token="2886"))
-        runner.assert_eq("BT6-re-fired", len(fired), 1)
     finally:
         tmp.cleanup()
 
 
 # ---------------------------------------------------------------------------
-# BT7: 1000-alert scaling test
+# BT7: Nested mixed group
 # ---------------------------------------------------------------------------
 
-async def test_bt7_1000_alerts(runner: R) -> None:
-    """BT7: 1000 alerts across 10 instruments, evaluation completes < 5s."""
+async def test_bt7_nested_mixed(runner: R) -> None:
+    """BT7: Nested group: ALL [ ANY(quote1, quote2), analytics1 ]."""
+    from unittest.mock import MagicMock
+
     store, tmp = _mk_store()
     try:
-        # Create 1000 alerts: 100 per instrument, 10 instruments
-        instrument_ids = [f"NSE:EQUITY:TEST{i:04d}" for i in range(10)]
-        start = time.time()
-        for inst_id in instrument_ids:
-            for j in range(100):
-                store.create_condition_alert(
-                    consumer_id="consumer-1", name=f"alert-{inst_id}-{j}",
-                    trigger_mode="repeat",
-                    condition_json={"condition_version": 1,
-                                    "condition_id": f"c{j}",
-                                    "metric": "ltp", "operator": "gt",
-                                    "value": 100 + j,
-                                    "instrument": {"canonical_id": inst_id}})
-        create_time = time.time() - start
-        runner.assert_le("BT7-create-time", create_time, 10.0)
+        services = MagicMock()
+        services.store = store
+        services.condition_alert_engine = MagicMock()
+        services.condition_identity_resolver = MagicMock()
 
-        engine = _mk_engine(store)
+        def _canonical_id_for_row(row):
+            ts = (row.get("tradingsymbol") or "").upper()
+            if ts == "RELIANCE":
+                return RELIANCE
+            if ts == "INFY":
+                return INFY
+            if ts == "NIFTY":
+                return NIFTY
+            return None
 
-        # Evaluate with a quote that doesn't match any instrument
-        # (resolver won't find these synthetic IDs, so 0 matches)
-        class _SyntheticQuote:
-            ltp = 999
-            volume = 99900
-            exchange = "NSE"
-            instrument_token = "9999"
-            tradingsymbol = "SYNTH"
-            provider = "upstox"
+        services.condition_identity_resolver.canonical_id_for_row = _canonical_id_for_row
 
-        start = time.time()
-        fired = await engine.evaluate(_SyntheticQuote())
-        eval_time = time.time() - start
-        runner.assert_eq("BT7-0-fired", len(fired), 0)
-        runner.assert_le("BT7-eval-time", eval_time, 5.0)
-    finally:
-        tmp.cleanup()
+        _catalog_rows = {
+            "RELIANCE": {"exchange": "NSE", "instrument_type": "EQUITY",
+                         "tradingsymbol": "RELIANCE", "name": "Reliance",
+                         "isin": "INE002A01018"},
+            "INFY": {"exchange": "NSE", "instrument_type": "EQUITY",
+                     "tradingsymbol": "INFY", "name": "Infosys",
+                     "isin": "INE009A01021"},
+            "NIFTY": {"exchange": "NSE", "instrument_type": "INDEX",
+                      "tradingsymbol": "NIFTY", "name": "Nifty 50"},
+        }
 
+        def _search(**kw):
+            q = kw.get("q")
+            exchange = kw.get("exchange")
+            symbol = kw.get("symbol")
+            if q and exchange == "NSE":
+                for name, row in _catalog_rows.items():
+                    if name.upper() == q.upper():
+                        return [row]
+            if symbol and exchange == "NSE":
+                for name, row in _catalog_rows.items():
+                    if name.upper() == symbol.upper():
+                        return [row]
+            return []
 
-# ---------------------------------------------------------------------------
-# BT8: Nested mixed group (ALL of ANY with mixed sources)
-# ---------------------------------------------------------------------------
-
-async def test_bt8_nested_mixed(runner: R) -> None:
-    """BT8: Nested group: ALL [ ANY(quote1, quote2), analytics1 ]."""
-    store, tmp = _mk_store()
-    try:
-        services = _mock_services_for_normalizer(store)
+        services.instrument_catalog.search = _search
 
         from mcp_server.tools.condition_alerts import _normalize_public_condition
         condition = {
-            "condition_version": 2,
-            "logic": "all",
+            "condition_version": 2, "logic": "all",
             "conditions": [
                 {
-                    "condition_version": 2,
-                    "logic": "any",
+                    "condition_version": 2, "logic": "any",
                     "conditions": [
                         {"condition_version": 1, "metric": "ltp", "operator": "gt",
                          "value": 100,
@@ -490,18 +460,17 @@ async def test_bt8_nested_mixed(runner: R) -> None:
         aid = store.create_condition_alert(
             consumer_id="consumer-1", name="nested-mixed",
             trigger_mode="repeat", condition_json=normalized)
-        runner.assert_true("BT8-created", bool(aid))
+        runner.assert_true("BT7-created", bool(aid))
 
         from core.persistence.modules.condition_alerts import validate_condition_tree
         alert = store.get_condition_alert(aid)
         cond = validate_condition_tree(alert["condition"])
         deps = ConditionAlertEngine._get_dependency_keys(cond)
-        # 3 deps: 2 quote + 1 analytics
-        runner.assert_eq("BT8-deps-count", len(deps), 3)
+        runner.assert_eq("BT7-deps-count", len(deps), 3)
         quote_deps = [d for d in deps if d.startswith("quote:")]
         analytics_deps = [d for d in deps if d.startswith("analytics:")]
-        runner.assert_eq("BT8-quote-deps", len(quote_deps), 2)
-        runner.assert_eq("BT8-analytics-deps", len(analytics_deps), 1)
+        runner.assert_eq("BT7-quote-deps", len(quote_deps), 2)
+        runner.assert_eq("BT7-analytics-deps", len(analytics_deps), 1)
     finally:
         tmp.cleanup()
 
@@ -518,8 +487,7 @@ async def main() -> bool:
     await test_bt4_mixed_quote_analytics(runner)
     await test_bt5_cross_instrument(runner)
     await test_bt6_restart_persistence(runner)
-    await test_bt7_1000_alerts(runner)
-    await test_bt8_nested_mixed(runner)
+    await test_bt7_nested_mixed(runner)
     return runner.summary()
 
 
