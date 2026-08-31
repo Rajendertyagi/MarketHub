@@ -582,15 +582,17 @@ handles missing data gracefully via the UNKNOWN path.
 |------|--------|
 | AND/OR composition (`logic` field) | **Supported in B4** (v2 groups) |
 | Nested condition groups (`conditions[]`) | **Supported in B4** (v2, max depth 8, max 64 leaves) |
-| PCR (Put-Call Ratio) analytics | Out of scope — B6 work |
-| Max Pain analytics | Out of scope — B6 work |
-| GEX (Gamma Exposure) analytics | Out of scope — B6 work |
-| IV skew analytics | Out of scope — B6 work |
+| PCR (Put-Call Ratio) analytics | **Added in B6B** (pcr_oi metric) |
+| PCR volume analytics | **Added in B6B** (pcr_volume metric) |
+| Max Pain analytics | **Added in B6B** (max_pain metric) |
+| IV skew analytics | **Added in B6B** (iv_skew metric) |
+| GEX (Gamma Exposure) analytics | Deferred — production-correct GEX requires lot-size multiplier not yet available in chain snapshot |
 | Historical indicator conditions | Out of scope — future work |
 | Market status conditions | Out of scope — future work |
 | Public `condition_alert_*` MCP tools | **Added in B5** (5 tools, CONTRACT_VERSION 2.3.0) |
 | Cross-instrument expressions | Out of scope — B7 work |
 | Multi-instrument v2 groups | Out of scope — B7 work (same-instrument enforced) |
+| Mixed quote + analytics groups | Out of scope — B7 work (rejected in B6B) |
 | WebUI condition management | Out of scope — future work |
 
 ### 14.14 Public MCP availability (B5)
@@ -604,7 +606,55 @@ handles missing data gracefully via the UNKNOWN path.
 - `condition_alert_set_enabled` — enable/disable with re-arm semantics
 - `condition_alert_delete` — delete alert (ownership enforced, history preserved)
 
-**Contract version is now `2.3.0` with 47 public tools.**
+**Contract version is now `2.4.0` with 47 public tools and 31 condition metrics.**
+
+### 14.15 Analytics Metrics (B6B)
+
+B6B adds 4 analytics-derived condition metrics that are extracted from an
+`OptionChainAnalyticsSnapshot` instead of a `Quote`:
+
+| Metric | Source | Description |
+|--------|--------|-------------|
+| `pcr_oi` | `OptionChainAnalyticsSnapshot.pcr_oi` | Put-Call Ratio from total OI. `None` when call OI denominator is zero. |
+| `pcr_volume` | `OptionChainAnalyticsSnapshot.pcr_volume` | Put-Call Ratio from total volume. `None` when call volume denominator is zero. |
+| `max_pain` | `OptionChainAnalyticsSnapshot.max_pain` | Strike with minimum total option-writer payout. `None` when no usable OI data. |
+| `iv_skew` | `OptionChainAnalyticsSnapshot.iv_skew` | Average OTM put IV minus average OTM call IV. `None` when no usable IV data. |
+
+**Metric registry:** `market/condition_metrics.py` defines `METRIC_NAMES` (27 Quote-backed),
+`ANALYTICS_METRIC_NAMES` (4 chain-derived), `METRIC_SET` (31 total),
+`METRIC_SOURCE` (`"quote"` or `"analytics"`), and `METRIC_EVAL_CLASS`
+(`"event"` for per-quote or `"snapshot"` for per-refresh).
+
+**Analytics evaluation trigger:** Analytics metrics are evaluated against the
+latest `OptionChainAnalyticsSnapshot` from `MarketAnalyticsService`, NOT on
+every Quote tick. The `ConditionAlertEngine._evaluate_leaf_v1()` method
+checks `METRIC_SOURCE[metric]` and routes to
+`extract_analytics_metric()` when the source is `"analytics"`.
+
+**Same-chain restriction (B6B):** All leaves in an analytics v2 group must
+share the same `canonical_id` AND the same `expiry`. Mixed-chain or
+mixed-expiry groups are rejected at condition normalization time with
+`ConditionValidationError`. Mixed quote + analytics groups are also
+rejected — this is a B7 feature.
+
+**Max Pain formula:** Uses OI only (not volume or premium). For each candidate
+strike S:
+```
+call_payout(S) = Σ max(0, S - K) × CallOI(K)
+put_payout(S)  = Σ max(0, K - S) × PutOI(K)
+total_payout(S) = call_payout(S) + put_payout(S)
+```
+Max Pain = strike with minimum total_payout. Ties broken by lowest strike.
+Missing OI on individual legs → that leg contributes zero. No usable OI
+across the chain → `max_pain = None`.
+
+**PCR zero-denominator:** Returns `None` (UNKNOWN) when call OI or call volume
+is zero, NOT `0.0` or `Infinity`.
+
+**GEX deferred:** Production-correct GEX requires a contract multiplier
+(lot size) which is not yet available in the `OptionChainSnapshot`. The
+existing `compute_gex()` function is retained for read-only analytics tools
+but GEX is NOT added as a condition metric in B6B.
 
 The same production `ConditionAlertEngine` and `EventStore` are reused —
 no second engine or store was added. Delivery uses the existing

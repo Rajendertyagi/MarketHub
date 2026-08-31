@@ -1,4 +1,4 @@
-# MCP-1 Market-Data Tool Contract (v2.3.0)
+# MCP-1 Market-Data Tool Contract (v2.4.0)
 
 > Frozen reference document for the MCP public tool surface.
 > Any change to tool names, inputs, or output shapes requires a contract version bump.
@@ -17,6 +17,7 @@
 | **Composite** | 1 | Full option-chain analysis (bundled) |
 | **MCP-2B Public** | 16 | Alerts, events, consumers, replay |
 | **B5 Advanced Alerts** | 5 | condition_alert_* (public MCP exposure of market_condition engine) |
+| **B6 Analytics Metrics** | 4 | pcr_oi, pcr_volume, max_pain, iv_skew (analytics-backed condition metrics) |
 | **Total Public** | **47** | |
 | **Deferred / Internal** | 0 | All previously deferred tools are now finalized |
 
@@ -471,3 +472,4 @@ These tools were previously deferred but are now finalized as part of the public
 | **2.1.0** | **2026-08-27** | **MCP-2B.3C: Removed `consumer_event_list` (44→43 visible tools); `consumer_event_pending_list` is the canonical replay tool; normalized `market_alert_*` errors to shared domain exceptions; `consumer_checkpoint_get` now reports persisted `updated_at`** |
 | **2.2.0** | **2026-08-28** | **MCP-2B.3D: Removed `event_publish` from public registry (43→42 visible tools); froze 16 MCP-2B tools as final public surface; `event_list` documented as diagnostics-only; at-least-once replay contract frozen; live notification deferred to MCP-2B.4** |
 | **2.3.0** | **2026-08-31** | **B5: Added 5 public `condition_alert_*` tools (42→47 tools); `CONTRACT_VERSION` bumped to 2.3.0; v1 leaf + v2 same-instrument ALL/ANY groups exposed via MCP; human/canonical instrument references (no broker tokens); re-arm on enable; ownership enforcement on get/set_enabled/delete** |
+| **2.4.0** | **2026-08-31** | **B6B: Added 4 analytics-backed condition metrics (pcr_oi, pcr_volume, max_pain, iv_skew); `CONTRACT_VERSION` bumped to 2.4.0; total metrics 27→31; analytics conditions require `instrument.expiry`; same-chain restriction enforced for analytics groups; mixed quote+analytics groups rejected (B7); MarketAnalyticsService cache + scheduler; PCR zero-denominator returns None** |

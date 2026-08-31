@@ -496,8 +496,14 @@ try:
 except Exception:
     _app_logger.warning(
         "condition identity resolver population failed", exc_info=True)
+
+from app.market_analytics import MarketAnalyticsService as _AnalyticsService
+_analytics_service = _AnalyticsService(
+    _market_service, instrument_catalog=_instrument_catalog)
+
 _condition_alert_engine = _ConditionAlertEngine(
-    _store, resolver=_identity_resolver, bus=_subscription_bus)
+    _store, resolver=_identity_resolver, bus=_subscription_bus,
+    analytics_service=_analytics_service)
 
 from api.product_routes import (
     build_market_data_routes as _build_market_data_routes,
@@ -721,6 +727,7 @@ _services = Services(
     alert_engine=_alert_engine,
     condition_alert_engine=_condition_alert_engine,
     condition_identity_resolver=_identity_resolver,
+    analytics_service=_analytics_service,
 )
 
 
@@ -848,8 +855,25 @@ async def _lifespan(app: Starlette) -> None:
     # Restore a Fyers access token from the stored refresh token BEFORE the
     # SDK starts sources, so an enabled Fyers feed is READY without re-login.
     await _try_restore_fyers_token()
+
+    # Start the analytics scheduler.
+    try:
+        await _analytics_service.start(_bg_task_manager)
+        # Reconstruct active chains from persisted enabled analytics alerts.
+        def _load_enabled():
+            return _store.load_enabled_condition_alerts()
+        _analytics_service.reconstruct_from_alerts(_load_enabled)
+    except Exception:
+        _app_logger.warning("analytics service startup failed", exc_info=True)
+
     async with mcp_asgi_app.router.lifespan_context(app):
         yield
+
+    # Stop the analytics scheduler.
+    try:
+        await _analytics_service.stop(_bg_task_manager)
+    except Exception:
+        _app_logger.warning("analytics service shutdown failed", exc_info=True)
 
 
 # One top-level Starlette app: MCP protocol routes + /health + /events/stream

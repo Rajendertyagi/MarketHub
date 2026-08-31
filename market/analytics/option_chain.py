@@ -100,11 +100,18 @@ def buildup_color(build_tag: str) -> str:
 
 
 def compute_pcr(snapshot: OptionChainSnapshot) -> dict[str, Any]:
-    """Put-Call Ratio from total open interest. >1 = put-heavy (bearish bias)."""
+    """Put-Call Ratio from total open interest. >1 = put-heavy (bearish bias).
+
+    Returns None (not 0.0) when the call OI denominator is zero or missing,
+    signalling UNKNOWN rather than a false numeric value.
+    """
     rows = _rows(snapshot)
     ce_oi = sum(r["call_leg"]["open_interest"] for r in rows if r["call_leg"])
     pe_oi = sum(r["put_leg"]["open_interest"] for r in rows if r["put_leg"])
-    pcr = (pe_oi / ce_oi) if ce_oi else 0.0
+    if ce_oi == 0:
+        return {"pcr": None, "total_call_oi": ce_oi,
+                "total_put_oi": pe_oi, "interpretation": "Unknown — no call OI"}
+    pcr = pe_oi / ce_oi
     if pcr >= 1.2:
         interp = "Put-heavy — bearish sentiment / possible oversold"
     elif pcr <= 0.8:
@@ -115,32 +122,77 @@ def compute_pcr(snapshot: OptionChainSnapshot) -> dict[str, Any]:
             "total_put_oi": pe_oi, "interpretation": interp}
 
 
-def compute_max_pain(snapshot: OptionChainSnapshot) -> dict[str, Any]:
-    """Strike where total option-writer payout is minimised (max pain theory)."""
+def compute_pcr_volume(snapshot: OptionChainSnapshot) -> dict[str, Any]:
+    """Put-Call Ratio from total volume. >1 = put-volume heavy.
+
+    Returns None when call volume denominator is zero or missing.
+    Skips legs with missing volume.
+    """
     rows = _rows(snapshot)
-    strikes = [r["strike"] for r in rows]
+    ce_vol = 0.0
+    pe_vol = 0.0
+    for r in rows:
+        if r["call_leg"]:
+            v = r["call_leg"].get("volume")
+            if v is not None:
+                ce_vol += float(v)
+        if r["put_leg"]:
+            v = r["put_leg"].get("volume")
+            if v is not None:
+                pe_vol += float(v)
+    if ce_vol == 0:
+        return {"pcr_volume": None, "total_call_volume": ce_vol,
+                "total_put_volume": pe_vol}
+    pcr = pe_vol / ce_vol
+    return {"pcr_volume": round(pcr, 4), "total_call_volume": ce_vol,
+            "total_put_volume": pe_vol}
+
+
+def compute_max_pain(snapshot: OptionChainSnapshot) -> dict[str, Any]:
+    """Strike where total option-writer payout is minimised (max pain theory).
+
+    Uses OPEN INTEREST only — volume, premium, and LTP are NOT inputs.
+
+    For ties (equal minimum payout), the LOWEST strike is selected.
+
+    Returns None max_pain when there is no usable OI data across the chain.
+    """
+    rows = _rows(snapshot)
+    strikes = sorted(set(r["strike"] for r in rows))
     if not strikes:
-        return {"max_pain": 0.0, "underlying_value": _num(snapshot.spot_price)}
-    best_strike = strikes[0]
+        return {"max_pain": None, "underlying_value": _num(snapshot.spot_price)}
+
+    best_strike: float | None = None
     best_loss: float | None = None
     for s in strikes:
         loss = 0.0
+        has_usable_oi = False
         for r in rows:
             ce = r["call_leg"]
             pe = r["put_leg"]
             if ce:
-                k = ce["strike"]
-                oi = ce["open_interest"]
-                if s > k:
-                    loss += (s - k) * oi
+                oi = ce.get("open_interest")
+                if oi is not None and oi > 0:
+                    k = ce["strike"]
+                    if s > k:
+                        loss += (s - k) * oi
+                    has_usable_oi = True
             if pe:
-                k = pe["strike"]
-                oi = pe["open_interest"]
-                if s < k:
-                    loss += (k - s) * oi
+                oi = pe.get("open_interest")
+                if oi is not None and oi > 0:
+                    k = pe["strike"]
+                    if s < k:
+                        loss += (k - s) * oi
+                    has_usable_oi = True
+        if not has_usable_oi:
+            continue
         if best_loss is None or loss < best_loss:
             best_loss = loss
             best_strike = s
+        # Tie-break: lowest strike wins (already iterating sorted, so first match)
+
+    if best_strike is None:
+        return {"max_pain": None, "underlying_value": _num(snapshot.spot_price)}
     return {"max_pain": best_strike, "underlying_value": _num(snapshot.spot_price)}
 
 

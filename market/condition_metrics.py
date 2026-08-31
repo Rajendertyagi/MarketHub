@@ -7,7 +7,9 @@ deterministic derivation such as ``spread``). Extraction returns a numeric
 value or ``None`` (UNKNOWN) — ``None`` is NEVER treated as zero, and a
 reported zero is a valid value (never treated as missing).
 
-Pure domain module: standard library + ``market.models`` only.
+B6B adds 4 analytics-derived metrics (pcr_oi, pcr_volume, max_pain, iv_skew)
+that are extracted from an ``OptionChainAnalyticsSnapshot`` instead of a
+``Quote``. These are tracked in ``METRIC_SOURCE`` and ``METRIC_EVAL_CLASS``.
 """
 
 from __future__ import annotations
@@ -47,7 +49,23 @@ METRIC_NAMES = (
     "greeks.iv",
 )
 
-METRIC_SET = frozenset(METRIC_NAMES)
+# B6B analytics metrics (added to the registry).
+ANALYTICS_METRIC_NAMES = (
+    "pcr_oi",
+    "pcr_volume",
+    "max_pain",
+    "iv_skew",
+)
+
+METRIC_SET = frozenset(METRIC_NAMES) | frozenset(ANALYTICS_METRIC_NAMES)
+
+# METRIC_SOURCE: "quote" for Quote-backed metrics, "analytics" for chain-derived.
+METRIC_SOURCE: dict[str, str] = {m: "quote" for m in METRIC_NAMES}
+METRIC_SOURCE.update({m: "analytics" for m in ANALYTICS_METRIC_NAMES})
+
+# METRIC_EVAL_CLASS: "event" for per-quote evaluation, "snapshot" for per-chain-refresh.
+METRIC_EVAL_CLASS: dict[str, str] = {m: "event" for m in METRIC_NAMES}
+METRIC_EVAL_CLASS.update({m: "snapshot" for m in ANALYTICS_METRIC_NAMES})
 
 # Direct Quote attribute for each scalar metric.
 _DIRECT_ATTRS = {
@@ -113,3 +131,22 @@ def extract_metric(quote: Quote, metric: str) -> float | None:
 def metric_value(quote: Quote, metric: str) -> Any:
     """Alias of :func:`extract_metric` (kept for symmetry with the registry)."""
     return extract_metric(quote, metric)
+
+
+def extract_analytics_metric(snapshot: Any, metric: str) -> float | None:
+    """Extract one analytics metric from an OptionChainAnalyticsSnapshot.
+
+    Returns ``None`` (UNKNOWN) when the metric is not available or the
+    snapshot is stale. A reported zero is returned as-is.
+
+    Raises ``KeyError`` for an unknown metric name.
+    """
+    if metric == "pcr_oi":
+        return snapshot.pcr_oi
+    if metric == "pcr_volume":
+        return snapshot.pcr_volume
+    if metric == "max_pain":
+        return snapshot.max_pain
+    if metric == "iv_skew":
+        return snapshot.iv_skew
+    raise KeyError(f"unknown metric: {metric!r}")

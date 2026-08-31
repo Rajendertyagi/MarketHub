@@ -47,6 +47,13 @@ _EXPECTED_27 = (
     "greeks.rho", "greeks.iv",
 )
 
+# B6B analytics metrics.
+_EXPECTED_B6B = (
+    "pcr_oi", "pcr_volume", "max_pain", "iv_skew",
+)
+
+_EXPECTED_31 = _EXPECTED_27 + _EXPECTED_B6B
+
 
 def _mk_quote(**kw) -> Quote:
     base = dict(
@@ -73,7 +80,7 @@ def _full_quote() -> Quote:
 def test_cm1_registry_exact(runner: R) -> None:
     runner.assert_eq("CM1-count", len(METRIC_NAMES), 27)
     runner.assert_eq("CM1-names", METRIC_NAMES, _EXPECTED_27)
-    runner.assert_eq("CM1-set", METRIC_SET, frozenset(_EXPECTED_27))
+    runner.assert_eq("CM1-set", METRIC_SET, frozenset(_EXPECTED_31))
     runner.assert_true("CM1-no-dupes", len(set(METRIC_NAMES)) == 27,
                        "duplicate metric names")
 

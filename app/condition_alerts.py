@@ -70,7 +70,7 @@ from core.persistence.modules.condition_alerts import (
     ROOT_CONDITION_ID_PREFIX,
     validate_condition_tree,
 )
-from market.condition_metrics import extract_metric
+from market.condition_metrics import extract_metric, extract_analytics_metric, METRIC_SOURCE
 
 logger = logging.getLogger("event_server")
 
@@ -136,10 +136,12 @@ class ConditionAlertEngine:
         }
     """
 
-    def __init__(self, store: Any, resolver: Any, bus: Any = None) -> None:
+    def __init__(self, store: Any, resolver: Any, bus: Any = None,
+                 analytics_service: Any = None) -> None:
         self._store = store
         self._resolver = resolver
         self._bus = bus
+        self._analytics = analytics_service
         self._lock = threading.Lock()
         self._alerts: dict[str, dict[str, Any]] = {}
         self._index: dict[str, set[str]] = {}
@@ -216,9 +218,22 @@ class ConditionAlertEngine:
 
     @staticmethod
     def _get_canonical_id(condition: dict[str, Any]) -> str:
+        """Return the chain key for an alert's condition tree.
+
+        For quote metrics: returns the canonical instrument id.
+        For analytics metrics: returns ``canonical_id:expiry``.
+        """
         if condition.get("condition_version") == CONDITION_VERSION_V1:
-            return condition["instrument"]["canonical_id"]
-        return condition["conditions"][0]["instrument"]["canonical_id"]
+            inst = condition.get("instrument", {})
+            cid = inst.get("canonical_id", "")
+            expiry = inst.get("expiry")
+            if expiry:
+                return f"{cid}:{expiry}"
+            return cid
+        children = condition.get("conditions", [])
+        if children:
+            return ConditionAlertEngine._get_canonical_id(children[0])
+        return ""
 
     def _get_alert_and_state(
         self, alert_id: str
@@ -280,7 +295,12 @@ class ConditionAlertEngine:
         threshold = condition["value"]
         condition_id = condition["condition_id"]
 
-        value = extract_metric(quote, metric)
+        # Analytics metrics are evaluated against the cached snapshot,
+        # not per-quote. Quote is ignored for analytics-backed leaves.
+        if METRIC_SOURCE.get(metric) == "analytics" and self._analytics is not None:
+            value = self._extract_analytics_value(alert, metric)
+        else:
+            value = extract_metric(quote, metric)
         leaf_state = state["leaves"].get(
             condition_id,
             {"last_result": LAST_RESULT_UNKNOWN,
@@ -338,7 +358,7 @@ class ConditionAlertEngine:
             if child.get("condition_version") == CONDITION_VERSION_V2:
                 # Nested group: evaluate recursively.
                 child_result = await self._evaluate_subgroup(
-                    child, state, quote)
+                    child, state, quote, alert=alert)
                 child_results.append(child_result)
                 # Persist subgroup state under synthetic ID.
                 sg_state = self._get_subgroup_state(state, cid)
@@ -424,11 +444,51 @@ class ConditionAlertEngine:
             }
         return leaves[cid]
 
+    def _extract_analytics_value(
+        self, alert: dict[str, Any], metric: str
+    ) -> float | None:
+        """Extract an analytics metric value from the cached snapshot.
+
+        Returns None (UNKNOWN) when the snapshot is missing or stale.
+        """
+        if self._analytics is None:
+            return None
+        # Determine chain key from the alert's condition tree.
+        condition = alert["_condition"]
+        chain_key = self._chain_key_from_condition(condition)
+        if chain_key is None:
+            return None
+        snap = self._analytics.get_snapshot(chain_key)
+        if snap is None:
+            return None
+        try:
+            return extract_analytics_metric(snap, metric)
+        except KeyError:
+            return None
+
+    @staticmethod
+    def _chain_key_from_condition(condition: dict[str, Any]) -> str | None:
+        """Extract chain_key (canonical_id:expiry) from a condition tree."""
+        version = condition.get("condition_version")
+        if version == CONDITION_VERSION_V1:
+            inst = condition.get("instrument", {})
+            cid = inst.get("canonical_id")
+            expiry = inst.get("expiry")
+            if cid and expiry:
+                return f"{cid}:{expiry}"
+            return None
+        if version == CONDITION_VERSION_V2:
+            children = condition.get("conditions", [])
+            if children:
+                return ConditionAlertEngine._chain_key_from_condition(children[0])
+        return None
+
     async def _evaluate_subgroup(
         self,
         child: dict[str, Any],
         state: dict[str, Any],
         quote: Any,
+        alert: dict[str, Any] | None = None,
     ) -> str:
         """Recursively evaluate a nested group, returning its root result."""
         logic = child["logic"]
@@ -438,14 +498,19 @@ class ConditionAlertEngine:
             if sub_child.get("condition_version") == CONDITION_VERSION_V2:
                 # Deeper nested group.
                 result = await self._evaluate_subgroup(
-                    sub_child, state, quote)
+                    sub_child, state, quote, alert=alert)
                 results.append(result)
             else:
                 # Leaf.
                 metric = sub_child["metric"]
                 operator = sub_child["operator"]
                 threshold = sub_child["value"]
-                value = extract_metric(quote, metric)
+                if (METRIC_SOURCE.get(metric) == "analytics"
+                        and self._analytics is not None
+                        and alert is not None):
+                    value = self._extract_analytics_value(alert, metric)
+                else:
+                    value = extract_metric(quote, metric)
                 prev = self._get_subgroup_state(state, sub_cid)
                 new_state = await self._evaluate_leaf_node(
                     operator, threshold, value, prev)

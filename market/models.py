@@ -37,16 +37,37 @@ from datetime import datetime
 from typing import Any
 
 __all__ = [
-    "Instrument", "Quote", "DepthLevel", "Depth", "OptionGreeks",
-    "merge_greeks", "Candle",
-    "OptionContractData", "OptionStrikeRow", "OptionChainSnapshot",
-    "OIStrikeRow", "OISnapshot", "OIChangeStrikeRow", "OIChangeSnapshot",
-    "MaxPainData", "PCRData", "NewsArticle", "NewsSnapshot",
-    "MarketHoliday", "MarketSession",
-    "FuturesSmartlistEntry", "FuturesSmartlist",
-    "FIIRecord", "FIIActivity",
-    "DIIRecord", "DIIActivity",
-    "CompanyProfile", "KeyRatios", "CorporateAction", "Competitor",
+    "Candle",
+    "CompanyProfile",
+    "Competitor",
+    "CorporateAction",
+    "DIIActivity",
+    "DIIRecord",
+    "Depth",
+    "DepthLevel",
+    "FIIActivity",
+    "FIIRecord",
+    "FuturesSmartlist",
+    "FuturesSmartlistEntry",
+    "Instrument",
+    "KeyRatios",
+    "MarketHoliday",
+    "MarketSession",
+    "MaxPainData",
+    "NewsArticle",
+    "NewsSnapshot",
+    "OIChangeSnapshot",
+    "OIChangeStrikeRow",
+    "OISnapshot",
+    "OIStrikeRow",
+    "OptionChainSnapshot",
+    "OptionContractData",
+    "OptionGreeks",
+    "OptionStrikeRow",
+    "OptionChainAnalyticsSnapshot",
+    "PCRData",
+    "Quote",
+    "merge_greeks",
 ]
 
 # Identity field names shared by every instrument-bearing model.
@@ -287,8 +308,8 @@ class Depth:
 
 
 def merge_greeks(
-    old: "OptionGreeks | None", new: "OptionGreeks | None"
-) -> "OptionGreeks | None":
+    old: OptionGreeks | None, new: OptionGreeks | None
+) -> OptionGreeks | None:
     """Field-wise merge of an incoming Greeks snapshot over prior state.
 
     Providers report greeks as snapshots; a snapshot may legitimately
@@ -383,7 +404,7 @@ class OptionChainSnapshot:
             _coerce_strike_rows(self.strikes))
 
 
-def _coerce_strike_rows(value: Any) -> tuple["OptionStrikeRow", ...]:
+def _coerce_strike_rows(value: Any) -> tuple[OptionStrikeRow, ...]:
     if value is None:
         return ()
     try:
@@ -478,6 +499,52 @@ class PCRData:
     total_put_oi: int | None = None
     total_call_oi: int | None = None
     spot_price: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class OptionChainAnalyticsSnapshot:
+    """Provider-neutral derived analytics snapshot for one expiry chain.
+
+    This wraps an ``OptionChainSnapshot`` with pre-computed analytics metrics
+    plus freshness metadata. The underlying ``OptionChainSnapshot`` is NOT
+    modified — this is a separate derived model.
+    """
+    chain_key: str                # canonical_underlying_id:expiry
+    canonical_underlying_id: str
+    exchange: str
+    tradingsymbol: str
+    expiry: str
+    spot_price: float | None = None
+
+    # Analytics metrics (None = UNKNOWN / unavailable).
+    pcr_oi: float | None = None
+    pcr_volume: float | None = None
+    max_pain: float | None = None
+    iv_skew: float | None = None
+
+    # Freshness metadata.
+    received_ts: datetime | None = None
+    calculated_at: datetime | None = None
+    stale_after_seconds: float = 300.0
+
+    @property
+    def age_seconds(self) -> float | None:
+        """Seconds since the snapshot was received. None if received_ts is missing."""
+        if self.received_ts is None:
+            return None
+        now = datetime.now(timezone.utc)
+        delta = now - self.received_ts
+        return delta.total_seconds()
+
+    @property
+    def is_stale(self) -> bool:
+        """True if the snapshot exists but has exceeded its stale threshold."""
+        if self.received_ts is None:
+            return True
+        age = self.age_seconds
+        if age is None:
+            return True
+        return age > self.stale_after_seconds
 
 
 @dataclass(frozen=True, slots=True)

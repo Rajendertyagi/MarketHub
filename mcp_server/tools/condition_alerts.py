@@ -39,7 +39,7 @@ from core.persistence.modules.condition_alerts import (
     VALID_OPERATORS,
     VALID_TRIGGER_MODES,
 )
-from market.condition_metrics import METRIC_SET
+from market.condition_metrics import METRIC_SET, METRIC_SOURCE
 from mcp_server.contract import (
     TOOL_CONDITION_ALERT_CREATE,
     TOOL_CONDITION_ALERT_DELETE,
@@ -171,7 +171,8 @@ def _tree_canonical_id(node: dict[str, Any]) -> str | None:
 
 def _normalize_leaf(services: Any, node: dict[str, Any], *,
                     leaf_count: list[int],
-                    expected_canonical_id: str | None) -> dict[str, Any]:
+                    expected_canonical_id: str | None,
+                    expected_expiry: str | None = None) -> dict[str, Any]:
     if "logic" in node or "conditions" in node:
         raise ConditionValidationError(
             "leaf must not contain logic/conditions (use a group node)")
@@ -188,12 +189,52 @@ def _normalize_leaf(services: Any, node: dict[str, Any], *,
     instrument = node.get("instrument")
     if not isinstance(instrument, dict):
         raise ConditionValidationError("instrument must be an object")
-    resolved = _resolve_public_instrument(services, instrument)
-    canonical_id = resolved["canonical_id"]
-    if expected_canonical_id is not None and canonical_id != expected_canonical_id:
-        raise ConditionValidationError(
-            f"same-instrument required: expected {expected_canonical_id!r}, "
-            f"got {canonical_id!r}")
+
+    is_analytics = METRIC_SOURCE.get(metric) == "analytics"
+
+    if is_analytics:
+        # Analytics metrics require expiry in the instrument reference.
+        expiry = (instrument.get("expiry") or "").strip()
+        if not expiry:
+            raise ConditionValidationError(
+                "analytics metric requires instrument.expiry (YYYY-MM-DD)")
+        # For analytics, resolve the underlying to get canonical_id.
+        # The expiry is part of the chain identity, not the instrument identity.
+        ref_without_expiry = {k: v for k, v in instrument.items()
+                              if k != "expiry"}
+        resolved = _resolve_public_instrument(services, ref_without_expiry)
+        canonical_id = resolved["canonical_id"]
+        # Validate expiry format.
+        try:
+            from datetime import datetime
+            datetime.strptime(expiry, "%Y-%m-%d")
+        except (ValueError, TypeError):
+            raise ConditionValidationError(
+                f"instrument.expiry must be YYYY-MM-DD (got {expiry!r})")
+        chain_key = f"{canonical_id}:{expiry}"
+        if expected_canonical_id is not None:
+            if canonical_id != expected_canonical_id:
+                raise ConditionValidationError(
+                    f"same-chain required: expected canonical {expected_canonical_id!r}, "
+                    f"got {canonical_id!r}")
+            if expiry != expected_expiry:
+                raise ConditionValidationError(
+                    f"same-chain required: expected expiry {expected_expiry!r}, "
+                    f"got {expiry!r}")
+    else:
+        # Quote metric: resolve via catalog, no expiry required.
+        resolved = _resolve_public_instrument(services, instrument)
+        canonical_id = resolved["canonical_id"]
+        if expected_canonical_id is not None and canonical_id != expected_canonical_id:
+            raise ConditionValidationError(
+                f"same-instrument required: expected {expected_canonical_id!r}, "
+                f"got {canonical_id!r}")
+        # Reject mixed-source groups.
+        if expected_expiry is not None:
+            raise ConditionValidationError(
+                "quote metric in analytics group not supported (B7)")
+        chain_key = canonical_id
+
     # Unsupported metric for instrument (public-layer soft check).
     if metric in _GREEKS_METRICS and resolved["instrument_type"] != "OPTION":
         raise ConditionValidationError(
@@ -202,7 +243,7 @@ def _normalize_leaf(services: Any, node: dict[str, Any], *,
     if leaf_count[0] > MAX_CONDITION_LEAVES:
         raise ConditionValidationError(
             f"too many leaves (max {MAX_CONDITION_LEAVES})")
-    return {
+    result = {
         "condition_version": CONDITION_VERSION_V1,
         "condition_id": uuid.uuid4().hex,
         "metric": metric,
@@ -210,11 +251,16 @@ def _normalize_leaf(services: Any, node: dict[str, Any], *,
         "value": value,
         "instrument": {"canonical_id": canonical_id},
     }
+    if is_analytics:
+        result["instrument"]["expiry"] = expiry
+        result["_chain_key"] = chain_key
+    return result
 
 
 def _normalize_group(services: Any, node: dict[str, Any], *,
                      depth: int, leaf_count: list[int],
-                     expected_canonical_id: str | None) -> dict[str, Any]:
+                     expected_canonical_id: str | None,
+                     expected_expiry: str | None = None) -> dict[str, Any]:
     if depth >= MAX_CONDITION_DEPTH:
         raise ConditionValidationError(
             f"max condition depth ({MAX_CONDITION_DEPTH}) exceeded")
@@ -230,23 +276,32 @@ def _normalize_group(services: Any, node: dict[str, Any], *,
             f"too many children ({len(conditions)}), max {MAX_CONDITION_LEAVES}")
     normalized: list[dict[str, Any]] = []
     expected = expected_canonical_id
+    expected_exp = expected_expiry
     for child in conditions:
         if not isinstance(child, dict):
             raise ConditionValidationError("each condition must be an object")
         if child.get("condition_version") == CONDITION_VERSION_V2:
             nv = _normalize_group(services, child, depth=depth + 1,
                                   leaf_count=leaf_count,
-                                  expected_canonical_id=expected)
+                                  expected_canonical_id=expected,
+                                  expected_expiry=expected_exp)
         else:
             nv = _normalize_leaf(services, child, leaf_count=leaf_count,
-                                 expected_canonical_id=expected)
+                                 expected_canonical_id=expected,
+                                 expected_expiry=expected_exp)
         child_canonical = _tree_canonical_id(nv)
+        child_expiry = nv.get("instrument", {}).get("expiry")
         if expected is None:
             expected = child_canonical
+            expected_exp = child_expiry
         if child_canonical != expected:
             raise ConditionValidationError(
-                f"same-instrument required within group: "
+                f"same-chain required within group: "
                 f"{expected!r} != {child_canonical!r}")
+        if expected_exp is not None and child_expiry != expected_exp:
+            raise ConditionValidationError(
+                f"same-chain required within group: "
+                f"expiry {expected_exp!r} != {child_expiry!r}")
         normalized.append(nv)
     return {"condition_version": CONDITION_VERSION_V2, "logic": logic,
             "conditions": normalized}
@@ -283,6 +338,7 @@ def register_condition_alert_tools(mcp, services, **kwargs) -> None:
     """Register the 5 public advanced condition-alert tools (B5)."""
     store = getattr(services, "store", None)
     engine = getattr(services, "condition_alert_engine", None)
+    analytics = getattr(services, "analytics_service", None)
 
     def _reload_engine() -> None:
         if engine is not None:
@@ -293,13 +349,26 @@ def register_condition_alert_tools(mcp, services, **kwargs) -> None:
 
     def _public_alert(alert: dict[str, Any]) -> dict[str, Any]:
         """Public-safe representation (no provider tokens, no internal state)."""
+        condition = alert.get("condition") or {}
+        # Preserve analytics-specific fields for public output.
+        public_condition = dict(condition)
+        if "conditions" in public_condition:
+            public_conditions = []
+            for child in public_condition["conditions"]:
+                pc = dict(child)
+                public_conditions.append(pc)
+            public_condition["conditions"] = public_conditions
+        # Copy expiry from instrument if present (analytics).
+        inst = public_condition.get("instrument", {})
+        if "expiry" in inst:
+            public_condition["instrument"] = dict(inst)
         return {
             "alert_id": alert.get("alert_id"),
             "consumer_id": alert.get("consumer_id"),
             "name": alert.get("name"),
             "enabled": bool(alert.get("enabled")),
             "trigger_mode": alert.get("trigger_mode"),
-            "condition": alert.get("condition"),
+            "condition": public_condition,
             "metadata": alert.get("metadata") or {},
             "created_at": alert.get("created_at"),
             "updated_at": alert.get("updated_at"),
@@ -318,6 +387,39 @@ def register_condition_alert_tools(mcp, services, **kwargs) -> None:
             # Cross-owner access is treated as not-found (existing pattern).
             raise AlertNotFoundError(alert_id)
         return alert
+
+    def _extract_analytics_chains(condition: dict[str, Any]) -> set[str]:
+        """Extract chain keys from a normalized condition tree."""
+        keys: set[str] = set()
+        version = condition.get("condition_version")
+        if version == CONDITION_VERSION_V1:
+            chain_key = condition.get("_chain_key")
+            if chain_key:
+                keys.add(chain_key)
+        elif version == CONDITION_VERSION_V2:
+            for child in condition.get("conditions", []):
+                keys |= _extract_analytics_chains(child)
+        return keys
+
+    def _register_chains_for_alert(alert: dict[str, Any]) -> None:
+        """Register analytics chains if this alert uses analytics metrics."""
+        if analytics is None:
+            return
+        condition = alert.get("condition")
+        if not isinstance(condition, dict):
+            return
+        for key in _extract_analytics_chains(condition):
+            analytics.register_chain(key, alert["alert_id"])
+
+    def _unregister_chains_for_alert(alert: dict[str, Any]) -> None:
+        """Unregister analytics chains for this alert."""
+        if analytics is None:
+            return
+        condition = alert.get("condition")
+        if not isinstance(condition, dict):
+            return
+        for key in _extract_analytics_chains(condition):
+            analytics.unregister_chain(key, alert["alert_id"])
 
     @mcp.tool(name=TOOL_CONDITION_ALERT_CREATE)
     async def condition_alert_create(
@@ -361,6 +463,7 @@ def register_condition_alert_tools(mcp, services, **kwargs) -> None:
             raise StorageError("condition alert creation failed", exc) from exc
         _reload_engine()
         alert = store.get_condition_alert(alert_id)
+        _register_chains_for_alert(alert)
         return {"status": "created", "alert": _public_alert(alert)}
 
     @mcp.tool(name=TOOL_CONDITION_ALERT_LIST)
@@ -436,6 +539,11 @@ def register_condition_alert_tools(mcp, services, **kwargs) -> None:
         except Exception as exc:
             raise StorageError("condition alert enable/disable failed", exc) from exc
         _reload_engine()
+        # Re-register chains after enable (re-arm may need fresh chain data).
+        if enabled:
+            alert = store.get_condition_alert(alert_id)
+            if alert is not None:
+                _register_chains_for_alert(alert)
         return {"status": "enabled" if enabled else "disabled",
                 "ok": True, "alert_id": alert_id, "enabled": bool(enabled)}
 
@@ -467,5 +575,7 @@ def register_condition_alert_tools(mcp, services, **kwargs) -> None:
             raise
         except Exception as exc:
             raise StorageError("condition alert deletion failed", exc) from exc
+        # Unregister chains before reload (alert no longer exists).
+        _unregister_chains_for_alert({"alert_id": alert_id, "condition": {}})
         _reload_engine()
         return {"status": "deleted", "ok": True, "alert_id": alert_id}
