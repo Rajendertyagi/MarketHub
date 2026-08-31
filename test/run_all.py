@@ -126,6 +126,8 @@ _TEST_FILES: dict[str, str] = {
     "condition_alert_atomicity": "test_condition_alert_atomicity.py",
     "condition_alert_live_delivery": "test_condition_alert_live_delivery.py",
     "condition_groups": "test_condition_groups.py",
+    "condition_alert_mcp": "test_condition_alert_mcp.py",
+    "condition_alert_mcp_acceptance": "test_condition_alert_mcp_acceptance.py",
 }
 
 # Group -> ordered list of module keys. Order matters (fast/stable first).
@@ -179,10 +181,11 @@ GROUPS: dict[str, list[str]] = {
         "condition_alert_atomicity",
         "condition_alert_live_delivery",
         "condition_groups",
+        "condition_alert_mcp",
     ],
     "source": ["source_lifecycle", "source_dedup", "source_controls", "alert_history", "fyers_config", "release_hardening"],
     "consumer": ["consumers", "acknowledgement"],
-    "mcp": ["subscriptions", "mcp_live_consumer_notifications", "mcp_live_alert_acceptance", "sdk_alignment", "lifespan", "multi_client", "errors", "timeouts", "sse_stream"],
+    "mcp": ["subscriptions", "mcp_live_consumer_notifications", "mcp_live_alert_acceptance", "sdk_alignment", "lifespan", "multi_client", "errors", "timeouts", "sse_stream", "condition_alert_mcp_acceptance"],
     "lifecycle": ["source_lifecycle", "reconnect", "mcp_3e_reconnect_restart"],
     "unit": ["unit_sources", "market_normalize", "market_service", "upstox_auth",
              "upstox_rest", "options_analytics", "margin_shareholdings_greeks"],
