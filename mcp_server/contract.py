@@ -18,7 +18,7 @@ from __future__ import annotations
 # ─── Contract version ─────────────────────────────────────────────────────────
 # Bumps only when the MCP tool/resource/event contract changes in a breaking way.
 # Distinct from MCP spec version, app version, Python version, and SDK version.
-CONTRACT_VERSION = "2.2.0"
+CONTRACT_VERSION = "2.3.0"
 
 # ─── Resource URIs ─────────────────────────────────────────────────────────────
 # mcp-event:// is an APPLICATION-PRIVATE URI scheme. It is NOT an official
@@ -78,6 +78,15 @@ TOOL_MARKET_ALERT_LIST = "market_alert_list"
 TOOL_MARKET_ALERT_ENABLE = "market_alert_enable"
 TOOL_MARKET_ALERT_DISABLE = "market_alert_disable"
 TOOL_MARKET_ALERT_DELETE = "market_alert_delete"
+
+# ─── Advanced condition-alert tools (B5, market_condition family) ────────────
+# Public MCP exposure of the B2/B4 ConditionAlertEngine. Consumer-owned,
+# v1 leaf / v2 same-instrument all/any groups, human instrument references.
+TOOL_CONDITION_ALERT_CREATE = "condition_alert_create"
+TOOL_CONDITION_ALERT_LIST = "condition_alert_list"
+TOOL_CONDITION_ALERT_GET = "condition_alert_get"
+TOOL_CONDITION_ALERT_SET_ENABLED = "condition_alert_set_enabled"
+TOOL_CONDITION_ALERT_DELETE = "condition_alert_delete"
 
 # ─── Options analytics tools (derived, provider-agnostic) ────────────────────
 # Locally computed over the canonical OptionChainSnapshot — no extra broker API
