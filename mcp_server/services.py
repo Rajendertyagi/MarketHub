@@ -24,6 +24,8 @@ class Services:
     metrics: Any
     market_service: Any = None          # RuntimeMetrics
     alert_engine: Any = None            # market alert engine (WebUI parity)
+    condition_alert_engine: Any = None  # advanced market_condition engine (B2/B4)
+    condition_identity_resolver: Any = None  # provider-neutral identity resolver (B2)
     market_intel: Any = None            # unified search/discovery/chain
     instrument_catalog: Any = None      # canonical instrument catalog
     provider_market_data: Any = None    # history/option-chain services
