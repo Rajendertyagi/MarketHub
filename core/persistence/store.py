@@ -882,6 +882,17 @@ class EventStore:
         finally:
             conn.close()
 
+    def reset_condition_runtime_state(self, alert_id: str) -> None:
+        """Delete runtime-state rows for an alert (re-arm on enable)."""
+        conn = self._open(self._db_path)
+        try:
+            _condition_alerts.reset_condition_runtime_state(conn, alert_id)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def load_enabled_condition_alerts(self) -> list[dict[str, Any]]:
         conn = self._open(self._db_path)
         try:

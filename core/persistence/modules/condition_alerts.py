@@ -371,6 +371,20 @@ def delete_condition_alert(conn: sqlite3.Connection, alert_id: str) -> None:
         raise AlertNotFoundError(alert_id)
 
 
+def reset_condition_runtime_state(conn: sqlite3.Connection,
+                                  alert_id: str) -> None:
+    """Delete runtime-state rows for an alert (re-arm on enable).
+
+    Used by the public enable path so an explicitly re-enabled alert starts
+    from UNKNOWN (re-armed) rather than resuming a fired state. No schema
+    change — rows are simply removed; the engine re-initializes them to
+    UNKNOWN on reload.
+    """
+    conn.execute("DELETE FROM condition_runtime_state WHERE alert_id = ?",
+                 (alert_id,))
+    conn.commit()
+
+
 def load_enabled_condition_alerts(
     conn: sqlite3.Connection,
 ) -> list[dict[str, Any]]:
