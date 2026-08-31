@@ -52,6 +52,8 @@ class _MockServices:
         self.metrics = MagicMock()
         self.market_service = None
         self.alert_engine = None
+        self.condition_alert_engine = None
+        self.condition_identity_resolver = None
         self.market_intel = None
         self.instrument_catalog = None
         self.provider_market_data = None
@@ -64,6 +66,7 @@ def _register_all(fake: _FakeMCP, services: _MockServices) -> None:
     from mcp_server.tools.consumers import register_consumer_tools
     from mcp_server.tools.replay import register_replay_tools
     from mcp_server.tools.alerts import register_alert_tools
+    from mcp_server.tools.condition_alerts import register_condition_alert_tools
     from mcp_server.tools.market import register_market_tools
     from mcp_server.tools.market_intel_tools import register_market_intel_tools
     from mcp_server.tools.market_alerts import register_market_alert_tools
@@ -78,6 +81,7 @@ def _register_all(fake: _FakeMCP, services: _MockServices) -> None:
     register_market_intel_tools(fake, services)
     register_market_alert_tools(fake, services)
     register_options_analytics_tools(fake, services)
+    register_condition_alert_tools(fake, services)
 
 
 # ── Contract completeness ────────────────────────────────────────────────────
@@ -150,13 +154,21 @@ _MCP2B_TOOLS: set[str] = {
     "market_alert_disable", "market_alert_delete",
 }
 
-EXPECTED_MCP_TOOL_NAMES: set[str] = _MCP1_FROZEN_TOOLS | _MCP2B_TOOLS
+_MCP2B5_TOOLS: set[str] = {
+    # 5 advanced condition alerts (B5, market_condition family)
+    "condition_alert_create", "condition_alert_list", "condition_alert_get",
+    "condition_alert_set_enabled", "condition_alert_delete",
+}
+
+EXPECTED_MCP_TOOL_NAMES: set[str] = (
+    _MCP1_FROZEN_TOOLS | _MCP2B_TOOLS | _MCP2B5_TOOLS
+)
 
 
 class TestMcpToolSnapshot:
-    """Exact 42-tool name set + 16 MCP-2B subset + zero dev_* (MCP-2B.3D)."""
+    """Exact 47-tool name set + 16 MCP-2B subset + 5 B5 subset + zero dev_*."""
 
-    def test_exact_42_tool_names(self) -> None:
+    def test_exact_47_tool_names(self) -> None:
         fake = _FakeMCP()
         services = _MockServices()
         _register_all(fake, services)
@@ -178,6 +190,19 @@ class TestMcpToolSnapshot:
             f"MCP-2B subset mismatch.\n"
             f"  Missing: {_MCP2B_TOOLS - mcp2b_registered}\n"
             f"  Extra:   {mcp2b_registered - _MCP2B_TOOLS}"
+        )
+
+    def test_mcp2b5_subset_exact_5(self) -> None:
+        fake = _FakeMCP()
+        services = _MockServices()
+        _register_all(fake, services)
+        registered = set(fake.tools.keys())
+        # Filter to B5 subset from the full registration.
+        b5_registered = registered & _MCP2B5_TOOLS
+        assert b5_registered == _MCP2B5_TOOLS, (
+            f"B5 subset mismatch.\n"
+            f"  Missing: {_MCP2B5_TOOLS - b5_registered}\n"
+            f"  Extra:   {b5_registered - _MCP2B5_TOOLS}"
         )
 
     def test_no_dev_tools_in_snapshot(self) -> None:
