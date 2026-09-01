@@ -432,6 +432,10 @@ class ConditionAlertEngine:
                      "crossing_side": CROSSING_UNKNOWN})
                 is_new_tick = (leaf_dep is not None
                                and leaf_dep == quote_dep)
+                # Analytics leaves are always "new tick" since their values
+                # change independently of quote updates.
+                if METRIC_SOURCE.get(metric) == "analytics":
+                    is_new_tick = True
                 new_leaf_state = await self._evaluate_leaf_node(
                     operator, threshold, value, prev_leaf_state,
                     analytics_seen=(METRIC_SOURCE.get(metric) == "analytics"
@@ -583,6 +587,8 @@ class ConditionAlertEngine:
                 prev = self._get_subgroup_state(state, sub_cid)
                 sub_is_new_tick = (sub_leaf_dep is not None
                                    and sub_leaf_dep == sub_quote_dep)
+                if METRIC_SOURCE.get(metric) == "analytics":
+                    sub_is_new_tick = True
                 new_state = await self._evaluate_leaf_node(
                     operator, threshold, value, prev,
                     analytics_seen=(METRIC_SOURCE.get(metric) == "analytics"
@@ -636,12 +642,14 @@ class ConditionAlertEngine:
                     fire = (prev_side == CROSSING_ABOVE
                             and new_side == CROSSING_BELOW_OR_EQUAL)
             if fire:
-                leaf_result = LAST_RESULT_TRUE
-            elif prev_value is not None and value == prev_value:
-                # Same stale value — preserve state for re-arm support.
-                leaf_result = prev_state["last_result"]
+                # Crossing event: set state to match the new side.
+                leaf_result = LAST_RESULT_TRUE if operator == "crosses_above" else LAST_RESULT_FALSE
+            elif not is_new_tick and value == prev_value:
+                # Stale re-evaluation with same value — reset to FALSE
+                # to prevent phantom fires across different instruments.
+                leaf_result = LAST_RESULT_FALSE
             else:
-                # New value or first evaluation — preserve state.
+                # New tick or value changed — preserve state for re-arm.
                 leaf_result = prev_state["last_result"]
             return {"last_result": leaf_result, "crossing_side": new_side}
         else:
