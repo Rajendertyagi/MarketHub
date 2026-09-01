@@ -455,16 +455,19 @@ threshold **crossing** based on persisted side-of-threshold state:
 | `TRUE → UNKNOWN` | **No re-arm** — retain current level state |
 | `FALSE → UNKNOWN` | **Retains FALSE** — do not fake re-arm |
 
-**CROSSING first observation:** the first valid metric establishes the
-`crossing_side` from `UNKNOWN`. If it arrives already on the crossed side it is
-treated as a valid first crossing and **fires** (e.g. `crosses_above` with the
-first value above threshold, or `crosses_below` with the first value below
-threshold). If it arrives on the non-crossed side it merely establishes the
-baseline and does **not** fire. Subsequent crossings from the opposite side
-fire per the crossing operator rules. This holds for BOTH quote-backed and
-analytics-backed (B7) crossing leaves: an analytics leaf's very first snapshot
-that is already on the crossed side is a genuine first crossing, not a stale
-reuse of a prior crossing.
+**CROSSING first observation (frozen contract):** the first valid metric
+establishes the `crossing_side` from `UNKNOWN` and **NEVER fires**, regardless
+of which side it lands on (above or below/equal the threshold). It only records
+the baseline side. A fire occurs only on a *subsequent* genuine crossing from
+the opposite side:
+- `crosses_above`: fires only when `previous_side == below_or_equal` AND
+  `current_value > threshold` (a genuine below→above crossing).
+- `crosses_below`: fires only when `previous_side == above` AND
+  `current_value <= threshold` (a genuine above→below crossing).
+This holds for BOTH quote-backed and analytics-backed (B7) crossing leaves. An
+analytics leaf's very first snapshot, even if already on the crossed side, merely
+establishes the baseline and does **not** fire — it is the first observation, not
+a stale reuse of a prior crossing.
 
 ### 14.7 Trigger modes
 
@@ -774,6 +777,25 @@ Each leaf evaluates independently per quote arrival:
 This means a RELIANCE quote update evaluates only RELIANCE leaves;
 INFY leaves use their remembered values. The root aggregates using
 Kleene logic (ALL/ANY) over the mixed results.
+
+### Analytics Freshness Is Dependency-Driven (not value-change-driven)
+
+Freshness is determined by **which dependency produced the current evaluation**,
+not by whether the numeric value changed. A crossing leaf is a fresh observation
+only when its OWN dependency updates:
+
+- **Quote leaf:** fresh only when its own `quote:<canonical_id>` dependency
+  triggered the evaluation. A quote for a different instrument re-evaluates the
+  leaf with its remembered value and is NOT a fresh tick.
+- **Analytics leaf (B7):** fresh only when its own analytics chain produces a
+  *new* snapshot object (snapshot identity), even when the extracted metric value
+  is numerically identical to the previous one. Two consecutive same-value
+  analytics refreshes are two fresh observations; an unchanged cached snapshot
+  during an unrelated quote update is NOT a fresh analytics tick and must not
+  generate a crossing event.
+
+A cached last-known analytics value remains usable for LEVEL operators while it
+is fresh/non-stale, but it is never a fresh crossing tick.
 
 ### Crossing Ephemeral Across Targets
 

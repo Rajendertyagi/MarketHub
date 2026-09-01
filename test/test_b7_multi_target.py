@@ -1663,6 +1663,228 @@ async def test_bt25_subgroup_analytics_crossing(runner: R) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
+
+
+# ---------------------------------------------------------------------------
+# B7 crossing semantic fix - targeted regression tests (TEST 1-8)
+# ---------------------------------------------------------------------------
+
+from app.condition_alerts import (CROSSING_ABOVE as _CA,
+                                  CROSSING_BELOW_OR_EQUAL as _CBE,
+                                  LAST_RESULT_UNKNOWN as _LR_UNKNOWN)
+from market.condition_metrics import METRIC_SOURCE as _METRIC_SOURCE
+
+
+def _b7fix_setup(store, analytics_metric, operator, threshold,
+                 quote_threshold=25000, expiry="2026-09-25"):
+    """Build a mixed v2 group (quote ltp + one analytics crossing leaf)."""
+    services = _mock_services_for_normalizer(store)
+    from mcp_server.tools.condition_alerts import _normalize_public_condition
+    condition = {
+        "condition_version": 2, "logic": "all",
+        "conditions": [
+            {"condition_version": 1, "metric": "ltp", "operator": "gt",
+             "value": quote_threshold,
+             "instrument": {"exchange": "NSE", "symbol": "NIFTY"}},
+            {"condition_version": 1, "metric": analytics_metric,
+             "operator": operator, "value": threshold,
+             "instrument": {"exchange": "NSE", "symbol": "NIFTY",
+                            "expiry": expiry}},
+        ],
+    }
+    normalized = _normalize_public_condition(services, condition)
+    aid = store.create_condition_alert(
+        consumer_id="consumer-1", name="b7fix-cross",
+        trigger_mode="repeat", condition_json=normalized)
+    resolver = _mk_resolver(store)
+    analytics = _FakeAnalyticsService()
+    engine = ConditionAlertEngine(store, resolver=resolver,
+                                  analytics_service=analytics)
+    engine.reload()
+    CK = f"analytics:NSE:INDEX:NIFTY:{expiry}"
+    cid = None
+    for c in normalized["conditions"]:
+        if _METRIC_SOURCE.get(c["metric"]) == "analytics":
+            cid = c["condition_id"]
+    return analytics, engine, aid, cid, CK
+
+
+def _leaf_side(engine, aid, cid):
+    return engine._state[aid]["leaves"][cid]["crossing_side"]
+
+
+def _leaf_result(engine, aid, cid):
+    return engine._state[aid]["leaves"][cid]["last_result"]
+
+
+async def test_b7fix_t1_first_obs_above_no_fire(runner: R) -> None:
+    """TEST 1: first observation above threshold establishes side ABOVE, no fire."""
+    store, tmp = _mk_store()
+    try:
+        analytics, engine, aid, cid, CK = _b7fix_setup(
+            store, "pcr_oi", "crosses_above", 1.2)
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.3))
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("T1-first-obs-no-fire", len(fired), 0)
+        runner.assert_eq("T1-side-above", _leaf_side(engine, aid, cid), _CA)
+    finally:
+        tmp.cleanup()
+
+
+async def test_b7fix_t2_first_obs_below_no_fire(runner: R) -> None:
+    """TEST 2: first observation below threshold establishes side BELOW, no fire."""
+    store, tmp = _mk_store()
+    try:
+        analytics, engine, aid, cid, CK = _b7fix_setup(
+            store, "pcr_oi", "crosses_below", 1.2)
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.0))
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("T2-first-obs-no-fire", len(fired), 0)
+        runner.assert_eq("T2-side-below", _leaf_side(engine, aid, cid), _CBE)
+    finally:
+        tmp.cleanup()
+
+
+async def test_b7fix_t3_second_obs_true_crossing(runner: R) -> None:
+    """TEST 3: second (fresh) observation crossing above fires once."""
+    store, tmp = _mk_store()
+    try:
+        analytics, engine, aid, cid, CK = _b7fix_setup(
+            store, "pcr_oi", "crosses_above", 1.2)
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.1))
+        await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.3))
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("T3-crossing-fire", len(fired), 1)
+        runner.assert_eq("T3-trigger-count",
+                         store.get_condition_alert(aid)["trigger_count"], 1)
+    finally:
+        tmp.cleanup()
+
+
+async def test_b7fix_t4_rearm_side_update(runner: R) -> None:
+    """TEST 4: side updates on every fresh obs; re-crossing fires exactly twice."""
+    store, tmp = _mk_store()
+    try:
+        analytics, engine, aid, cid, CK = _b7fix_setup(
+            store, "pcr_oi", "crosses_above", 1.2)
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.1))
+        await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.3))
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("T4-fire-1", len(fired), 1)
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.4))
+        await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        # drop back below: no fire, but durable side MUST update to BELOW
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.1))
+        await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("T4-side-below", _leaf_side(engine, aid, cid), _CBE)
+        # genuine second crossing -> fire #2
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.3))
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("T4-fire-2", len(fired), 1)
+        runner.assert_eq("T4-trigger-count",
+                         store.get_condition_alert(aid)["trigger_count"], 2)
+    finally:
+        tmp.cleanup()
+
+
+async def test_b7fix_t5_identical_fresh_analytics(runner: R) -> None:
+    """TEST 5: two identical-value refreshes are BOTH fresh; not classified stale."""
+    store, tmp = _mk_store()
+    try:
+        analytics, engine, aid, cid, CK = _b7fix_setup(
+            store, "pcr_oi", "crosses_above", 1.2)
+        snap_a = _FakeAnalyticsSnapshot(CK, pcr_oi=1.10)
+        analytics.set_snapshot(CK, snap_a)
+        await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("T5-refresh1-fresh",
+                         engine._analytics_last_snapshot[(aid, cid)] is snap_a, True)
+        runner.assert_eq("T5-refresh1-side", _leaf_side(engine, aid, cid), _CBE)
+        # Second refresh with the SAME numeric value but a distinct observation.
+        snap_b = _FakeAnalyticsSnapshot(CK, pcr_oi=1.10)
+        analytics.set_snapshot(CK, snap_b)
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("T5-refresh2-no-fire", len(fired), 0)
+        runner.assert_eq("T5-refresh2-fresh",
+                         engine._analytics_last_snapshot[(aid, cid)] is snap_b, True)
+        # Not stale: leaf keeps a normal FALSE crossing result with side BELOW.
+        runner.assert_eq("T5-refresh2-side", _leaf_side(engine, aid, cid), _CBE)
+        runner.assert_eq("T5-refresh2-not-unknown",
+                         _leaf_result(engine, aid, cid) == _LR_UNKNOWN, False)
+        runner.assert_eq("T5-trigger-count",
+                         store.get_condition_alert(aid)["trigger_count"], 0)
+    finally:
+        tmp.cleanup()
+
+
+async def test_b7fix_t6_old_crossing_not_reused_by_quote(runner: R) -> None:
+    """TEST 6: an old analytics crossing must not be reused by a later quote."""
+    store, tmp = _mk_store()
+    try:
+        analytics, engine, aid, cid, CK = _b7fix_setup(
+            store, "pcr_oi", "crosses_above", 1.2)
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.1))
+        await engine.evaluate(_FakeQuote(24000, token="2887", tsym="NIFTY"))
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.3))
+        fired = await engine.evaluate(_FakeQuote(24000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("T6-cross-while-quote-false", len(fired), 0)
+        # quote later TRUE: old crossing must NOT be reused
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("T6-quote-true-no-fire", len(fired), 0)
+        runner.assert_eq("T6-trigger-count",
+                         store.get_condition_alert(aid)["trigger_count"], 0)
+    finally:
+        tmp.cleanup()
+
+
+async def test_b7fix_t7_same_value_after_crossing(runner: R) -> None:
+    """TEST 7: a fresh observation with the same value is still fresh, no 2nd crossing."""
+    store, tmp = _mk_store()
+    try:
+        analytics, engine, aid, cid, CK = _b7fix_setup(
+            store, "pcr_oi", "crosses_above", 1.2)
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.1))
+        await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.3))
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("T7-cross-fire", len(fired), 1)
+        # third observation identical value (fresh snapshot) -> no second crossing
+        snap_c = _FakeAnalyticsSnapshot(CK, pcr_oi=1.3)
+        analytics.set_snapshot(CK, snap_c)
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("T7-same-value-no-fire", len(fired), 0)
+        runner.assert_eq("T7-still-fresh",
+                         engine._analytics_last_snapshot[(aid, cid)] is snap_c, True)
+        runner.assert_eq("T7-trigger-count",
+                         store.get_condition_alert(aid)["trigger_count"], 1)
+    finally:
+        tmp.cleanup()
+
+
+async def test_b7fix_t8_crosses_below_symmetry(runner: R) -> None:
+    """TEST 8: crosses_below symmetry - baseline no fire, only genuine below-cross fires."""
+    store, tmp = _mk_store()
+    try:
+        analytics, engine, aid, cid, CK = _b7fix_setup(
+            store, "pcr_oi", "crosses_below", 1.2, quote_threshold=0.5)
+        # first observation below threshold -> no fire
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.0))
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("T8-baseline-no-fire", len(fired), 0)
+        # moves above -> not a below-crossing -> no fire
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.3))
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("T8-above-no-below-cross", len(fired), 0)
+        # genuine below-crossing -> fire once
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.0))
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("T8-below-cross-fire", len(fired), 1)
+        runner.assert_eq("T8-trigger-count",
+                         store.get_condition_alert(aid)["trigger_count"], 1)
+    finally:
+        tmp.cleanup()
+
 async def main() -> bool:
     runner = R()
     await test_bt1_multi_quote_all(runner)
@@ -1690,6 +1912,14 @@ async def main() -> bool:
     await test_bt23_multichain_analytics_crossing(runner)
     await test_bt24_same_chain_multiple_analytics_leaves(runner)
     await test_bt25_subgroup_analytics_crossing(runner)
+    await test_b7fix_t1_first_obs_above_no_fire(runner)
+    await test_b7fix_t2_first_obs_below_no_fire(runner)
+    await test_b7fix_t3_second_obs_true_crossing(runner)
+    await test_b7fix_t4_rearm_side_update(runner)
+    await test_b7fix_t5_identical_fresh_analytics(runner)
+    await test_b7fix_t6_old_crossing_not_reused_by_quote(runner)
+    await test_b7fix_t7_same_value_after_crossing(runner)
+    await test_b7fix_t8_crosses_below_symmetry(runner)
     return runner.summary()
 
 

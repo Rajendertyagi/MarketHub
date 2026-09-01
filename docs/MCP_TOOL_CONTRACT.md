@@ -420,7 +420,7 @@ These tools were previously deferred but are now finalized as part of the public
 | **Purpose** | Enable or disable a condition alert (ownership enforced) |
 | **Inputs** | `consumer_id: str` (required), `alert_id: str` (required), `enabled: bool` (required) |
 | **Output** | `{"status": "enabled"|"disabled", "ok": true, "alert_id": str, "enabled": bool}` |
-| **Re-arm semantics** | Enabling a disabled alert **resets runtime state to UNKNOWN** so the alert re-arms fresh. For LEVEL operators this means a new FALSE→TRUE transition can fire. For CROSSING operators the first valid observation re-establishes the crossing side baseline. |
+| **Re-arm semantics** | Enabling a disabled alert **resets runtime state to UNKNOWN** so the alert re-arms fresh. For LEVEL operators this means a new FALSE→TRUE transition can fire. For CROSSING operators the first valid observation re-establishes the crossing side baseline and does **not** fire on that first observation. |
 
 ### condition_alert_delete
 
@@ -438,6 +438,8 @@ These tools were previously deferred but are now finalized as part of the public
 - **Multi-instrument support**: v2 groups may span different instruments (B7)
 - **Mixed source support**: v2 groups may mix quote-backed and analytics-backed leaves (B7)
 - **Multi-chain analytics**: analytics leaves with different expiries are independent dependency keys (B7)
+- **Crossing first observation NEVER fires**: the first valid crossing observation (quote-backed or analytics-backed B7) only establishes the `crossing_side` baseline from `UNKNOWN` and does **not** fire, regardless of which side it lands on. A fire occurs only on a subsequent genuine crossing from the opposite side.
+- **Analytics freshness is dependency-update-driven, not value-change-driven**: an analytics leaf is a fresh observation only when its own analytics chain produces a new snapshot (snapshot identity), even if the numeric value is unchanged across two refreshes. A cached analytics value during an unrelated quote update is NOT a fresh analytics tick and must not generate a crossing event.
 - **Crossing ephemeral**: `crosses_above` / `crosses_below` evaluate to TRUE ONLY on the tick where the crossing is observed, for BOTH quote-backed and analytics-backed (B7) leaves. The crossing *side* and *history* are persisted (restart-safe) but the crossing *event* (TRUE) is NOT persisted: a fresh analytics snapshot that produces a crossing fires exactly once and cannot be reused by a later quote update, a stale re-evaluation, or another chain's analytics refresh (contract sections 1-3, 9)
 - **Atomic trigger**: engine evaluates against live quotes; a fire persists runtime state + alert row + event + consumer materialization in one SQLite transaction
 - **Delivery**: trigger event flows through the existing `alert.triggered` → `consumer_event_pending_list` → `consumer_event_acknowledge` path

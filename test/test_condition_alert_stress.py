@@ -252,12 +252,10 @@ async def test_crossing_under_load(runner):
         engine.reload()
         q1 = _mk_quote(24000.0)
         fired1 = await engine.evaluate(q1)
-        # First observation already in the crossed state fires (same convention
-        # as S8-t1 for crosses_above): crosses_below with value already below
-        # threshold is TRUE on its first observation. The contract guarantees an
-        # event may not persist across later unrelated updates, but an initial
-        # observation in the crossed side is a valid first tick.
-        runner.assert_eq("S9-first-no-fire", len(fired1), 1)
+        # Frozen contract: the first valid observation establishes the side and
+        # NEVER fires. crosses_below with value already below threshold is the
+        # baseline (side = below_or_equal), not a crossing event.
+        runner.assert_eq("S9-first-no-fire", len(fired1), 0)
         q2 = _mk_quote(26000.0)
         fired2 = await engine.evaluate(q2)
         runner.assert_eq("S9-cross-above", len(fired2), 1)
@@ -270,9 +268,9 @@ async def test_crossing_under_load(runner):
         a = store.get_condition_alert(aid_above)
         runner.assert_eq("S9-trigger_count_above", a["trigger_count"], 1)
         b = store.get_condition_alert(aid_below)
-        # aid_below fires on its first observation (value already below
-        # threshold) and again on the genuine above->below crossing at q4.
-        runner.assert_eq("S9-trigger_count_below", b["trigger_count"], 2)
+        # aid_below establishes its side on the first observation (no fire) and
+        # fires only once on the genuine above->below crossing at q4.
+        runner.assert_eq("S9-trigger_count_below", b["trigger_count"], 1)
     finally:
         import shutil; shutil.rmtree(tmp, ignore_errors=True)
 

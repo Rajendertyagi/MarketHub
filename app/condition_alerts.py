@@ -226,6 +226,12 @@ class ConditionAlertEngine:
             # When an analytics snapshot disappears (None) after having a value,
             # the leaf must go UNKNOWN, not preserve its old state.
             self._analytics_seen: set[tuple[str, str]] = set()
+            # B7: per-(alert_id, condition_id) last-seen analytics snapshot.
+            # Freshness for an analytics leaf is dependency-driven: a leaf is
+            # fresh only when ITS OWN chain produced a newer snapshot than the
+            # last evaluation. Snapshot identity (not numeric value) is the
+            # signal, so identical-value refreshes remain distinct fresh ticks.
+            self._analytics_last_snapshot: dict[tuple[str, str], Any] = {}
 
     # ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -333,14 +339,39 @@ class ConditionAlertEngine:
         # from the last genuinely observed value) is required for a new tick,
         # so a historical crossing TRUE cannot be reused by an unrelated quote
         # update.
+        # Dependency-driven freshness. A quote leaf is fresh when this quote
+        # evaluation matches its own quote dependency. An analytics leaf is
+        # fresh only when ITS OWN analytics chain produced a newer snapshot
+        # than the last evaluation (not when the numeric value merely changed).
         is_new_tick = True
         last_seen = self._last_values.get(alert["alert_id"])
         if METRIC_SOURCE.get(metric) == "analytics" and self._analytics is not None:
-            value = self._extract_analytics_value(alert, condition, metric)
+            chain_key = self._chain_key_from_leaf(condition)
+            snap = (self._analytics.get_snapshot(chain_key)
+                    if chain_key else None)
+            last_snap = self._analytics_last_snapshot.get(
+                (alert["alert_id"], condition_id))
+            # Fresh only when THIS leaf's analytics chain produced a new
+            # observation (a different snapshot). Two same-value refreshes are
+            # still two fresh observations; an unchanged snapshot during an
+            # unrelated quote tick is NOT a fresh analytics tick.
+            is_new_tick = (snap is not None and snap is not last_snap)
+            if is_new_tick:
+                self._analytics_last_snapshot[(alert["alert_id"],
+                                              condition_id)] = snap
+            elif snap is None and last_snap is not None:
+                # Snapshot disappeared (stale/removed) after having a value.
+                self._analytics_last_snapshot[(alert["alert_id"],
+                                              condition_id)] = None
+            if snap is not None:
+                try:
+                    value = extract_analytics_metric(snap, metric)
+                except KeyError:
+                    value = None
+            else:
+                value = None
             if value is not None:
                 self._analytics_seen.add((alert["alert_id"], condition_id))
-            is_new_tick = (value is not None
-                           and (last_seen is None or value != last_seen))
         else:
             value = extract_metric(quote, metric)
         leaf_state = state["leaves"].get(
@@ -359,8 +390,12 @@ class ConditionAlertEngine:
         changed = (new_state["last_result"] != leaf_state["last_result"]
                    or new_state["crossing_side"] != leaf_state["crossing_side"])
 
-        # For v1, root state mirrors leaf state.
-        root_state = dict(new_state)
+        # For v1, root state mirrors the leaf's TICK result (TRUE only on the
+        # crossing tick); the durable leaf state stores the ephemeral FALSE.
+        root_state = {
+            "last_result": new_state["tick_result"],
+            "crossing_side": new_state["crossing_side"],
+        }
         all_states = {condition_id: new_state,
                       ROOT_CONDITION_ID_PREFIX + alert["alert_id"]: root_state}
 
@@ -419,24 +454,34 @@ class ConditionAlertEngine:
                 leaf_dep = child.get("_dependency_key")
                 quote_dep = f"quote:{self._resolver.resolve_quote(quote) or ''}"
                 last_seen = self._dep_last_values.get((alert["alert_id"], cid))
+                # Dependency-driven freshness (see _evaluate_leaf_v1 for the
+                # full rationale). Quote leaf fresh only when its own quote dep
+                # triggered; analytics leaf fresh only when its own chain
+                # produced a new snapshot (snapshot identity, not value).
                 if (METRIC_SOURCE.get(metric) == "analytics"
                         and self._analytics is not None):
-                    value = self._extract_analytics_value(alert, child, metric)
+                    chain_key = self._chain_key_from_leaf(child)
+                    snap = (self._analytics.get_snapshot(chain_key)
+                            if chain_key else None)
+                    last_snap = self._analytics_last_snapshot.get(
+                        (alert["alert_id"], cid))
+                    is_new_tick = (snap is not None and snap is not last_snap)
+                    if is_new_tick:
+                        self._analytics_last_snapshot[(alert["alert_id"],
+                                                      cid)] = snap
+                    elif snap is None and last_snap is not None:
+                        # Snapshot disappeared (stale/removed) after a value.
+                        self._analytics_last_snapshot[(alert["alert_id"],
+                                                      cid)] = None
+                    if snap is not None:
+                        try:
+                            value = extract_analytics_metric(snap, metric)
+                        except KeyError:
+                            value = None
+                    else:
+                        value = None
                     if value is not None:
                         self._analytics_seen.add((alert["alert_id"], cid))
-                    # Ephemeral-crossing fix: a crossing leaf counts as a NEW
-                    # tick only when THIS leaf's analytics chain produced a
-                    # fresh observation (a snapshot value that differs from the
-                    # last genuinely observed value). A cached or stale snapshot
-                    # is NOT a new tick, so a historical crossing TRUE cannot be
-                    # reused by an unrelated quote update or another chain refresh.
-                    is_new_tick = (value is not None
-                                   and (last_seen is None or value != last_seen))
-                    if is_new_tick:
-                        # Record the new observation only when genuinely fresh;
-                        # otherwise a stale re-evaluation would clobber the
-                        # last-observed value used to detect new ticks.
-                        self._dep_last_values[(alert["alert_id"], cid)] = value
                 else:
                     # B7: only use quote value if it matches this leaf's dep.
                     if leaf_dep and leaf_dep == quote_dep:
@@ -471,7 +516,7 @@ class ConditionAlertEngine:
                            or new_leaf_state["crossing_side"] != prev_leaf_state["crossing_side"])
                 if changed:
                     leaf_updates[cid] = new_leaf_state
-                child_results.append(new_leaf_state["last_result"])
+                child_results.append(new_leaf_state["tick_result"])
 
         # Compute root result from child results using Kleene logic.
         logic = condition["logic"]
@@ -594,18 +639,32 @@ class ConditionAlertEngine:
                 sub_leaf_dep = sub_child.get("_dependency_key")
                 sub_quote_dep = f"quote:{self._resolver.resolve_quote(quote) or ''}"
                 last_seen = self._dep_last_values.get((alert["alert_id"], sub_cid))
+                # Dependency-driven freshness (mirrors _evaluate_group).
                 if (METRIC_SOURCE.get(metric) == "analytics"
                         and self._analytics is not None
                         and alert is not None):
-                    value = self._extract_analytics_value(alert, sub_child, metric)
+                    chain_key = self._chain_key_from_leaf(sub_child)
+                    snap = (self._analytics.get_snapshot(chain_key)
+                            if chain_key else None)
+                    last_snap = self._analytics_last_snapshot.get(
+                        (alert["alert_id"], sub_cid))
+                    sub_is_new_tick = (snap is not None
+                                       and snap is not last_snap)
+                    if sub_is_new_tick:
+                        self._analytics_last_snapshot[(alert["alert_id"],
+                                                      sub_cid)] = snap
+                    elif snap is None and last_snap is not None:
+                        self._analytics_last_snapshot[(alert["alert_id"],
+                                                      sub_cid)] = None
+                    if snap is not None:
+                        try:
+                            value = extract_analytics_metric(snap, metric)
+                        except KeyError:
+                            value = None
+                    else:
+                        value = None
                     if value is not None:
                         self._analytics_seen.add((alert["alert_id"], sub_cid))
-                    # Ephemeral-crossing fix (mirrors _evaluate_group): a fresh
-                    # analytics observation is required for a new tick.
-                    sub_is_new_tick = (value is not None
-                                       and (last_seen is None or value != last_seen))
-                    if sub_is_new_tick:
-                        self._dep_last_values[(alert["alert_id"], sub_cid)] = value
                 else:
                     # B7: only use quote value if it matches this leaf's dep.
                     if sub_leaf_dep and sub_leaf_dep == sub_quote_dep:
@@ -632,7 +691,7 @@ class ConditionAlertEngine:
                            or new_state["crossing_side"] != prev["crossing_side"])
                 if changed:
                     state["leaves"][sub_cid] = new_state
-                results.append(new_state["last_result"])
+                results.append(new_state["tick_result"])
 
         if logic == "all":
             return _all_result(results)
@@ -658,45 +717,49 @@ class ConditionAlertEngine:
         phantom fires across instruments.
         """
         if operator in CROSSING_OPERATORS:
+            # Dependency-driven freshness: a crossing leaf only evaluates a
+            # crossing event when its OWN dependency produced this evaluation.
+            # A stale re-evaluation (e.g. an unrelated quote tick arriving for
+            # an analytics leaf, or a different instrument matching this alert)
+            # must preserve the previously persisted side/history and never
+            # fabricate a crossing event (contract sections 1-3, 9, 12).
+            if not is_new_tick:
+                return {
+                    "last_result": prev_state["last_result"],
+                    "crossing_side": prev_state["crossing_side"],
+                    "tick_result": prev_state["last_result"],
+                }
             new_side = prev_state["crossing_side"]
             if value is not None:
                 new_side = (CROSSING_ABOVE if value > threshold
                             else CROSSING_BELOW_OR_EQUAL)
-            # Crossing result is TRUE only on the crossing observation.
+            # Crossing result is TRUE only on the actual crossing observation.
+            # First valid observation establishes the side and NEVER fires
+            # (frozen contract: UNKNOWN -> current side, no fire).
             fire = False
             if value is not None:
                 prev_side = prev_state["crossing_side"]
                 if operator == "crosses_above":
-                    # A first observation (UNKNOWN initial side) is treated
-                    # as starting below the threshold, so arriving already
-                    # above is a genuine crossing. This honours the contract
-                    # convention that an initial observation in the crossed
-                    # side is a valid first tick. Subsequent same-side ticks
-                    # are NOT crossings (ephemeral; see module docstring).
-                    fire = (prev_side in (CROSSING_UNKNOWN, CROSSING_BELOW_OR_EQUAL)
+                    fire = (prev_side == CROSSING_BELOW_OR_EQUAL
                             and new_side == CROSSING_ABOVE)
                 else:
-                    fire = (prev_side in (CROSSING_UNKNOWN, CROSSING_ABOVE)
+                    fire = (prev_side == CROSSING_ABOVE
                             and new_side == CROSSING_BELOW_OR_EQUAL)
-            if fire:
-                # Crossing event: the event is TRUE on the crossing tick
-                # for BOTH operators. The side is persisted separately; the
-                # crossing-result itself is ephemeral (see module docstring).
-                leaf_result = LAST_RESULT_TRUE
-            elif value is not None:
-                # No genuine crossing on this tick. The crossing result is
-                # ephemeral: TRUE only on the crossing tick (fire). Every
-                # non-crossing observation - even a same-side value move, a
-                # later quote update, or another chain analytics refresh -
-                # must reset to FALSE so stale crossing truth can never be
-                # reused (contract sections 1-3, 9).
-                leaf_result = LAST_RESULT_FALSE
-            else:
-                # No fresh value - preserve prior state (UNKNOWN on first
-                # evaluation, or the last genuine result) rather than
-                # inventing a crossing event.
-                leaf_result = prev_state["last_result"]
-            return {"last_result": leaf_result, "crossing_side": new_side}
+            # Ephemeral crossing: the event is TRUE on this tick ONLY; the
+            # durable leaf result is always FALSE so a historical crossing
+            # can never be reused by a later unrelated evaluation. Only the
+            # crossing_side is persisted. ``tick_result`` is what this tick
+            # contributed to the group/root result.
+            tick_result = LAST_RESULT_TRUE if fire else (
+                LAST_RESULT_FALSE if value is not None
+                else prev_state["last_result"])
+            persisted = (LAST_RESULT_FALSE if value is not None
+                         else prev_state["last_result"])
+            return {
+                "last_result": persisted,
+                "crossing_side": new_side,
+                "tick_result": tick_result,
+            }
         else:
             new_result = prev_state["last_result"]
             if value is not None:
@@ -704,8 +767,11 @@ class ConditionAlertEngine:
             elif analytics_seen:
                 # Analytics snapshot disappeared after having a value → UNKNOWN.
                 new_result = LAST_RESULT_UNKNOWN
-            return {"last_result": new_result,
-                    "crossing_side": prev_state["crossing_side"]}
+            return {
+                "last_result": new_result,
+                "crossing_side": prev_state["crossing_side"],
+                "tick_result": new_result,
+            }
 
     @staticmethod
     def _check_root_fire(
