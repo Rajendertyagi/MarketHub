@@ -19,7 +19,7 @@ if _PROJECT_DIR not in sys.path:
 from core.persistence.store import EventStore
 from core import events
 from core.alert_events import build_alert_triggered_data
-from core.sse_broker import InMemorySubscriptionBus
+from core.sse_broker import EventBroker
 
 
 def _percentile(vals, p):
