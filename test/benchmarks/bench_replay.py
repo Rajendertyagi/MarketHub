@@ -14,7 +14,7 @@ import shutil
 import time
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_PROJECT_DIR = os.path.dirname(_SCRIPT_DIR)
+_PROJECT_DIR = os.path.dirname(os.path.dirname(_SCRIPT_DIR))
 if _PROJECT_DIR not in sys.path:
     sys.path.insert(0, _PROJECT_DIR)
 
