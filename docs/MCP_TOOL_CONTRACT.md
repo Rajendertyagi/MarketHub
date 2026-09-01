@@ -386,9 +386,9 @@ These tools were previously deferred but are now finalized as part of the public
 | FUTURE | `exchange`, `underlying`, `expiry` | `{"exchange": "NSE", "underlying": "NIFTY", "expiry": "2026-09-25"}` |
 | OPTION | `exchange`, `underlying`, `expiry`, `strike`, `option_type` | `{"exchange": "NSE", "underlying": "NIFTY", "expiry": "2026-09-25", "strike": 25000, "option_type": "CE"}` |
 
-**Limits:** max depth 8, max leaves 64, same-instrument enforced within v2 groups.
+**Limits:** max depth 8, max leaves 64, multi-instrument and mixed quote+analytics groups supported (B7).
 
-**Metrics (27):** `ltp, open, high, low, close, change, change_percent, avg_trade_price, last_traded_qty, volume, total_buy_qty, total_sell_qty, open_interest, previous_oi, oi_change, oi_change_percent, best_bid, best_ask, spread, upper_circuit, lower_circuit, greeks.delta, greeks.gamma, greeks.theta, greeks.vega, greeks.rho, greeks.iv`
+**Metrics (31):** `ltp, open, high, low, close, change, change_percent, avg_trade_price, last_traded_qty, volume, total_buy_qty, total_sell_qty, open_interest, previous_oi, oi_change, oi_change_percent, best_bid, best_ask, spread, upper_circuit, lower_circuit, greeks.delta, greeks.gamma, greeks.theta, greeks.vega, greeks.rho, greeks.iv, pcr_oi, pcr_volume, max_pain, iv_skew`
 
 **Operators (8):** `eq, ne, gt, gte, lt, lte, crosses_above, crosses_below`
 
@@ -432,13 +432,14 @@ These tools were previously deferred but are now finalized as part of the public
 | **History** | Deletes the alert definition and runtime state. Historical `alert.triggered` events are **preserved** in the durable event store. |
 | **Ownership** | Cross-owner access returns not-found. |
 
-### B5 invariants
+### B5/B7 invariants
 
 - **No provider tokens** in any input or output
-- **Same-instrument restriction**: all leaves in a v2 group must resolve to the same canonical instrument
+- **Multi-instrument support**: v2 groups may span different instruments (B7)
+- **Mixed source support**: v2 groups may mix quote-backed and analytics-backed leaves (B7)
+- **Multi-chain analytics**: analytics leaves with different expiries are independent dependency keys (B7)
 - **Atomic trigger**: engine evaluates against live quotes; a fire persists runtime state + alert row + event + consumer materialization in one SQLite transaction
 - **Delivery**: trigger event flows through the existing `alert.triggered` → `consumer_event_pending_list` → `consumer_event_acknowledge` path
-- **B6/B7/B8 exclusions**: no PCR, no Max Pain, no multi-instrument groups, no quote-injection tool, no analytics-layer calls
 
 ---
 
@@ -473,4 +474,4 @@ These tools were previously deferred but are now finalized as part of the public
 | **2.1.0** | **2026-08-27** | **MCP-2B.3C: Removed `consumer_event_list` (44→43 visible tools); `consumer_event_pending_list` is the canonical replay tool; normalized `market_alert_*` errors to shared domain exceptions; `consumer_checkpoint_get` now reports persisted `updated_at`** |
 | **2.2.0** | **2026-08-28** | **MCP-2B.3D: Removed `event_publish` from public registry (43→42 visible tools); froze 16 MCP-2B tools as final public surface; `event_list` documented as diagnostics-only; at-least-once replay contract frozen; live notification deferred to MCP-2B.4** |
 | **2.3.0** | **2026-08-31** | **B5: Added 5 public `condition_alert_*` tools (42→47 tools); `CONTRACT_VERSION` bumped to 2.3.0; v1 leaf + v2 same-instrument ALL/ANY groups exposed via MCP; human/canonical instrument references (no broker tokens); re-arm on enable; ownership enforcement on get/set_enabled/delete** |
-| **2.4.0** | **2026-08-31** | **B6B: Added 4 analytics-backed condition metrics (pcr_oi, pcr_volume, max_pain, iv_skew); `CONTRACT_VERSION` bumped to 2.4.0; total metrics 27→31; analytics conditions require `instrument.expiry`; same-chain restriction enforced for analytics groups; mixed quote+analytics groups rejected (B7); MarketAnalyticsService cache + scheduler; PCR zero-denominator returns None** |
+| **2.5.0** | **2026-09-01** | **B7: Removed same-instrument/same-chain/mixed-source restrictions; multi-target dependency routing; _dep_last_values keyed by (alert_id, condition_id); crossing ephemeral across target updates; restart reconstruction proven; CONTRACT_VERSION bumped to 2.5.0** |

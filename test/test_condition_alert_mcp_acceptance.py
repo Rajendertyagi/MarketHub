@@ -60,18 +60,25 @@ def _db_path() -> str:
 
 
 def _seed_catalog() -> None:
-    """Seed the canonical instruments catalog with RELIANCE."""
+    """Seed the canonical instruments catalog with RELIANCE, INFY, NIFTY."""
     store = EventStore(_db_path())
-    store.replace_provider_instruments("upstox", [{
-        "instrument_token": "INE002A01018",
-        "exchange": "NSE",
-        "tradingsymbol": "RELIANCE",
-        "name": "Reliance Industries Ltd",
-        "instrument_type": "EQUITY",
-        "segment": "EQ",
-        "isin": "INE002A01018",
-        "underlying": None,
-    }])
+    store.replace_provider_instruments("upstox", [
+        {"instrument_token": "INE002A01018",
+         "exchange": "NSE", "tradingsymbol": "RELIANCE",
+         "name": "Reliance Industries Ltd",
+         "instrument_type": "EQUITY", "segment": "EQ",
+         "isin": "INE002A01018", "underlying": None},
+        {"instrument_token": "INE009A01021",
+         "exchange": "NSE", "tradingsymbol": "INFY",
+         "name": "Infosys Ltd",
+         "instrument_type": "EQUITY", "segment": "EQ",
+         "isin": "INE009A01021", "underlying": None},
+        {"instrument_token": "NSE_INDEX|NIFTY",
+         "exchange": "NSE", "tradingsymbol": "NIFTY",
+         "name": "Nifty 50",
+         "instrument_type": "INDEX", "segment": "NSE",
+         "isin": None, "underlying": None},
+    ])
 
 
 def _mk_quote(ltp: float, token: str = "INE002A01018",
@@ -495,6 +502,244 @@ async def scenario_x7(runner: R) -> None:
 
 
 # ===================================================================
+# Scenario X8: Real MCP multi-instrument create (B7)
+# ===================================================================
+
+async def scenario_x8(runner: R) -> None:
+    name = "X8-multi-instrument"
+    proc = None
+    try:
+        proc = await start_server()
+        _seed_catalog()
+        cid = _uid("x8")
+        await call("consumer_register", {"consumer_id": cid})
+
+        # Create multi-instrument alert via real MCP.
+        created = await call("condition_alert_create", {
+            "consumer_id": cid,
+            "condition": {
+                "condition_version": 2,
+                "logic": "all",
+                "conditions": [
+                    {
+                        "condition_version": 1,
+                        "metric": "ltp",
+                        "operator": "gt",
+                        "value": 2500.0,
+                        "instrument": {"exchange": "NSE", "symbol": "RELIANCE"},
+                    },
+                    {
+                        "condition_version": 1,
+                        "metric": "ltp",
+                        "operator": "gt",
+                        "value": 1500.0,
+                        "instrument": {"exchange": "NSE", "symbol": "INFY"},
+                    },
+                ],
+            },
+            "trigger_mode": "repeat",
+            "name": "X8-RELIANCE-INFY-both-above",
+        })
+        runner.assert_eq(name + "-created", created.get("status"), "created")
+        alert = created["alert"]
+        runner.assert_eq(name + "-version",
+                         alert["condition"]["condition_version"], 2)
+        runner.assert_eq(name + "-logic", alert["condition"]["logic"], "all")
+        runner.assert_eq(name + "-children",
+                         len(alert["condition"]["conditions"]), 2)
+
+        # List/get round-trip.
+        listed = await call("condition_alert_list", {"consumer_id": cid})
+        runner.assert_eq(name + "-list-count", listed["count"], 1)
+        got = await call("condition_alert_get",
+                         {"consumer_id": cid, "alert_id": alert["alert_id"]})
+        runner.assert_eq(name + "-get-status", got.get("status"), "ok")
+        runner.assert_eq(name + "-get-name", got["alert"]["name"],
+                         "X8-RELIANCE-INFY-both-above")
+
+        # Verify no provider tokens exposed.
+        cond_json = got["alert"]["condition"]
+        for leaf in cond_json["conditions"]:
+            inst = leaf.get("instrument", {})
+            runner.assert_not_in(name + "-no-token",
+                                 "instrument_token", inst)
+            runner.assert_not_in(name + "-no-provider",
+                                 "provider", inst)
+    except Exception as exc:
+        runner.fail(name, str(exc))
+    finally:
+        safe_teardown(stop_server, proc)
+        safe_teardown(restore_environment)
+
+
+# ===================================================================
+# Scenario X9: Real MCP mixed quote+analytics create (B7)
+# ===================================================================
+
+async def scenario_x9(runner: R) -> None:
+    name = "X9-mixed-create"
+    proc = None
+    try:
+        proc = await start_server()
+        _seed_catalog()
+        cid = _uid("x9")
+        await call("consumer_register", {"consumer_id": cid})
+
+        # Create mixed quote+analytics alert via real MCP.
+        created = await call("condition_alert_create", {
+            "consumer_id": cid,
+            "condition": {
+                "condition_version": 2,
+                "logic": "all",
+                "conditions": [
+                    {
+                        "condition_version": 1,
+                        "metric": "ltp",
+                        "operator": "gt",
+                        "value": 25000.0,
+                        "instrument": {"exchange": "NSE", "symbol": "NIFTY"},
+                    },
+                    {
+                        "condition_version": 1,
+                        "metric": "pcr_oi",
+                        "operator": "gt",
+                        "value": 1.2,
+                        "instrument": {"exchange": "NSE", "symbol": "NIFTY",
+                                       "expiry": "2026-09-25"},
+                    },
+                ],
+            },
+            "trigger_mode": "repeat",
+            "name": "X9-NIFTY-mixed",
+        })
+        runner.assert_eq(name + "-created", created.get("status"), "created")
+        alert = created["alert"]
+        runner.assert_eq(name + "-version",
+                         alert["condition"]["condition_version"], 2)
+
+        # List/get round-trip.
+        listed = await call("condition_alert_list", {"consumer_id": cid})
+        runner.assert_eq(name + "-list-count", listed["count"], 1)
+        got = await call("condition_alert_get",
+                         {"consumer_id": cid, "alert_id": alert["alert_id"]})
+        runner.assert_eq(name + "-get-status", got.get("status"), "ok")
+
+        # Verify mixed source tree preserved.
+        cond = got["alert"]["condition"]
+        leaves = cond["conditions"]
+        runner.assert_eq(name + "-leaves", len(leaves), 2)
+        # One quote leaf, one analytics leaf.
+        metrics = {l["metric"] for l in leaves}
+        runner.assert_true(name + "-has-quote", "ltp" in metrics)
+        runner.assert_true(name + "-has-analytics", "pcr_oi" in metrics)
+        # Expiry preserved in _dependency_key (strip happens in validator).
+        analytics_leaf = [l for l in leaves if l["metric"] == "pcr_oi"][0]
+        dep_key = analytics_leaf.get("_dependency_key", "")
+        runner.assert_true(name + "-expiry-in-depkey",
+                           "2026-09-25" in dep_key)
+
+        # Verify no provider tokens.
+        for leaf in leaves:
+            inst = leaf.get("instrument", {})
+            runner.assert_not_in(name + "-no-token",
+                                 "instrument_token", inst)
+    except Exception as exc:
+        runner.fail(name, str(exc))
+    finally:
+        safe_teardown(stop_server, proc)
+        safe_teardown(restore_environment)
+
+
+# ===================================================================
+# Scenario X10: Real multi-target MCP→trigger→replay→ack E2E (B7)
+# ===================================================================
+
+async def scenario_x10(runner: R) -> None:
+    name = "X10-multi-target-e2e"
+    proc = None
+    try:
+        proc = await start_server()
+        _seed_catalog()
+        cid = _uid("x10")
+        await call("consumer_register", {"consumer_id": cid})
+
+        # Create multi-target alert (RELIANCE + INFY) via real MCP.
+        created = await call("condition_alert_create", {
+            "consumer_id": cid,
+            "condition": {
+                "condition_version": 2,
+                "logic": "all",
+                "conditions": [
+                    {
+                        "condition_version": 1,
+                        "metric": "ltp",
+                        "operator": "gt",
+                        "value": 2500.0,
+                        "instrument": {"exchange": "NSE", "symbol": "RELIANCE"},
+                    },
+                    {
+                        "condition_version": 1,
+                        "metric": "ltp",
+                        "operator": "gt",
+                        "value": 1500.0,
+                        "instrument": {"exchange": "NSE", "symbol": "INFY"},
+                    },
+                ],
+            },
+            "trigger_mode": "repeat",
+        })
+        alert_id = created["alert"]["alert_id"]
+        runner.assert_true(name + "-created", bool(alert_id))
+
+        # Trigger in-process against shared DB (production engine path).
+        from core.persistence.store import EventStore as ES
+        from app.condition_alerts import ConditionAlertEngine as CAE
+        from app.market_identity import MarketInstrumentIdentityResolver as MIR
+
+        store = ES(_db_path())
+        resolver = MIR()
+        resolver.register_catalog_rows(store.list_all_instruments())
+        engine = CAE(store, resolver=resolver, bus=None)
+
+        # First RELIANCE quote above threshold.
+        fired = await engine.evaluate(_mk_quote(2600.0, token="INE002A01018"))
+        runner.assert_eq(name + "-rel-fired", len(fired), 0)  # INFY not yet
+
+        # Now INFY quote above threshold → both TRUE → fire.
+        fired = await engine.evaluate(_mk_quote(1600.0, token="INE009A01021"))
+        runner.assert_ge(name + "-both-fired", len(fired), 1)
+
+        # Verify exactly one trigger.
+        alert = store.get_condition_alert(alert_id)
+        runner.assert_eq(name + "-trigger-count", alert["trigger_count"], 1)
+
+        # Replay through real MCP.
+        pending = await _pending(cid)
+        evts = _alert_triggered(pending.get("events", []))
+        runner.assert_ge(name + "-replayed", len(evts), 1)
+        ev = evts[0]
+        runner.assert_eq(name + "-family", ev["data"].get("alert_family"),
+                         "market_condition")
+        runner.assert_eq(name + "-alert-id", ev["data"].get("alert_id"),
+                         alert_id)
+
+        # Acknowledge through real MCP.
+        ack = await _ack(cid, ev["id"])
+        runner.assert_true(name + "-ack-ok",
+                           not ack.get("is_error", False))
+
+        # Pending should be empty after ack.
+        pending2 = await _pending(cid)
+        evts2 = _alert_triggered(pending2.get("events", []))
+        runner.assert_eq(name + "-empty-after-ack", len(evts2), 0)
+    except Exception as exc:
+        runner.fail(name, str(exc))
+    finally:
+        safe_teardown(stop_server, proc)
+        safe_teardown(restore_environment)
+
+
+# ===================================================================
 # Main
 # ===================================================================
 
@@ -506,6 +751,9 @@ _TESTS = [
     scenario_x5,
     scenario_x6,
     scenario_x7,
+    scenario_x8,
+    scenario_x9,
+    scenario_x10,
 ]
 
 

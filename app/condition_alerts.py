@@ -663,12 +663,23 @@ class ConditionAlertEngine:
                         "group_conditions_count": len(child.get("conditions", [])),
                     })
                 else:
+                    # B7: analytics metrics cannot be extracted from quote.
+                    leaf_metric = child["metric"]
+                    leaf_dep = child.get("_dependency_key", "")
+                    is_analytics = METRIC_SOURCE.get(leaf_metric) == "analytics"
+                    if is_analytics and self._analytics is not None:
+                        leaf_value = self._extract_analytics_value(
+                            alert, child, leaf_metric)
+                    elif leaf_dep and leaf_dep.startswith("quote:"):
+                        leaf_value = extract_metric(quote, leaf_metric)
+                    else:
+                        leaf_value = None
                     observed.append({
                         "condition_id": child["condition_id"],
-                        "metric": child["metric"],
+                        "metric": leaf_metric,
                         "operator": child["operator"],
                         "expected": child["value"],
-                        "value": extract_metric(quote, child["metric"]),
+                        "value": leaf_value,
                         "previous_value": None,
                     })
 
