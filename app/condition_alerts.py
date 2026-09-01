@@ -643,10 +643,16 @@ class ConditionAlertEngine:
                             and new_side == CROSSING_BELOW_OR_EQUAL)
             if fire:
                 # Crossing event: set state to match the new side.
-                leaf_result = LAST_RESULT_TRUE
+                if operator == "crosses_above":
+                    leaf_result = LAST_RESULT_TRUE
+                else:  # crosses_below
+                    leaf_result = LAST_RESULT_FALSE
             elif value is not None:
                 # Value changed this tick — update state based on current side.
-                if operator == "crosses_above":
+                if not is_new_tick and value == prev_value:
+                    # Stale re-evaluation — reset to FALSE.
+                    leaf_result = LAST_RESULT_FALSE
+                elif operator == "crosses_above":
                     leaf_result = LAST_RESULT_TRUE if new_side == CROSSING_ABOVE else LAST_RESULT_FALSE
                 else:  # crosses_below
                     leaf_result = LAST_RESULT_TRUE if new_side == CROSSING_BELOW_OR_EQUAL else LAST_RESULT_FALSE

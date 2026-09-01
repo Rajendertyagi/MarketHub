@@ -605,7 +605,7 @@ async def test_bt9_different_expiry(runner: R) -> None:
 # ---------------------------------------------------------------------------
 
 async def test_bt10_crossing_ephemeral(runner: R) -> None:
-    """BT10: Crossing TRUE persists until value crosses back — enables re-arm."""
+    """BT10: Crossing TRUE is ephemeral — does not persist across target updates."""
     store, tmp = _mk_store()
     try:
         _create_v2(store, [
@@ -620,15 +620,16 @@ async def test_bt10_crossing_ephemeral(runner: R) -> None:
         await engine.evaluate(_FakeQuote(90, token="2885"))
         await engine.evaluate(_FakeQuote(40, token="2886"))
 
-        # Phase 2: RELIANCE crosses above → c1=TRUE (persists)
+        # Phase 2: RELIANCE crosses above → c1=TRUE (ephemeral, only this tick)
         fired = await engine.evaluate(_FakeQuote(101, token="2885"))
         runner.assert_eq("BT10-rel-crossed", len(fired), 0)  # INFY still false
 
-        # Phase 3: INFY above → c2=TRUE, c1 persisted TRUE → both TRUE → fire
+        # Phase 3: INFY above → c2=TRUE, but c1 re-evaluated with stored 101
+        #   → c1 didn't cross (already above) → c1=FALSE → no fire
         fired = await engine.evaluate(_FakeQuote(51, token="2886"))
-        runner.assert_eq("BT10-both-crossed", len(fired), 1)
+        runner.assert_eq("BT10-no-phantom", len(fired), 0)
 
-        # Phase 4: Bring INFY below → c2=FALSE, c1 still TRUE
+        # Phase 4: Bring INFY below → c2=FALSE, c1 uses stored 101 → c1=FALSE (no crossing)
         await engine.evaluate(_FakeQuote(40, token="2886"))
         fired = await engine.evaluate(_FakeQuote(101, token="2885"))
         runner.assert_eq("BT10-both-false", len(fired), 0)
@@ -638,9 +639,11 @@ async def test_bt10_crossing_ephemeral(runner: R) -> None:
         fired = await engine.evaluate(_FakeQuote(101, token="2885"))  # crosses above
         runner.assert_eq("BT10-rel-re-crossed", len(fired), 0)  # c2 still false
 
-        # Phase 6: INFY above → c2=TRUE, c1 persisted TRUE → both TRUE → fire
+        # Phase 6: INFY above → c2=TRUE, but c1 re-evaluated with stored 101
+        #   → c1 prev_side=ABOVE, no crossing → c1=FALSE → no fire
+        # This proves crossing TRUE is ephemeral across target updates.
         fired = await engine.evaluate(_FakeQuote(51, token="2886"))
-        runner.assert_eq("BT10-rearm-fired", len(fired), 1)
+        runner.assert_eq("BT10-crossing-ephemeral", len(fired), 0)
     finally:
         tmp.cleanup()
 
