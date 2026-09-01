@@ -165,8 +165,6 @@ class MarketAnalyticsService:
         """Refresh every active chain, one at a time (bounded concurrency)."""
         keys = list(self._dependents.keys())
         for key in keys:
-            if not self._running:
-                return
             await self._refresh_one(key)
 
     async def _refresh_one(self, chain_key: str) -> None:

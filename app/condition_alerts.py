@@ -343,8 +343,9 @@ class ConditionAlertEngine:
         new_state = await self._evaluate_leaf_node(
             operator, threshold, value, leaf_state,
             analytics_seen=(metric in ("pcr_oi", "pcr_volume", "max_pain", "iv_skew")
-                           and (alert["alert_id"], condition_id)
-                           in self._analytics_seen))
+                            and (alert["alert_id"], condition_id)
+                            in self._analytics_seen),
+            prev_value=self._last_values.get(alert["alert_id"]))
         changed = (new_state["last_result"] != leaf_state["last_result"]
                    or new_state["crossing_side"] != leaf_state["crossing_side"])
 
@@ -405,15 +406,18 @@ class ConditionAlertEngine:
                 metric = child["metric"]
                 operator = child["operator"]
                 threshold = child["value"]
+                leaf_dep = child.get("_dependency_key")
+                quote_dep = f"quote:{self._resolver.resolve_quote(quote) or ''}"
                 if (METRIC_SOURCE.get(metric) == "analytics"
                         and self._analytics is not None):
                     value = self._extract_analytics_value(alert, child, metric)
                     if value is not None:
                         self._analytics_seen.add((alert["alert_id"], cid))
+                        # Track last analytics value so crossing leaves can
+                        # distinguish "same stale value" from "new tick".
+                        self._dep_last_values[(alert["alert_id"], cid)] = value
                 else:
                     # B7: only use quote value if it matches this leaf's dep.
-                    leaf_dep = child.get("_dependency_key")
-                    quote_dep = f"quote:{self._resolver.resolve_quote(quote) or ''}"
                     if leaf_dep and leaf_dep == quote_dep:
                         value = extract_metric(quote, metric)
                         # Store last-known for this specific leaf.
@@ -426,11 +430,16 @@ class ConditionAlertEngine:
                     cid,
                     {"last_result": LAST_RESULT_UNKNOWN,
                      "crossing_side": CROSSING_UNKNOWN})
+                is_new_tick = (leaf_dep is not None
+                               and leaf_dep == quote_dep)
                 new_leaf_state = await self._evaluate_leaf_node(
                     operator, threshold, value, prev_leaf_state,
                     analytics_seen=(METRIC_SOURCE.get(metric) == "analytics"
                                     and (alert["alert_id"], cid)
-                                    in self._analytics_seen))
+                                    in self._analytics_seen),
+                    prev_value=self._dep_last_values.get(
+                        (alert["alert_id"], cid)),
+                    is_new_tick=is_new_tick)
                 changed = (new_leaf_state["last_result"] != prev_leaf_state["last_result"]
                            or new_leaf_state["crossing_side"] != prev_leaf_state["crossing_side"])
                 if changed:
@@ -555,6 +564,8 @@ class ConditionAlertEngine:
                 metric = sub_child["metric"]
                 operator = sub_child["operator"]
                 threshold = sub_child["value"]
+                sub_leaf_dep = sub_child.get("_dependency_key")
+                sub_quote_dep = f"quote:{self._resolver.resolve_quote(quote) or ''}"
                 if (METRIC_SOURCE.get(metric) == "analytics"
                         and self._analytics is not None
                         and alert is not None):
@@ -563,20 +574,23 @@ class ConditionAlertEngine:
                         self._analytics_seen.add((alert["alert_id"], sub_cid))
                 else:
                     # B7: only use quote value if it matches this leaf's dep.
-                    leaf_dep = sub_child.get("_dependency_key")
-                    quote_dep = f"quote:{self._resolver.resolve_quote(quote) or ''}"
-                    if leaf_dep and leaf_dep == quote_dep:
+                    if sub_leaf_dep and sub_leaf_dep == sub_quote_dep:
                         value = extract_metric(quote, metric)
                         self._dep_last_values[(alert["alert_id"], sub_cid)] = value
                     else:
                         value = self._dep_last_values.get(
                             (alert["alert_id"], sub_cid))
                 prev = self._get_subgroup_state(state, sub_cid)
+                sub_is_new_tick = (sub_leaf_dep is not None
+                                   and sub_leaf_dep == sub_quote_dep)
                 new_state = await self._evaluate_leaf_node(
                     operator, threshold, value, prev,
                     analytics_seen=(METRIC_SOURCE.get(metric) == "analytics"
                                     and (alert["alert_id"], sub_cid)
-                                    in self._analytics_seen))
+                                    in self._analytics_seen),
+                    prev_value=self._dep_last_values.get(
+                        (alert["alert_id"], sub_cid)),
+                    is_new_tick=sub_is_new_tick)
                 changed = (new_state["last_result"] != prev["last_result"]
                            or new_state["crossing_side"] != prev["crossing_side"])
                 if changed:
@@ -594,8 +608,18 @@ class ConditionAlertEngine:
         value: float | None,
         prev_state: dict[str, str],
         analytics_seen: bool = False,
+        prev_value: float | None = None,
+        is_new_tick: bool = True,
     ) -> dict[str, str]:
-        """Evaluate a single leaf node, returning new state."""
+        """Evaluate a single leaf node, returning new state.
+
+        is_new_tick must be True when the current evaluation is driven by a
+        quote/analytics update relevant to this leaf (i.e. the leaf's dep
+        matches the incoming data source).  False means this is a stale
+        re-evaluation caused by a *different* leaf's dep matching the
+        incoming tick — in that case crossing leaves must reset to avoid
+        phantom fires across instruments.
+        """
         if operator in CROSSING_OPERATORS:
             new_side = prev_state["crossing_side"]
             if value is not None:
@@ -611,8 +635,14 @@ class ConditionAlertEngine:
                 else:
                     fire = (prev_side == CROSSING_ABOVE
                             and new_side == CROSSING_BELOW_OR_EQUAL)
-            # Ephemeral: TRUE only on crossing tick, then FALSE.
-            leaf_result = LAST_RESULT_TRUE if fire else LAST_RESULT_FALSE
+            if fire:
+                leaf_result = LAST_RESULT_TRUE
+            elif prev_value is not None and value == prev_value:
+                # Same stale value — preserve state for re-arm support.
+                leaf_result = prev_state["last_result"]
+            else:
+                # New value or first evaluation — preserve state.
+                leaf_result = prev_state["last_result"]
             return {"last_result": leaf_result, "crossing_side": new_side}
         else:
             new_result = prev_state["last_result"]
