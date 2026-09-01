@@ -1,0 +1,84 @@
+name: b8a-performance-benchmark
+
+# B8A Performance + Live Acceptance Audit — measurements only.
+# Manual dispatch. Pushes benchmark artifacts to GitHub Actions.
+# Does NOT modify production code.
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [audit/b8-performance-measurement]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  benchmark:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: audit/b8-performance-measurement
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Show environment
+        run: |
+          python -c "import sys,os,platform; print(f'Python {sys.version}'); print(f'CPU: {os.cpu_count()}'); print(f'Platform: {platform.machine()} {platform.system()}')"
+
+      - name: Run B8A benchmarks
+        run: |
+          python test/benchmarks/run.py
+        env:
+          BENCHMARK_OUTPUT: b8-benchmark-results
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: b8a-benchmark-results
+          path: test/benchmarks/b8-benchmark-results.json
+          retention-days: 30
+
+      - name: Upload benchmark CSV
+        uses: actions/upload-artifact@v4
+        with:
+          name: b8a-benchmark-results-csv
+          path: test/benchmarks/b8-benchmark-results.csv
+          retention-days: 30
+
+  b7-ci-verify:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: B7 exact-head full regression
+        run: python test/run_all.py --group all --timeout 300
