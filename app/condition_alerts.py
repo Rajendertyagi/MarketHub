@@ -222,6 +222,10 @@ class ConditionAlertEngine:
             self._last_values = {}
             # B7: per-(alert_id, condition_id) last-known values for cross-instrument
             self._dep_last_values: dict[tuple[str, str], float] = {}
+            # B7: track which analytics leaves have seen a non-None value.
+            # When an analytics snapshot disappears (None) after having a value,
+            # the leaf must go UNKNOWN, not preserve its old state.
+            self._analytics_seen: set[tuple[str, str]] = set()
 
     # ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -337,7 +341,10 @@ class ConditionAlertEngine:
         previous_value = self._last_values.get(alert["alert_id"])
 
         new_state = await self._evaluate_leaf_node(
-            operator, threshold, value, leaf_state)
+            operator, threshold, value, leaf_state,
+            analytics_seen=(metric in ("pcr_oi", "pcr_volume", "max_pain", "iv_skew")
+                           and (alert["alert_id"], condition_id)
+                           in self._analytics_seen))
         changed = (new_state["last_result"] != leaf_state["last_result"]
                    or new_state["crossing_side"] != leaf_state["crossing_side"])
 
@@ -401,6 +408,8 @@ class ConditionAlertEngine:
                 if (METRIC_SOURCE.get(metric) == "analytics"
                         and self._analytics is not None):
                     value = self._extract_analytics_value(alert, child, metric)
+                    if value is not None:
+                        self._analytics_seen.add((alert["alert_id"], cid))
                 else:
                     # B7: only use quote value if it matches this leaf's dep.
                     leaf_dep = child.get("_dependency_key")
@@ -418,7 +427,10 @@ class ConditionAlertEngine:
                     {"last_result": LAST_RESULT_UNKNOWN,
                      "crossing_side": CROSSING_UNKNOWN})
                 new_leaf_state = await self._evaluate_leaf_node(
-                    operator, threshold, value, prev_leaf_state)
+                    operator, threshold, value, prev_leaf_state,
+                    analytics_seen=(METRIC_SOURCE.get(metric) == "analytics"
+                                    and (alert["alert_id"], cid)
+                                    in self._analytics_seen))
                 changed = (new_leaf_state["last_result"] != prev_leaf_state["last_result"]
                            or new_leaf_state["crossing_side"] != prev_leaf_state["crossing_side"])
                 if changed:
@@ -547,6 +559,8 @@ class ConditionAlertEngine:
                         and self._analytics is not None
                         and alert is not None):
                     value = self._extract_analytics_value(alert, sub_child, metric)
+                    if value is not None:
+                        self._analytics_seen.add((alert["alert_id"], sub_cid))
                 else:
                     # B7: only use quote value if it matches this leaf's dep.
                     leaf_dep = sub_child.get("_dependency_key")
@@ -559,7 +573,10 @@ class ConditionAlertEngine:
                             (alert["alert_id"], sub_cid))
                 prev = self._get_subgroup_state(state, sub_cid)
                 new_state = await self._evaluate_leaf_node(
-                    operator, threshold, value, prev)
+                    operator, threshold, value, prev,
+                    analytics_seen=(METRIC_SOURCE.get(metric) == "analytics"
+                                    and (alert["alert_id"], sub_cid)
+                                    in self._analytics_seen))
                 changed = (new_state["last_result"] != prev["last_result"]
                            or new_state["crossing_side"] != prev["crossing_side"])
                 if changed:
@@ -576,6 +593,7 @@ class ConditionAlertEngine:
         operator: str, threshold: float,
         value: float | None,
         prev_state: dict[str, str],
+        analytics_seen: bool = False,
     ) -> dict[str, str]:
         """Evaluate a single leaf node, returning new state."""
         if operator in CROSSING_OPERATORS:
@@ -600,6 +618,9 @@ class ConditionAlertEngine:
             new_result = prev_state["last_result"]
             if value is not None:
                 new_result = _compare(operator, value, threshold)
+            elif analytics_seen:
+                # Analytics snapshot disappeared after having a value → UNKNOWN.
+                new_result = LAST_RESULT_UNKNOWN
             return {"last_result": new_result,
                     "crossing_side": prev_state["crossing_side"]}
 
