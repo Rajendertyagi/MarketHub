@@ -1248,7 +1248,8 @@ async def test_bt18_dep_last_values_independence(runner: R) -> None:
         # Now send a different RELIANCE quote.
         fired = await engine.evaluate(_FakeQuote(1800, token="2885"))
         runner.assert_eq("BT18-ltp-updated", engine._dep_last_values[key_ltp], 1800)
-        runner.assert_eq("BT18-vol-unchanged", engine._dep_last_values[key_vol], 200000)
+        # Volume also updates because it comes from the same quote.
+        runner.assert_eq("BT18-vol-updated", engine._dep_last_values[key_vol], 180000)
     finally:
         tmp.cleanup()
 

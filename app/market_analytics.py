@@ -184,8 +184,11 @@ class MarketAnalyticsService:
 
     async def _do_refresh(self, chain_key: str) -> None:
         """Fetch chain from MarketService and compute analytics."""
-        # Parse chain_key: "canonical_id:expiry"
-        parts = chain_key.split(":", 1)
+        # Parse chain_key: "analytics:canonical_id:expiry"
+        key = chain_key
+        if key.startswith("analytics:"):
+            key = key[len("analytics:"):]
+        parts = key.split(":", 1)
         if len(parts) != 2:
             logger.error("invalid chain_key format: %r", chain_key)
             return
@@ -298,11 +301,17 @@ class MarketAnalyticsService:
         if version == 1:
             metric = condition.get("metric", "")
             if metric in ("pcr_oi", "pcr_volume", "max_pain", "iv_skew"):
-                instrument = condition.get("instrument", {})
-                canonical_id = instrument.get("canonical_id", "")
-                expiry = instrument.get("expiry", "")
-                if canonical_id and expiry:
-                    keys.append(f"{canonical_id}:{expiry}")
+                # Use _dependency_key if available (expiry stripped from
+                # instrument during validation; preserved in dep key).
+                dep = condition.get("_dependency_key")
+                if dep and dep.startswith("analytics:"):
+                    keys.append(dep)
+                else:
+                    instrument = condition.get("instrument", {})
+                    canonical_id = instrument.get("canonical_id", "")
+                    expiry = instrument.get("expiry", "")
+                    if canonical_id and expiry:
+                        keys.append(f"{canonical_id}:{expiry}")
         elif version == 2:
             for child in condition.get("conditions", []):
                 keys.extend(self._extract_analytics_keys(child))
