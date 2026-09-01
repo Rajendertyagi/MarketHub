@@ -911,8 +911,17 @@ async def test_bt14_shared_chain_rest_count(runner: R) -> None:
                 })
 
         # Build a real MarketAnalyticsService with mocked MarketService.
+        from market.models import OptionChainSnapshot, OptionStrikeRow, OptionContractData
+        _empty_snapshot = OptionChainSnapshot(
+            instrument_token="NSE_INDEX|NIFTY", exchange="NSE",
+            tradingsymbol="NIFTY", expiry="2026-09-25",
+            spot_price=25000.0, atm_strike=25000.0, strikes=())
+        call_count = [0]
+        async def _fake_option_chain(**kw):
+            call_count[0] += 1
+            return _empty_snapshot
         mock_ms = MagicMock()
-        mock_ms.option_chain = AsyncMock()
+        mock_ms.option_chain = _fake_option_chain
         mock_catalog = MagicMock()
         mock_catalog.search.return_value = [{
             "exchange": "NSE", "instrument_type": "INDEX",
@@ -935,7 +944,7 @@ async def test_bt14_shared_chain_rest_count(runner: R) -> None:
 
         # Verify exactly 1 REST call.
         runner.assert_eq("BT14-option-chain-calls",
-                         mock_ms.option_chain.call_count, 1)
+                         call_count[0], 1)
         # Verify one cached chain.
         runner.assert_eq("BT14-cached-chains",
                          len(analytics._cache), 1)
