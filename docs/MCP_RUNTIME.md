@@ -710,6 +710,78 @@ An old crossing does NOT remain TRUE waiting for another leaf later.
 In an ALL group: `crosses_above 25000 AND volume > 1M` fires only when
 BOTH are TRUE on the **same** evaluation tick.
 
+## 14. B7 — Multi-Target Dependency Routing
+
+B7 removes the B4/B6 restrictions that required all leaves in a group to
+share the same instrument (same-instrument) or same option chain (same-chain).
+It also allows mixed quote + analytics leaves in the same group.
+
+### Dependency Index
+
+The engine replaces the single `canonical_id → alert_ids` index with a
+multi-target dependency index:
+
+```python
+self._dep_index: dict[str, set[str]]  # dep_key → set of alert_ids
+self._alert_deps: dict[str, set[str]]  # alert_id → set of dep_keys
+```
+
+Dependent keys are:
+- Quote deps: `quote:<canonical_id>` (e.g. `quote:NSE:EQUITY:INE002A01018`)
+- Analytics deps: `analytics:<canonical_id>:<expiry>` (e.g. `analytics:NSE:INDEX:NIFTY:2026-09-25`)
+
+On `reload()`, every alert is scanned for its dependency keys and
+re-indexed. `_dependency_key` is preserved through re-validation so
+analytics expiries survive the store round-trip.
+
+### Last-Known Leaf State
+
+When a quote for one instrument arrives, leaves for OTHER instruments
+must use their stored last-known value (or UNKNOWN if never seen). The
+engine tracks this per-(alert_id, condition_id):
+
+```python
+self._dep_last_values: dict[tuple[str, str], float]
+#   key = (alert_id, condition_id)
+#   value = last known metric value for that leaf
+```
+
+**Critical:** the key uses `condition_id` (leaf identity), NOT `dep_key`.
+This ensures multiple leaves on the same dependency (e.g. RELIANCE ltp
+AND RELIANCE volume) maintain independent last-known values. Using
+`dep_key` as the key would overwrite one metric's value with another's.
+
+### Independent Update Semantics
+
+Each leaf evaluates independently per quote arrival:
+1. If the quote's resolved canonical matches the leaf's dep_key → use
+   the fresh quote value and update last-known.
+2. Otherwise → use the stored last-known value (may be None → UNKNOWN).
+
+This means a RELIANCE quote update evaluates only RELIANCE leaves;
+INFY leaves use their remembered values. The root aggregates using
+Kleene logic (ALL/ANY) over the mixed results.
+
+### Crossing Ephemeral Across Targets
+
+Crossing operators produce TRUE only on the tick where the crossing
+is observed. If a DIFFERENT target's quote arrives next, the crossing
+leaf is re-evaluated with its last-known value. Since it didn't cross
+(on that tick), its result becomes FALSE. This proves crossing TRUE
+does not persist across target updates.
+
+### Restart Reconstruction
+
+On `reload()`:
+1. All enabled alerts are loaded from the store.
+2. Each alert's condition tree is validated (preserving `_dependency_key`).
+3. Runtime state rows are loaded into `self._state[alert_id]`.
+4. The dependency index is rebuilt from each alert's deps.
+5. `_dep_last_values` is cleared (fresh start).
+
+Durable leaf/root states survive restart. Ephemeral crossing TRUE does
+not — it must be re-observed on a fresh crossing tick.
+
 **Ownership:** Every condition alert is consumer-owned. `get`,
 `set_enabled`, and `delete` enforce ownership — cross-owner access
 returns not-found (same pattern as market alerts).
