@@ -456,8 +456,15 @@ threshold **crossing** based on persisted side-of-threshold state:
 | `FALSE → UNKNOWN` | **Retains FALSE** — do not fake re-arm |
 
 **CROSSING first observation:** the first valid metric establishes the
-side (`above` or `below_or_equal`); it **never fires**. Subsequent
-crossings from the opposite side fire per the crossing operator rules.
+`crossing_side` from `UNKNOWN`. If it arrives already on the crossed side it is
+treated as a valid first crossing and **fires** (e.g. `crosses_above` with the
+first value above threshold, or `crosses_below` with the first value below
+threshold). If it arrives on the non-crossed side it merely establishes the
+baseline and does **not** fire. Subsequent crossings from the opposite side
+fire per the crossing operator rules. This holds for BOTH quote-backed and
+analytics-backed (B7) crossing leaves: an analytics leaf's very first snapshot
+that is already on the crossed side is a genuine first crossing, not a stale
+reuse of a prior crossing.
 
 ### 14.7 Trigger modes
 
@@ -705,8 +712,14 @@ UNKNOWN ≠ FALSE. UNKNOWN does not fake re-arm.
 | FALSE → UNKNOWN | Retain FALSE | N/A |
 
 **CROSSING-group semantics:** A crossing leaf's TRUE is ephemeral — it is
-TRUE only on the crossing evaluation tick. Crossing side is restart-safe.
-An old crossing does NOT remain TRUE waiting for another leaf later.
+TRUE only on the crossing evaluation tick, for BOTH quote-backed and
+analytics-backed (B7) leaves. The crossing *side* and *history* are persisted
+(restart-safe), but the crossing *event* (TRUE) is NOT persisted: it must be
+re-observed on a fresh crossing tick. An old crossing does NOT remain TRUE
+waiting for another leaf later, for a later quote update, or for another
+analytics chain's refresh — a fresh analytics snapshot that produces a
+crossing fires exactly once and cannot be reused by a stale or different
+dependency.
 In an ALL group: `crosses_above 25000 AND volume > 1M` fires only when
 BOTH are TRUE on the **same** evaluation tick.
 

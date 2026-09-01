@@ -196,6 +196,8 @@ def _mock_services_for_normalizer(store):
             return INFY
         if ts == "NIFTY":
             return NIFTY
+        if ts == "BANKNIFTY":
+            return BANKNIFTY
         return None
 
     services.condition_identity_resolver.canonical_id_for_row = _canonical_id_for_row
@@ -209,6 +211,8 @@ def _mock_services_for_normalizer(store):
                  "isin": "INE009A01021"},
         "NIFTY": {"exchange": "NSE", "instrument_type": "INDEX",
                   "tradingsymbol": "NIFTY", "name": "Nifty 50"},
+        "BANKNIFTY": {"exchange": "NSE", "instrument_type": "INDEX",
+                      "tradingsymbol": "BANKNIFTY", "name": "Nifty Bank"},
     }
 
     def _search(**kw):
@@ -726,13 +730,17 @@ async def test_bt11_analytics_crossing(runner: R) -> None:
         fired = await engine.evaluate(_FakeQuote(24900, token="2887", tsym="NIFTY"))
         runner.assert_eq("BT11-analytics-cross-no-fire", len(fired), 0)
 
-        # Phase 6: Bring quote back TRUE. Must fire (re-arm then F→T).
+        # Phase 6: Bring quote back TRUE. The analytics crossing already fired
+        # at phase 2 and is EPHPEMERAL: it is NOT a lasting leaf truth. With no
+        # fresh analytics crossing on this quote-driven recomputation the crossing
+        # leaf evaluates FALSE, so the group does NOT fire (contract section 3:
+        # further unrelated quote updates must not reuse the earlier crossing).
         fired = await engine.evaluate(_FakeQuote(25100, token="2887", tsym="NIFTY"))
-        runner.assert_eq("BT11-rearm-fire", len(fired), 1)
+        runner.assert_eq("BT11-rearm-fire", len(fired), 0)
 
-        # Verify total trigger count.
+        # Verify total trigger count: only the genuine phase-2 crossing fired.
         alert = store.get_condition_alert(aid)
-        runner.assert_eq("BT11-trigger-count", alert["trigger_count"], 2)
+        runner.assert_eq("BT11-trigger-count", alert["trigger_count"], 1)
     finally:
         tmp.cleanup()
 
@@ -786,11 +794,13 @@ async def test_bt12_analytics_crossing_ephemeral(runner: R) -> None:
         fired = await engine.evaluate(_FakeQuote(24900, token="2887", tsym="NIFTY"))
         runner.assert_eq("BT12-cross-no-fire-quote-false", len(fired), 0)
 
-        # Phase 3: Quote arrives TRUE later.
-        # Analytics crossing persisted from phase 2 (pcr_oi=1.3 > 1.2).
-        # Quote is now TRUE (25100 > 25000). Both conditions met → fire.
+        # Phase 3: Quote arrives TRUE later. The analytics crossing from phase 2
+        # is EPHPEMERAL: it is NOT persisted as a lasting leaf truth. This
+        # quote-driven recomputation only sees a cached/stale analytics value, so
+        # the crossing leaf re-evaluates as FALSE (contract section 12 / GATE 8).
+        # Root must NOT fire from the historical crossing.
         fired = await engine.evaluate(_FakeQuote(25100, token="2887", tsym="NIFTY"))
-        runner.assert_eq("BT12-rearm-fire", len(fired), 1)
+        runner.assert_eq("BT12-rearm-fire", len(fired), 0)
 
         # Phase 4: Bring both below, then cross again together → should fire.
         analytics.set_snapshot(
@@ -1260,6 +1270,396 @@ async def test_bt18_dep_last_values_independence(runner: R) -> None:
 
 
 # ---------------------------------------------------------------------------
+# BT19: Analytics crossing lost before quote update (GATE 8 / section 12)
+# ---------------------------------------------------------------------------
+
+async def test_bt19_analytics_crossing_lost_before_quote(runner: R) -> None:
+    """Crossing occurs while quote is FALSE; a later quote update with no new
+    analytics crossing MUST NOT fire (analytics crossing is ephemeral)."""
+    store, tmp = _mk_store()
+    try:
+        services = _mock_services_for_normalizer(store)
+        from mcp_server.tools.condition_alerts import _normalize_public_condition
+        condition = {
+            "condition_version": 2, "logic": "all",
+            "conditions": [
+                {"condition_version": 1, "metric": "ltp", "operator": "gt",
+                 "value": 25000,
+                 "instrument": {"exchange": "NSE", "symbol": "NIFTY"}},
+                {"condition_version": 1, "metric": "pcr_oi", "operator": "crosses_above",
+                 "value": 1.2,
+                 "instrument": {"exchange": "NSE", "symbol": "NIFTY",
+                                "expiry": "2026-09-25"}},
+            ],
+        }
+        normalized = _normalize_public_condition(services, condition)
+        aid = store.create_condition_alert(
+            consumer_id="consumer-1", name="bt19-analytics-ephemeral",
+            trigger_mode="repeat", condition_json=normalized)
+        resolver = _mk_resolver(store)
+        analytics = _FakeAnalyticsService()
+        engine = ConditionAlertEngine(store, resolver=resolver,
+                                      analytics_service=analytics)
+        engine.reload()
+        CK = "analytics:NSE:INDEX:NIFTY:2026-09-25"
+
+        # quote FALSE
+        fired = await engine.evaluate(_FakeQuote(24000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT19-quote-false", len(fired), 0)
+        # analytics baseline below threshold
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.1))
+        await engine.evaluate(_FakeQuote(24000, token="2887", tsym="NIFTY"))
+        # analytics crosses above while quote still FALSE -> no fire
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.3))
+        fired = await engine.evaluate(_FakeQuote(24000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT19-cross-while-quote-false", len(fired), 0)
+        # quote becomes TRUE later -> must NOT reuse old crossing
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT19-quote-true-no-fire", len(fired), 0)
+    finally:
+        tmp.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# BT20: Analytics crossing with quote already TRUE (GATE 7 / section 13)
+# ---------------------------------------------------------------------------
+
+async def test_bt20_analytics_crossing_quote_true_first(runner: R) -> None:
+    """Quote TRUE first, then a fresh analytics crossing -> exactly one FIRE;
+    further unrelated quote updates must not reuse that crossing."""
+    store, tmp = _mk_store()
+    try:
+        services = _mock_services_for_normalizer(store)
+        from mcp_server.tools.condition_alerts import _normalize_public_condition
+        condition = {
+            "condition_version": 2, "logic": "all",
+            "conditions": [
+                {"condition_version": 1, "metric": "ltp", "operator": "gt",
+                 "value": 25000,
+                 "instrument": {"exchange": "NSE", "symbol": "NIFTY"}},
+                {"condition_version": 1, "metric": "pcr_oi", "operator": "crosses_above",
+                 "value": 1.2,
+                 "instrument": {"exchange": "NSE", "symbol": "NIFTY",
+                                "expiry": "2026-09-25"}},
+            ],
+        }
+        normalized = _normalize_public_condition(services, condition)
+        aid = store.create_condition_alert(
+            consumer_id="consumer-1", name="bt20-analytics-ephemeral",
+            trigger_mode="repeat", condition_json=normalized)
+        resolver = _mk_resolver(store)
+        analytics = _FakeAnalyticsService()
+        engine = ConditionAlertEngine(store, resolver=resolver,
+                                      analytics_service=analytics)
+        engine.reload()
+        CK = "analytics:NSE:INDEX:NIFTY:2026-09-25"
+
+        # quote TRUE (no analytics yet)
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT20-quote-true", len(fired), 0)
+        # analytics baseline below threshold
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.1))
+        await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        # fresh analytics crossing -> exactly one FIRE
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.3))
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT20-cross-fire", len(fired), 1)
+        # further quote updates must NOT reuse old crossing
+        fired = await engine.evaluate(_FakeQuote(27000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT20-quote-27000", len(fired), 0)
+        fired = await engine.evaluate(_FakeQuote(28000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT20-quote-28000", len(fired), 0)
+        alert = store.get_condition_alert(aid)
+        runner.assert_eq("BT20-trigger-count", alert["trigger_count"], 1)
+    finally:
+        tmp.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# BT21: Second genuine analytics crossing fires again (GATE 9 / section 14)
+# ---------------------------------------------------------------------------
+
+async def test_bt21_second_genuine_analytics_crossing(runner: R) -> None:
+    """After the first crossing fires, a second genuine analytics crossing
+    (value below then above) can still fire in repeat mode."""
+    store, tmp = _mk_store()
+    try:
+        services = _mock_services_for_normalizer(store)
+        from mcp_server.tools.condition_alerts import _normalize_public_condition
+        condition = {
+            "condition_version": 2, "logic": "all",
+            "conditions": [
+                {"condition_version": 1, "metric": "ltp", "operator": "gt",
+                 "value": 25000,
+                 "instrument": {"exchange": "NSE", "symbol": "NIFTY"}},
+                {"condition_version": 1, "metric": "pcr_oi", "operator": "crosses_above",
+                 "value": 1.2,
+                 "instrument": {"exchange": "NSE", "symbol": "NIFTY",
+                                "expiry": "2026-09-25"}},
+            ],
+        }
+        normalized = _normalize_public_condition(services, condition)
+        aid = store.create_condition_alert(
+            consumer_id="consumer-1", name="bt21-second-cross",
+            trigger_mode="repeat", condition_json=normalized)
+        resolver = _mk_resolver(store)
+        analytics = _FakeAnalyticsService()
+        engine = ConditionAlertEngine(store, resolver=resolver,
+                                      analytics_service=analytics)
+        engine.reload()
+        CK = "analytics:NSE:INDEX:NIFTY:2026-09-25"
+
+        # First genuine crossing.
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.1))
+        await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.3))
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT21-first-fire", len(fired), 1)
+        # unrelated quote updates must not reuse it
+        await engine.evaluate(_FakeQuote(27000, token="2887", tsym="NIFTY"))
+        # Second genuine crossing sequence.
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.4))
+        fired = await engine.evaluate(_FakeQuote(27000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT21-above-no-cross", len(fired), 0)
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.1))
+        fired = await engine.evaluate(_FakeQuote(27000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT21-below-no-cross", len(fired), 0)
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.3))
+        fired = await engine.evaluate(_FakeQuote(27000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT21-second-cross-fire", len(fired), 1)
+        alert = store.get_condition_alert(aid)
+        runner.assert_eq("BT21-trigger-count", alert["trigger_count"], 2)
+    finally:
+        tmp.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# BT22: Analytics crosses_below equivalent (GATE 10 / section 15)
+# ---------------------------------------------------------------------------
+
+async def test_bt22_analytics_crosses_below(runner: R) -> None:
+    """An old crosses_below event must not be reused by a later unrelated
+    quote update."""
+    store, tmp = _mk_store()
+    try:
+        services = _mock_services_for_normalizer(store)
+        from mcp_server.tools.condition_alerts import _normalize_public_condition
+        condition = {
+            "condition_version": 2, "logic": "all",
+            "conditions": [
+                {"condition_version": 1, "metric": "ltp", "operator": "gt",
+                 "value": 25000,
+                 "instrument": {"exchange": "NSE", "symbol": "NIFTY"}},
+                {"condition_version": 1, "metric": "pcr_oi", "operator": "crosses_below",
+                 "value": 1.2,
+                 "instrument": {"exchange": "NSE", "symbol": "NIFTY",
+                                "expiry": "2026-09-25"}},
+            ],
+        }
+        normalized = _normalize_public_condition(services, condition)
+        aid = store.create_condition_alert(
+            consumer_id="consumer-1", name="bt22-crosses-below",
+            trigger_mode="repeat", condition_json=normalized)
+        resolver = _mk_resolver(store)
+        analytics = _FakeAnalyticsService()
+        engine = ConditionAlertEngine(store, resolver=resolver,
+                                      analytics_service=analytics)
+        engine.reload()
+        CK = "analytics:NSE:INDEX:NIFTY:2026-09-25"
+
+        # quote TRUE, analytics above baseline
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.3))
+        await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        # analytics crosses below while quote TRUE -> fire
+        analytics.set_snapshot(CK, _FakeAnalyticsSnapshot(CK, pcr_oi=1.1))
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT22-cross-below-fire", len(fired), 1)
+        # quote goes FALSE -> re-arm (crossing event ephemeral)
+        fired = await engine.evaluate(_FakeQuote(24000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT22-quote-false", len(fired), 0)
+        # quote back TRUE later -> must NOT reuse old crosses_below event
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT22-quote-true-no-reuse", len(fired), 0)
+    finally:
+        tmp.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# BT23: Multi-chain analytics crossing (GATE 6 / section 18)
+# ---------------------------------------------------------------------------
+
+async def test_bt23_multichain_analytics_crossing(runner: R) -> None:
+    """When one chain refreshes, a cached crossing from another chain must not
+    persist TRUE; a genuine crossing on its own chain still evaluates."""
+    store, tmp = _mk_store()
+    try:
+        services = _mock_services_for_normalizer(store)
+        from mcp_server.tools.condition_alerts import _normalize_public_condition
+        condition = {
+            "condition_version": 2, "logic": "all",
+            "conditions": [
+                {"condition_version": 1, "metric": "ltp", "operator": "gt",
+                 "value": 25000,
+                 "instrument": {"exchange": "NSE", "symbol": "NIFTY"}},
+                {"condition_version": 1, "metric": "pcr_oi", "operator": "crosses_above",
+                 "value": 1.2,
+                 "instrument": {"exchange": "NSE", "symbol": "NIFTY",
+                                "expiry": "2026-09-25"}},
+                {"condition_version": 1, "metric": "iv_skew", "operator": "lt",
+                 "value": -2,
+                 "instrument": {"exchange": "NSE", "symbol": "BANKNIFTY",
+                                "expiry": "2026-09-25"}},
+            ],
+        }
+        normalized = _normalize_public_condition(services, condition)
+        aid = store.create_condition_alert(
+            consumer_id="consumer-1", name="bt23-multichain",
+            trigger_mode="repeat", condition_json=normalized)
+        resolver = _mk_resolver(store)
+        analytics = _FakeAnalyticsService()
+        engine = ConditionAlertEngine(store, resolver=resolver,
+                                      analytics_service=analytics)
+        engine.reload()
+        NK = "analytics:NSE:INDEX:NIFTY:2026-09-25"
+        BK = "analytics:NSE:INDEX:BANKNIFTY:2026-09-25"
+
+        # baseline: NIFTY below, BANKNIFTY iv_skew TRUE, quote FALSE
+        analytics.set_snapshot(NK, _FakeAnalyticsSnapshot(NK, pcr_oi=1.1))
+        analytics.set_snapshot(BK, _FakeAnalyticsSnapshot(BK, iv_skew=-3.0))
+        await engine.evaluate(_FakeQuote(24000, token="2887", tsym="NIFTY"))
+        # NIFTY genuine crossing ABOVE while quote & BANKNIFTY TRUE -> fire
+        analytics.set_snapshot(NK, _FakeAnalyticsSnapshot(NK, pcr_oi=1.3))
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT23-nifty-cross-fire", len(fired), 1)
+        # BANKNIFTY refreshes (genuine, still TRUE): cached NIFTY crossing must
+        # NOT persist -> no fire.
+        analytics.set_snapshot(BK, _FakeAnalyticsSnapshot(BK, iv_skew=-4.0))
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT23-banknifty-refresh-no-fire", len(fired), 0)
+        # NIFTY genuine second crossing -> fire again
+        analytics.set_snapshot(NK, _FakeAnalyticsSnapshot(NK, pcr_oi=1.0))
+        await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        analytics.set_snapshot(NK, _FakeAnalyticsSnapshot(NK, pcr_oi=1.3))
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT23-nifty-second-cross-fire", len(fired), 1)
+    finally:
+        tmp.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# BT24: Same-chain multiple analytics leaves (GATE 11 / section 17)
+# ---------------------------------------------------------------------------
+
+async def test_bt24_same_chain_multiple_analytics_leaves(runner: R) -> None:
+    """Two analytics leaves on the SAME chain receive the same fresh-chain
+    observation; is_new_tick is driven by dependency update, not source type."""
+    store, tmp = _mk_store()
+    try:
+        services = _mock_services_for_normalizer(store)
+        from mcp_server.tools.condition_alerts import _normalize_public_condition
+        condition = {
+            "condition_version": 2, "logic": "all",
+            "conditions": [
+                {"condition_version": 1, "metric": "ltp", "operator": "gt",
+                 "value": 25000,
+                 "instrument": {"exchange": "NSE", "symbol": "NIFTY"}},
+                {"condition_version": 1, "metric": "pcr_oi", "operator": "crosses_above",
+                 "value": 1.2,
+                 "instrument": {"exchange": "NSE", "symbol": "NIFTY",
+                                "expiry": "2026-09-25"}},
+                {"condition_version": 1, "metric": "iv_skew", "operator": "lt",
+                 "value": -2,
+                 "instrument": {"exchange": "NSE", "symbol": "NIFTY",
+                                "expiry": "2026-09-25"}},
+            ],
+        }
+        normalized = _normalize_public_condition(services, condition)
+        aid = store.create_condition_alert(
+            consumer_id="consumer-1", name="bt24-same-chain",
+            trigger_mode="repeat", condition_json=normalized)
+        resolver = _mk_resolver(store)
+        analytics = _FakeAnalyticsService()
+        engine = ConditionAlertEngine(store, resolver=resolver,
+                                      analytics_service=analytics)
+        engine.reload()
+        NK = "analytics:NSE:INDEX:NIFTY:2026-09-25"
+
+        # baseline below + iv_skew not low
+        analytics.set_snapshot(NK, _FakeAnalyticsSnapshot(NK, pcr_oi=1.1, iv_skew=-1.0))
+        await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        # fresh chain snapshot: pcr_oi crosses above AND iv_skew goes < -2
+        analytics.set_snapshot(NK, _FakeAnalyticsSnapshot(NK, pcr_oi=1.3, iv_skew=-3.0))
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT24-same-chain-fire", len(fired), 1)
+        # quote-only update must not reuse the analytics crossing
+        fired = await engine.evaluate(_FakeQuote(27000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT24-quote-only-no-fire", len(fired), 0)
+    finally:
+        tmp.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# BT25: Nested-subgroup analytics crossing (GATE 12 / section 11)
+# ---------------------------------------------------------------------------
+
+async def test_bt25_subgroup_analytics_crossing(runner: R) -> None:
+    """The nested-subgroup evaluator must apply identical dependency-aware
+    new-observation semantics to analytics crossing leaves."""
+    store, tmp = _mk_store()
+    try:
+        services = _mock_services_for_normalizer(store)
+        from mcp_server.tools.condition_alerts import _normalize_public_condition
+        condition = {
+            "condition_version": 2, "logic": "all",
+            "conditions": [
+                {"condition_version": 1, "metric": "pcr_oi", "operator": "crosses_above",
+                 "value": 1.2,
+                 "instrument": {"exchange": "NSE", "symbol": "NIFTY",
+                                "expiry": "2026-09-25"}},
+                {"condition_version": 2, "logic": "any",
+                 "conditions": [
+                     {"condition_version": 1, "metric": "ltp", "operator": "gt",
+                      "value": 25000,
+                      "instrument": {"exchange": "NSE", "symbol": "NIFTY"}},
+                     {"condition_version": 1, "metric": "iv_skew", "operator": "lt",
+                      "value": -2,
+                      "instrument": {"exchange": "NSE", "symbol": "NIFTY",
+                                     "expiry": "2026-09-25"}},
+                 ]},
+            ],
+        }
+        normalized = _normalize_public_condition(services, condition)
+        aid = store.create_condition_alert(
+            consumer_id="consumer-1", name="bt25-subgroup",
+            trigger_mode="repeat", condition_json=normalized)
+        resolver = _mk_resolver(store)
+        analytics = _FakeAnalyticsService()
+        engine = ConditionAlertEngine(store, resolver=resolver,
+                                      analytics_service=analytics)
+        engine.reload()
+        NK = "analytics:NSE:INDEX:NIFTY:2026-09-25"
+
+        # baseline below, subgroup not satisfied
+        analytics.set_snapshot(NK, _FakeAnalyticsSnapshot(NK, pcr_oi=1.1, iv_skew=-1.0))
+        await engine.evaluate(_FakeQuote(24000, token="2887", tsym="NIFTY"))
+        # analytics crosses above while quote FALSE + iv_skew not low -> no fire
+        analytics.set_snapshot(NK, _FakeAnalyticsSnapshot(NK, pcr_oi=1.3, iv_skew=-1.0))
+        fired = await engine.evaluate(_FakeQuote(24000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT25-cross-while-subgroup-false", len(fired), 0)
+        # quote TRUE later -> cached analytics crossing must not reuse -> no fire
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT25-quote-true-no-reuse", len(fired), 0)
+        # genuine crossing with subgroup satisfied -> fire
+        analytics.set_snapshot(NK, _FakeAnalyticsSnapshot(NK, pcr_oi=1.1, iv_skew=-1.0))
+        await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        analytics.set_snapshot(NK, _FakeAnalyticsSnapshot(NK, pcr_oi=1.3, iv_skew=-3.0))
+        fired = await engine.evaluate(_FakeQuote(26000, token="2887", tsym="NIFTY"))
+        runner.assert_eq("BT25-genuine-cross-fire", len(fired), 1)
+    finally:
+        tmp.cleanup()
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1283,6 +1683,13 @@ async def main() -> bool:
     await test_bt16_stale_mixed_true_unknown_true(runner)
     await test_bt17_1000_alert_dep_index(runner)
     await test_bt18_dep_last_values_independence(runner)
+    await test_bt19_analytics_crossing_lost_before_quote(runner)
+    await test_bt20_analytics_crossing_quote_true_first(runner)
+    await test_bt21_second_genuine_analytics_crossing(runner)
+    await test_bt22_analytics_crosses_below(runner)
+    await test_bt23_multichain_analytics_crossing(runner)
+    await test_bt24_same_chain_multiple_analytics_leaves(runner)
+    await test_bt25_subgroup_analytics_crossing(runner)
     return runner.summary()
 
 

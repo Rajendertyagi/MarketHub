@@ -438,6 +438,7 @@ These tools were previously deferred but are now finalized as part of the public
 - **Multi-instrument support**: v2 groups may span different instruments (B7)
 - **Mixed source support**: v2 groups may mix quote-backed and analytics-backed leaves (B7)
 - **Multi-chain analytics**: analytics leaves with different expiries are independent dependency keys (B7)
+- **Crossing ephemeral**: `crosses_above` / `crosses_below` evaluate to TRUE ONLY on the tick where the crossing is observed, for BOTH quote-backed and analytics-backed (B7) leaves. The crossing *side* and *history* are persisted (restart-safe) but the crossing *event* (TRUE) is NOT persisted: a fresh analytics snapshot that produces a crossing fires exactly once and cannot be reused by a later quote update, a stale re-evaluation, or another chain's analytics refresh (contract sections 1-3, 9)
 - **Atomic trigger**: engine evaluates against live quotes; a fire persists runtime state + alert row + event + consumer materialization in one SQLite transaction
 - **Delivery**: trigger event flows through the existing `alert.triggered` → `consumer_event_pending_list` → `consumer_event_acknowledge` path
 
