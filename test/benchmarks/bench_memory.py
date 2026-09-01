@@ -70,7 +70,7 @@ async def run():
         engine.reload()
         engines.append(engine)
         # Fire a few to populate transient state
-        from test.benchmarks.bench_quote_eval import _FakeQuote
+        from bench_quote_eval import _FakeQuote
         q = _FakeQuote(30000.0)
         await engine.evaluate(q)
         rss, tm = _get_mem_mb()

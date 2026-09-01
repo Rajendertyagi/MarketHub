@@ -74,8 +74,16 @@ async def run():
         """),
     ]
 
+    query_bindings = {
+        "pending_list": ("c1", 0, 100),
+        "inbox_status": ("c1", 0),
+        "advance_checkpoint_find_next": ("c1", 0),
+        "ack_lookup": ("c1", "evt-id"),
+    }
+
     for qname, sql in queries:
-        plan_rows = conn.execute(f"EXPLAIN QUERY PLAN {sql}", ("c1", 0, 100)).fetchall()
+        bindings = query_bindings.get(qname, ())
+        plan_rows = conn.execute(f"EXPLAIN QUERY PLAN {sql}", bindings).fetchall()
         plan_str = "; ".join(str(r["detail"]) for r in plan_rows)
         rows.append({
             "scenario": qname,

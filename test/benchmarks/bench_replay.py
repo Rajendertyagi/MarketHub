@@ -79,9 +79,6 @@ async def run():
                 "pending_count": status["pending_count"],
                 "latest_sequence": status["latest_sequence"],
             })
-        finally:
-            conn.close()
-
         # Measure replay page fetch
         def row_to_event(r):
             return {
@@ -130,6 +127,7 @@ async def run():
                 "p99_ms": round(_percentile(ack_times, 99), 4),
             })
 
+        conn.close()
         shutil.rmtree(tmp, ignore_errors=True)
 
     return {"rows": rows}

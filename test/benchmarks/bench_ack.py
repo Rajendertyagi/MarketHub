@@ -62,7 +62,7 @@ async def run():
 
         # Get all event IDs
         conn = store._open(store._db_path)
-        from core.persistence.modules.events import _row_to_event
+        from core.persistence.modules.events import row_to_event
         all_events = conn.execute(
             "SELECT sequence, id FROM persistent_events ORDER BY sequence").fetchall()
         conn.close()
