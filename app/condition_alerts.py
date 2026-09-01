@@ -220,6 +220,8 @@ class ConditionAlertEngine:
                     "root": root_state,
                 }
             self._last_values = {}
+            # B7: per-(alert_id, condition_id) last-known values for cross-instrument
+            self._dep_last_values: dict[tuple[str, str], float] = {}
 
     # ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -400,7 +402,17 @@ class ConditionAlertEngine:
                         and self._analytics is not None):
                     value = self._extract_analytics_value(alert, child, metric)
                 else:
-                    value = extract_metric(quote, metric)
+                    # B7: only use quote value if it matches this leaf's dep.
+                    leaf_dep = child.get("_dependency_key")
+                    quote_dep = f"quote:{self._resolver.resolve_quote(quote) or ''}"
+                    if leaf_dep and leaf_dep == quote_dep:
+                        value = extract_metric(quote, metric)
+                        # Store last-known for this specific leaf.
+                        self._dep_last_values[(alert["alert_id"], cid)] = value
+                    else:
+                        # Use stored last-known value (may be None → UNKNOWN).
+                        value = self._dep_last_values.get(
+                            (alert["alert_id"], cid))
                 prev_leaf_state = state["leaves"].get(
                     cid,
                     {"last_result": LAST_RESULT_UNKNOWN,
@@ -536,7 +548,15 @@ class ConditionAlertEngine:
                         and alert is not None):
                     value = self._extract_analytics_value(alert, sub_child, metric)
                 else:
-                    value = extract_metric(quote, metric)
+                    # B7: only use quote value if it matches this leaf's dep.
+                    leaf_dep = sub_child.get("_dependency_key")
+                    quote_dep = f"quote:{self._resolver.resolve_quote(quote) or ''}"
+                    if leaf_dep and leaf_dep == quote_dep:
+                        value = extract_metric(quote, metric)
+                        self._dep_last_values[(alert["alert_id"], sub_cid)] = value
+                    else:
+                        value = self._dep_last_values.get(
+                            (alert["alert_id"], sub_cid))
                 prev = self._get_subgroup_state(state, sub_cid)
                 new_state = await self._evaluate_leaf_node(
                     operator, threshold, value, prev)
