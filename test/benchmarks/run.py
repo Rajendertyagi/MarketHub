@@ -47,7 +47,7 @@ async def main():
         ("condition_complexity", bench_condition_complexity),
         ("trigger_persistence", bench_trigger_persistence),
         ("sqlite_txn", bench_sqlite_txn),
-        ("write_amplification", bench_write_amplification),
+        ("write_amplification", bench_write_amp),
         ("max_pain", bench_max_pain),
         ("analytics_metrics", bench_analytics_metrics),
         ("analytics_scheduler", bench_analytics_scheduler),
