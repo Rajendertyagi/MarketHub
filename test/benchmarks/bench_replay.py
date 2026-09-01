@@ -79,6 +79,9 @@ async def run():
                 "pending_count": status["pending_count"],
                 "latest_sequence": status["latest_sequence"],
             })
+        finally:
+            pass
+
         # Measure replay page fetch
         def row_to_event(r):
             return {
