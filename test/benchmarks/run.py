@@ -36,6 +36,11 @@ from bench_ack import run as bench_ack
 from bench_live_wake import run as bench_live_wake
 from bench_concurrency import run as bench_concurrency
 from bench_explain_plan import run as bench_explain_plan
+from bench_q1q7_quote_eval import run as bench_q1q7
+from bench_slow_chain_blocking import run as bench_slow_chain_blocking
+from bench_restart_10k import run as bench_restart_10k
+from bench_replay_10k import run as bench_replay_10k
+from bench_ack_10k import run as bench_ack_10k
 
 
 async def main():
@@ -60,6 +65,11 @@ async def main():
         ("live_wake", bench_live_wake),
         ("concurrency", bench_concurrency),
         ("explain_plan", bench_explain_plan),
+        ("q1q7_quote_scale", bench_q1q7),
+        ("slow_chain_blocking", bench_slow_chain_blocking),
+        ("restart_10k", bench_restart_10k),
+        ("replay_10k", bench_replay_10k),
+        ("ack_10k", bench_ack_10k),
     ]
 
     for name, fn in runners:
