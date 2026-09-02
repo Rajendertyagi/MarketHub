@@ -83,21 +83,17 @@ async def run():
     for i in range(3):
         setattr(mock_ms2, f"option_chain_chain_{i}", patched_chain(i, latencies[i]))
 
-    # Use a single mock that picks latency by chain index
+    # Use a single mock that picks latency by call order (sequential)
     call_order = []
+    call_count = [0]
+    latencies = [50, 1000, 50]
+
     async def unified_mock(**kw):
-        chain_id = kw.get("chain_index", kw.get("instrument_token", ""))
-        # Extract chain index from keyword
-        idx = None
-        for k, v in kw.items():
-            if k == "chain_index":
-                idx = v
-                break
-        if idx is None:
-            idx = 0
-        call_order.append(("call_start", int(time.perf_counter_ns())))
+        idx = call_count[0]
+        call_count[0] += 1
+        call_order.append(("call_start", idx, int(time.perf_counter_ns())))
         await asyncio.sleep(latencies[idx] / 1000.0)
-        call_order.append(("call_end", int(time.perf_counter_ns())))
+        call_order.append(("call_end", idx, int(time.perf_counter_ns())))
         return OptionChainSnapshot(
             instrument_token=f"NSE_INDEX|CHAIN{idx}",
             exchange="NSE", tradingsymbol=f"CHAIN{idx}", expiry="2026-09-25",
@@ -138,13 +134,11 @@ async def run():
     call_order2 = []
     fail_count = [0]
     c_called = [False]
+    call_count2 = [0]
 
     async def failing_mock(**kw):
-        idx = 0
-        for k, v in kw.items():
-            if k == "chain_index":
-                idx = v
-                break
+        idx = call_count2[0]
+        call_count2[0] += 1
         call_order2.append(("call_start", idx, int(time.perf_counter_ns())))
         if idx == 1:
             fail_count[0] += 1
@@ -198,13 +192,11 @@ async def run():
     call_order3 = []
     fail_count3 = [0]
     c_called3 = [False]
+    call_count3 = [0]
 
     async def slow_then_fail_mock(**kw):
-        idx = 0
-        for k, v in kw.items():
-            if k == "chain_index":
-                idx = v
-                break
+        idx = call_count3[0]
+        call_count3[0] += 1
         call_order3.append(("call_start", idx, int(time.perf_counter_ns())))
         if idx == 1:
             await asyncio.sleep(500 / 1000.0)
