@@ -68,7 +68,7 @@ async def run():
     errors = []
 
     for total, target_bucket, label in scenarios:
-        tmp = tempfile.mkdtemp(prefix=f"bench_q_{label[:10]}_")
+        tmp = tempfile.mkdtemp(prefix=f"bench_q_{label.replace(':', '_')}")
         try:
             # Build store with exact total alerts
             store = EventStore(os.path.join(tmp, "test.db"))

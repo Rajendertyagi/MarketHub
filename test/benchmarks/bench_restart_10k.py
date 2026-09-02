@@ -44,11 +44,12 @@ async def run():
 
     print(f"  Creating {n} alerts...", flush=True)
     for i in range(n):
+        # Use distinct canonical_ids so each alert gets its own dep_index entry
         store.create_condition_alert(
             consumer_id="c1", name=f"a{i}", trigger_mode="repeat",
             condition_json={"condition_version": 1, "condition_id": f"c{i}",
                 "metric": "ltp", "operator": "gt", "value": 20000.0 + i * 10,
-                "instrument": {"canonical_id": "NSE:EQUITY:I"}})
+                "instrument": {"canonical_id": f"NSE:EQUITY:I{i}"}})
     print(f"  {n} alerts created", flush=True)
 
     resolver = MarketInstrumentIdentityResolver()

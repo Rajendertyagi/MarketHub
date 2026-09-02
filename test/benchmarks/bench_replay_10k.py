@@ -154,7 +154,11 @@ async def run():
         """),
     ]
     for qname, sql in queries:
-        plan_rows = conn.execute(f"EXPLAIN QUERY PLAN {sql}", ("c1", 0, 100)).fetchall()
+        if qname == "pending_list":
+            bindings = ("c1", 0, 100)
+        else:
+            bindings = ("c1", 0)
+        plan_rows = conn.execute(f"EXPLAIN QUERY PLAN {sql}", bindings).fetchall()
         plan_str = "; ".join(str(r["detail"]) for r in plan_rows)
         rows.append({
             "scenario": f"explain_{qname}",
