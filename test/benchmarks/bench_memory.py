@@ -1,7 +1,7 @@
 """Benchmark Part 11 — Memory measurement.
 
 Uses tracemalloc to measure incremental memory for:
-  baseline, 1000, 5000, 10000 alerts
+  baseline, 100, 1000, 5000 alerts.
 Then delete/disable and measure retained memory.
 """
 from __future__ import annotations
@@ -23,34 +23,30 @@ from app.condition_alerts import ConditionAlertEngine
 from app.market_identity import MarketInstrumentIdentityResolver
 
 
-def _get_mem_mb():
-    """Return (rss_mb, tracemalloc_mb) or (None, None) if tracemalloc not active."""
-    import os as _os
-    rss = None
-    try:
-        with open(f"/proc/{_os.getpid()}/statm") as f:
-            pages = int(f.read().split()[0])
-            rss = pages * _os.sysconf("SC_PAGE_SIZE") / 1024 / 1024
-    except Exception:
-        pass
-    tm = None
+def _get_traced_mb():
     if tracemalloc.is_tracing():
-        tm = tracemalloc.get_traced_memory()[0] / 1024 / 1024
-    return rss, tm
+        return round(tracemalloc.get_traced_memory()[0] / 1024 / 1024, 4)
+    return None
+
+
+def _get_current_mb():
+    if tracemalloc.is_tracing():
+        return round(tracemalloc.get_traced_memory()[1] / 1024 / 1024, 4)
+    return None
 
 
 async def run():
     rows = []
     tracemalloc.start()
-    baseline_rss, baseline_tm = _get_mem_mb()
+    baseline = _get_traced_mb()
 
     counts = [100, 1000, 5000]
-    store_paths = []
     engines = []
+    tmps = []
 
     for n in counts:
         tmp = tempfile.mkdtemp(prefix=f"bench_mem_{n}_")
-        store_paths.append(tmp)
+        tmps.append(tmp)
         store = EventStore(os.path.join(tmp, "test.db"))
         store.register_consumer("c1")
         store.replace_provider_instruments("upstox", [
@@ -64,79 +60,75 @@ async def run():
         for i in range(n):
             store.create_condition_alert(
                 consumer_id="c1", name=f"a{i}", trigger_mode="repeat",
-                condition_json={"condition_version":1,"condition_id":f"c{i}",
-                    "metric":"ltp","operator":"gt","value":20000.0+i*10,
-                    "instrument":{"canonical_id":"NSE:EQUITY:I"}})
+                condition_json={"condition_version": 1, "condition_id": f"c{i}",
+                    "metric": "ltp", "operator": "gt", "value": 20000.0 + i * 10,
+                    "instrument": {"canonical_id": "NSE:EQUITY:I"}})
         engine.reload()
         engines.append(engine)
-        # Fire a few to populate transient state
+
         from bench_quote_eval import _FakeQuote
         q = _FakeQuote(30000.0)
         await engine.evaluate(q)
-        rss, tm = _get_mem_mb()
+
         rows.append({
             "scenario": f"create_{n}_alerts",
             "alert_count": n,
-            "dep_index_size": len(engine._dep_index),
-            "alert_deps_size": len(engine._alert_deps),
+            "dep_index_entries": sum(len(v) for v in engine._dep_index.values()),
+            "dep_index_keys": len(engine._dep_index),
             "alerts_dict_size": len(engine._alerts),
-            "state_dict_size": len(engine._state),
-            "dep_last_values_size": len(engine._dep_last_values),
-            "analytics_seen_size": len(engine._analytics_seen),
-            "analytics_snapshot_size": len(engine._analytics_last_snapshot),
+            "alert_deps_size": len(engine._alert_deps),
             "alert_locks_size": len(engine._alert_locks),
-            "rss_mb": round(rss, 2) if rss else None,
-            "tracemalloc_mb": round(tm, 2) if tm else None,
+            "dep_last_values_size": len(engine._dep_last_values),
+            "state_entries": len(engine._state),
+            "tracemalloc_mb": _get_traced_mb(),
+            "tracemalloc_peak_mb": _get_current_mb(),
+            "baseline_mb": baseline,
+            "allocated_delta_mb": round((_get_traced_mb() or 0) - (baseline or 0), 4),
         })
-        print(f"  {n} alerts: dep_index={len(engine._dep_index)} locks={len(engine._alert_locks)} dep_last={len(engine._dep_last_values)}")
+        print(f"  {n} alerts: locks={len(engine._alert_locks)} dep_last={len(engine._dep_last_values)}")
 
-    # Test delete cleanup
     for idx, (engine, n) in enumerate(zip(engines, counts)):
-        # Delete half the alerts
         store = engine._store
         alerts = store.list_condition_alerts("c1")
-        to_delete = alerts[:n//2]
+        to_delete = alerts[:n // 2]
         for a in to_delete:
             store.delete_condition_alert(a["alert_id"])
         engine.reload()
-        rss, tm = _get_mem_mb()
         rows.append({
             "scenario": f"delete_half_{n}_alerts",
             "remaining_alerts": len(engine._alerts),
-            "dep_index_size": len(engine._dep_index),
+            "dep_index_entries": sum(len(v) for v in engine._dep_index.values()),
+            "dep_index_keys": len(engine._dep_index),
             "alert_deps_size": len(engine._alert_deps),
-            "dep_last_values_size": len(engine._dep_last_values),
-            "analytics_seen_size": len(engine._analytics_seen),
-            "analytics_snapshot_size": len(engine._analytics_last_snapshot),
             "alert_locks_size": len(engine._alert_locks),
-            "rss_mb": round(rss, 2) if rss else None,
-            "tracemalloc_mb": round(tm, 2) if tm else None,
+            "dep_last_values_size": len(engine._dep_last_values),
+            "state_entries": len(engine._state),
+            "tracemalloc_mb": _get_traced_mb(),
+            "tracemalloc_peak_mb": _get_current_mb(),
         })
-        print(f"  after delete half {n}: locks={len(engine._alert_locks)} dep_last={len(engine._dep_last_values)}")
+        print(f"  delete half {n}: locks={len(engine._alert_locks)}")
 
-    # Test disable cleanup
-    for idx, (engine, n) in enumerate(engines):
+    for idx, (engine, n) in enumerate(zip(engines, counts)):
         store = engine._store
         alerts = store.list_condition_alerts("c1")
-        to_disable = alerts[:n//4]
+        to_disable = alerts[:max(1, len(alerts) // 4)]
         for a in to_disable:
             store.set_condition_alert_enabled(a["alert_id"], False)
         engine.reload()
-        rss, tm = _get_mem_mb()
         rows.append({
             "scenario": f"disable_quarter_{n}_alerts",
             "remaining_alerts": len(engine._alerts),
-            "dep_index_size": len(engine._dep_index),
+            "dep_index_entries": sum(len(v) for v in engine._dep_index.values()),
+            "dep_index_keys": len(engine._dep_index),
             "alert_locks_size": len(engine._alert_locks),
-            "rss_mb": round(rss, 2) if rss else None,
-            "tracemalloc_mb": round(tm, 2) if tm else None,
+            "dep_last_values_size": len(engine._dep_last_values),
+            "tracemalloc_mb": _get_traced_mb(),
+            "tracemalloc_peak_mb": _get_current_mb(),
         })
-        print(f"  after disable quarter {n}: locks={len(engine._alert_locks)}")
+        print(f"  disable quarter {n}: locks={len(engine._alert_locks)}")
 
     tracemalloc.stop()
-
-    # Cleanup
-    for tmp in store_paths:
+    for tmp in tmps:
         shutil.rmtree(tmp, ignore_errors=True)
 
     return {"rows": rows}

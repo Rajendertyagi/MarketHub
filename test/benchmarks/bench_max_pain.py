@@ -12,7 +12,7 @@ _PROJECT_DIR = os.path.dirname(os.path.dirname(_SCRIPT_DIR))
 if _PROJECT_DIR not in sys.path:
     sys.path.insert(0, _PROJECT_DIR)
 
-from market.models import OptionChainSnapshot, OptionContractData
+from market.models import OptionChainSnapshot, OptionContractData, OptionStrikeRow
 from market.analytics.option_chain import compute_max_pain
 
 
@@ -27,38 +27,26 @@ def _percentile(vals, p):
 
 
 def _make_snapshot(n_strikes):
-    """Create a deterministic option chain snapshot with N strikes."""
     strikes = []
     base_strike = 25000.0
     for i in range(n_strikes):
         strike = base_strike + (i - n_strikes // 2) * 50.0
+        ce_oi = max(100000.0 - abs(i - n_strikes // 2) * 1000.0, 1000.0)
+        pe_oi = max(80000.0 - abs(i - n_strikes // 2) * 800.0, 800.0)
         ce = OptionContractData(
-            strike=strike, atm=False,
-            open_interest=100000.0 - abs(i - n_strikes // 2) * 1000.0,
-            volume=50000.0, iv=0.20, ltp=100.0, close=95.0,
-            gamma=0.01, buildup_tag="Neutral"
+            ltp=100.0, volume=50000, oi=int(ce_oi), close=95.0,
+            iv=0.20, gamma=0.01, oi_change=0.0,
         )
         pe = OptionContractData(
-            strike=strike, atm=False,
-            open_interest=80000.0 - abs(i - n_strikes // 2) * 800.0,
-            volume=40000.0, iv=0.22, ltp=80.0, close=75.0,
-            gamma=0.01, buildup_tag="Neutral"
+            ltp=80.0, volume=40000, oi=int(pe_oi), close=75.0,
+            iv=0.22, gamma=0.01, oi_change=0.0,
         )
-        # Ensure positive OI
-        ce.open_interest = max(ce.open_interest, 1000.0)
-        pe.open_interest = max(pe.open_interest, 800.0)
-        strikes.append(type('R', (), {
-            'strike': strike, 'atm': False,
-            'call': ce, 'put': pe
-        })())
+        strikes.append(OptionStrikeRow(strike=strike, atm=False, call=ce, put=pe))
     snap = OptionChainSnapshot(
-        chain_key=f"test:NSE:INDEX:NIFTY:2026-09-25",
-        canonical_underlying_id="NSE:INDEX:NIFTY",
+        instrument_token="NSE_INDEX|NIFTY",
         exchange="NSE", tradingsymbol="NIFTY", expiry="2026-09-25",
-        spot_price=25000.0, pcr_oi=1.1, pcr_volume=None,
-        max_pain=None, iv_skew=None,
-        strikes=strikes, received_ts=None, calculated_at=None,
-        stale_after_seconds=300.0
+        spot_price=25000.0, atm_strike=25000.0,
+        strikes=tuple(strikes),
     )
     return snap
 
@@ -71,26 +59,25 @@ async def run():
 
     for n in strike_counts:
         snap = _make_snapshot(n)
-        # Verify correctness
         result = compute_max_pain(snap)
         assert result["max_pain"] is not None, f"max_pain should not be None for N={n}"
+        expected_mp = result["max_pain"]
 
-        # Warmup
         for _ in range(WARMUP):
             compute_max_pain(snap)
 
-        # Measure
         times = []
         for _ in range(MEASURE):
             t0 = time.perf_counter_ns()
             r = compute_max_pain(snap)
             dt = (time.perf_counter_ns() - t0) / 1e6
             times.append(dt)
-            assert r["max_pain"] is not None
+            assert r["max_pain"] == expected_mp, f"max_pain instability at N={n}"
 
         rows.append({
             "scenario": f"max_pain_N{n}_strikes",
             "strikes": n,
+            "max_pain_value": expected_mp,
             "p50_ms": round(_percentile(times, 50), 4),
             "p95_ms": round(_percentile(times, 95), 4),
             "p99_ms": round(_percentile(times, 99), 4),
@@ -100,6 +87,6 @@ async def run():
             "iterations": MEASURE,
             "correctness": "verified",
         })
-        print(f"  N={n}: p50={_percentile(times,50):.4f}ms p99={_percentile(times,99):.4f}ms")
+        print(f"  N={n}: p50={_percentile(times,50):.4f}ms p99={_percentile(times,99):.4f}ms mp={expected_mp}")
 
     return {"rows": rows}

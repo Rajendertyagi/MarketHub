@@ -13,7 +13,7 @@ _PROJECT_DIR = os.path.dirname(os.path.dirname(_SCRIPT_DIR))
 if _PROJECT_DIR not in sys.path:
     sys.path.insert(0, _PROJECT_DIR)
 
-from market.models import OptionChainSnapshot, OptionContractData
+from market.models import OptionChainSnapshot, OptionContractData, OptionStrikeRow
 from market.analytics.option_chain import compute_pcr, compute_pcr_volume, compute_iv_skew
 
 
@@ -32,33 +32,21 @@ def _make_snapshot(n_strikes):
     base_strike = 25000.0
     for i in range(n_strikes):
         strike = base_strike + (i - n_strikes // 2) * 50.0
+        is_atm = (i == n_strikes // 2)
         ce = OptionContractData(
-            strike=strike, atm=(i == n_strikes // 2),
-            open_interest=100000.0, volume=50000.0,
-            iv=0.18 + abs(i - n_strikes//2) * 0.001,
-            ltp=100.0, close=95.0, gamma=0.01,
-            buildup_tag="Neutral"
+            ltp=100.0, volume=50000, oi=100000, close=95.0,
+            iv=0.18 + abs(i - n_strikes // 2) * 0.001, gamma=0.01, oi_change=0.0,
         )
         pe = OptionContractData(
-            strike=strike, atm=(i == n_strikes // 2),
-            open_interest=110000.0, volume=55000.0,
-            iv=0.20 + abs(i - n_strikes//2) * 0.001,
-            ltp=90.0, close=85.0, gamma=0.01,
-            buildup_tag="Neutral"
+            ltp=90.0, volume=55000, oi=110000, close=85.0,
+            iv=0.20 + abs(i - n_strikes // 2) * 0.001, gamma=0.01, oi_change=0.0,
         )
-        strikes.append(type('R', (), {
-            'strike': strike, 'atm': i == n_strikes // 2,
-            'call': ce, 'put': pe
-        })())
+        strikes.append(OptionStrikeRow(strike=strike, atm=is_atm, call=ce, put=pe))
     snap = OptionChainSnapshot(
-        chain_key="test:NSE:INDEX:NIFTY:2026-09-25",
-        canonical_underlying_id="NSE:INDEX:NIFTY",
+        instrument_token="NSE_INDEX|NIFTY",
         exchange="NSE", tradingsymbol="NIFTY", expiry="2026-09-25",
-        spot_price=25000.0, pcr_oi=1.1, pcr_volume=None,
-        max_pain=None, iv_skew=None,
-        strikes=strikes, received_ts=None, calculated_at=None,
-        stale_after_seconds=300.0,
-        atm_strike=base_strike
+        spot_price=25000.0, atm_strike=base_strike,
+        strikes=tuple(strikes),
     )
     return snap
 

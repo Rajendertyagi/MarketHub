@@ -3,8 +3,7 @@
 Measures actual transaction latency for:
   - non-trigger state save
   - trigger transaction
-  - once trigger
-  - nested/multi-leaf trigger
+  - multi-leaf v2 trigger
 
 Counts actual SQL writes via trace callback.
 """
@@ -47,59 +46,70 @@ def _percentile(vals, p):
     return s[f] + (k - f) * (s[c] - s[f])
 
 
+def _make_tracked_engine(tmp_path):
+    store = EventStore(tmp_path)
+    store.register_consumer("c1")
+    store.replace_provider_instruments("upstox", [
+        {"exchange": "NSE", "instrument_token": "T",
+         "tradingsymbol": "SYM", "name": "S",
+         "instrument_type": "EQ", "segment": "NSE", "isin": "I"}
+    ])
+    resolver = MarketInstrumentIdentityResolver()
+    resolver.register_catalog_rows(store.list_all_instruments())
+
+    write_counts = [0]
+    orig_open = store._open
+
+    def tracked_open(db_path):
+        conn = orig_open(db_path)
+        def trace_callback(sql):
+            if sql:
+                sql_upper = sql.strip().upper()
+                if sql_upper.startswith(("INSERT", "UPDATE", "DELETE", "UPSERT")):
+                    write_counts[0] += 1
+        conn.set_trace_callback(trace_callback)
+        return conn
+
+    store._open = tracked_open
+    engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
+    return store, engine, write_counts
+
+
 async def run():
     rows = []
     WARMUP = 10
     MEASURE = 50
 
-    # Helper to count SQL statements via trace
-    def make_tracked_store(tmp_path):
-        store = EventStore(tmp_path)
-        store.register_consumer("c1")
-        store.replace_provider_instruments("upstox", [
-            {"exchange": "NSE", "instrument_token": "T",
-             "tradingsymbol": "SYM", "name": "S",
-             "instrument_type": "EQ", "segment": "NSE", "isin": "I"}
-        ])
-        # Track SQL calls
-        store._trace_calls = []
-        orig_conn = store._open
-        def tracked_open(path):
-            conn = orig_conn(path)
-            conn.set_trace_callback(lambda evt: store._trace_calls.append(evt))
-            return conn
-        store._open = tracked_open
-        return store
+    def build_engine(tmp_prefix):
+        tmp = tempfile.mkdtemp(prefix=tmp_prefix)
+        store, engine, write_counts = _make_tracked_engine(
+            os.path.join(tmp, "test.db"))
+        return store, engine, write_counts, tmp
 
-    # --- A: non-trigger state save ---
-    tmp = tempfile.mkdtemp(prefix="bench_sqlite_")
-    store = make_tracked_store(os.path.join(tmp, "test.db"))
-    resolver = MarketInstrumentIdentityResolver()
-    resolver.register_catalog_rows(store.list_all_instruments())
-    engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
+    # --- A: non-trigger state save (FALSE -> FALSE) ---
+    store, engine, wc, tmp = build_engine("bench_sqlite_a_")
     aid = store.create_condition_alert(
         consumer_id="c1", name="s", trigger_mode="repeat",
-        condition_json={"condition_version":1,"condition_id":"c1",
-            "metric":"ltp","operator":"gt","value":25000.0,
-            "instrument":{"canonical_id":"NSE:EQUITY:I"}})
+        condition_json={"condition_version": 1, "condition_id": "c1",
+            "metric": "ltp", "operator": "gt", "value": 25000.0,
+            "instrument": {"canonical_id": "NSE:EQUITY:I"}})
     engine.reload()
-    q = _FakeQuote(24000.0)  # below threshold
+    q = _FakeQuote(24000.0)
     for _ in range(WARMUP):
         await engine.evaluate(q)
     times = []
     call_counts = []
     for _ in range(MEASURE):
-        store._trace_calls = []
+        wc[0] = 0
         t0 = time.perf_counter_ns()
         await engine.evaluate(q)
         dt = (time.perf_counter_ns() - t0) / 1e6
         times.append(dt)
-        call_counts.append(len(store._trace_calls))
+        call_counts.append(wc[0])
     rows.append({
         "scenario": "A_non_trigger_state_save",
-        "sql_calls_p50": int(_percentile(call_counts, 50)),
-        "sql_calls_p95": int(_percentile(call_counts, 95)),
-        "sql_calls_p99": int(_percentile(call_counts, 99)),
+        "sql_writes_p50": int(_percentile(call_counts, 50)),
+        "sql_writes_p95": int(_percentile(call_counts, 95)),
         "p50_ms": round(_percentile(times, 50), 4),
         "p95_ms": round(_percentile(times, 95), 4),
         "p99_ms": round(_percentile(times, 99), 4),
@@ -107,41 +117,35 @@ async def run():
     })
     shutil.rmtree(tmp, ignore_errors=True)
 
-    # --- B: trigger transaction ---
-    tmp = tempfile.mkdtemp(prefix="bench_sqlite_")
-    store = make_tracked_store(os.path.join(tmp, "test.db"))
-    resolver = MarketInstrumentIdentityResolver()
-    resolver.register_catalog_rows(store.list_all_instruments())
-    engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
+    # --- B: trigger transaction (FALSE -> TRUE) ---
+    store, engine, wc, tmp = build_engine("bench_sqlite_b_")
     aid = store.create_condition_alert(
         consumer_id="c1", name="s", trigger_mode="repeat",
-        condition_json={"condition_version":1,"condition_id":"c1",
-            "metric":"ltp","operator":"gt","value":25000.0,
-            "instrument":{"canonical_id":"NSE:EQUITY:I"}})
+        condition_json={"condition_version": 1, "condition_id": "c1",
+            "metric": "ltp", "operator": "gt", "value": 25000.0,
+            "instrument": {"canonical_id": "NSE:EQUITY:I"}})
     engine.reload()
-    q = _FakeQuote(26000.0)  # above threshold
-    # First eval to establish TRUE state
-    await engine.evaluate(q)
-    for _ in range(WARMUP):
-        await engine.evaluate(q)  # TRUE→TRUE, no fire
-    # Now go below then above to get a fire
+    q_above = _FakeQuote(26000.0)
     q_below = _FakeQuote(24000.0)
-    await engine.evaluate(q_below)  # TRUE→FALSE, re-arm
+    await engine.evaluate(q_below)  # FALSE
+    for _ in range(WARMUP):
+        await engine.evaluate(q_above)  # TRUE (fires)
+        await engine.evaluate(q_below)  # FALSE (re-arm)
     times = []
     call_counts = []
     for _ in range(MEASURE):
-        store._trace_calls = []
+        wc[0] = 0
         t0 = time.perf_counter_ns()
-        fired = await engine.evaluate(q)
+        fired = await engine.evaluate(q_above)
         dt = (time.perf_counter_ns() - t0) / 1e6
         times.append(dt)
-        call_counts.append(len(store._trace_calls))
+        call_counts.append(wc[0])
         assert len(fired) == 1, "should fire"
+        await engine.evaluate(q_below)  # re-arm
     rows.append({
         "scenario": "B_trigger_transaction",
-        "sql_calls_p50": int(_percentile(call_counts, 50)),
-        "sql_calls_p95": int(_percentile(call_counts, 95)),
-        "sql_calls_p99": int(_percentile(call_counts, 99)),
+        "sql_writes_p50": int(_percentile(call_counts, 50)),
+        "sql_writes_p95": int(_percentile(call_counts, 95)),
         "p50_ms": round(_percentile(times, 50), 4),
         "p95_ms": round(_percentile(times, 95), 4),
         "p99_ms": round(_percentile(times, 99), 4),
@@ -150,44 +154,40 @@ async def run():
     shutil.rmtree(tmp, ignore_errors=True)
 
     # --- C: multi-leaf v2 trigger ---
-    tmp = tempfile.mkdtemp(prefix="bench_sqlite_")
-    store = make_tracked_store(os.path.join(tmp, "test.db"))
-    resolver = MarketInstrumentIdentityResolver()
-    resolver.register_catalog_rows(store.list_all_instruments())
-    engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
+    store, engine, wc, tmp = build_engine("bench_sqlite_c_")
     aid = store.create_condition_alert(
         consumer_id="c1", name="s", trigger_mode="repeat",
-        condition_json={"condition_version":2,"logic":"all",
-            "conditions":[
-                {"condition_version":1,"condition_id":"ca",
-                 "metric":"ltp","operator":"gt","value":25000.0,
-                 "instrument":{"canonical_id":"NSE:EQUITY:I"}},
-                {"condition_version":1,"condition_id":"cb",
-                 "metric":"volume","operator":"gt","value":1000.0,
-                 "instrument":{"canonical_id":"NSE:EQUITY:I"}},
+        condition_json={"condition_version": 2, "logic": "all",
+            "conditions": [
+                {"condition_version": 1, "condition_id": "ca",
+                 "metric": "ltp", "operator": "gt", "value": 25000.0,
+                 "instrument": {"canonical_id": "NSE:EQUITY:I"}},
+                {"condition_version": 1, "condition_id": "cb",
+                 "metric": "volume", "operator": "gt", "value": 1000.0,
+                 "instrument": {"canonical_id": "NSE:EQUITY:I"}},
             ]})
     engine.reload()
-    q = _FakeQuote(26000.0)
-    await engine.evaluate(q)
-    for _ in range(WARMUP):
-        await engine.evaluate(q)
+    q_above = _FakeQuote(26000.0)
     q_below = _FakeQuote(24000.0)
     await engine.evaluate(q_below)
+    for _ in range(WARMUP):
+        await engine.evaluate(q_above)
+        await engine.evaluate(q_below)
     times = []
     call_counts = []
     for _ in range(MEASURE):
-        store._trace_calls = []
+        wc[0] = 0
         t0 = time.perf_counter_ns()
-        fired = await engine.evaluate(q)
+        fired = await engine.evaluate(q_above)
         dt = (time.perf_counter_ns() - t0) / 1e6
         times.append(dt)
-        call_counts.append(len(store._trace_calls))
+        call_counts.append(wc[0])
         assert len(fired) == 1
+        await engine.evaluate(q_below)
     rows.append({
         "scenario": "C_multi_leaf_v2_trigger",
-        "sql_calls_p50": int(_percentile(call_counts, 50)),
-        "sql_calls_p95": int(_percentile(call_counts, 95)),
-        "sql_calls_p99": int(_percentile(call_counts, 99)),
+        "sql_writes_p50": int(_percentile(call_counts, 50)),
+        "sql_writes_p95": int(_percentile(call_counts, 95)),
         "p50_ms": round(_percentile(times, 50), 4),
         "p95_ms": round(_percentile(times, 95), 4),
         "p99_ms": round(_percentile(times, 99), 4),

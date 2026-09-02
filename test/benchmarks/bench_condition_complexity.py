@@ -16,6 +16,7 @@ import sys
 import tempfile
 import shutil
 import time
+from datetime import datetime, timezone
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_DIR = os.path.dirname(os.path.dirname(_SCRIPT_DIR))
@@ -25,6 +26,7 @@ if _PROJECT_DIR not in sys.path:
 from core.persistence.store import EventStore
 from app.condition_alerts import ConditionAlertEngine
 from app.market_identity import MarketInstrumentIdentityResolver
+from market.models import OptionChainAnalyticsSnapshot
 
 
 class _FakeQuote:
@@ -41,18 +43,34 @@ class _FakeAnalytics:
     """Deterministic analytics service returning fixed snapshots."""
     def __init__(self):
         self._cache = {}
+        self._dependents = {}
+        self._locks = {}
 
     def get_snapshot(self, chain_key):
         return self._cache.get(chain_key)
 
-    def set_snapshot(self, chain_key, value):
-        class Snap:
-            pass
-        s = Snap()
-        s.pcr_oi = value
-        s.is_stale = False
-        s.age_seconds = 0
-        self._cache[chain_key] = s
+    def register_chain(self, chain_key, alert_id):
+        self._dependents.setdefault(chain_key, set()).add(alert_id)
+
+    def unregister_chain(self, chain_key, alert_id):
+        deps = self._dependents.get(chain_key)
+        if deps:
+            deps.discard(alert_id)
+            if not deps:
+                del self._dependents[chain_key]
+                self._cache.pop(chain_key, None)
+
+    def has_chain(self, chain_key):
+        return chain_key in self._dependents
+
+    def set_snapshot(self, chain_key, pcr_oi_value):
+        self._cache[chain_key] = OptionChainAnalyticsSnapshot(
+            chain_key=chain_key,
+            canonical_underlying_id="NSE:EQUITY:I",
+            exchange="NSE", tradingsymbol="SYM", expiry="2026-09-25",
+            spot_price=25000.0, pcr_oi=pcr_oi_value,
+            received_ts=datetime.now(timezone.utc),
+        )
 
 
 def _percentile(vals, p):
@@ -105,6 +123,36 @@ async def run():
         times.append((time.perf_counter_ns() - t0) / 1e6)
     rows.append({
         "scenario": "v1_single_leaf",
+        "type": "v1_level",
+        "bucket_size": BUCKET,
+        "p50_ms": round(_percentile(times, 50), 4),
+        "p95_ms": round(_percentile(times, 95), 4),
+        "p99_ms": round(_percentile(times, 99), 4),
+        "iterations": MEASURE,
+    })
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # --- v1 crossing leaf ---
+    store, resolver, tmp = _make_base()
+    engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
+    for i in range(BUCKET):
+        store.create_condition_alert(consumer_id="c1", name=f"cross_{i}",
+            trigger_mode="repeat",
+            condition_json={"condition_version": 1, "condition_id": f"c{i}",
+                "metric": "ltp", "operator": "crosses_above",
+                "value": 25000.0 + i,
+                "instrument": {"canonical_id": "NSE:EQUITY:I"}})
+    engine.reload()
+    for _ in range(WARMUP):
+        await engine.evaluate(q)
+    times = []
+    for _ in range(MEASURE):
+        t0 = time.perf_counter_ns()
+        await engine.evaluate(q)
+        times.append((time.perf_counter_ns() - t0) / 1e6)
+    rows.append({
+        "scenario": "v1_crossing_leaf",
+        "type": "v1_crossing",
         "bucket_size": BUCKET,
         "p50_ms": round(_percentile(times, 50), 4),
         "p95_ms": round(_percentile(times, 95), 4),
@@ -138,6 +186,7 @@ async def run():
         times.append((time.perf_counter_ns() - t0) / 1e6)
     rows.append({
         "scenario": "v2_all_2leaves",
+        "type": "v2_all",
         "bucket_size": BUCKET,
         "p50_ms": round(_percentile(times, 50), 4),
         "p95_ms": round(_percentile(times, 95), 4),
@@ -171,6 +220,7 @@ async def run():
         times.append((time.perf_counter_ns() - t0) / 1e6)
     rows.append({
         "scenario": "v2_any_2leaves",
+        "type": "v2_any",
         "bucket_size": BUCKET,
         "p50_ms": round(_percentile(times, 50), 4),
         "p95_ms": round(_percentile(times, 95), 4),
@@ -210,6 +260,7 @@ async def run():
         times.append((time.perf_counter_ns() - t0) / 1e6)
     rows.append({
         "scenario": "v2_nested_all_of_any",
+        "type": "v2_nested",
         "bucket_size": BUCKET,
         "p50_ms": round(_percentile(times, 50), 4),
         "p95_ms": round(_percentile(times, 95), 4),
@@ -220,9 +271,8 @@ async def run():
 
     # --- mixed quote+analytics ---
     store, resolver, tmp = _make_base()
-    from app.market_analytics import MarketAnalyticsService
-    mock_ms = type('M', (), {'option_chain': asyncio.coroutine(lambda **kw: None)})()
-    analytics = MarketAnalyticsService(mock_ms)
+    analytics = _FakeAnalytics()
+    analytics.register_chain("analytics:NSE:EQUITY:I:2026-09-25", "dummy")
     analytics.set_snapshot("analytics:NSE:EQUITY:I:2026-09-25", 1.1)
     engine = ConditionAlertEngine(store, resolver=resolver, bus=None,
                                   analytics_service=analytics)
@@ -232,7 +282,7 @@ async def run():
             condition_json={"condition_version": 2, "logic": "all",
                 "conditions": [
                     {"condition_version": 1, "condition_id": f"c{i}a",
-                     "metric": "ltp", "operator": "gt", "value": 25000.0 + i,
+                     "metric": "pcr_oi", "operator": "gt", "value": 1.0,
                      "instrument": {"canonical_id": "NSE:EQUITY:I",
                                     "expiry": "2026-09-25",
                                     "_dependency_key": "analytics:NSE:EQUITY:I:2026-09-25"}},
@@ -241,8 +291,6 @@ async def run():
                      "instrument": {"canonical_id": "NSE:EQUITY:I"}},
                 ]})
     engine.reload()
-    # Need to also register the analytics chain
-    analytics.register_chain("analytics:NSE:EQUITY:I:2026-09-25", "dummy")
     for _ in range(WARMUP):
         await engine.evaluate(q)
     times = []
@@ -252,6 +300,7 @@ async def run():
         times.append((time.perf_counter_ns() - t0) / 1e6)
     rows.append({
         "scenario": "mixed_quote_analytics",
+        "type": "mixed",
         "bucket_size": BUCKET,
         "p50_ms": round(_percentile(times, 50), 4),
         "p95_ms": round(_percentile(times, 95), 4),

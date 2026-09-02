@@ -40,12 +40,15 @@ jobs:
           python -c "import sys,os,platform; print(f'Python {sys.version}'); print(f'CPU: {os.cpu_count()}'); print(f'Platform: {platform.machine()} {platform.system()}')"
 
       - name: Run B8A benchmarks
+        id: benchmark
+        continue-on-error: true
         run: |
           python test/benchmarks/run.py
         env:
           BENCHMARK_OUTPUT: b8-benchmark-results
 
-      - name: Upload benchmark results
+      - name: Upload benchmark JSON
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: b8a-benchmark-results
@@ -53,11 +56,16 @@ jobs:
           retention-days: 30
 
       - name: Upload benchmark CSV
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: b8a-benchmark-results-csv
           path: test/benchmarks/b8-benchmark-results.csv
           retention-days: 30
+
+      - name: Fail if benchmark failed
+        if: steps.benchmark.outcome == 'failure'
+        run: exit 1
 
   b7-ci-verify:
     runs-on: windows-latest

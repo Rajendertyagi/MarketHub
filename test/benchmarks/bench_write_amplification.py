@@ -7,6 +7,7 @@ Then alternate TRUE/FALSE and measure writes.
 from __future__ import annotations
 import asyncio
 import os
+import sqlite3
 import sys
 import tempfile
 import shutil
@@ -32,12 +33,8 @@ class _FakeQuote:
         self.provider = "upstox"
 
 
-async def run():
-    rows = []
-
-    # --- Unchanged state ---
-    tmp = tempfile.mkdtemp(prefix="bench_writeamp_")
-    store = EventStore(os.path.join(tmp, "test.db"))
+def _make_tracked_engine(tmp_path):
+    store = EventStore(tmp_path)
     store.register_consumer("c1")
     store.replace_provider_instruments("upstox", [
         {"exchange": "NSE", "instrument_token": "T",
@@ -46,96 +43,86 @@ async def run():
     ])
     resolver = MarketInstrumentIdentityResolver()
     resolver.register_catalog_rows(store.list_all_instruments())
+
+    write_counts = [0]
+    orig_open = store._open
+
+    def tracked_open(db_path):
+        conn = orig_open(db_path)
+        def trace_callback(sql):
+            if sql:
+                sql_upper = sql.strip().upper()
+                if sql_upper.startswith(("INSERT", "UPDATE", "DELETE", "UPSERT")):
+                    write_counts[0] += 1
+        conn.set_trace_callback(trace_callback)
+        return conn
+
+    store._open = tracked_open
     engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
+    return store, engine, write_counts
+
+
+async def run():
+    rows = []
+
+    # --- Unchanged state: 1000 repeated TRUE->TRUE evaluations ---
+    tmp = tempfile.mkdtemp(prefix="bench_writeamp_")
+    store, engine, write_counts = _make_tracked_engine(os.path.join(tmp, "test.db"))
     aid = store.create_condition_alert(
         consumer_id="c1", name="s", trigger_mode="repeat",
-        condition_json={"condition_version":1,"condition_id":"c1",
-            "metric":"ltp","operator":"gt","value":25000.0,
-            "instrument":{"canonical_id":"NSE:EQUITY:I"}})
+        condition_json={"condition_version": 1, "condition_id": "c1",
+            "metric": "ltp", "operator": "gt", "value": 25000.0,
+            "instrument": {"canonical_id": "NSE:EQUITY:I"}})
     engine.reload()
 
-    # Fire once to establish TRUE state
     q_above = _FakeQuote(26000.0)
-    await engine.evaluate(q_above)
+    await engine.evaluate(q_above)  # UNKNOWN->TRUE, fires
 
-    # 1000 repeated evaluations, state unchanged (TRUE→TRUE)
-    sql_counts = []
+    eval_counts = []
     for _ in range(1000):
-        store._trace_calls = []
-        orig_open = store._open
-        def tracked_open(path):
-            conn = orig_open(path)
-            calls = []
-            orig_exec = conn.execute
-            def tracked_execute(sql, params=()):
-                calls.append(sql)
-                return orig_exec(sql, params)
-            conn.execute = tracked_execute
-            return conn
-        store._open = tracked_open
-        await engine.evaluate(q_above)
-        # Count INSERT/UPDATE/DELETE
-        write_count = sum(1 for s in store._trace_calls if s and any(s.upper().startswith(p) for p in ("INSERT","UPDATE","DELETE")))
-        sql_counts.append(write_count)
-        store._open = orig_open
+        write_counts[0] = 0
+        await engine.evaluate(q_above)  # TRUE->TRUE, no fire
+        eval_counts.append(write_counts[0])
 
+    total_writes = sum(eval_counts)
     rows.append({
         "scenario": "unchanged_state_1000_evals",
         "evaluations": 1000,
-        "total_sql_writes": sum(sql_counts),
-        "avg_writes_per_eval": round(sum(sql_counts) / len(sql_counts), 2),
-        "min_writes": min(sql_counts),
-        "max_writes": max(sql_counts),
+        "total_sql_writes": total_writes,
+        "avg_writes_per_eval": round(total_writes / 1000, 4),
+        "min_writes": min(eval_counts),
+        "max_writes": max(eval_counts),
     })
 
-    # --- Alternating TRUE/FALSE ---
-    store2 = EventStore(os.path.join(tmp, "test2.db"))
-    store2.register_consumer("c1")
-    store2.replace_provider_instruments("upstox", [
-        {"exchange": "NSE", "instrument_token": "T",
-         "tradingsymbol": "SYM", "name": "S",
-         "instrument_type": "EQ", "segment": "NSE", "isin": "I"}
-    ])
-    resolver2 = MarketInstrumentIdentityResolver()
-    resolver2.register_catalog_rows(store2.list_all_instruments())
-    engine2 = ConditionAlertEngine(store2, resolver=resolver2, bus=None)
+    # --- Alternating TRUE/FALSE: 200 evaluations ---
+    tmp2 = tempfile.mkdtemp(prefix="bench_writeamp_alt_")
+    store2, engine2, write_counts2 = _make_tracked_engine(os.path.join(tmp2, "test.db"))
     aid2 = store2.create_condition_alert(
         consumer_id="c1", name="s", trigger_mode="repeat",
-        condition_json={"condition_version":1,"condition_id":"c1",
-            "metric":"ltp","operator":"gt","value":25000.0,
-            "instrument":{"canonical_id":"NSE:EQUITY:I"}})
+        condition_json={"condition_version": 1, "condition_id": "c1",
+            "metric": "ltp", "operator": "gt", "value": 25000.0,
+            "instrument": {"canonical_id": "NSE:EQUITY:I"}})
     engine2.reload()
 
     q_above2 = _FakeQuote(26000.0)
     q_below2 = _FakeQuote(24000.0)
-    sql_counts_alt = []
+    alt_counts = []
     for i in range(200):
-        store2._trace_calls = []
-        orig_open2 = store2._open
-        def tracked_open2(path):
-            conn = orig_open2(path)
-            orig_exec = conn.execute
-            def tracked_execute(sql, params=()):
-                calls2.append(sql)
-                return orig_exec(sql, params)
-            calls2 = []
-            conn.execute = tracked_execute
-            return conn
-        store2._open = tracked_open2
+        write_counts2[0] = 0
         q = q_above2 if i % 2 == 0 else q_below2
         await engine2.evaluate(q)
-        write_count = sum(1 for s in calls2 if s and any(s.upper().startswith(p) for p in ("INSERT","UPDATE","DELETE")))
-        sql_counts_alt.append(write_count)
-        store2._open = orig_open2
+        alt_counts.append(write_counts2[0])
 
+    total_alt = sum(alt_counts)
     rows.append({
         "scenario": "alternating_true_false_200_evals",
         "evaluations": 200,
-        "total_sql_writes": sum(sql_counts_alt),
-        "avg_writes_per_eval": round(sum(sql_counts_alt) / len(sql_counts_alt), 2),
-        "min_writes": min(sql_counts_alt),
-        "max_writes": max(sql_counts_alt),
+        "total_sql_writes": total_alt,
+        "avg_writes_per_eval": round(total_alt / 200, 4),
+        "min_writes": min(alt_counts),
+        "max_writes": max(alt_counts),
     })
 
     shutil.rmtree(tmp, ignore_errors=True)
+    shutil.rmtree(tmp2, ignore_errors=True)
     return {"rows": rows}

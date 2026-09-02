@@ -18,6 +18,7 @@ if _PROJECT_DIR not in sys.path:
     sys.path.insert(0, _PROJECT_DIR)
 
 from app.market_analytics import MarketAnalyticsService
+from market.models import OptionChainSnapshot, OptionStrikeRow
 
 
 def _percentile(vals, p):
@@ -30,14 +31,23 @@ def _percentile(vals, p):
     return s[f] + (k - f) * (s[c] - s[f])
 
 
+def _make_catalog():
+    """Mock instrument catalog that returns a dummy row for any NSE query."""
+    catalog = MagicMock()
+    catalog.search.return_value = [{
+        "exchange": "NSE", "instrument_type": "INDEX",
+        "tradingsymbol": "NIFTY", "name": "Nifty 50",
+    }]
+    return catalog
+
+
 async def run():
     rows = []
-    rest_latencies = [0.050, 0.250, 1.0]  # seconds
+    rest_latencies = [0.050, 0.250, 1.0]
     chain_counts = [1, 10, 25, 50, 100]
 
     for rest_ms in rest_latencies:
         for n_chains in chain_counts:
-            # Build mock market service that simulates REST latency
             call_count = 0
             max_concurrent = 0
             current_concurrent = 0
@@ -52,28 +62,26 @@ async def run():
                 async with lock:
                     current_concurrent -= 1
                 call_count += 1
-                # Return a minimal snapshot
-                from market.models import OptionChainSnapshot
                 return OptionChainSnapshot(
-                    chain_key=kw.get("chain_key", "test"),
-                    canonical_underlying_id="NSE:INDEX:NIFTY",
+                    instrument_token="NSE_INDEX|NIFTY",
                     exchange="NSE", tradingsymbol="NIFTY", expiry="2026-09-25",
-                    spot_price=25000.0, pcr_oi=1.1, pcr_volume=None,
-                    max_pain=25000.0, iv_skew=0.02,
-                    strikes=[], received_ts=None, calculated_at=None,
-                    stale_after_seconds=300.0
+                    spot_price=25000.0, atm_strike=25000.0, strikes=(),
                 )
 
             mock_ms = MagicMock()
             mock_ms.option_chain = mock_option_chain
+            mock_catalog = _make_catalog()
 
-            analytics = MarketAnalyticsService(mock_ms, refresh_interval=60.0)
+            analytics = MarketAnalyticsService(
+                market_service=mock_ms,
+                instrument_catalog=mock_catalog,
+                refresh_interval=60.0,
+            )
 
-            # Register chains
             for i in range(n_chains):
-                analytics.register_chain(f"analytics:NSE:INDEX:NIFTY:E{i:04d}", f"alert-{i}")
+                analytics.register_chain(
+                    f"analytics:NSE:INDEX:NIFTY:E{i:04d}", f"alert-{i}")
 
-            # Run one full refresh cycle
             t0 = time.perf_counter()
             await analytics._refresh_all_active()
             cycle_time = time.perf_counter() - t0
@@ -90,7 +98,6 @@ async def run():
             })
             print(f"  chains={n_chains} rest={int(rest_ms*1000)}ms: cycle={cycle_time:.3f}s calls={call_count} max_conc={max_concurrent}")
 
-            # Stop to clean up
             await analytics.stop(None)
 
     return {"rows": rows}
