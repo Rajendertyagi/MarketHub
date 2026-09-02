@@ -45,14 +45,15 @@ def _make_store_and_engine(n_per_instrument, n_instruments, trigger_mode="repeat
     store = EventStore(os.path.join(tmp, "test.db"))
     store.register_consumer("c1")
     tokens = []
+    all_instruments = []
     for i in range(n_instruments):
         token = f"T{i:04d}"
         tokens.append(token)
-        store.replace_provider_instruments("upstox", [
+        all_instruments.append(
             {"exchange": "NSE", "instrument_token": token,
              "tradingsymbol": f"SYM{i}", "name": f"S{i}",
-             "instrument_type": "EQ", "segment": "NSE", "isin": f"I{i}"}
-        ])
+             "instrument_type": "EQ", "segment": "NSE", "isin": f"I{i}"})
+    store.replace_provider_instruments("upstox", all_instruments)
     resolver = MarketInstrumentIdentityResolver()
     resolver.register_catalog_rows(store.list_all_instruments())
     engine = ConditionAlertEngine(store, resolver=resolver, bus=None)
@@ -104,25 +105,27 @@ async def run():
         store, engine, tmp, cids, tokens = _make_store_and_engine(
             n_per_inst, n_inst)
         try:
-            # Determine which instrument is the target
             target_idx = 0
-            target_cid = cids[target_idx]
             target_token = tokens[target_idx]
+            q_above = _FakeQuote(30000.0, token=target_token)
+            q_below = _FakeQuote(100.0, token=target_token)
 
-            # Warm up
-            q = _FakeQuote(30000.0, token=target_token)
-            for _ in range(WARMUP):
+            # Warm up: alternate above/below to establish state pattern
+            for i in range(WARMUP):
+                q = q_above if i % 2 == 0 else q_below
                 await engine.evaluate(q)
 
-            # Measure
+            # Measure: alternate above/below to create repeated transitions
+            # Engine fires on FALSE/UNKNOWN -> TRUE transitions only.
             times = []
-            eval_counts = []
-            for _ in range(MEASURE):
+            fire_counts = []
+            for i in range(MEASURE):
+                q = q_above if i % 2 == 0 else q_below
                 t0 = time.perf_counter_ns()
                 fired = await engine.evaluate(q)
-                dt = (time.perf_counter_ns() - t0) / 1e6  # ms
+                dt = (time.perf_counter_ns() - t0) / 1e6
                 times.append(dt)
-                eval_counts.append(len(fired))
+                fire_counts.append(len(fired))
 
             p50 = _percentile(times, 50)
             p95 = _percentile(times, 95)
@@ -131,9 +134,16 @@ async def run():
             mx = max(times)
             mean = sum(times) / len(times)
 
-            # Correctness check
-            assert all(c == target_bucket for c in eval_counts), \
-                f"evaluated counts mismatch: {eval_counts[:5]}..."
+            # Verify: above-threshold evaluations fire, below don't
+            fires_on_above = sum(1 for i, c in enumerate(fire_counts)
+                                 if i % 2 == 0 and c == target_bucket)
+            fires_on_below = sum(1 for i, c in enumerate(fire_counts)
+                                 if i % 2 == 1 and c == 0)
+            expected_above = MEASURE // 2
+            assert fires_on_above >= expected_above, \
+                f"above fires: {fires_on_above}/{expected_above}, counts={fire_counts[:10]}"
+            assert fires_on_below >= expected_above, \
+                f"below non-fires: {fires_on_below}/{expected_above}"
 
             rows.append({
                 "scenario": label,
@@ -149,7 +159,7 @@ async def run():
                 "iterations": MEASURE,
                 "warmup": WARMUP,
             })
-            print(f"  {label}: p50={p50:.3f}ms p95={p95:.3f}ms p99={p99:.3f}ms eval={target_bucket}")
+            print(f"  {label}: p50={p50:.3f}ms p95={p95:.3f}ms p99={p99:.3f}ms fires={fires_on_above}/{expected_above}")
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
