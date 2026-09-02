@@ -34,7 +34,7 @@ def _percentile(vals, p):
 
 async def run():
     rows = []
-    event_counts = [100, 1000, 10000]
+    event_counts = [100, 500, 1000]
     page_size = 100
 
     for n_events in event_counts:

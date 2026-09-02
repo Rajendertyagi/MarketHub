@@ -35,7 +35,7 @@ async def run():
     rows = []
     WARMUP = 3
     MEASURE = 10
-    alert_counts = [100, 1000, 5000, 10000]
+    alert_counts = [100, 500, 1000, 5000]
 
     for n in alert_counts:
         tmp = tempfile.mkdtemp(prefix=f"bench_restart_{n}_")

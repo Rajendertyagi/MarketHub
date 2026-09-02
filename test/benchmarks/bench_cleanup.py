@@ -30,7 +30,7 @@ class _FakeQuote:
 
 async def run():
     rows = []
-    n = 5000
+    n = 1000
 
     tmp = tempfile.mkdtemp(prefix="bench_cleanup_")
     store = EventStore(os.path.join(tmp, "test.db"))

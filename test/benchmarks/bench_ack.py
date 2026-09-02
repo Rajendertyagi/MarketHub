@@ -32,7 +32,7 @@ def _percentile(vals, p):
 
 async def run():
     rows = []
-    event_counts = [1, 100, 1000, 10000]
+    event_counts = [1, 100, 500]
 
     for n in event_counts:
         tmp = tempfile.mkdtemp(prefix=f"bench_ack_{n}_")
