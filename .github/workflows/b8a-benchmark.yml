@@ -43,8 +43,9 @@ jobs:
         id: benchmark
         continue-on-error: true
         run: |
-          python test/benchmarks/run.py
+          python -u test/benchmarks/run.py
         env:
+          PYTHONUNBUFFERED: "1"
           BENCHMARK_OUTPUT: b8-benchmark-results
 
       - name: Upload benchmark JSON

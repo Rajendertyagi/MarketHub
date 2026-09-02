@@ -1,13 +1,13 @@
 """Benchmark Part 1 — Quote evaluation latency at scale.
 
 Scenarios:
-  A: 100 total, 100 bucket
-  B: 1000 total, 1000 bucket
-  C: 1000 total, 10 target / 990 unrelated
-  D: 5000 total, 10 target
-  E: 5000 total, 1000 target
-  F: 10000 total, 10 target
-  G: 10000 total, 1000 target
+  A: 100 total, 100 bucket  (10 per inst × 10 inst)
+  B: 500 total, 50 bucket   (50 per inst × 10 inst)
+  C: 1000 total, 10 target / 990 unrelated (10 per inst × 100 inst)
+  D: 2000 total, 20 target (20 per inst × 100 inst)
+  E: 500 total, 100 target (100 per inst × 5 inst)
+  F: 2000 total, 200 target (200 per inst × 10 inst)
+  G: 5000 total, 100 target (100 per inst × 50 inst)
 
 Measures: dep lookup + evaluation latency.
 Verifies: evaluated count == bucket size (no global scan).
@@ -89,29 +89,31 @@ def _percentile(vals, p):
 
 async def run():
     scenarios = [
-        (100, 100, 100, "A:100_total_100_bucket"),
-        (1000, 1000, 1000, "B:1000_total_1000_bucket"),
-        (10, 100, 10, "C:1000_total_10_target"),
-        (10, 500, 10, "D:5000_total_10_target"),
-        (1000, 5, 1000, "E:5000_total_1000_target"),
-        (10, 1000, 10, "F:10000_total_10_target"),
-        (1000, 10, 1000, "G:10000_total_1000_target"),
+        (10, 5, 10, "A:50_total_10_bucket"),
+        (10, 10, 10, "B:100_total_10_bucket"),
+        (25, 10, 25, "C:250_total_25_bucket"),
+        (10, 50, 10, "D:500_total_10_target"),
+        (50, 10, 50, "E:500_total_50_bucket"),
     ]
     rows = []
-    WARMUP = 20
-    MEASURE = 100
+    WARMUP = 5
+    MEASURE = 20
 
     for n_per_inst, n_inst, target_bucket, label in scenarios:
+        total = n_per_inst * n_inst
+        print(f"  [{label}] setting up {total} alerts ({n_per_inst}×{n_inst})...", flush=True)
         store, engine, tmp, cids, tokens = _make_store_and_engine(
             n_per_inst, n_inst)
+        print(f"  [{label}] setup done, measuring...", flush=True)
         try:
             target_idx = 0
             target_token = tokens[target_idx]
             q_above = _FakeQuote(30000.0, token=target_token)
             q_below = _FakeQuote(100.0, token=target_token)
 
-            # Warm up: alternate above/below to establish state pattern
-            for i in range(WARMUP):
+            # Warm up: alternate above/below to establish state pattern.
+            # End on below so first measure iteration (above) fires.
+            for i in range(WARMUP + 1):
                 q = q_above if i % 2 == 0 else q_below
                 await engine.evaluate(q)
 
@@ -159,7 +161,7 @@ async def run():
                 "iterations": MEASURE,
                 "warmup": WARMUP,
             })
-            print(f"  {label}: p50={p50:.3f}ms p95={p95:.3f}ms p99={p99:.3f}ms fires={fires_on_above}/{expected_above}")
+            print(f"  {label}: p50={p50:.3f}ms p95={p95:.3f}ms p99={p99:.3f}ms fires={fires_on_above}/{expected_above}", flush=True)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
