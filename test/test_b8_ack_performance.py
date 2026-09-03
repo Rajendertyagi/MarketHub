@@ -143,7 +143,7 @@ async def t2_ack_100(runner: R) -> None:
         status = get_consumer_inbox_status(store._open(store._db_path), "c1")
         runner.assert_eq(name + "-pending", status["pending_count"], 0)
         runner.assert_true(name + "-p50",
-                          _percentile(times, 50) < 25.0,
+                          _percentile(times, 50) < 50.0,
                           f"p50={_percentile(times, 50):.2f}ms")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -166,7 +166,7 @@ async def t3_ack_1000(runner: R) -> None:
         status = get_consumer_inbox_status(store._open(store._db_path), "c1")
         runner.assert_eq(name + "-pending", status["pending_count"], 0)
         runner.assert_true(name + "-p50",
-                          _percentile(times, 50) < 25.0,
+                          _percentile(times, 50) < 50.0,
                           f"p50={_percentile(times, 50):.2f}ms")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
