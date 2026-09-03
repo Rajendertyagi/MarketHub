@@ -83,12 +83,39 @@ _PATTERNS: list[re.Pattern[str]] = [
 
 # Simpler approach: find-and-replace sensitive value patterns
 _REDACT_VALUE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    # Bearer token value
+    # Bearer token value (preserves "Bearer " prefix)
     (re.compile(r"(Bearer\s+)[A-Za-z0-9\-._~+/]+=*", re.I), r"\1<redacted>"),
-    # token= in URLs
-    (re.compile(r"((?:access_token|auth_token|token)=[A-Za-z0-9\-._~+/]+)", re.I), r"<redacted>"),
+    # Authorization header value (preserves "Authorization:" prefix)
+    (re.compile(
+        r"(Authorization['\"]?\s*[:=]\s*['\"]?)[A-Za-z0-9\-._~+/]+=*",
+        re.I), r"\1<redacted>"),
+    # token= in URLs (query params)
+    (re.compile(
+        r"((?:access_token|auth_token|token)=[A-Za-z0-9\-._~+/]+)",
+        re.I), r"<redacted>"),
+    # Bearer in URL query param (e.g. ?token=Bearer eyJ...)
+    (re.compile(
+        r"(token=[Bb]earer\s+)[A-Za-z0-9\-._~+/]+=*",
+        re.I), r"<redacted>"),
     # Key-value patterns where value looks like a secret
-    (re.compile(r"((?:api[_-]?key|api[_-]?secret|access[_-]?token|refresh[_-]?token|secret|password|passwd|pin|cookie|session[_-]?secret)\s*[:=]\s*['\"]?)[A-Za-z0-9\-._~+/]{16,}", re.I), r"\1<redacted>"),
+    (re.compile(
+        r"((?:api[_-]?key|api[_-]?secret|access[_-]?token|refresh[_-]?token|"
+        r"secret|password|passwd|pin|cookie|session[_-]?secret|client[_-]?secret|"
+        r"app[_-]?id|app[_-]?secret)\s*[:=]\s*['\"]?)[A-Za-z0-9\-._~+/]{16,}",
+        re.I), r"\1<redacted>"),
+    # Passwords without quotes (e.g. password = mysecretpassword123)
+    (re.compile(
+        r"(password\s*[:=]\s*)[^\s'\",;]{4,}",
+        re.I), r"\1<redacted>"),
+    # PIN values (4-6 digits in key contexts)
+    (re.compile(
+        r"((?:pin|mpin|otp|security[_-]?code)\s*[:=]\s*['\"]?)\d{4,8}",
+        re.I), r"\1<redacted>"),
+    # WebSocket URLs with embedded auth tokens
+    (re.compile(
+        r"(wss?://[^\s]*?)[?&](?:auth_token|access_token|token|key)"
+        r"=[A-Za-z0-9\-._~+/]+",
+        re.I), r"<redacted>"),
 ]
 
 

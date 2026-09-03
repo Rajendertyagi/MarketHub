@@ -2130,6 +2130,323 @@ function initBackup() {
     });
   }
 
+  // ── News view ─────────────────────────────────────────────────────────────
+  let _newsSources = [];
+
+  function initNews() {
+    const addBtn = $("news-add-source");
+    if (addBtn) addBtn.addEventListener("click", _openAddSourceModal);
+    const closeBtn = $("news-modal-close");
+    if (closeBtn) closeBtn.addEventListener("click", _closeSourceModal);
+    const cancelBtn = $("news-modal-cancel");
+    if (cancelBtn) cancelBtn.addEventListener("click", _closeSourceModal);
+    const saveBtn = $("news-modal-save");
+    if (saveBtn) saveBtn.addEventListener("click", _saveSource);
+    const testBtn = $("news-test-source");
+    if (testBtn) testBtn.addEventListener("click", _testSource);
+    const refreshBtn = $("news-refresh");
+    if (refreshBtn) refreshBtn.addEventListener("click", _loadNews);
+    const sentimentBtn = $("news-sentiment-btn");
+    if (sentimentBtn) sentimentBtn.addEventListener("click", _loadSentiment);
+    const typeSelect = $("news-src-type");
+    if (typeSelect) typeSelect.addEventListener("change", _toggleSourceTypeFields);
+    // Load sources when News view is opened
+    const navBtns = document.querySelectorAll('[data-view="news"]');
+    navBtns.forEach(btn => {
+      btn.addEventListener("click", () => { _loadNewsSources(); });
+    });
+  }
+
+  function _toggleSourceTypeFields() {
+    const type = $("news-src-type")?.value;
+    const urlRow = $("news-config-url-row");
+    const subRow = $("news-config-sub-row");
+    if (urlRow) urlRow.classList.toggle("hidden", type !== "rss");
+    if (subRow) subRow.classList.toggle("hidden", type !== "reddit");
+  }
+
+  async function _loadNewsSources() {
+    try {
+      const resp = await fetch("/api/news/sources");
+      if (!resp.ok) return;
+      const data = await resp.json();
+      _newsSources = data.sources || [];
+      _renderNewsSources();
+      _populateSourceFilter();
+    } catch { /* ignore */ }
+  }
+
+  function _renderNewsSources() {
+    const tbody = $("news-sources-body");
+    if (!tbody) return;
+    if (!_newsSources.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-row">No sources configured</td></tr>';
+      return;
+    }
+    tbody.innerHTML = "";
+    _newsSources.forEach(s => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="mono" style="font-size:11px">${_esc(s.source_id)}</td>
+        <td>${_esc(s.name)}</td>
+        <td><span class="news-action-btn">${_esc(s.source_type)}</span></td>
+        <td>${_esc(s.category || "—")}</td>
+        <td>${s.enabled
+            ? '<span class="news-status-on">ON</span>'
+            : '<span class="news-status-off">OFF</span>'}</td>
+        <td class="mono" style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${
+          s.source_type === "rss"
+            ? _esc((s.config_json?.url || "").substring(0, 50))
+            : "r/" + _esc(s.config_json?.subreddit || "")
+        }</td>
+        <td>
+          <button class="news-action-btn" onclick="window._newsToggle('${_esc(s.source_id)}', ${!s.enabled})">${s.enabled ? "Disable" : "Enable"}</button>
+          <button class="news-action-btn" onclick="window._newsEdit('${_esc(s.source_id)}')">Edit</button>
+          <button class="news-action-btn danger" onclick="window._newsDelete('${_esc(s.source_id)}')">Del</button>
+        </td>`;
+      tbody.appendChild(tr);
+    });
+  }
+
+  function _esc(s) { return String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+  function _populateSourceFilter() {
+    const sel = $("news-filter-source");
+    if (!sel) return;
+    const val = sel.value;
+    sel.innerHTML = '<option value="">All Sources</option>';
+    _newsSources.forEach(s => {
+      const opt = document.createElement("option");
+      opt.value = s.source_id;
+      opt.textContent = s.name;
+      sel.appendChild(opt);
+    });
+    sel.value = val;
+  }
+
+  function _openAddSourceModal() {
+    $("news-modal-title").textContent = "Add Source";
+    $("news-src-id").value = "";
+    $("news-src-id").disabled = false;
+    $("news-src-name").value = "";
+    $("news-src-type").value = "rss";
+    $("news-src-category").value = "";
+    $("news-src-url").value = "";
+    $("news-src-subreddit").value = "";
+    $("news-test-result").textContent = "";
+    _toggleSourceTypeFields();
+    $("news-source-modal").classList.remove("hidden");
+  }
+
+  function _closeSourceModal() {
+    $("news-source-modal").classList.add("hidden");
+  }
+
+  async function _saveSource() {
+    const sourceId = $("news-src-id").value.trim();
+    const name = $("news-src-name").value.trim();
+    const sourceType = $("news-src-type").value;
+    const category = $("news-src-category").value.trim();
+    const configJson = sourceType === "rss"
+      ? { url: $("news-src-url").value.trim() }
+      : { subreddit: $("news-src-subreddit").value.trim() };
+
+    if (!sourceId || !name) {
+      $("news-test-result").textContent = "Source ID and Name are required";
+      $("news-test-result").className = "hint err";
+      return;
+    }
+
+    try {
+      const resp = await fetch("/api/news/sources", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          source_id: sourceId, name, source_type: sourceType,
+          category, enabled: true, config_json: configJson,
+        }),
+      });
+      const data = await resp.json();
+      if (data.status === "ok") {
+        _closeSourceModal();
+        _loadNewsSources();
+      } else {
+        $("news-test-result").textContent = data.message || "Save failed";
+        $("news-test-result").className = "hint err";
+      }
+    } catch (e) {
+      $("news-test-result").textContent = "Network error: " + e.message;
+      $("news-test-result").className = "hint err";
+    }
+  }
+
+  async function _testSource() {
+    const sourceType = $("news-src-type").value;
+    const configJson = sourceType === "rss"
+      ? { url: $("news-src-url").value.trim() }
+      : { subreddit: $("news-src-subreddit").value.trim() };
+
+    const resultEl = $("news-test-result");
+    resultEl.textContent = "Testing…";
+    resultEl.className = "hint";
+
+    try {
+      const resp = await fetch("/api/news/sources/test", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ source_type: sourceType, config_json: configJson }),
+      });
+      const data = await resp.json();
+      if (data.reachable) {
+        resultEl.textContent = `✓ ${data.message}` +
+          (data.sample_titles ? ` — "${data.sample_titles[0]}"` : "");
+        resultEl.className = "hint";
+        resultEl.style.color = "var(--green)";
+      } else {
+        resultEl.textContent = `✗ ${data.message}`;
+        resultEl.className = "hint err";
+        resultEl.style.color = "var(--red)";
+      }
+    } catch (e) {
+      resultEl.textContent = "Test failed: " + e.message;
+      resultEl.className = "hint err";
+      resultEl.style.color = "var(--red)";
+    }
+  }
+
+  window._newsToggle = async function(sourceId, enable) {
+    const action = enable ? "enable" : "disable";
+    try {
+      await fetch(`/api/news/sources/${sourceId}/${action}`, { method: "POST" });
+      _loadNewsSources();
+    } catch { /* ignore */ }
+  };
+
+  window._newsEdit = function(sourceId) {
+    const src = _newsSources.find(s => s.source_id === sourceId);
+    if (!src) return;
+    $("news-modal-title").textContent = "Edit Source";
+    $("news-src-id").value = src.source_id;
+    $("news-src-id").disabled = true;
+    $("news-src-name").value = src.name;
+    $("news-src-type").value = src.source_type;
+    $("news-src-category").value = src.category || "";
+    $("news-src-url").value = src.config_json?.url || "";
+    $("news-src-subreddit").value = src.config_json?.subreddit || "";
+    $("news-test-result").textContent = "";
+    _toggleSourceTypeFields();
+    $("news-source-modal").classList.remove("hidden");
+  };
+
+  window._newsDelete = async function(sourceId) {
+    if (!confirm("Delete source " + sourceId + "?")) return;
+    try {
+      await fetch(`/api/news/sources/${sourceId}`, { method: "DELETE" });
+      _loadNewsSources();
+    } catch { /* ignore */ }
+  };
+
+  async function _loadNews() {
+    const listEl = $("news-articles-list");
+    if (!listEl) return;
+    listEl.innerHTML = '<div class="empty-row" style="padding:20px;text-align:center">Loading…</div>';
+
+    const params = new URLSearchParams();
+    const src = $("news-filter-source")?.value;
+    const kw = $("news-filter-keywords")?.value?.trim();
+    const sym = $("news-filter-symbol")?.value?.trim();
+    if (src) params.set("source_ids", src);
+    if (kw) params.set("keywords_include", kw);
+    if (sym) params.set("symbol", sym);
+    params.set("limit", "50");
+
+    try {
+      const resp = await fetch("/api/news?" + params.toString());
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      const data = await resp.json();
+      if (!data.articles?.length) {
+        listEl.innerHTML = '<div class="empty-row" style="padding:20px;text-align:center">No articles found</div>';
+        return;
+      }
+      listEl.innerHTML = "";
+      data.articles.forEach(a => {
+        const div = document.createElement("div");
+        div.className = "news-article";
+        const typeBadge = a.type === "rss" ? "RSS" : "r/" + (a.subreddit || "?");
+        const timeStr = a.published || a.created_utc || "";
+        const link = a.link || a.url || "#";
+        div.innerHTML = `
+          <span class="news-article-type">${_esc(typeBadge)}</span>
+          <div class="news-article-body">
+            <div class="news-article-title"><a href="${_esc(link)}" target="_blank">${_esc(a.title)}</a></div>
+            <div class="news-article-meta">
+              <span>${_esc(a.source_name || "")}</span>
+              <span>${_esc(timeStr ? new Date(timeStr).toLocaleString() : "")}</span>
+              ${a.score != null ? `<span>▲ ${a.score}</span>` : ""}
+              ${a.num_comments != null ? `<span>${a.num_comments} comments</span>` : ""}
+            </div>
+            ${a.summary ? `<div class="news-article-summary">${_esc(a.summary.substring(0, 200))}</div>` : ""}
+          </div>`;
+        listEl.appendChild(div);
+      });
+    } catch (e) {
+      listEl.innerHTML = `<div class="empty-row" style="padding:20px;text-align:center;color:var(--red)">Error: ${_esc(e.message)}</div>`;
+    }
+  }
+
+  async function _loadSentiment() {
+    const resultEl = $("news-sentiment-result");
+    if (!resultEl) return;
+    resultEl.innerHTML = '<div class="empty-row" style="padding:20px;text-align:center">Analyzing…</div>';
+
+    const params = new URLSearchParams();
+    const src = $("news-filter-source")?.value;
+    const kw = $("news-filter-keywords")?.value?.trim();
+    if (src) params.set("source_ids", src);
+    if (kw) params.set("keywords_include", kw);
+    params.set("limit", "30");
+
+    try {
+      const resp = await fetch("/api/news/sentiment?" + params.toString());
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      const data = await resp.json();
+      if (!data.sentiments?.length) {
+        resultEl.innerHTML = '<div class="empty-row" style="padding:20px;text-align:center">No sentiment results</div>';
+        return;
+      }
+      // Aggregate
+      const scores = data.sentiments.map(s => s.score);
+      const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+      const pos = data.sentiments.filter(s => s.sentiment === "positive").length;
+      const neg = data.sentiments.filter(s => s.sentiment === "negative").length;
+      const neu = data.sentiments.filter(s => s.sentiment === "neutral").length;
+
+      resultEl.innerHTML = `
+        <div class="news-sentiment-header">
+          <span style="font-weight:600">Aggregate:</span>
+          <span class="news-score-badge ${avg > 0.1 ? 'news-score-positive' : avg < -0.1 ? 'news-score-negative' : 'news-score-neutral'}">
+            ${avg > 0 ? "+" : ""}${avg.toFixed(3)}
+          </span>
+          <span style="font-size:12px;color:var(--text-muted)">${pos} positive, ${neg} negative, ${neu} neutral</span>
+        </div>`;
+      data.sentiments.forEach((s, i) => {
+        const article = data.articles?.[i];
+        const title = article?.title || s.item_id;
+        const div = document.createElement("div");
+        div.className = "news-sentiment-item";
+        div.innerHTML = `
+          <span class="news-score-badge ${s.sentiment === 'positive' ? 'news-score-positive' : s.sentiment === 'negative' ? 'news-score-negative' : 'news-score-neutral'}">
+            ${s.score > 0 ? "+" : ""}${s.score.toFixed(3)}
+          </span>
+          <span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_esc(title)}</span>
+          <span style="font-size:11px;color:var(--text-muted)">${s.matched_keywords?.join(", ") || ""}</span>`;
+        resultEl.appendChild(div);
+      });
+    } catch (e) {
+      resultEl.innerHTML = `<div class="empty-row" style="padding:20px;text-align:center;color:var(--red)">Error: ${_esc(e.message)}</div>`;
+    }
+  }
+
   // ── Logs view ─────────────────────────────────────────────────────────────
   const LOGS_MAX_BROWSER_ROWS = 500;
   let logsEventSource = null;
@@ -2306,6 +2623,7 @@ function initBackup() {
     initAlertPush();
     initSourceControls();
     initAIAlerts();
+    initNews();
     initMCPTools();
     initLogs();
     loadInitialQuotes();

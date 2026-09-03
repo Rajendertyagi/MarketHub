@@ -7,6 +7,7 @@ Provides:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -44,30 +45,46 @@ def build_log_routes(log_buffer: Any, log_broker: Any) -> list[Route]:
           request_id  — filter by request_id
           limit       — max records to return (default 200, max 1000)
         """
-        level = request.query_params.get("level")
-        logger_pat = request.query_params.get("logger")
-        search = request.query_params.get("search")
-        consumer_id = request.query_params.get("consumer_id")
-        alert_id = request.query_params.get("alert_id")
-        request_id = request.query_params.get("request_id")
-        limit_str = request.query_params.get("limit", "200")
+        try:
+            level = request.query_params.get("level", "").strip() or None
+            logger_pat = request.query_params.get("logger", "").strip() or None
+            search = request.query_params.get("search", "").strip() or None
+            consumer_id = request.query_params.get("consumer_id", "").strip() or None
+            alert_id = request.query_params.get("alert_id", "").strip() or None
+            request_id = request.query_params.get("request_id", "").strip() or None
+            limit_str = request.query_params.get("limit", "200")
+        except Exception:
+            return Response(
+                content=json.dumps({"status": "error", "message": "bad query params"}),
+                media_type="application/json",
+                status_code=400,
+            )
 
         try:
             limit = max(1, min(int(limit_str), 1000))
         except (ValueError, TypeError):
             limit = 200
 
-        records = log_buffer.snapshot(
-            limit=limit,
-            level=level,
-            logger_pattern=logger_pat,
-            search=search,
-            consumer_id=consumer_id,
-            alert_id=alert_id,
-            request_id=request_id,
-        )
+        # Validate level filter
+        valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+        if level and level.upper() not in valid_levels:
+            level = None  # ignore invalid level
 
-        # Redact each record before serving
+        try:
+            records = log_buffer.snapshot(
+                limit=limit,
+                level=level,
+                logger_pattern=logger_pat,
+                search=search,
+                consumer_id=consumer_id,
+                alert_id=alert_id,
+                request_id=request_id,
+            )
+        except Exception as exc:
+            logger.warning("log snapshot failed: %s", exc)
+            records = []
+
+        # Redact each record before serving (defense in depth)
         records = [redact_record(r) for r in records]
 
         return Response(
@@ -84,13 +101,18 @@ def build_log_routes(log_buffer: Any, log_broker: Any) -> list[Route]:
         """GET /api/logs/stream — SSE live stream of new log records.
 
         Sends each new log record as a ``data:`` SSE message containing
-        the structured JSON.  Handles disconnect cleanly via the
+        the redacted structured JSON.  Handles disconnect cleanly via the
         EventBroker subscribe context manager.
         """
         async def _generate():
-            async with log_broker.subscribe() as lines:
-                async for line in lines:
-                    yield line
+            try:
+                async with log_broker.subscribe() as lines:
+                    async for line in lines:
+                        yield line
+            except asyncio.CancelledError:
+                pass  # client disconnected — clean exit
+            except Exception as exc:
+                logger.debug("log SSE stream error: %s", exc)
 
         return EventSourceResponse(
             _generate(),

@@ -201,7 +201,7 @@ events.configure_sse_broker(_event_broker)
 _market_event_broker = EventBroker()
 
 
-# ── N2: WebUI live log buffer + SSE broker ──────────────────────────────────
+# ── L1: WebUI live log buffer + SSE broker ──────────────────────────────────
 from core.log_buffer import LogBuffer as _LogBuffer
 from core.sse_broker import EventBroker as _LogEventBroker
 from app.logging_setup import attach_webui_handler as _attach_webui_handler
@@ -209,6 +209,21 @@ from app.logging_setup import attach_webui_handler as _attach_webui_handler
 _log_buffer = _LogBuffer(max_size=1000)
 _log_sse_broker = _LogEventBroker()
 _webui_handler = _attach_webui_handler(_log_buffer, broker=_log_sse_broker)
+
+
+# ── News & Sentiment service ────────────────────────────────────────────────
+from news.service import NewsService as _NewsService
+from news.adapters.rss import RSSAdapter as _RSSAdapter
+from news.adapters.reddit import RedditAdapter as _RedditAdapter
+from app.config import DEFAULTS as _DEFAULTS
+
+_news_service = _NewsService(store=_store)
+_news_service.register_adapter(_RSSAdapter())
+_news_service.register_adapter(_RedditAdapter())
+try:
+    _news_service.seed_defaults(_DEFAULTS.get("news", {}).get("default_sources", []))
+except Exception as _exc:
+    _app_logger.warning("news seed_defaults failed: %s", _exc)
 
 
 async def _on_market_quote_update(quote: Quote) -> None:
@@ -520,6 +535,7 @@ from api.product_routes import (
 )
 from api.ai_alert_routes import build_ai_alert_routes as _build_ai_alert_routes
 from api.log_routes import build_log_routes as _build_log_routes
+from api.news_routes import build_news_routes as _build_news_routes
 from app.market_data import ProviderMarketData as _ProviderMarketData
 
 
@@ -965,6 +981,7 @@ app = Starlette(
     + _build_api_meta_routes()
     + _build_ai_alert_routes(_store, mcp)
     + _build_log_routes(_log_buffer, _log_sse_broker)
+    + _build_news_routes(_news_service)
     + [Mount("/ui", app=StaticFiles(directory=str(PROJECT_ROOT / "web" / "ui"), html=True),
             name="ui")],
     middleware=list(mcp_asgi_app.user_middleware),

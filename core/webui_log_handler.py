@@ -11,7 +11,7 @@ import traceback
 from typing import Any
 
 from core.log_buffer import LogBuffer, LogRecord
-from core.log_redaction import redact_message
+from core.log_redaction import redact_message, redact_record
 
 
 class WebUILogHandler(logging.Handler):
@@ -39,7 +39,9 @@ class WebUILogHandler(logging.Handler):
             structured = self._structure(record)
             self._buffer.append(structured)
             if self._broker is not None:
-                self._broadcast(structured)
+                # Redact before SSE broadcast — defense in depth
+                redacted = redact_record(structured.to_dict())
+                self._broadcast_dict(redacted)
         except Exception:
             # Never let handler errors propagate to the application
             self.handleError(record)
@@ -81,8 +83,8 @@ class WebUILogHandler(logging.Handler):
             extra=extra if extra else None,
         )
 
-    def _broadcast(self, record: LogRecord) -> None:
-        """Send record to SSE broker (fire-and-forget)."""
+    def _broadcast_dict(self, record_dict: dict) -> None:
+        """Send redacted record dict to SSE broker (fire-and-forget)."""
         import asyncio
         import json
         try:
@@ -91,7 +93,7 @@ class WebUILogHandler(logging.Handler):
             return  # no event loop — skip SSE broadcast
         if loop.is_closed():
             return
-        data = json.dumps(record.to_dict(), default=str)
+        data = json.dumps(record_dict, default=str)
         # Fire-and-forget: schedule without waiting
         loop.call_soon_threadsafe(
             lambda: asyncio.ensure_future(

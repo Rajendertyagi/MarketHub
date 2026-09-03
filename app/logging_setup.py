@@ -187,6 +187,9 @@ def _best_effort_commit() -> str | None:
     return commit[:12] or None
 
 
+_L1_HANDLER_ATTACHED = False  # dedup guard for WebUI log handler
+
+
 def attach_webui_handler(
     buffer: Any,
     broker: Any | None = None,
@@ -197,13 +200,28 @@ def attach_webui_handler(
     after server.py has constructed it.
 
     Never raises — handler failure degrades silently.
+    Idempotent: calling multiple times returns the existing handler.
     """
+    global _L1_HANDLER_ATTACHED
+
+    if _L1_HANDLER_ATTACHED:
+        # Return the existing WebUI handler from the root logger
+        try:
+            root = logging.getLogger()
+            for h in root.handlers:
+                if type(h).__name__ == "WebUILogHandler":
+                    return h
+        except Exception:
+            pass
+        return None
+
     try:
         from core.webui_log_handler import WebUILogHandler
         handler = WebUILogHandler(buffer, broker=broker)
         handler.setLevel(logging.DEBUG)
         root = logging.getLogger()
         root.addHandler(handler)
+        _L1_HANDLER_ATTACHED = True
         return handler
     except Exception as exc:
         print(

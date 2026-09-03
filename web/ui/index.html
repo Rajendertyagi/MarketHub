@@ -32,6 +32,7 @@
     <button class="nav-link" data-view="charts">Charts</button>
     <button class="nav-link" data-view="alerts">Alerts</button>
     <button class="nav-link" data-view="ai-alerts">AI Alerts</button>
+    <button class="nav-link" data-view="news">News</button>
     <button class="nav-link" data-view="mcp">MCP</button>
 <button class="nav-link" data-view="chat">Chat</button>
     <button class="nav-link" data-view="logs">Logs</button>
@@ -541,6 +542,112 @@
     </div>
 
       </section>
+
+  <!-- ── NEWS VIEW ── -->
+  <section id="view-news" class="view">
+    <!-- Sources Management Sub-view -->
+    <div id="news-sources-panel" class="panel" style="margin-bottom:12px">
+      <div class="panel-header">
+        <h2>News Sources</h2>
+        <button id="news-add-source" class="btn" style="margin-left:auto">Add Source</button>
+      </div>
+      <table class="data-table" id="news-sources-table">
+        <thead>
+          <tr>
+            <th style="width:140px">ID</th>
+            <th style="width:120px">Name</th>
+            <th style="width:70px">Type</th>
+            <th style="width:80px">Category</th>
+            <th style="width:60px">Status</th>
+            <th>Config</th>
+            <th style="width:150px">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="news-sources-body">
+          <tr><td colspan="7" class="empty-row">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Source Edit Modal -->
+    <div id="news-source-modal" class="modal hidden">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 id="news-modal-title">Add Source</h3>
+          <button id="news-modal-close" class="icon-btn">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <label>Source ID</label>
+            <input type="text" id="news-src-id" class="filter-input" placeholder="e.g. rss_bloomberg">
+          </div>
+          <div class="form-row">
+            <label>Name</label>
+            <input type="text" id="news-src-name" class="filter-input" placeholder="e.g. Bloomberg Markets">
+          </div>
+          <div class="form-row">
+            <label>Type</label>
+            <select id="news-src-type" class="filter-input">
+              <option value="rss">RSS</option>
+              <option value="reddit">Reddit</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Category</label>
+            <input type="text" id="news-src-category" class="filter-input" placeholder="e.g. finance, crypto">
+          </div>
+          <div id="news-config-url-row" class="form-row">
+            <label>RSS URL</label>
+            <input type="text" id="news-src-url" class="filter-input" placeholder="https://example.com/rss">
+          </div>
+          <div id="news-config-sub-row" class="form-row hidden">
+            <label>Subreddit</label>
+            <input type="text" id="news-src-subreddit" class="filter-input" placeholder="e.g. IndianStockMarket">
+          </div>
+          <div class="form-row">
+            <label></label>
+            <button id="news-test-source" class="btn">Test Source</button>
+            <span id="news-test-result" class="hint" style="margin-left:8px"></span>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="news-modal-cancel" class="btn">Cancel</button>
+          <button id="news-modal-save" class="btn accent">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- News Articles View -->
+    <div class="panel">
+      <div class="panel-header">
+        <h2>News</h2>
+        <div style="display:flex;gap:6px;align-items:center;margin-left:auto">
+          <select id="news-filter-source" class="filter-input" style="width:130px">
+            <option value="">All Sources</option>
+          </select>
+          <input type="text" id="news-filter-keywords" class="filter-input"
+                 placeholder="Keywords…" style="width:130px" autocomplete="off">
+          <input type="text" id="news-filter-symbol" class="filter-input"
+                 placeholder="Symbol…" style="width:90px" autocomplete="off">
+          <button id="news-refresh" class="btn">Refresh</button>
+        </div>
+      </div>
+      <div id="news-articles-list" class="news-list">
+        <div class="empty-row" style="padding:20px;text-align:center">Click Refresh to load news</div>
+      </div>
+    </div>
+
+    <!-- Sentiment View -->
+    <div class="panel" style="margin-top:12px">
+      <div class="panel-header">
+        <h2>Sentiment</h2>
+        <button id="news-sentiment-btn" class="btn" style="margin-left:auto">Analyze Sentiment</button>
+      </div>
+      <div id="news-sentiment-result" class="news-sentiment">
+        <div class="empty-row" style="padding:20px;text-align:center">Click Analyze to compute sentiment</div>
+      </div>
+    </div>
+  </section>
 
   <!-- ── LOGS VIEW ── -->
   <section id="view-logs" class="view">
