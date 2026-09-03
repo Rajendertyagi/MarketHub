@@ -49,6 +49,7 @@ from mcp_server.contract import (
     TOOL_CONDITION_ALERT_LIST,
     TOOL_CONDITION_ALERT_SET_ENABLED,
 )
+from mcp_server.registry import get_tool_description
 
 # greeks.* metrics are only meaningful on OPTION instruments.
 _GREEKS_METRICS = frozenset({
@@ -389,7 +390,7 @@ def register_condition_alert_tools(mcp, services, **kwargs) -> None:
         for key in _extract_analytics_chains(condition):
             analytics.unregister_chain(key, alert["alert_id"])
 
-    @mcp.tool(name=TOOL_CONDITION_ALERT_CREATE)
+    @mcp.tool(name=TOOL_CONDITION_ALERT_CREATE, description=get_tool_description(TOOL_CONDITION_ALERT_CREATE))
     async def condition_alert_create(
         consumer_id: str,
         condition: dict[str, object],
@@ -434,7 +435,7 @@ def register_condition_alert_tools(mcp, services, **kwargs) -> None:
         _register_chains_for_alert(alert)
         return {"status": "created", "alert": _public_alert(alert)}
 
-    @mcp.tool(name=TOOL_CONDITION_ALERT_LIST)
+    @mcp.tool(name=TOOL_CONDITION_ALERT_LIST, description=get_tool_description(TOOL_CONDITION_ALERT_LIST))
     async def condition_alert_list(
         consumer_id: str,
         enabled: bool | None = None,
@@ -459,7 +460,7 @@ def register_condition_alert_tools(mcp, services, **kwargs) -> None:
         return {"status": "ok", "count": len(alerts),
                 "alerts": [_public_alert(a) for a in alerts]}
 
-    @mcp.tool(name=TOOL_CONDITION_ALERT_GET)
+    @mcp.tool(name=TOOL_CONDITION_ALERT_GET, description=get_tool_description(TOOL_CONDITION_ALERT_GET))
     async def condition_alert_get(
         consumer_id: str,
         alert_id: str,
@@ -474,7 +475,7 @@ def register_condition_alert_tools(mcp, services, **kwargs) -> None:
         alert = await asyncio.to_thread(_get_owned, consumer_id, alert_id)
         return {"status": "ok", "alert": _public_alert(alert)}
 
-    @mcp.tool(name=TOOL_CONDITION_ALERT_SET_ENABLED)
+    @mcp.tool(name=TOOL_CONDITION_ALERT_SET_ENABLED, description=get_tool_description(TOOL_CONDITION_ALERT_SET_ENABLED))
     async def condition_alert_set_enabled(
         consumer_id: str,
         alert_id: str,
@@ -515,7 +516,7 @@ def register_condition_alert_tools(mcp, services, **kwargs) -> None:
         return {"status": "enabled" if enabled else "disabled",
                 "ok": True, "alert_id": alert_id, "enabled": bool(enabled)}
 
-    @mcp.tool(name=TOOL_CONDITION_ALERT_DELETE)
+    @mcp.tool(name=TOOL_CONDITION_ALERT_DELETE, description=get_tool_description(TOOL_CONDITION_ALERT_DELETE))
     async def condition_alert_delete(
         consumer_id: str,
         alert_id: str,

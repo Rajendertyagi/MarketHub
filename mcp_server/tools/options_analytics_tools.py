@@ -33,6 +33,7 @@ from mcp_server.contract import (
     TOOL_PRICE_LONG_STRADDLE,
     TOOL_PRICE_LONG_STRANGLE,
 )
+from mcp_server.registry import get_tool_description
 
 from market.analytics.option_chain import (
     analyze_option_chain,
@@ -118,7 +119,7 @@ def register_options_analytics_tools(mcp, services, **kwargs) -> None:
 
     # ── compute_* tools ────────────────────────────────────────────────────────
 
-    @mcp.tool(name=TOOL_COMPUTE_PCR)
+    @mcp.tool(name=TOOL_COMPUTE_PCR, description=get_tool_description(TOOL_COMPUTE_PCR))
     async def compute_pcr_tool(underlying: str, expiry: str | None = None) -> dict[str, Any]:
         """Put-Call Ratio from total open interest of the option chain (>1 = bearish)."""
         snap, err = await _snapshot_for(underlying, expiry)
@@ -126,7 +127,7 @@ def register_options_analytics_tools(mcp, services, **kwargs) -> None:
             return {"status": "error", **err}
         return {"status": "ok", **compute_pcr(snap)}
 
-    @mcp.tool(name=TOOL_COMPUTE_MAX_PAIN)
+    @mcp.tool(name=TOOL_COMPUTE_MAX_PAIN, description=get_tool_description(TOOL_COMPUTE_MAX_PAIN))
     async def compute_max_pain_tool(underlying: str, expiry: str | None = None) -> dict[str, Any]:
         """Strike where total option-writer payout is minimised (max pain theory)."""
         snap, err = await _snapshot_for(underlying, expiry)
@@ -134,7 +135,7 @@ def register_options_analytics_tools(mcp, services, **kwargs) -> None:
             return {"status": "error", **err}
         return {"status": "ok", **compute_max_pain(snap)}
 
-    @mcp.tool(name=TOOL_COMPUTE_TOP_OI_STRIKES)
+    @mcp.tool(name=TOOL_COMPUTE_TOP_OI_STRIKES, description=get_tool_description(TOOL_COMPUTE_TOP_OI_STRIKES))
     async def compute_top_oi_strikes_tool(underlying: str, expiry: str | None = None, n: int = 5) -> dict[str, Any]:
         """Strikes with the highest call OI and highest put OI (key battle levels)."""
         snap, err = await _snapshot_for(underlying, expiry)
@@ -142,7 +143,7 @@ def register_options_analytics_tools(mcp, services, **kwargs) -> None:
             return {"status": "error", **err}
         return {"status": "ok", **compute_top_oi_strikes(snap, n=n)}
 
-    @mcp.tool(name=TOOL_COMPUTE_ATM)
+    @mcp.tool(name=TOOL_COMPUTE_ATM, description=get_tool_description(TOOL_COMPUTE_ATM))
     async def compute_atm_tool(underlying: str, expiry: str | None = None) -> dict[str, Any]:
         """At-the-money strike and the underlying spot used."""
         snap, err = await _snapshot_for(underlying, expiry)
@@ -150,7 +151,7 @@ def register_options_analytics_tools(mcp, services, **kwargs) -> None:
             return {"status": "error", **err}
         return {"status": "ok", **compute_atm(snap)}
 
-    @mcp.tool(name=TOOL_COMPUTE_IV_SKEW)
+    @mcp.tool(name=TOOL_COMPUTE_IV_SKEW, description=get_tool_description(TOOL_COMPUTE_IV_SKEW))
     async def compute_iv_skew_tool(underlying: str, expiry: str | None = None) -> dict[str, Any]:
         """IV skew: average OTM put IV minus average OTM call IV (negative = fear)."""
         snap, err = await _snapshot_for(underlying, expiry)
@@ -158,7 +159,7 @@ def register_options_analytics_tools(mcp, services, **kwargs) -> None:
             return {"status": "error", **err}
         return {"status": "ok", **compute_iv_skew(snap)}
 
-    @mcp.tool(name=TOOL_COMPUTE_OI_BUILDUP)
+    @mcp.tool(name=TOOL_COMPUTE_OI_BUILDUP, description=get_tool_description(TOOL_COMPUTE_OI_BUILDUP))
     async def compute_oi_buildup_tool(underlying: str, expiry: str | None = None) -> dict[str, Any]:
         """Count of legs per buildup tag (Long/Short Buildup, Long Unwinding, ...)."""
         snap, err = await _snapshot_for(underlying, expiry)
@@ -166,7 +167,7 @@ def register_options_analytics_tools(mcp, services, **kwargs) -> None:
             return {"status": "error", **err}
         return {"status": "ok", **compute_oi_buildup(snap)}
 
-    @mcp.tool(name=TOOL_COMPUTE_SUPPORT_RESISTANCE)
+    @mcp.tool(name=TOOL_COMPUTE_SUPPORT_RESISTANCE, description=get_tool_description(TOOL_COMPUTE_SUPPORT_RESISTANCE))
     async def compute_support_resistance_tool(underlying: str, expiry: str | None = None) -> dict[str, Any]:
         """Support = strike with max put OI; resistance = strike with max call OI."""
         snap, err = await _snapshot_for(underlying, expiry)
@@ -174,7 +175,7 @@ def register_options_analytics_tools(mcp, services, **kwargs) -> None:
             return {"status": "error", **err}
         return {"status": "ok", **compute_support_resistance(snap)}
 
-    @mcp.tool(name=TOOL_COMPUTE_STRADDLE)
+    @mcp.tool(name=TOOL_COMPUTE_STRADDLE, description=get_tool_description(TOOL_COMPUTE_STRADDLE))
     async def compute_straddle_tool(underlying: str, expiry: str | None = None) -> dict[str, Any]:
         """ATM straddle cost and its two breakeven levels."""
         snap, err = await _snapshot_for(underlying, expiry)
@@ -182,7 +183,7 @@ def register_options_analytics_tools(mcp, services, **kwargs) -> None:
             return {"status": "error", **err}
         return {"status": "ok", **compute_straddle(snap)}
 
-    @mcp.tool(name=TOOL_COMPUTE_GEX)
+    @mcp.tool(name=TOOL_COMPUTE_GEX, description=get_tool_description(TOOL_COMPUTE_GEX))
     async def compute_gex_tool(underlying: str, expiry: str | None = None) -> dict[str, Any]:
         """Gamma Exposure proxy: net of (gamma * OI) across calls minus puts."""
         snap, err = await _snapshot_for(underlying, expiry)
@@ -190,7 +191,7 @@ def register_options_analytics_tools(mcp, services, **kwargs) -> None:
             return {"status": "error", **err}
         return {"status": "ok", **compute_gex(snap)}
 
-    @mcp.tool(name=TOOL_COMPUTE_FUTURES_BASIS)
+    @mcp.tool(name=TOOL_COMPUTE_FUTURES_BASIS, description=get_tool_description(TOOL_COMPUTE_FUTURES_BASIS))
     async def compute_futures_basis_tool(underlying: str) -> dict[str, Any]:
         """Futures premium/discount vs spot for each expiry (cost-of-carry).
 
@@ -222,7 +223,7 @@ def register_options_analytics_tools(mcp, services, **kwargs) -> None:
 
     # ── price_* strategy tools ──────────────────────────────────────────────────
 
-    @mcp.tool(name=TOOL_PRICE_LONG_STRADDLE)
+    @mcp.tool(name=TOOL_PRICE_LONG_STRADDLE, description=get_tool_description(TOOL_PRICE_LONG_STRADDLE))
     async def price_long_straddle_tool(underlying: str, expiry: str | None = None, strike: float | None = None) -> dict[str, Any]:
         """Long straddle: buy ATM call + buy ATM put. Profits on big moves either way."""
         snap, err = await _snapshot_for(underlying, expiry)
@@ -230,7 +231,7 @@ def register_options_analytics_tools(mcp, services, **kwargs) -> None:
             return {"status": "error", **err}
         return {"status": "ok", **price_long_straddle(snap, strike=strike)}
 
-    @mcp.tool(name=TOOL_PRICE_LONG_STRANGLE)
+    @mcp.tool(name=TOOL_PRICE_LONG_STRANGLE, description=get_tool_description(TOOL_PRICE_LONG_STRANGLE))
     async def price_long_strangle_tool(underlying: str, call_strike: float, put_strike: float, expiry: str | None = None) -> dict[str, Any]:
         """Long strangle: buy OTM call + buy OTM put. Cheaper than a straddle, needs bigger move."""
         snap, err = await _snapshot_for(underlying, expiry)
@@ -238,7 +239,7 @@ def register_options_analytics_tools(mcp, services, **kwargs) -> None:
             return {"status": "error", **err}
         return {"status": "ok", **price_long_strangle(snap, call_strike, put_strike)}
 
-    @mcp.tool(name=TOOL_PRICE_BULL_CALL_SPREAD)
+    @mcp.tool(name=TOOL_PRICE_BULL_CALL_SPREAD, description=get_tool_description(TOOL_PRICE_BULL_CALL_SPREAD))
     async def price_bull_call_spread_tool(underlying: str, lower_strike: float, higher_strike: float, expiry: str | None = None) -> dict[str, Any]:
         """Bull call spread: buy lower-strike call, sell higher-strike call. Capped upside."""
         snap, err = await _snapshot_for(underlying, expiry)
@@ -246,7 +247,7 @@ def register_options_analytics_tools(mcp, services, **kwargs) -> None:
             return {"status": "error", **err}
         return {"status": "ok", **price_bull_call_spread(snap, lower_strike, higher_strike)}
 
-    @mcp.tool(name=TOOL_PRICE_BEAR_PUT_SPREAD)
+    @mcp.tool(name=TOOL_PRICE_BEAR_PUT_SPREAD, description=get_tool_description(TOOL_PRICE_BEAR_PUT_SPREAD))
     async def price_bear_put_spread_tool(underlying: str, higher_strike: float, lower_strike: float, expiry: str | None = None) -> dict[str, Any]:
         """Bear put spread: buy higher-strike put, sell lower-strike put. Capped downside."""
         snap, err = await _snapshot_for(underlying, expiry)
@@ -254,7 +255,7 @@ def register_options_analytics_tools(mcp, services, **kwargs) -> None:
             return {"status": "error", **err}
         return {"status": "ok", **price_bear_put_spread(snap, higher_strike, lower_strike)}
 
-    @mcp.tool(name=TOOL_PRICE_IRON_CONDOR)
+    @mcp.tool(name=TOOL_PRICE_IRON_CONDOR, description=get_tool_description(TOOL_PRICE_IRON_CONDOR))
     async def price_iron_condor_tool(underlying: str, put_sell_strike: float, put_buy_strike: float, call_buy_strike: float, call_sell_strike: float, expiry: str | None = None) -> dict[str, Any]:
         """Iron condor: sell OTM put, buy lower put, buy OTM call, sell higher call. Range-bound income."""
         snap, err = await _snapshot_for(underlying, expiry)
@@ -262,7 +263,7 @@ def register_options_analytics_tools(mcp, services, **kwargs) -> None:
             return {"status": "error", **err}
         return {"status": "ok", **price_iron_condor(snap, put_sell_strike, put_buy_strike, call_buy_strike, call_sell_strike)}
 
-    @mcp.tool(name=TOOL_PRICE_LONG_BUTTERFLY)
+    @mcp.tool(name=TOOL_PRICE_LONG_BUTTERFLY, description=get_tool_description(TOOL_PRICE_LONG_BUTTERFLY))
     async def price_long_butterfly_tool(underlying: str, lower_strike: float, middle_strike: float, upper_strike: float, expiry: str | None = None) -> dict[str, Any]:
         """Long butterfly: buy lower call, sell 2 middle calls, buy upper call. Profits at middle."""
         snap, err = await _snapshot_for(underlying, expiry)
@@ -272,7 +273,7 @@ def register_options_analytics_tools(mcp, services, **kwargs) -> None:
 
     # ── composite ───────────────────────────────────────────────────────────────
 
-    @mcp.tool(name=TOOL_ANALYZE_OPTION_CHAIN)
+    @mcp.tool(name=TOOL_ANALYZE_OPTION_CHAIN, description=get_tool_description(TOOL_ANALYZE_OPTION_CHAIN))
     async def analyze_option_chain_tool(underlying: str, expiry: str | None = None, max_strikes: int | None = None) -> dict[str, Any]:
         """One-call option-chain analysis: 7 derived analytics (PCR, max pain, ATM,
         support/resistance, OI buildup, IV skew, GEX) over the FULL chain, plus an

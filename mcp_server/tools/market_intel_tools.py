@@ -14,13 +14,14 @@ from mcp_server.contract import (
     TOOL_FUTURES_CONTRACTS,
     TOOL_OPTION_CHAIN,
 )
+from mcp_server.registry import get_tool_description
 
 
 def register_market_intel_tools(mcp, services, **kwargs) -> None:
     """Register derivatives-discovery read tools."""
     intel = getattr(services, "market_intel", None)
 
-    @mcp.tool(name=TOOL_OPTION_CHAIN)
+    @mcp.tool(name=TOOL_OPTION_CHAIN, description=get_tool_description(TOOL_OPTION_CHAIN))
     async def option_chain(
         underlying: str,
         expiry: str | None = None,
@@ -45,7 +46,7 @@ def register_market_intel_tools(mcp, services, **kwargs) -> None:
             return {"status": "error", **result}
         return {"status": "ok", **result}
 
-    @mcp.tool(name=TOOL_FUTURES_CONTRACTS)
+    @mcp.tool(name=TOOL_FUTURES_CONTRACTS, description=get_tool_description(TOOL_FUTURES_CONTRACTS))
     async def futures_contracts(
         underlying: str,
         expiry: str | None = None,

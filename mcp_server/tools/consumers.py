@@ -11,12 +11,13 @@ from mcp_server.contract import (
     TOOL_CONSUMER_REGISTER,
     TOOL_CONSUMER_TOPIC_ADD,
 )
+from mcp_server.registry import get_tool_description
 
 
 def register_consumer_tools(mcp, services, **kwargs) -> None:
     """Register consumer-related tools."""
 
-    @mcp.tool(name=TOOL_CONSUMER_REGISTER)
+    @mcp.tool(name=TOOL_CONSUMER_REGISTER, description=get_tool_description(TOOL_CONSUMER_REGISTER))
     def register_consumer(consumer_id: str) -> dict[str, Any]:
         """Register a consumer identity. Idempotent — safe to call repeatedly."""
         consumer_id = consumer_id.strip()
@@ -28,7 +29,7 @@ def register_consumer_tools(mcp, services, **kwargs) -> None:
             raise StorageError("consumer registration failed", exc) from exc
         return {"status": "registered", "consumer_id": consumer_id}
 
-    @mcp.tool(name=TOOL_CONSUMER_TOPIC_ADD)
+    @mcp.tool(name=TOOL_CONSUMER_TOPIC_ADD, description=get_tool_description(TOOL_CONSUMER_TOPIC_ADD))
     def add_consumer_topic(consumer_id: str, topic: str) -> dict[str, Any]:
         """Assign a topic to a consumer for topic-based routing."""
         consumer_id = consumer_id.strip()

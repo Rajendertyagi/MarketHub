@@ -26,12 +26,13 @@ from mcp_server.contract import (
     TOOL_ALERT_GET,
     TOOL_ALERT_LIST,
 )
+from mcp_server.registry import get_tool_description
 
 
 def register_alert_tools(mcp, services, **kwargs) -> None:
     """Register alert-related tools."""
 
-    @mcp.tool(name=TOOL_ALERT_CREATE)
+    @mcp.tool(name=TOOL_ALERT_CREATE, description=get_tool_description(TOOL_ALERT_CREATE))
     async def create_alert(
         consumer_id: str,
         source: str,
@@ -93,7 +94,7 @@ def register_alert_tools(mcp, services, **kwargs) -> None:
 
         return {"status": "created", "alert": alert}
 
-    @mcp.tool(name=TOOL_ALERT_LIST)
+    @mcp.tool(name=TOOL_ALERT_LIST, description=get_tool_description(TOOL_ALERT_LIST))
     def list_alerts(
         consumer_id: str,
         enabled: bool | None = None,
@@ -116,7 +117,7 @@ def register_alert_tools(mcp, services, **kwargs) -> None:
             "alerts": alerts,
         }
 
-    @mcp.tool(name=TOOL_ALERT_GET)
+    @mcp.tool(name=TOOL_ALERT_GET, description=get_tool_description(TOOL_ALERT_GET))
     def get_alert(consumer_id: str, alert_id: str) -> dict[str, Any]:
         """
         Get a single alert definition owned by a consumer.
@@ -138,7 +139,7 @@ def register_alert_tools(mcp, services, **kwargs) -> None:
             raise AlertNotFoundError(alert_id)
         return {"alert": alert}
 
-    @mcp.tool(name=TOOL_ALERT_ENABLE)
+    @mcp.tool(name=TOOL_ALERT_ENABLE, description=get_tool_description(TOOL_ALERT_ENABLE))
     def enable_alert(consumer_id: str, alert_id: str) -> dict[str, Any]:
         """
         Enable a previously disabled alert.
@@ -161,7 +162,7 @@ def register_alert_tools(mcp, services, **kwargs) -> None:
             raise StorageError("alert enable failed", exc) from exc
         return {"status": "enabled", "alert_id": alert_id, "changed": changed}
 
-    @mcp.tool(name=TOOL_ALERT_DISABLE)
+    @mcp.tool(name=TOOL_ALERT_DISABLE, description=get_tool_description(TOOL_ALERT_DISABLE))
     def disable_alert(consumer_id: str, alert_id: str) -> dict[str, Any]:
         """
         Disable an alert (stops evaluation without deleting it).

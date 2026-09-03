@@ -12,6 +12,7 @@ from typing import Any
 
 from core import events
 from mcp_server.contract import TOOL_EVENT_PUBLISH, TOOL_EVENT_LIST
+from mcp_server.registry import get_tool_description
 
 
 def register_event_tools(mcp, services, **kwargs) -> None:
@@ -55,7 +56,7 @@ def register_event_tools(mcp, services, **kwargs) -> None:
             "event": event,
         }
 
-    @mcp.tool(name=TOOL_EVENT_LIST)
+    @mcp.tool(name=TOOL_EVENT_LIST, description=get_tool_description(TOOL_EVENT_LIST))
     def list_events(limit: int = 10) -> dict[str, Any]:
         """
         List recent events from the in-memory history buffer.

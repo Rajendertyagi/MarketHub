@@ -680,6 +680,18 @@ def get_by_name(name: str) -> dict | None:
     return None
 
 
+def get_tool_description(name: str) -> str:
+    """Return the canonical description for a tool by its MCP name.
+
+    Used by tool handlers to pull description from the registry so that
+    MCP clients receive the same metadata as the WebUI API.
+    """
+    t = get_by_name(name)
+    if t is None:
+        return ""
+    return t["description"]
+
+
 def get_input_schema(tool: dict) -> dict:
     """Convert registry params to JSON Schema for MCP wire format."""
     properties: dict[str, Any] = {}

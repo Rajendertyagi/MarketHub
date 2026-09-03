@@ -14,13 +14,14 @@ from mcp_server.contract import (
     TOOL_CONSUMER_EVENT_ACKNOWLEDGE,
     TOOL_CONSUMER_CHECKPOINT_GET,
 )
+from mcp_server.registry import get_tool_description
 from app.lifecycle import run_with_timeout
 
 
 def register_replay_tools(mcp, services, **kwargs) -> None:
     """Register replay/checkpoint-related tools."""
 
-    @mcp.tool(name=TOOL_CONSUMER_EVENT_PENDING_LIST)
+    @mcp.tool(name=TOOL_CONSUMER_EVENT_PENDING_LIST, description=get_tool_description(TOOL_CONSUMER_EVENT_PENDING_LIST))
     async def get_pending_events(
         consumer_id: str,
         limit: int = 50,
@@ -63,7 +64,7 @@ def register_replay_tools(mcp, services, **kwargs) -> None:
             timeout_seconds=services.timeouts["database_seconds"],
         )
 
-    @mcp.tool(name=TOOL_CONSUMER_EVENT_ACKNOWLEDGE)
+    @mcp.tool(name=TOOL_CONSUMER_EVENT_ACKNOWLEDGE, description=get_tool_description(TOOL_CONSUMER_EVENT_ACKNOWLEDGE))
     async def acknowledge_event(
         consumer_id: str,
         event_id: str,
@@ -105,7 +106,7 @@ def register_replay_tools(mcp, services, **kwargs) -> None:
             "checkpoint": new_cp,
         }
 
-    @mcp.tool(name=TOOL_CONSUMER_CHECKPOINT_GET)
+    @mcp.tool(name=TOOL_CONSUMER_CHECKPOINT_GET, description=get_tool_description(TOOL_CONSUMER_CHECKPOINT_GET))
     async def get_consumer_checkpoint(consumer_id: str) -> dict[str, Any]:
         """Get the current durable checkpoint position for a consumer.
 

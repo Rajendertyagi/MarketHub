@@ -21,6 +21,7 @@ from mcp_server.contract import (
     TOOL_MARKET_ALERT_ENABLE,
     TOOL_MARKET_ALERT_LIST,
 )
+from mcp_server.registry import get_tool_description
 
 _ALLOWED_FIELDS = ("ltp", "change_percent", "volume", "oi_change_percent")
 _ALLOWED_OPERATORS = ("gt", "lt", "crosses_above", "crosses_below")
@@ -46,7 +47,7 @@ def register_market_alert_tools(mcp, services, **kwargs) -> None:
         results = found.get("results") or []
         return results[0] if results else None
 
-    @mcp.tool(name=TOOL_MARKET_ALERT_CREATE)
+    @mcp.tool(name=TOOL_MARKET_ALERT_CREATE, description=get_tool_description(TOOL_MARKET_ALERT_CREATE))
     async def market_alert_create(
         instrument_query: str,
         operator: str,
@@ -96,7 +97,7 @@ def register_market_alert_tools(mcp, services, **kwargs) -> None:
         return {"status": "created", "alert": alert,
                 "instrument": inst}
 
-    @mcp.tool(name=TOOL_MARKET_ALERT_LIST)
+    @mcp.tool(name=TOOL_MARKET_ALERT_LIST, description=get_tool_description(TOOL_MARKET_ALERT_LIST))
     async def market_alert_list() -> dict[str, Any]:
         """List all configured market alerts with their state."""
         if store is None:
@@ -104,7 +105,7 @@ def register_market_alert_tools(mcp, services, **kwargs) -> None:
         alerts = await asyncio.to_thread(store.list_market_alerts)
         return {"status": "ok", "count": len(alerts), "alerts": alerts}
 
-    @mcp.tool(name=TOOL_MARKET_ALERT_ENABLE)
+    @mcp.tool(name=TOOL_MARKET_ALERT_ENABLE, description=get_tool_description(TOOL_MARKET_ALERT_ENABLE))
     async def market_alert_enable(alert_id: int) -> dict[str, Any]:
         """Enable a disabled market alert by id."""
         if store is None:
@@ -119,7 +120,7 @@ def register_market_alert_tools(mcp, services, **kwargs) -> None:
         _reload_engine()
         return {"status": "enabled", "ok": True, "alert_id": int(alert_id)}
 
-    @mcp.tool(name=TOOL_MARKET_ALERT_DISABLE)
+    @mcp.tool(name=TOOL_MARKET_ALERT_DISABLE, description=get_tool_description(TOOL_MARKET_ALERT_DISABLE))
     async def market_alert_disable(alert_id: int) -> dict[str, Any]:
         """Disable a market alert by id (it stops evaluating)."""
         if store is None:
@@ -134,7 +135,7 @@ def register_market_alert_tools(mcp, services, **kwargs) -> None:
         _reload_engine()
         return {"status": "disabled", "ok": True, "alert_id": int(alert_id)}
 
-    @mcp.tool(name=TOOL_MARKET_ALERT_DELETE)
+    @mcp.tool(name=TOOL_MARKET_ALERT_DELETE, description=get_tool_description(TOOL_MARKET_ALERT_DELETE))
     async def market_alert_delete(alert_id: int) -> dict[str, Any]:
         """Delete a market alert by id. Historical trigger records are
         preserved (deleting an alert never erases its past firings)."""

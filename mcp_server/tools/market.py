@@ -21,6 +21,7 @@ from mcp_server.contract import (
     TOOL_MARKET_STATUS,
     TOOL_WATCHLISTS,
 )
+from mcp_server.registry import get_tool_description
 
 
 def _parse_instrument_ref(
@@ -59,7 +60,7 @@ def _parse_instrument_ref(
 def register_market_tools(mcp, services, **kwargs) -> None:
     """Register read-only market data tools."""
 
-    @mcp.tool(name=TOOL_MARKET_QUOTE)
+    @mcp.tool(name=TOOL_MARKET_QUOTE, description=get_tool_description(TOOL_MARKET_QUOTE))
     async def market_quote(
         instrument_ref: str,
     ) -> dict[str, Any]:
@@ -87,7 +88,7 @@ def register_market_tools(mcp, services, **kwargs) -> None:
         from market.serialization import quote_to_dict
         return {"status": "ok", "quote": quote_to_dict(quote)}
 
-    @mcp.tool(name=TOOL_MARKET_DEPTH)
+    @mcp.tool(name=TOOL_MARKET_DEPTH, description=get_tool_description(TOOL_MARKET_DEPTH))
     async def market_depth(
         instrument_ref: str,
     ) -> dict[str, Any]:
@@ -113,7 +114,7 @@ def register_market_tools(mcp, services, **kwargs) -> None:
         from market.serialization import depth_to_dict
         return {"status": "ok", "depth": depth_to_dict(depth)}
 
-    @mcp.tool(name=TOOL_MARKET_STATUS)
+    @mcp.tool(name=TOOL_MARKET_STATUS, description=get_tool_description(TOOL_MARKET_STATUS))
     async def market_status() -> dict[str, Any]:
         """Return MarketService diagnostic counters.
 
@@ -126,7 +127,7 @@ def register_market_tools(mcp, services, **kwargs) -> None:
             return {"error": "market service not available"}
         return {"status": "ok", "service": await svc.status()}
 
-    @mcp.tool(name=TOOL_INSTRUMENT_SEARCH)
+    @mcp.tool(name=TOOL_INSTRUMENT_SEARCH, description=get_tool_description(TOOL_INSTRUMENT_SEARCH))
     async def instrument_search(
         q: str,
         exchange: str | None = None,
@@ -157,7 +158,7 @@ def register_market_tools(mcp, services, **kwargs) -> None:
             limit=min(max(limit, 1), 50))
         return {"status": "ok", "count": len(results), "results": results}
 
-    @mcp.tool(name=TOOL_WATCHLISTS)
+    @mcp.tool(name=TOOL_WATCHLISTS, description=get_tool_description(TOOL_WATCHLISTS))
     async def watchlists() -> dict[str, Any]:
         """List all persistent watchlists and their instruments.
 
@@ -174,7 +175,7 @@ def register_market_tools(mcp, services, **kwargs) -> None:
             out.append({"id": wl["id"], "name": wl["name"], "items": items})
         return {"status": "ok", "watchlists": out}
 
-    @mcp.tool(name=TOOL_MARKET_HISTORY)
+    @mcp.tool(name=TOOL_MARKET_HISTORY, description=get_tool_description(TOOL_MARKET_HISTORY))
     async def market_history(
         instrument_ref: str,
         unit: str,
