@@ -133,6 +133,7 @@ _TEST_FILES: dict[str, str] = {
     "b8_alert_locks": "test_b8_alert_locks.py",
     "b8_analytics_scheduler": "test_b8_analytics_scheduler.py",
     "b8_ack_performance": "test_b8_ack_performance.py",
+    "ai_alert_observability": "test_ai_alert_observability.py",
 }
 
 # Group -> ordered list of module keys. Order matters (fast/stable first).

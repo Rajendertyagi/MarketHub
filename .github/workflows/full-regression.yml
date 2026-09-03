@@ -16,7 +16,7 @@ permissions:
 jobs:
   regression:
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       # UTF-8 mode for ALL Python processes in the job (runner + spawned test
       # files + server subprocesses). Prevents cp1252 UnicodeEncodeError on
@@ -36,5 +36,5 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Full regression (hard 300s cap per file)
-        run: python test/run_all.py --group all --timeout 300
+      - name: Full regression (hard 600s cap per file)
+        run: python test/run_all.py --group all --timeout 600

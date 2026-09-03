@@ -508,6 +508,7 @@ _condition_alert_engine = _ConditionAlertEngine(
 from api.product_routes import (
     build_market_data_routes as _build_market_data_routes,
 )
+from api.ai_alert_routes import build_ai_alert_routes as _build_ai_alert_routes
 from app.market_data import ProviderMarketData as _ProviderMarketData
 
 
@@ -930,6 +931,7 @@ app = Starlette(
         lambda: get_public_base_url(_config),
     )
     + _build_api_meta_routes()
+    + _build_ai_alert_routes(_store)
     + [Mount("/ui", app=StaticFiles(directory=str(PROJECT_ROOT / "web" / "ui"), html=True),
             name="ui")],
     middleware=list(mcp_asgi_app.user_middleware),

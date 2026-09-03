@@ -30,6 +30,7 @@
     <button class="nav-link" data-view="watchlists">Watchlists</button>
     <button class="nav-link" data-view="charts">Charts</button>
     <button class="nav-link" data-view="alerts">Alerts</button>
+    <button class="nav-link" data-view="ai-alerts">AI Alerts</button>
     <button class="nav-link" data-view="mcp">MCP</button>
 <button class="nav-link" data-view="chat">Chat</button>
     <button class="nav-link" data-view="settings">Settings</button>
@@ -250,6 +251,55 @@
           <th>Observed</th><th>Provider</th><th>Exchange</th>
         </tr></thead>
         <tbody id="alert-history-body"><tr><td colspan="6" class="empty-row">No trigger history yet.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── AI ALERTS VIEW ── -->
+  <section id="view-ai-alerts" class="view">
+    <div class="toolbar">
+      <h2 style="margin:0">AI Alert Observability</h2>
+      <button id="ai-alerts-refresh" class="btn" style="padding:2px 10px;font-size:12px">Refresh</button>
+    </div>
+
+    <!-- Consumer Status -->
+    <div class="panel">
+      <div class="panel-header"><h2>Consumer Status</h2></div>
+      <div id="ai-consumers-loading" class="hint">Loading…</div>
+      <div id="ai-consumers-empty" class="hint" style="display:none">No consumers registered.</div>
+      <div id="ai-consumers-error" class="hint" style="display:none;color:var(--red)"></div>
+      <div id="ai-consumers-cards" style="display:none"></div>
+    </div>
+
+    <!-- Active Alerts -->
+    <div class="panel">
+      <div class="panel-header"><h2>Active Condition Alerts</h2></div>
+      <div id="ai-alerts-loading" class="hint">Loading…</div>
+      <div id="ai-alerts-empty" class="hint" style="display:none">No condition alerts configured.</div>
+      <div id="ai-alerts-error" class="hint" style="display:none;color:var(--red)"></div>
+      <table class="data-table" id="ai-alerts-table" style="display:none">
+        <thead><tr>
+          <th>Alert ID</th><th>Consumer</th><th>Instrument</th>
+          <th>Condition</th><th>Mode</th><th>State</th>
+          <th>Enabled</th><th>Triggers</th><th>Last Fired</th><th>Created</th>
+        </tr></thead>
+        <tbody id="ai-alerts-body"></tbody>
+      </table>
+    </div>
+
+    <!-- Triggered Events -->
+    <div class="panel">
+      <div class="panel-header"><h2>Triggered Events</h2></div>
+      <div id="ai-events-loading" class="hint">Loading…</div>
+      <div id="ai-events-empty" class="hint" style="display:none">No triggered events.</div>
+      <div id="ai-events-error" class="hint" style="display:none;color:var(--red)"></div>
+      <table class="data-table" id="ai-events-table" style="display:none">
+        <thead><tr>
+          <th>Event ID</th><th>Alert ID</th><th>Consumer</th>
+          <th>Instrument</th><th>Condition</th><th>Status</th>
+          <th>Triggered</th><th>ACKed</th>
+        </tr></thead>
+        <tbody id="ai-events-body"></tbody>
       </table>
     </div>
   </section>
