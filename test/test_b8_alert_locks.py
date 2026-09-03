@@ -110,7 +110,6 @@ async def t1_lock_count_after_delete(runner: R) -> None:
         locks_after = len(engine._alert_locks)
         runner.assert_eq(name + "-locks-after-delete", locks_after, 0)
     finally:
-        store.close()
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -142,7 +141,6 @@ async def t2_repeated_create_delete_no_growth(runner: R) -> None:
             f"expected <= 1 lock, got {lock_count}",
         )
     finally:
-        store.close()
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -186,7 +184,6 @@ async def t3_concurrent_evaluate_during_delete(runner: R) -> None:
             "aid2 should still exist",
         )
     finally:
-        store.close()
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -217,7 +214,6 @@ async def t4_reload_preserves_existing_locks(runner: R) -> None:
             "aid2 lock should still be present",
         )
     finally:
-        store.close()
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -230,7 +226,6 @@ async def t5_baseline_lock_count(runner: R) -> None:
         engine = ConditionAlertEngine(store, resolver)
         runner.assert_eq(name, len(engine._alert_locks), 0)
     finally:
-        store.close()
         shutil.rmtree(tmp, ignore_errors=True)
 
 

@@ -184,7 +184,6 @@ async def test_ld3_acknowledge(runner: R) -> None:
         status = store.get_consumer_inbox_status("consumer-1")
         runner.assert_eq("LD3-inbox-zero", status["pending_count"], 0)
     finally:
-        store.close()
         tmp.cleanup()
 
 

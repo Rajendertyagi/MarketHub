@@ -103,7 +103,7 @@ async def t1_ack_correctness(runner: R) -> None:
         ids = await _publish_n(store, bus, 10)
 
         # Verify pending before ACK
-        status = get_consumer_inbox_status(store._get_conn(), "c1")
+        status = get_consumer_inbox_status(store._open(store._db_path), "c1")
         runner.assert_eq(name + "-before", status["pending_count"], 10)
 
         # ACK all
@@ -111,7 +111,7 @@ async def t1_ack_correctness(runner: R) -> None:
             store.acknowledge_event("c1", eid)
 
         # Verify pending = 0
-        status2 = get_consumer_inbox_status(store._get_conn(), "c1")
+        status2 = get_consumer_inbox_status(store._open(store._db_path), "c1")
         runner.assert_eq(name + "-after", status2["pending_count"], 0)
 
         # Repeated ACK should be safe (idempotent)
@@ -123,7 +123,6 @@ async def t1_ack_correctness(runner: R) -> None:
         pending_after = store.replay_events("c1", limit=20)
         runner.assert_eq(name + "-history", len(pending_after.get("events", [])), 0)
     finally:
-        store.close()
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -141,13 +140,12 @@ async def t2_ack_100(runner: R) -> None:
             dt = (time.perf_counter_ns() - t0) / 1e6
             times.append(dt)
 
-        status = get_consumer_inbox_status(store._get_conn(), "c1")
+        status = get_consumer_inbox_status(store._open(store._db_path), "c1")
         runner.assert_eq(name + "-pending", status["pending_count"], 0)
         runner.assert_true(name + "-p50",
                           _percentile(times, 50) < 25.0,
                           f"p50={_percentile(times, 50):.2f}ms")
     finally:
-        store.close()
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -165,13 +163,12 @@ async def t3_ack_1000(runner: R) -> None:
             dt = (time.perf_counter_ns() - t0) / 1e6
             times.append(dt)
 
-        status = get_consumer_inbox_status(store._get_conn(), "c1")
+        status = get_consumer_inbox_status(store._open(store._db_path), "c1")
         runner.assert_eq(name + "-pending", status["pending_count"], 0)
         runner.assert_true(name + "-p50",
                           _percentile(times, 50) < 25.0,
                           f"p50={_percentile(times, 50):.2f}ms")
     finally:
-        store.close()
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -205,7 +202,6 @@ async def t4_ack_errors(runner: R) -> None:
         except EventNotRelevantError:
             pass
     finally:
-        store.close()
         shutil.rmtree(tmp, ignore_errors=True)
 
 
