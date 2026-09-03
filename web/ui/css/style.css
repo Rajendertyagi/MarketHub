@@ -247,3 +247,97 @@ html.wa-theme-light .ticker-strip { background: #f6f8fa; }
   color: var(--text-muted); margin: 14px 0 6px;
 }
 .kv-table td:first-child { color: var(--text-muted); width: 45%; }
+
+/* ── Logs view ───────────────────────────────────────────────────────────── */
+.logs-container {
+  height: calc(100vh - 240px);
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.logs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.logs-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-panel-alt);
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  z-index: 1;
+}
+.logs-table tbody tr {
+  border-bottom: 1px solid var(--border);
+}
+.logs-table td {
+  padding: 4px 8px;
+  vertical-align: top;
+  word-break: break-word;
+}
+.logs-ts {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.logs-level-cell {
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.logs-lvl-debug { color: var(--text-muted); }
+.logs-lvl-info { color: var(--accent); }
+.logs-lvl-warning { color: var(--yellow); }
+.logs-lvl-error { color: var(--red); }
+.logs-lvl-critical { color: var(--red); font-weight: 700; }
+.logs-component {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
+.logs-message {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.logs-exception {
+  color: var(--red);
+  font-size: 11px;
+  opacity: 0.8;
+}
+.logs-autofollow-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.logs-status {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+}
+.logs-conn-on { color: var(--green); }
+.logs-conn-off { color: var(--text-muted); }
+
+/* ── Light theme overrides ─────────────────────────────────────────────── */
+html.wa-theme-light .logs-level-cell { }
+html.wa-theme-light .logs-component { color: var(--text-muted); }

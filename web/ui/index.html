@@ -34,6 +34,7 @@
     <button class="nav-link" data-view="ai-alerts">AI Alerts</button>
     <button class="nav-link" data-view="mcp">MCP</button>
 <button class="nav-link" data-view="chat">Chat</button>
+    <button class="nav-link" data-view="logs">Logs</button>
     <button class="nav-link" data-view="settings">Settings</button>
   </div>
   <div class="topnav-right">
@@ -540,6 +541,52 @@
     </div>
 
       </section>
+
+  <!-- ── LOGS VIEW ── -->
+  <section id="view-logs" class="view">
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Logs</h2>
+        <div style="display:flex;gap:6px;align-items:center;margin-left:auto">
+          <select id="logs-level" class="filter-input" style="width:110px">
+            <option value="">All Levels</option>
+            <option value="DEBUG">DEBUG</option>
+            <option value="INFO" selected>INFO</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+            <option value="CRITICAL">CRITICAL</option>
+          </select>
+          <input type="text" id="logs-component" class="filter-input"
+                 placeholder="Component…" style="width:130px" autocomplete="off">
+          <input type="text" id="logs-search" class="filter-input"
+                 placeholder="Search…" style="width:160px" autocomplete="off">
+          <button id="logs-apply" class="btn">Apply</button>
+          <button id="logs-pause" class="btn">Pause</button>
+          <button id="logs-clear" class="btn">Clear View</button>
+          <label class="logs-autofollow-label">
+            <input type="checkbox" id="logs-autofollow" checked> Auto-follow
+          </label>
+        </div>
+      </div>
+      <div id="logs-container" class="logs-container">
+        <table class="data-table logs-table">
+          <thead>
+            <tr>
+              <th style="width:180px">Timestamp</th>
+              <th style="width:70px">Level</th>
+              <th style="width:120px">Component</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody id="logs-tbody"></tbody>
+        </table>
+      </div>
+      <div class="logs-status">
+        <span id="logs-count">0 records</span>
+        <span id="logs-conn-status" class="logs-conn-off">● Disconnected</span>
+      </div>
+    </div>
+  </section>
 
 </main>
 

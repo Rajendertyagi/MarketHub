@@ -9,6 +9,8 @@ Design (locked):
       ``<project_root>/data/logs/markethub.log`` so an incident's final
       event survives the console window closing.
       stdlib RotatingFileHandler: maxBytes=10 MiB, backupCount=5, utf-8.
+    * A WebUI log handler feeds a bounded in-memory buffer for live
+      viewing in the WebUI Logs page.
     * Logging must NEVER prevent startup: directory creation or handler
       failures degrade to console-only with a stderr note.
     * The startup diagnostic header carries version / python / platform /
@@ -183,3 +185,30 @@ def _best_effort_commit() -> str | None:
         return None
     commit = (result.stdout or "").strip()
     return commit[:12] or None
+
+
+def attach_webui_handler(
+    buffer: Any,
+    broker: Any | None = None,
+) -> Any:
+    """Attach a WebUILogHandler to the root logger.
+
+    Returns the handler instance so the caller can late-bind the SSE broker
+    after server.py has constructed it.
+
+    Never raises — handler failure degrades silently.
+    """
+    try:
+        from core.webui_log_handler import WebUILogHandler
+        handler = WebUILogHandler(buffer, broker=broker)
+        handler.setLevel(logging.DEBUG)
+        root = logging.getLogger()
+        root.addHandler(handler)
+        return handler
+    except Exception as exc:
+        print(
+            f"WARNING: WebUI log handler unavailable ({type(exc).__name__}); "
+            f"continuing without live log streaming",
+            file=sys.stderr,
+        )
+        return None
