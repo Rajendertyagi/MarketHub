@@ -249,33 +249,17 @@ def build_ai_alert_routes(store: Any, mcp_server: Any = None) -> list[Route]:
             conn.close()
 
     async def _list_mcp_tools(request: Request) -> Response:  # noqa: ARG001
-        """GET /api/mcp/tools — List all registered MCP tools."""
-        if mcp_server is None:
-            return _json({"tools": [], "count": 0})
+        """GET /api/mcp/tools — List all registered MCP tools from canonical registry."""
+        from mcp_server.registry import TOOLS, get_input_schema
         try:
-            tools = await mcp_server.list_tools()
             result = []
-            _CAT_MAP = {
-                "market_": "Market", "option_": "Market", "futures_": "Market",
-                "instrument_": "Market", "watchlist": "Market",
-                "alert_": "Alerts", "market_alert_": "Market Alerts",
-                "condition_alert_": "Condition Alerts",
-                "compute_": "Compute", "price_": "Pricing",
-                "analyze_": "Analytics", "event_": "Events",
-                "consumer_": "Consumer", "system_": "System",
-            }
-            def _category(name: str) -> str:
-                for prefix, cat in _CAT_MAP.items():
-                    if name.startswith(prefix):
-                        return cat
-                return "Other"
-            for t in tools:
+            for t in TOOLS:
                 result.append({
-                    "name": t.name,
-                    "title": t.title or t.name,
-                    "description": t.description or "",
-                    "category": _category(t.name),
-                    "input_schema": t.input_schema,
+                    "name": t["name"],
+                    "title": t["display"],
+                    "description": t["description"],
+                    "category": t["category"],
+                    "input_schema": get_input_schema(t),
                 })
             return _json({"tools": result, "count": len(result)})
         except Exception as exc:
