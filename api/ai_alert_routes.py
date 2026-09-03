@@ -64,7 +64,7 @@ def _instrument_label(condition_json: str) -> str:
     return instrument.get("canonical_id", "?")
 
 
-def build_ai_alert_routes(store: Any) -> list[Route]:
+def build_ai_alert_routes(store: Any, mcp_server: Any = None) -> list[Route]:
     """Build read-only AI alert observability routes."""
 
     async def _list_condition_alerts(request: Request) -> Response:  # noqa: ARG001
@@ -248,8 +248,28 @@ def build_ai_alert_routes(store: Any) -> list[Route]:
         finally:
             conn.close()
 
+    async def _list_mcp_tools(request: Request) -> Response:  # noqa: ARG001
+        """GET /api/mcp/tools — List all registered MCP tools."""
+        if mcp_server is None:
+            return _json({"tools": [], "count": 0})
+        try:
+            tools = await mcp_server.list_tools()
+            result = []
+            for t in tools:
+                result.append({
+                    "name": t.name,
+                    "title": t.title or t.name,
+                    "description": t.description or "",
+                    "input_schema": t.input_schema,
+                })
+            return _json({"tools": result, "count": len(result)})
+        except Exception as exc:
+            logger.warning("Failed to list MCP tools: %s", exc)
+            return _json({"tools": [], "count": 0, "error": str(exc)})
+
     return [
         Route("/api/ai-alerts", endpoint=_list_condition_alerts, methods=["GET"]),
         Route("/api/ai-alerts/events", endpoint=_triggered_events, methods=["GET"]),
         Route("/api/ai-alerts/consumers", endpoint=_consumer_status, methods=["GET"]),
+        Route("/api/mcp/tools", endpoint=_list_mcp_tools, methods=["GET"]),
     ]

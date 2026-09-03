@@ -307,16 +307,18 @@
   <!-- ── MCP VIEW ── -->
   <section id="view-mcp" class="view">
     <div class="panel">
-      <div class="panel-header"><h2>MCP Market Tools</h2></div>
-      <table class="data-table mcp-table">
-        <thead><tr><th>Tool</th><th>Description</th><th>Type</th></tr></thead>
-        <tbody>
-          <tr><td><code>market_quote</code></td><td>Latest normalized quote for an instrument</td><td>Read-only</td></tr>
-          <tr><td><code>market_depth</code></td><td>Market depth (bid/ask levels)</td><td>Read-only</td></tr>
-          <tr><td><code>market_status</code></td><td>Service counters and state</td><td>Read-only</td></tr>
-        </tbody>
+      <div class="panel-header">
+        <h2>MCP Tools</h2>
+        <button id="mcp-tools-refresh" class="btn" style="padding:2px 10px;font-size:12px">Refresh</button>
+      </div>
+      <div id="mcp-tools-loading" class="hint">Loading tools…</div>
+      <div id="mcp-tools-empty" class="hint" style="display:none">No tools registered.</div>
+      <div id="mcp-tools-error" class="hint" style="display:none;color:var(--red)"></div>
+      <table class="data-table mcp-table" id="mcp-tools-table" style="display:none">
+        <thead><tr><th>Tool</th><th>Description</th><th>Parameters</th></tr></thead>
+        <tbody id="mcp-tools-body"></tbody>
       </table>
-      <p class="hint">Tools read from the shared MarketService. No broker connections are created by MCP callers.</p>
+      <p class="hint" style="margin-top:8px">Tools are registered at server startup. Use MCP protocol to call them.</p>
     </div>
   </section>
 

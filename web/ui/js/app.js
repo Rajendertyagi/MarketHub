@@ -2055,6 +2055,66 @@ function initBackup() {
     });
   }
 
+  // ── MCP Tools ─────────────────────────────────────────────────────────────
+
+  async function _loadMCPTools() {
+    const loadEl = document.getElementById("mcp-tools-loading");
+    const emptyEl = document.getElementById("mcp-tools-empty");
+    const errEl = document.getElementById("mcp-tools-error");
+    const tblEl = document.getElementById("mcp-tools-table");
+    const bodyEl = document.getElementById("mcp-tools-body");
+    if (!loadEl) return;
+    loadEl.style.display = ""; emptyEl.style.display = "none";
+    errEl.style.display = "none"; tblEl.style.display = "none";
+    try {
+      const res = await fetch("/api/mcp/tools");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const list = data.tools || [];
+      if (!list.length) { loadEl.style.display = "none"; emptyEl.style.display = ""; return; }
+      // Group by category prefix
+      const categories = {};
+      list.forEach(t => {
+        const parts = t.name.split("_");
+        const cat = parts.length > 1 ? parts[0] : "other";
+        if (!categories[cat]) categories[cat] = [];
+        categories[cat].push(t);
+      });
+      const catOrder = ["market", "alert", "condition", "consumer", "event", "compute", "price", "analyze", "system", "other"];
+      let html = "";
+      catOrder.forEach(cat => {
+        const tools = categories[cat];
+        if (!tools || !tools.length) return;
+        tools.forEach(t => {
+          const params = t.input_schema && t.input_schema.properties
+            ? Object.keys(t.input_schema.properties).join(", ")
+            : "—";
+          const required = t.input_schema && t.input_schema.required
+            ? t.input_schema.required.join(", ")
+            : "";
+          html += `<tr>
+            <td><code>${t.name}</code></td>
+            <td>${t.description || "—"}</td>
+            <td style="font-size:11px;color:var(--text-muted)">${params}${required ? ' <span style="color:var(--yellow)" title="required">('*required+')</span>' : ''}</td>
+          </tr>`;
+        });
+      });
+      bodyEl.innerHTML = html;
+      loadEl.style.display = "none"; tblEl.style.display = "";
+    } catch (e) {
+      loadEl.style.display = "none"; errEl.textContent = e.message; errEl.style.display = "";
+    }
+  }
+
+  function initMCPTools() {
+    const refreshBtn = document.getElementById("mcp-tools-refresh");
+    if (refreshBtn) refreshBtn.addEventListener("click", _loadMCPTools);
+    const navBtns = document.querySelectorAll('[data-view="mcp"]');
+    navBtns.forEach(btn => {
+      btn.addEventListener("click", _loadMCPTools);
+    });
+  }
+
   function init() {
     initTheme();
     initNav();
@@ -2076,6 +2136,7 @@ function initBackup() {
     initAlertPush();
     initSourceControls();
     initAIAlerts();
+    initMCPTools();
     loadInitialQuotes();
     connectSSE();
     pollSources();                     // immediate status render (no 10s wait)

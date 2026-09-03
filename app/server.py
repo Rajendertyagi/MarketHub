@@ -931,7 +931,7 @@ app = Starlette(
         lambda: get_public_base_url(_config),
     )
     + _build_api_meta_routes()
-    + _build_ai_alert_routes(_store)
+    + _build_ai_alert_routes(_store, mcp)
     + [Mount("/ui", app=StaticFiles(directory=str(PROJECT_ROOT / "web" / "ui"), html=True),
             name="ui")],
     middleware=list(mcp_asgi_app.user_middleware),
