@@ -130,6 +130,9 @@ _TEST_FILES: dict[str, str] = {
     "condition_alert_mcp_acceptance": "test_condition_alert_mcp_acceptance.py",
     "condition_analytics": "test_condition_analytics.py",
     "b7_multi_target": "test_b7_multi_target.py",
+    "b8_alert_locks": "test_b8_alert_locks.py",
+    "b8_analytics_scheduler": "test_b8_analytics_scheduler.py",
+    "b8_ack_performance": "test_b8_ack_performance.py",
 }
 
 # Group -> ordered list of module keys. Order matters (fast/stable first).
