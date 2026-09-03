@@ -255,11 +255,26 @@ def build_ai_alert_routes(store: Any, mcp_server: Any = None) -> list[Route]:
         try:
             tools = await mcp_server.list_tools()
             result = []
+            _CAT_MAP = {
+                "market_": "Market", "option_": "Market", "futures_": "Market",
+                "instrument_": "Market", "watchlist": "Market",
+                "alert_": "Alerts", "market_alert_": "Market Alerts",
+                "condition_alert_": "Condition Alerts",
+                "compute_": "Compute", "price_": "Pricing",
+                "analyze_": "Analytics", "event_": "Events",
+                "consumer_": "Consumer", "system_": "System",
+            }
+            def _category(name: str) -> str:
+                for prefix, cat in _CAT_MAP.items():
+                    if name.startswith(prefix):
+                        return cat
+                return "Other"
             for t in tools:
                 result.append({
                     "name": t.name,
                     "title": t.title or t.name,
                     "description": t.description or "",
+                    "category": _category(t.name),
                     "input_schema": t.input_schema,
                 })
             return _json({"tools": result, "count": len(result)})

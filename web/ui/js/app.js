@@ -2057,6 +2057,19 @@ function initBackup() {
 
   // ── MCP Tools ─────────────────────────────────────────────────────────────
 
+  const _MCP_CAT_COLORS = {
+    "Market": "var(--green)", "Market Alerts": "var(--cyan)",
+    "Alerts": "var(--yellow)", "Condition Alerts": "var(--accent)",
+    "Compute": "var(--magenta)", "Pricing": "var(--cyan)",
+    "Analytics": "var(--yellow)", "Events": "var(--green)",
+    "Consumer": "var(--text-muted)", "System": "var(--text-muted)",
+    "Other": "var(--text-muted)",
+  };
+  function _mcpCatBadge(cat) {
+    const c = _MCP_CAT_COLORS[cat] || "var(--text-muted)";
+    return `<span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;background:${c};color:#000">${cat}</span>`;
+  }
+
   async function _loadMCPTools() {
     const loadEl = document.getElementById("mcp-tools-loading");
     const emptyEl = document.getElementById("mcp-tools-empty");
@@ -2072,15 +2085,15 @@ function initBackup() {
       const data = await res.json();
       const list = data.tools || [];
       if (!list.length) { loadEl.style.display = "none"; emptyEl.style.display = ""; return; }
-      // Group by category prefix
+      // Group by category from API
       const categories = {};
       list.forEach(t => {
-        const parts = t.name.split("_");
-        const cat = parts.length > 1 ? parts[0] : "other";
+        const cat = t.category || "Other";
         if (!categories[cat]) categories[cat] = [];
         categories[cat].push(t);
       });
-      const catOrder = ["market", "alert", "condition", "consumer", "event", "compute", "price", "analyze", "system", "other"];
+      const catOrder = ["Market", "Alerts", "Condition Alerts", "Market Alerts",
+        "Compute", "Pricing", "Analytics", "Events", "Consumer", "System", "Other"];
       let html = "";
       catOrder.forEach(cat => {
         const tools = categories[cat];
@@ -2092,10 +2105,12 @@ function initBackup() {
           const required = t.input_schema && t.input_schema.required
             ? t.input_schema.required.join(", ")
             : "";
+          const desc = (t.description || "—").split("\n")[0].trim();
           html += `<tr>
             <td><code>${t.name}</code></td>
-            <td>${t.description || "—"}</td>
-            <td style="font-size:11px;color:var(--text-muted)">${params}${required ? ' <span style="color:var(--yellow)" title="required">('*required+')</span>' : ''}</td>
+            <td>${_mcpCatBadge(t.category)}</td>
+            <td style="max-width:320px;font-size:12px" title="${(t.description||'').replace(/"/g,'&quot;')}">${desc}</td>
+            <td style="font-size:11px;color:var(--text-muted)">${params}${required ? ' <span style="color:var(--yellow)" title="required">('+required+')</span>' : ''}</td>
           </tr>`;
         });
       });
