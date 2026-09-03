@@ -70,6 +70,7 @@ class EventStore:
         self._db_path = str(Path(db_path).resolve())
         self._ensure_directory()
         self._init_db()
+        self._cached_conn: sqlite3.Connection | None = None
 
     # ─── Connection helper ────────────────────────────────────────────────────
 
@@ -81,6 +82,21 @@ class EventStore:
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA busy_timeout=5000")
         return conn
+
+    def _get_conn(self) -> sqlite3.Connection:
+        """Return a reused connection (avoids per-call open/close + PRAGMAs)."""
+        if self._cached_conn is None:
+            self._cached_conn = self._open(self._db_path)
+        return self._cached_conn
+
+    def close(self) -> None:
+        """Close the cached connection (call during shutdown or test cleanup)."""
+        if self._cached_conn is not None:
+            try:
+                self._cached_conn.close()
+            except Exception:
+                pass
+            self._cached_conn = None
 
     def _ensure_directory(self) -> None:
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -293,7 +309,7 @@ class EventStore:
         EventNotFoundError if the event doesn't exist, or EventNotRelevantError
         if the event is not relevant to the consumer.
         """
-        conn = self._open(self._db_path)
+        conn = self._get_conn()
         try:
             return _delivery.acknowledge_event(conn, consumer_id, event_id)
         except (
@@ -305,8 +321,6 @@ class EventStore:
         ):
             conn.rollback()
             raise
-        finally:
-            conn.close()
 
     def get_delivered_event_ids(self, consumer_id: str) -> set[str]:
         conn = self._open(self._db_path)

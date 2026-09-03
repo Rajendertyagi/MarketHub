@@ -8,6 +8,7 @@ identity. The service owns:
   * latest snapshot cache  — one ``OptionChainAnalyticsSnapshot`` per chain
   * per-chain refresh lock — ensures one REST call per chain at a time
   * background scheduler  — periodic refresh of all active chains
+                           (concurrent with configurable bound)
 
 It calls ``MarketService.option_chain(...)`` internally; broker
 implementations are never imported directly.
@@ -44,6 +45,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_REFRESH_INTERVAL_SECONDS = 60.0
 MIN_REFRESH_INTERVAL_SECONDS = 30.0
 DEFAULT_STALE_AFTER_SECONDS = 300.0
+DEFAULT_MAX_CONCURRENT_REFRESHES = 4
 
 # Retry backoff constants.
 INITIAL_RETRY_DELAY = 5.0
@@ -59,12 +61,14 @@ class MarketAnalyticsService:
         instrument_catalog: Any = None,
         refresh_interval: float = DEFAULT_REFRESH_INTERVAL_SECONDS,
         stale_after: float = DEFAULT_STALE_AFTER_SECONDS,
+        max_concurrent_refreshes: int = DEFAULT_MAX_CONCURRENT_REFRESHES,
     ) -> None:
         self._market_service = market_service
         self._instrument_catalog = instrument_catalog
         self._refresh_interval = max(
             MIN_REFRESH_INTERVAL_SECONDS, refresh_interval)
         self._stale_after = stale_after
+        self._max_concurrent_refreshes = max(1, max_concurrent_refreshes)
 
         # chain_key → OptionChainAnalyticsSnapshot
         self._cache: dict[str, OptionChainAnalyticsSnapshot] = {}
@@ -162,10 +166,20 @@ class MarketAnalyticsService:
                 pass
 
     async def _refresh_all_active(self) -> None:
-        """Refresh every active chain, one at a time (bounded concurrency)."""
+        """Refresh every active chain concurrently with bounded concurrency.
+
+        Per-chain locking in _refresh_one preserves same-chain dedup.
+        One slow/failing chain does not block unrelated chains.
+        """
         keys = list(self._dependents.keys())
-        for key in keys:
-            await self._refresh_one(key)
+        if not keys:
+            return
+        sem = asyncio.Semaphore(self._max_concurrent_refreshes)
+        async def _gated(key: str) -> None:
+            async with sem:
+                await self._refresh_one(key)
+        await asyncio.gather(*(_gated(k) for k in keys),
+                             return_exceptions=True)
 
     async def _refresh_one(self, chain_key: str) -> None:
         """Refresh a single chain with per-chain locking."""

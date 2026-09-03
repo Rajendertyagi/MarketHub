@@ -50,35 +50,38 @@ def acknowledge_event(
     now = datetime.now(timezone.utc).isoformat()
     conn.execute("BEGIN IMMEDIATE")
 
-    # Verify consumer exists
-    consumer = conn.execute(
-        "SELECT 1 FROM consumers WHERE consumer_id = ?", (consumer_id,)
-    ).fetchone()
-    if not consumer:
-        conn.rollback()
-        raise ConsumerNotFoundError(consumer_id)
-
-    # Verify event exists and is persistent
-    evt = conn.execute(
-        "SELECT 1 FROM persistent_events WHERE id = ?", (event_id,)
-    ).fetchone()
-    if not evt:
-        conn.rollback()
-        raise EventNotFoundError(event_id)
-
-    # Verify the event is in this consumer's state (relevant)
-    state = conn.execute(
-        "SELECT 1 FROM consumer_event_state WHERE consumer_id = ? AND event_id = ?",
+    # Combined check: relevance row exists ↔ consumer and event both exist
+    # (FK constraints guarantee referential integrity).
+    row = conn.execute(
+        "SELECT acknowledged_at FROM consumer_event_state "
+        "WHERE consumer_id = ? AND event_id = ?",
         (consumer_id, event_id),
     ).fetchone()
-    if not state:
+
+    if row is None:
+        # Distinguish error type for callers that rely on specific exceptions.
+        consumer = conn.execute(
+            "SELECT 1 FROM consumers WHERE consumer_id = ?",
+            (consumer_id,),
+        ).fetchone()
+        if not consumer:
+            conn.rollback()
+            raise ConsumerNotFoundError(consumer_id)
+        evt = conn.execute(
+            "SELECT 1 FROM persistent_events WHERE id = ?",
+            (event_id,),
+        ).fetchone()
+        if not evt:
+            conn.rollback()
+            raise EventNotFoundError(event_id)
         conn.rollback()
         raise EventNotRelevantError(event_id, consumer_id)
 
     # Mark acknowledged — preserve first ack time
     conn.execute(
         "UPDATE consumer_event_state SET "
-        "  acknowledged_at = CASE WHEN acknowledged_at IS NULL THEN ? ELSE acknowledged_at END "
+        "  acknowledged_at = CASE WHEN acknowledged_at IS NULL THEN ? "
+        "                        ELSE acknowledged_at END "
         "WHERE consumer_id = ? AND event_id = ?",
         (now, consumer_id, event_id),
     )

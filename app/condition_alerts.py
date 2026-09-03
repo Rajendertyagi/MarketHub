@@ -232,6 +232,16 @@ class ConditionAlertEngine:
             # last evaluation. Snapshot identity (not numeric value) is the
             # signal, so identical-value refreshes remain distinct fresh ticks.
             self._analytics_last_snapshot: dict[tuple[str, str], Any] = {}
+            # B8: clean up locks for alerts that no longer exist.
+            # Skip locks currently held by a suspended evaluation —
+            # they'll be cleaned up on the next reload().
+            active_ids = set(self._alerts.keys())
+            stale_ids = [aid for aid in self._alert_locks
+                         if aid not in active_ids]
+            for aid in stale_ids:
+                lock = self._alert_locks[aid]
+                if not lock.locked():
+                    del self._alert_locks[aid]
 
     # ── Helpers ─────────────────────────────────────────────────────────────
 
