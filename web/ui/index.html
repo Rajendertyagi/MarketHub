@@ -311,6 +311,20 @@
         <h2>MCP Tools</h2>
         <button id="mcp-tools-refresh" class="btn" style="padding:2px 10px;font-size:12px">Refresh</button>
       </div>
+      <div class="mcp-help" style="margin-bottom:12px;padding:10px 14px;background:var(--bg-alt);border:1px solid var(--border);border-radius:6px;font-size:13px;line-height:1.5">
+        <strong style="color:var(--accent)">What are MCP Tools?</strong><br>
+        MCP (Model Context Protocol) tools let AI models interact with MarketHub — querying live market data, managing alerts, and computing analytics. Tools are invoked automatically by the AI during chat conversations, or can be called via the MCP protocol directly.<br><br>
+        <strong style="color:var(--accent)">How it works:</strong> The AI reads tool descriptions and schemas to decide which tool to call and with what parameters. You approve each tool call before execution. Results are returned as structured data the AI can reason over.<br><br>
+        <strong style="color:var(--accent)">Categories:</strong>
+        <span style="color:var(--green)">Market</span> (quotes, depth, search) ·
+        <span style="color:var(--green)">Alerts</span> (create, list, enable/disable) ·
+        <span style="color:var(--green)">Condition Alerts</span> (trigger-based alerts) ·
+        <span style="color:var(--green)">Compute</span> (PCR, max pain, IV skew, support/resistance) ·
+        <span style="color:var(--green)">Pricing</span> (straddle, strangle, spreads, iron condor) ·
+        <span style="color:var(--green)">Events</span> (publish, list) ·
+        <span style="color:var(--green)">Consumer</span> (register, topics, ACK) ·
+        <span style="color:var(--green)">System</span> (ping)
+      </div>
       <div id="mcp-tools-loading" class="hint">Loading tools…</div>
       <div id="mcp-tools-empty" class="hint" style="display:none">No tools registered.</div>
       <div id="mcp-tools-error" class="hint" style="display:none;color:var(--red)"></div>
@@ -318,7 +332,6 @@
         <thead><tr><th>Tool</th><th>Description</th><th>Parameters</th></tr></thead>
         <tbody id="mcp-tools-body"></tbody>
       </table>
-      <p class="hint" style="margin-top:8px">Tools are registered at server startup. Use MCP protocol to call them.</p>
     </div>
   </section>
 
