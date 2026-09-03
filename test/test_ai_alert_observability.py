@@ -286,6 +286,7 @@ async def t6_repeat_alert_history(runner: R) -> None:
     bus = _StubBus()
     try:
         aid = _create_condition_alert(store, threshold=100.0, trigger_mode="repeat")
+        event_ids = []
         for i in range(3):
             data = {
                 "alert_family": "market_condition",
@@ -302,12 +303,24 @@ async def t6_repeat_alert_history(runner: R) -> None:
                 "instrument": {"canonical_id": "NSE:EQUITY:I"},
                 "one_shot": False,
             }
-            await events.publish_event(
+            result = await events.publish_event(
                 event_type="alert.triggered", source="test",
                 data=data, persistent=True,
                 routing={"targets": ["c1"]},
                 store=store, bus=bus,
             )
+            event_ids.append(result["id"])
+
+        # Simulate what the condition alert engine does: increment trigger_count
+        conn = store._open(store._db_path)
+        try:
+            conn.execute(
+                "UPDATE condition_alerts SET trigger_count = 3, "
+                "last_triggered_at = datetime('now') WHERE alert_id = ?",
+                (aid,))
+            conn.commit()
+        finally:
+            conn.close()
 
         from api.ai_alert_routes import build_ai_alert_routes
         from starlette.testclient import TestClient
@@ -359,6 +372,17 @@ async def t7_once_alert_single_trigger(runner: R) -> None:
             store=store, bus=bus,
         )
 
+        # Simulate engine: increment trigger_count
+        conn = store._open(store._db_path)
+        try:
+            conn.execute(
+                "UPDATE condition_alerts SET trigger_count = 1, "
+                "last_triggered_at = datetime('now') WHERE alert_id = ?",
+                (aid,))
+            conn.commit()
+        finally:
+            conn.close()
+
         from api.ai_alert_routes import build_ai_alert_routes
         from starlette.testclient import TestClient
         from starlette.applications import Starlette
@@ -384,7 +408,9 @@ async def t8_disabled_alert_shows_correctly(runner: R) -> None:
     name = "T8-disabled"
     store, tmp = _mk_store()
     try:
-        aid = _create_condition_alert(store, threshold=25000.0, enabled=False)
+        aid = _create_condition_alert(store, threshold=25000.0)
+        # Disable it after creation (create always inserts enabled=1)
+        store.set_condition_alert_enabled(aid, False)
 
         from api.ai_alert_routes import build_ai_alert_routes
         from starlette.testclient import TestClient
