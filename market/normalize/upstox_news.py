@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from market.models import NewsArticle, NewsSnapshot
+from market.models import NewsArticle, NewsPagination, NewsSnapshot
 
 
 def news_from_rest(payload: dict[str, Any], instrument_key: str = "") -> NewsSnapshot:
@@ -49,10 +49,14 @@ def news_from_rest(payload: dict[str, Any], instrument_key: str = "") -> NewsSna
                 source="upstox",
             ))
 
+    pagination = NewsPagination(
+        total_records=int(page_info.get("total_records") or 0),
+        page_number=int(page_info.get("page_number") or 1),
+        page_size=int(page_info.get("page_size") or 0),
+    )
+
     return NewsSnapshot(
         instrument_token=instrument_key or None,
         articles=tuple(articles),
-        total_records=int(page_info.get("total_records") or 0),
-        page=int(page_info.get("page_number") or 1),
-        page_size=int(page_info.get("page_size") or 0),
+        pagination=pagination,
     )

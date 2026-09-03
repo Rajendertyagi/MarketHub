@@ -175,7 +175,8 @@ class TestNewsArticle:
         assert len(result.articles) == 1
         assert result.articles[0].heading == "Reliance reports quarterly results"
         assert result.articles[0].summary == "Company posts 10% growth"
-        assert result.total_records == 1
+        assert result.pagination is not None
+        assert result.pagination.total_records == 1
         assert result.articles[0].published_time is not None
         assert result.articles[0].source == "upstox"
 

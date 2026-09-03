@@ -47,6 +47,28 @@ from helpers.runner import R  # noqa: E402
 HEAD_TIMEOUT = 10.0
 READ_TIMEOUT = 10.0
 
+# Global state set by _setup_globals() — used by all test functions.
+app = None
+market_service = None
+market_broker = None
+
+
+def _setup_globals() -> None:
+    """Import and cache the composed application objects for pytest."""
+    global app, market_service, market_broker
+    if app is not None:
+        return
+    from app.server import app as _app
+    from app.server import _market_event_broker as _broker
+    from app.server import _market_service as _service
+
+    app = _app
+    market_service = _service
+    market_broker = _broker
+
+
+_setup_globals()
+
 
 # ---------------------------------------------------------------------------
 # Minimal stdlib ASGI driver for GET-streaming endpoints
