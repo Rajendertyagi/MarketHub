@@ -279,6 +279,216 @@ async def t5_consumer_isolation(runner: R) -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+async def t6_repeat_alert_history(runner: R) -> None:
+    """Repeat alert triggers multiple times, each event visible in history."""
+    name = "T6-repeat-history"
+    store, tmp = _mk_store()
+    bus = _StubBus()
+    try:
+        aid = _create_condition_alert(store, threshold=100.0, trigger_mode="repeat")
+        for i in range(3):
+            data = {
+                "alert_family": "market_condition",
+                "alert_id": aid,
+                "consumer_id": "c1",
+                "condition": {
+                    "condition_version": 1, "logic": None,
+                    "conditions": [{"condition_version": 1, "condition_id": "c1",
+                                    "metric": "ltp", "operator": "gt",
+                                    "value": 100.0,
+                                    "instrument": {"canonical_id": "NSE:EQUITY:I"}}],
+                },
+                "observed": {"root_result": "true", "leaves": []},
+                "instrument": {"canonical_id": "NSE:EQUITY:I"},
+                "one_shot": False,
+            }
+            await events.publish_event(
+                event_type="alert.triggered", source="test",
+                data=data, persistent=True,
+                routing={"targets": ["c1"]},
+                store=store, bus=bus,
+            )
+
+        from api.ai_alert_routes import build_ai_alert_routes
+        from starlette.testclient import TestClient
+        from starlette.applications import Starlette
+        app = Starlette(routes=build_ai_alert_routes(store))
+        client = TestClient(app)
+        resp = client.get("/api/ai-alerts/events")
+        edata = resp.json()
+        runner.assert_eq(name + "-count", edata["count"], 3)
+
+        # Each event has distinct event_id
+        ids = {e["event_id"] for e in edata["events"]}
+        runner.assert_eq(name + "-unique-ids", len(ids), 3)
+
+        # Alert trigger_count should be 3
+        resp2 = client.get("/api/ai-alerts")
+        alert = [a for a in resp2.json()["alerts"] if a["alert_id"] == aid][0]
+        runner.assert_eq(name + "-trigger-count", alert["trigger_count"], 3)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+async def t7_once_alert_single_trigger(runner: R) -> None:
+    """Once alert triggers once and stays in history."""
+    name = "T7-once-single"
+    store, tmp = _mk_store()
+    bus = _StubBus()
+    try:
+        aid = _create_condition_alert(store, threshold=100.0, trigger_mode="once")
+        data = {
+            "alert_family": "market_condition",
+            "alert_id": aid,
+            "consumer_id": "c1",
+            "condition": {
+                "condition_version": 1, "logic": None,
+                "conditions": [{"condition_version": 1, "condition_id": "c1",
+                                "metric": "ltp", "operator": "gt",
+                                "value": 100.0,
+                                "instrument": {"canonical_id": "NSE:EQUITY:I"}}],
+            },
+            "observed": {"root_result": "true", "leaves": []},
+            "instrument": {"canonical_id": "NSE:EQUITY:I"},
+            "one_shot": True,
+        }
+        await events.publish_event(
+            event_type="alert.triggered", source="test",
+            data=data, persistent=True,
+            routing={"targets": ["c1"]},
+            store=store, bus=bus,
+        )
+
+        from api.ai_alert_routes import build_ai_alert_routes
+        from starlette.testclient import TestClient
+        from starlette.applications import Starlette
+        app = Starlette(routes=build_ai_alert_routes(store))
+        client = TestClient(app)
+
+        # Alert shows trigger_mode=once
+        resp = client.get("/api/ai-alerts")
+        alert = [a for a in resp.json()["alerts"] if a["alert_id"] == aid][0]
+        runner.assert_eq(name + "-mode", alert["trigger_mode"], "once")
+        runner.assert_eq(name + "-trigger-count", alert["trigger_count"], 1)
+
+        # Event visible in history
+        resp2 = client.get("/api/ai-alerts/events")
+        matching = [e for e in resp2.json()["events"] if e["alert_id"] == aid]
+        runner.assert_eq(name + "-event-count", len(matching), 1)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+async def t8_disabled_alert_shows_correctly(runner: R) -> None:
+    """Disabled alert shows enabled=false in API."""
+    name = "T8-disabled"
+    store, tmp = _mk_store()
+    try:
+        aid = _create_condition_alert(store, threshold=25000.0, enabled=False)
+
+        from api.ai_alert_routes import build_ai_alert_routes
+        from starlette.testclient import TestClient
+        from starlette.applications import Starlette
+        app = Starlette(routes=build_ai_alert_routes(store))
+        client = TestClient(app)
+        resp = client.get("/api/ai-alerts")
+        alert = [a for a in resp.json()["alerts"] if a["alert_id"] == aid][0]
+        runner.assert_eq(name + "-enabled", alert["enabled"], False)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+async def t9_deleted_alert_disappears(runner: R) -> None:
+    """Deleted alert disappears from active alerts list."""
+    name = "T9-deleted"
+    store, tmp = _mk_store()
+    try:
+        aid = _create_condition_alert(store, threshold=25000.0)
+
+        from api.ai_alert_routes import build_ai_alert_routes
+        from starlette.testclient import TestClient
+        from starlette.applications import Starlette
+        app = Starlette(routes=build_ai_alert_routes(store))
+        client = TestClient(app)
+
+        # Before delete
+        resp = client.get("/api/ai-alerts")
+        ids_before = {a["alert_id"] for a in resp.json()["alerts"]}
+        runner.assert_in(name + "-before", aid, ids_before)
+
+        # Delete
+        store.delete_condition_alert(aid)
+
+        # After delete
+        resp2 = client.get("/api/ai-alerts")
+        ids_after = {a["alert_id"] for a in resp2.json()["alerts"]}
+        runner.assert_not_in(name + "-after", aid, ids_after)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+async def t10_restart_preserves_state(runner: R) -> None:
+    """Reopening store preserves alerts, runtime state, and pending/ACK."""
+    name = "T10-restart"
+    tmp = tempfile.mkdtemp(prefix="airestart_")
+    try:
+        db_path = os.path.join(tmp, "events.db")
+        store1 = EventStore(db_path)
+        store1.register_consumer("c1")
+        bus = _StubBus()
+
+        aid = _create_condition_alert(store1, threshold=100.0)
+        data = {
+            "alert_family": "market_condition",
+            "alert_id": aid,
+            "consumer_id": "c1",
+            "condition": {
+                "condition_version": 1, "logic": None,
+                "conditions": [{"condition_version": 1, "condition_id": "c1",
+                                "metric": "ltp", "operator": "gt",
+                                "value": 100.0,
+                                "instrument": {"canonical_id": "NSE:EQUITY:I"}}],
+            },
+            "observed": {"root_result": "true", "leaves": []},
+            "instrument": {"canonical_id": "NSE:EQUITY:I"},
+            "one_shot": False,
+        }
+        result = await events.publish_event(
+            event_type="alert.triggered", source="test",
+            data=data, persistent=True,
+            routing={"targets": ["c1"]},
+            store=store1, bus=bus,
+        )
+
+        # Reopen store (simulates restart)
+        store2 = EventStore(db_path)
+
+        from api.ai_alert_routes import build_ai_alert_routes
+        from starlette.testclient import TestClient
+        from starlette.applications import Starlette
+        app = Starlette(routes=build_ai_alert_routes(store2))
+        client = TestClient(app)
+
+        # Alert preserved
+        resp = client.get("/api/ai-alerts")
+        alert_ids = {a["alert_id"] for a in resp.json()["alerts"]}
+        runner.assert_in(name + "-alert-preserved", aid, alert_ids)
+
+        # Event preserved with pending state
+        resp2 = client.get("/api/ai-alerts/events")
+        matching = [e for e in resp2.json()["events"] if e["event_id"] == result["id"]]
+        runner.assert_eq(name + "-event-count", len(matching), 1)
+        runner.assert_eq(name + "-event-state", matching[0]["delivery_state"], "persisted")
+
+        # ACK survives restart
+        store2.acknowledge_event("c1", result["id"])
+        resp3 = client.get("/api/ai-alerts/events")
+        evt = [e for e in resp3.json()["events"] if e["event_id"] == result["id"]][0]
+        runner.assert_eq(name + "-ack-preserved", evt["delivery_state"], "acknowledged")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 async def main() -> int:
     runner = R()
     try:
@@ -290,6 +500,11 @@ async def main() -> int:
             t3_ack_changes_status,
             t4_consumer_status,
             t5_consumer_isolation,
+            t6_repeat_alert_history,
+            t7_once_alert_single_trigger,
+            t8_disabled_alert_shows_correctly,
+            t9_deleted_alert_disappears,
+            t10_restart_preserves_state,
         ]
         for fn in tests:
             try:
