@@ -17,6 +17,8 @@ protobuf>=6.31.1,<7
 websockets>=17.0,<18.0
 # Fyers TBT feed fetches the dynamic WebSocket URL from the Fyers API.
 httpx>=0.27.0,<1.0.0
+# N1: News RSS/Atom parsing (used alongside httpx for HTTP fetch; never for network I/O).
+feedparser>=6.0.0,<7.0.0
 # WebUI credential management: Fernet authenticated encryption for long-lived
 # app credentials stored in the SQLite `secrets` table (app/secrets_store.py).
 # Lower bound: stable Fernet API present since 42; upper bound: next major.

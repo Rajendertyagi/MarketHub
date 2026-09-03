@@ -743,6 +743,27 @@ _market_intel = _MarketIntel(
     identity_resolver=_identity_registry)
 _services.market_intel = _market_intel
 
+# ── N1: News & Sentiment service ────────────────────────────────────────────
+from news.service import NewsService as _NewsService
+from news.adapters.rss import RSSAdapter as _RSSAdapter
+from news.adapters.reddit import RedditAdapter as _RedditAdapter
+
+_news_service = _NewsService(store=_store)
+_news_service.register_adapter(_RSSAdapter())
+_news_service.register_adapter(_RedditAdapter())
+
+# Seed default sources on startup (idempotent — deleted defaults stay deleted).
+_news_cfg = _config.get("news", {})
+if _news_cfg.get("enabled", True):
+    _defaults = _news_cfg.get("default_sources", [])
+    if _defaults:
+        try:
+            _news_service.seed_defaults(_defaults)
+        except Exception:
+            _app_logger.warning("news default seed failed", exc_info=True)
+
+_services.news_service = _news_service
+
 # Chat tool registry: same services, same semantics as REST/MCP.
 _chat_tools = _ChatToolRegistry(
     market_intel=_market_intel,

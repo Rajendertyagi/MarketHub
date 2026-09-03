@@ -39,6 +39,81 @@ DEFAULTS: dict[str, Any] = {
     # headers (avoids DNS-rebinding / open-redirect style abuse). Defaults to
     # the local dev address; override for LAN / reverse-proxy deployments.
     "public_base_url": "http://localhost:7070",
+    # N1: News & Sentiment — default sources seeded on first startup.
+    "news": {
+        "enabled": True,
+        "fetch_interval_seconds": 600,
+        "max_age_days": 30,
+        "default_source_limit": 50,
+        "sentiment": {
+            "enabled": True,
+        },
+        "default_sources": [
+            {
+                "source_id": "rss_moneycontrol",
+                "name": "Moneycontrol",
+                "source_type": "rss",
+                "category": "finance",
+                "config_json": {"url": "https://www.moneycontrol.com/rss/markets.xml"},
+            },
+            {
+                "source_id": "rss_etmarkets",
+                "name": "ET Markets",
+                "source_type": "rss",
+                "category": "finance",
+                "config_json": {"url": "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms"},
+            },
+            {
+                "source_id": "rss_livemint",
+                "name": "Livemint",
+                "source_type": "rss",
+                "category": "finance",
+                "config_json": {"url": "https://www.livemint.com/rss/markets"},
+            },
+            {
+                "source_id": "rss_coindesk",
+                "name": "CoinDesk",
+                "source_type": "rss",
+                "category": "crypto",
+                "config_json": {"url": "https://www.coindesk.com/arc/outboundfeeds/rss/"},
+            },
+            {
+                "source_id": "rss_cointelegraph",
+                "name": "CoinTelegraph",
+                "source_type": "rss",
+                "category": "crypto",
+                "config_json": {"url": "https://cointelegraph.com/rss"},
+            },
+            {
+                "source_id": "reddit_indianstockmarket",
+                "name": "r/IndianStockMarket",
+                "source_type": "reddit",
+                "category": "markets",
+                "config_json": {"subreddit": "IndianStockMarket"},
+            },
+            {
+                "source_id": "reddit_dalalstreettalks",
+                "name": "r/DalalStreetTalks",
+                "source_type": "reddit",
+                "category": "markets",
+                "config_json": {"subreddit": "DalalStreetTalks"},
+            },
+            {
+                "source_id": "reddit_indiainvestments",
+                "name": "r/IndiaInvestments",
+                "source_type": "reddit",
+                "category": "markets",
+                "config_json": {"subreddit": "IndiaInvestments"},
+            },
+            {
+                "source_id": "reddit_nifty50",
+                "name": "r/Nifty50",
+                "source_type": "reddit",
+                "category": "markets",
+                "config_json": {"subreddit": "Nifty50"},
+            },
+        ],
+    },
 }
 
 

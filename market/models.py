@@ -55,7 +55,10 @@ __all__ = [
     "MarketSession",
     "MaxPainData",
     "NewsArticle",
+    "NewsFilter",
+    "NewsResult",
     "NewsSnapshot",
+    "NewsSourceConfig",
     "OIChangeSnapshot",
     "OIChangeStrikeRow",
     "OISnapshot",
@@ -67,6 +70,9 @@ __all__ = [
     "OptionChainAnalyticsSnapshot",
     "PCRData",
     "Quote",
+    "RSSEntry",
+    "RedditPost",
+    "SentimentResult",
     "merge_greeks",
 ]
 
@@ -851,3 +857,110 @@ class OptionGreekSnapshot:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "entries", tuple(self.entries))
+
+
+# ---------------------------------------------------------------------------
+# News & Sentiment foundation models (N1)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class NewsSourceConfig:
+    """Persistent configuration for a generic news source.
+
+    ``config_json`` carries provider-specific settings (feed URL,
+    subreddit name, etc.) as a flat dict so future source types can
+    extend without schema changes.
+    """
+    source_id: str
+    name: str
+    source_type: str          # "rss" | "reddit" | future types
+    category: str             # e.g. "finance", "crypto", "markets"
+    enabled: bool = True
+    config_json: dict[str, Any] | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if self.source_type not in ("rss", "reddit"):
+            raise ValueError(f"unknown source_type: {self.source_type!r}")
+
+
+@dataclass(frozen=True, slots=True)
+class RSSEntry:
+    """Canonical RSS article from any provider."""
+    source_id: str
+    source_name: str
+    title: str
+    link: str
+    published: datetime | None = None
+    summary: str | None = None
+    author: str | None = None
+    guid: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.title.strip():
+            raise ValueError("RSS title must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
+class RedditPost:
+    """Canonical Reddit post from any subreddit."""
+    source_id: str
+    source_name: str
+    subreddit: str
+    title: str
+    score: int = 0
+    num_comments: int = 0
+    author: str | None = None
+    url: str | None = None
+    permalink: str | None = None
+    created_utc: datetime | None = None
+    selftext: str | None = None
+    upvote_ratio: float | None = None
+
+    def __post_init__(self) -> None:
+        if not self.title.strip():
+            raise ValueError("Reddit title must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
+class NewsFilter:
+    """Filter criteria for news/sentiment queries.
+
+    All fields are optional; omitted fields match everything.
+    """
+    source_ids: tuple[str, ...] | None = None
+    categories: tuple[str, ...] | None = None
+    keywords_include: tuple[str, ...] | None = None
+    keywords_exclude: tuple[str, ...] | None = None
+    symbol: str | None = None
+    max_age_hours: int | None = None
+    limit: int = 50
+
+
+@dataclass(frozen=True, slots=True)
+class SentimentResult:
+    """Sentiment analysis result for a single article or post."""
+    item_id: str
+    sentiment: str    # "positive" | "negative" | "neutral"
+    score: float      # -1.0 (bearish) to +1.0 (bullish)
+    matched_keywords: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "matched_keywords", tuple(self.matched_keywords))
+
+
+@dataclass(frozen=True, slots=True)
+class NewsResult:
+    """Aggregated result from a news/sentiment query."""
+    articles: tuple[RSSEntry | RedditPost, ...] = ()
+    sentiments: tuple[SentimentResult, ...] = ()
+    total_count: int = 0
+    sources_queried: tuple[str, ...] = ()
+    filtered: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "articles", tuple(self.articles))
+        object.__setattr__(self, "sentiments", tuple(self.sentiments))
+        object.__setattr__(self, "sources_queried", tuple(self.sources_queried))

@@ -30,4 +30,5 @@ class Services:
     instrument_catalog: Any = None      # canonical instrument catalog
     provider_market_data: Any = None    # history/option-chain services
     analytics_service: Any = None       # B6 MarketAnalyticsService
+    news_service: Any = None            # N1 News & Sentiment service
 

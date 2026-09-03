@@ -34,6 +34,7 @@ from core.persistence.modules import condition_alerts as _condition_alerts
 from core.persistence.modules import consumers as _consumers
 from core.persistence.modules import delivery as _delivery
 from core.persistence.modules import events as _events
+from core.persistence.modules import news as _news
 from core.persistence.modules import products as _products
 from core.persistence.modules import recent_events as _recent_events
 from core.persistence.modules import replay as _replay
@@ -42,6 +43,7 @@ from core.persistence.modules import secrets as _secrets
 from core.persistence.modules import source_state as _source_state
 from core.persistence.modules.products import migrate_v10_to_v11, migrate_v11_to_v12
 from core.persistence.modules.condition_alerts import migrate_v12_to_v13
+from core.persistence.modules.news import migrate_v13_to_v14
 from core.persistence.modules.schema import (
     SCHEMA_VERSION,
     create_v7_schema,
@@ -125,6 +127,8 @@ class EventStore:
                         migrate_v11_to_v12(conn)
                     elif current_version == 12:
                         migrate_v12_to_v13(conn)
+                    elif current_version == 13:
+                        migrate_v13_to_v14(conn)
                     else:
                         raise RuntimeError(
                             f"unsupported schema version {current_version}; "
@@ -1238,3 +1242,101 @@ class EventStore:
             conn_close = getattr(src, "close", None)
             if conn_close:
                 conn_close()
+
+    # ─── News & Sentiment (N1) ──────────────────────────────────────────────
+
+    def list_news_sources(self, *, enabled_only: bool = False) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _news.list_sources(conn, enabled_only=enabled_only)
+        finally:
+            conn.close()
+
+    def get_news_source(self, source_id: str) -> dict[str, Any] | None:
+        conn = self._open(self._db_path)
+        try:
+            return _news.get_source(conn, source_id)
+        finally:
+            conn.close()
+
+    def upsert_news_source(self, *, source_id: str, name: str,
+                           source_type: str, category: str, enabled: bool,
+                           config_json: dict[str, Any] | None = None) -> None:
+        from datetime import datetime, timezone
+        now_iso = datetime.now(timezone.utc).isoformat()
+        conn = self._open(self._db_path)
+        try:
+            _news.upsert_source(conn, source_id=source_id, name=name,
+                                source_type=source_type, category=category,
+                                enabled=enabled, config_json=config_json,
+                                now_iso=now_iso)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def delete_news_source(self, source_id: str) -> bool:
+        conn = self._open(self._db_path)
+        try:
+            result = _news.delete_source(conn, source_id)
+            conn.commit()
+            return result
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def set_news_source_enabled(self, source_id: str, enabled: bool) -> bool:
+        conn = self._open(self._db_path)
+        try:
+            result = _news.set_source_enabled(conn, source_id, enabled)
+            conn.commit()
+            return result
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def is_news_article_seen(self, article_id: str) -> bool:
+        conn = self._open(self._db_path)
+        try:
+            return _news.is_article_seen(conn, article_id)
+        finally:
+            conn.close()
+
+    def store_news_articles(self, articles: list[dict[str, Any]],
+                            fetched_at: str) -> int:
+        conn = self._open(self._db_path)
+        try:
+            count = _news.store_articles_batch(conn, articles, fetched_at)
+            conn.commit()
+            return count
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def recent_news_articles(self, *, source_id: str | None = None,
+                             limit: int = 50) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _news.recent_articles(conn, source_id=source_id, limit=limit)
+        finally:
+            conn.close()
+
+    def prune_news_articles(self, max_age_days: int) -> int:
+        conn = self._open(self._db_path)
+        try:
+            count = _news.prune_old_articles(conn, max_age_days)
+            conn.commit()
+            return count
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
