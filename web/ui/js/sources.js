@@ -47,14 +47,14 @@ function _renderNewsSources() {
   _newsSources.forEach(s => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td class="mono text-xs">${esc(s.source_id)}</td>
+      <td class="source-id">${esc(s.source_id)}</td>
       <td>${esc(s.name)}</td>
       <td><span class="news-action-btn">${esc(s.source_type)}</span></td>
       <td>${esc(s.category || "—")}</td>
       <td>${s.enabled
         ? '<span class="news-status-on">ON</span>'
         : '<span class="news-status-off">OFF</span>'}</td>
-      <td class="mono text-xs max-col-180 truncate">${
+      <td class="source-id source-summary">${
         s.source_type === "rss"
           ? esc((s.config_json?.url || "").substring(0, 50))
           : "r/" + esc(s.config_json?.subreddit || "")

@@ -9,32 +9,33 @@
  */
 
 function _aiStateBadge(state) {
-  const colors = { unknown: "text-muted", true: "text-pos", false: "text-neg" };
-  const labels = { unknown: "Unknown", true: "Triggered", false: "Normal" };
-  const c = colors[state] || colors.unknown;
+  const map = { true: "warning", false: "neutral", unknown: "neutral" };
+  const labels = { true: "Triggered", false: "Normal", unknown: "Unknown" };
+  const kind = map[state] || "neutral";
   const l = labels[state] || state;
-   return `<span class="${c} ui-label">${l}</span>`;
+  return `<span class="ui-badge ui-badge-${kind}">${l}</span>`;
 }
 
 function _aiDeliveryBadge(state) {
   const map = {
-    acknowledged: { bg: "bg-pos", fg: "text-inverse", label: "Acknowledged" },
-    pending: { bg: "bg-warning", fg: "text-inverse", label: "Pending" },
-    persisted: { bg: "bg-accent", fg: "text-inverse", label: "Persisted" },
+    acknowledged: "success",
+    pending: "warning",
+    persisted: "info",
   };
-  const s = map[state] || map.persisted;
-  return `<span class="badge ${s.bg} ${s.fg}">${s.label}</span>`;
+  const kind = map[state] || "info";
+  const labels = { acknowledged: "Acknowledged", pending: "Pending", persisted: "Persisted" };
+  return `<span class="ui-badge ui-badge-${kind}">${labels[state] || state}</span>`;
 }
 
 function _aiEnabledBadge(enabled) {
   return enabled
-    ? '<span class="text-pos">ON</span>'
-    : '<span class="text-muted">OFF</span>';
+    ? '<span class="ui-badge ui-badge-success">ON</span>'
+    : '<span class="ui-badge ui-badge-neutral">OFF</span>';
 }
 
 function _aiModeBadge(mode) {
-  const c = mode === "repeat" ? "text-accent" : "text-warning";
-  return `<span class="${c}">${mode}</span>`;
+  const kind = mode === "repeat" ? "info" : "neutral";
+  return `<span class="ui-badge ui-badge-${kind}">${mode}</span>`;
 }
 
 function _aiShortId(id) {
@@ -71,10 +72,10 @@ async function _loadAIConsumers() {
     const list = data.consumers || [];
     if (!list.length) { loadEl.classList.add("hidden"); emptyEl.classList.remove("hidden"); return; }
     cardsEl.innerHTML = list.map(c => `
-       <div class="d-inline-block bg-surface-2 border rounded pad-12-16 m-4-8-4-0 min-col-220">
-        <div class="fw-600 mb-6">${c.consumer_id}</div>
-        <div class="text-sm text-muted">
-          <div>Pending: <strong class="${c.pending_count > 0 ? 'text-warning' : 'text-pos'}">${c.pending_count}</strong></div>
+       <div class="ai-consumer-card">
+        <div class="ai-consumer-id">${c.consumer_id}</div>
+        <div class="ai-consumer-meta">
+          <div>Pending: <strong class="${c.pending_count > 0 ? 'ai-consumer-pending' : ''}">${c.pending_count}</strong></div>
           <div>Unacked: <strong>${c.unacknowledged_count}</strong></div>
           <div>Last trigger: ${c.last_triggered ? _aiTimeAgo(c.last_triggered.trigger_time) : '—'}</div>
           <div>Checkpoint: ${c.last_checkpoint ? '#' + c.last_checkpoint.last_sequence : '—'}</div>
@@ -103,11 +104,11 @@ async function _loadAIAlerts() {
       <td class="mono" title="${a.alert_id}">${_aiShortId(a.alert_id)}</td>
       <td>${a.consumer_id}</td>
       <td>${a.instrument || '—'}</td>
-       <td class="max-col-260 truncate" title="${a.condition_summary}">${a.condition_summary}</td>
-      <td>${_aiModeBadge(a.trigger_mode)}</td>
-      <td>${_aiStateBadge(a.current_state)}</td>
-      <td>${_aiEnabledBadge(a.enabled)}</td>
-      <td class="text-right">${a.trigger_count}</td>
+       <td class="ai-alert-condition" title="${a.condition_summary}">${a.condition_summary}</td>
+       <td>${_aiModeBadge(a.trigger_mode)}</td>
+       <td>${_aiStateBadge(a.current_state)}</td>
+       <td>${_aiEnabledBadge(a.enabled)}</td>
+       <td class="ai-alert-count">${a.trigger_count}</td>
       <td>${_aiTimeAgo(a.last_triggered_at)}</td>
       <td>${_aiTimeAgo(a.created_at)}</td>
     </tr>`).join("");
@@ -134,7 +135,7 @@ async function _loadAIEvents() {
       <td class="mono" title="${e.alert_id}">${_aiShortId(e.alert_id)}</td>
       <td>${e.consumer_id}</td>
       <td>${e.instrument || '—'}</td>
-       <td class="max-col-200 truncate" title="${e.condition_summary}">${e.condition_summary}</td>
+       <td class="ai-event-condition" title="${e.condition_summary}">${e.condition_summary}</td>
       <td>${_aiDeliveryBadge(e.delivery_state)}</td>
       <td>${_aiTimeAgo(e.trigger_time)}</td>
       <td>${e.acknowledged_at ? _aiTimeAgo(e.acknowledged_at) : '—'}</td>

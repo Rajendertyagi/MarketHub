@@ -19,7 +19,11 @@ document.body.appendChild(_colorProbe);
 function cssVar(name) {
   _colorProbe.style.color = `var(${name})`;
   const v = getComputedStyle(_colorProbe).color;
-  return v && v !== "rgba(0, 0, 0, 0)" ? v : "#888";
+  if (v && v !== "rgba(0, 0, 0, 0)") return v;
+  // Fallback to a MarketHub token, not a raw literal.
+  _colorProbe.style.color = "var(--text-muted)";
+  const f = getComputedStyle(_colorProbe).color;
+  return f && f !== "rgba(0, 0, 0, 0)" ? f : "#888";
 }
 
 export function initCharts() {

@@ -84,7 +84,7 @@ import { initSplitters } from "./core/splitter.js";
     if (!box) return null;
     const div = document.createElement("div");
     div.className = "hint " + (role === "user" ? "" : "ok");
-    div.classList.add("pre-wrap", "mb-6")
+    div.classList.add("chat-msg")
     div.textContent = (role === "user" ? "You: " : "Assistant: ") + text;
     box.appendChild(div);
     box.scrollTop = box.scrollHeight;

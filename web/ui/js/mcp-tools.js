@@ -6,17 +6,17 @@
  * count, or contract versions. Loading is idempotent fetch+render.
  */
 
-const _MCP_CAT_COLORS = {
-  "Market": "bg-pos", "Market Alerts": "bg-info",
-  "Alerts": "bg-warning", "Condition Alerts": "bg-accent",
-  "Compute": "bg-info", "Pricing": "bg-info",
-  "Analytics": "bg-warning", "Events": "bg-pos",
-  "Consumer": "bg-surface-2", "System": "bg-surface-2",
-  "Other": "bg-surface-2",
+const _MCP_CAT_KIND = {
+  "Market": "info", "Market Alerts": "info",
+  "Alerts": "warning", "Condition Alerts": "warning",
+  "Compute": "info", "Pricing": "info",
+  "Analytics": "warning", "Events": "info",
+  "Consumer": "neutral", "System": "neutral",
+  "Other": "neutral",
 };
 function _mcpCatBadge(cat) {
-  const c = _MCP_CAT_COLORS[cat] || "bg-surface-2";
-  return `<span class="badge ${c} text-inverse">${cat}</span>`;
+  const kind = _MCP_CAT_KIND[cat] || "neutral";
+  return `<span class="ui-badge ui-badge-${kind}">${cat}</span>`;
 }
 
 async function _loadMCPTools() {
@@ -55,11 +55,11 @@ async function _loadMCPTools() {
           ? t.input_schema.required.join(", ")
           : "";
         const desc = (t.description || "—").split("\n")[0].trim();
-        html += `<tr>
+         html += `<tr>
           <td><code>${t.name}</code></td>
           <td>${_mcpCatBadge(t.category)}</td>
-          <td class="max-col-320 text-sm" title="${(t.description||'').replace(/"/g,'&quot;')}">${desc}</td>
-          <td class="text-xs text-muted">${params}${required ? ' <span class="text-warning" title="required">('+required+')</span>' : ''}</td>
+          <td class="mcp-tool-description" title="${(t.description||'').replace(/"/g,'&quot;')}">${desc}</td>
+          <td class="mcp-tool-params">${params}${required ? ' <span class="mcp-tool-required" title="required">('+required+')</span>' : ''}</td>
         </tr>`;
       });
     });

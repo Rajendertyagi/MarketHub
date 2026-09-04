@@ -75,19 +75,19 @@ export function initArticleListUI(store) {
       let sk = "";
       for (let i = 0; i < 6; i++) {
         sk += `<div class="news-skeleton-row">` +
-          `<span class="ui-skeleton skel-85"></span>` +
-          `<span class="ui-skeleton skel-55"></span></div>`;
+          `<span class="ui-skeleton news-skeleton-lg"></span>` +
+          `<span class="ui-skeleton news-skeleton-sm"></span></div>`;
       }
       listEl.innerHTML = sk;
       return;
     }
     if (store.error && !store.order.length) {
-       listEl.innerHTML = `<div class="empty-row p-20 text-center text-neg">` +
-        `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" class="svg-icon"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg> Error: ${esc(store.error)}</div>`;
-      return;
-    }
-    if (!store.order.length) {
-       listEl.innerHTML = '<div class="empty-row p-20 text-center">' +
+       listEl.innerHTML = `<div class="empty-row empty-error">` +
+         `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" class="svg-icon"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg> Error: ${esc(store.error)}</div>`;
+       return;
+     }
+     if (!store.order.length) {
+       listEl.innerHTML = '<div class="empty-row">' +
         (store.loadedOnce ? "No articles match these filters" : "Open News to load articles") + "</div>";
       return;
     }

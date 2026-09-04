@@ -1,0 +1,5 @@
+/* Option Chain feature — composition only. */
+
+.option-chain-atm { background: var(--accent-soft); }
+.option-chain-scroll { overflow-x: auto; }
+.oc-underlying { width: 240px; max-width: 100%; }

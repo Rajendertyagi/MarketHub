@@ -1,0 +1,8 @@
+/* Market Sources feature — composition only. */
+
+.market-source-prop { color: var(--text-muted); }
+.market-source-prop-first { width: 180px; color: var(--text-muted); }
+.market-source-stale { color: var(--neg); }
+.market-source-busy { opacity: 0.6; }
+.market-source-meta { font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--text-muted); }
+.market-source-transitions-label { color: var(--text-muted); vertical-align: top; }

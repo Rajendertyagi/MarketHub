@@ -139,3 +139,14 @@
 /* ── State ───────────────────────────────────────────────── */
 .ui-error { color: var(--danger); font-size: var(--font-size-sm); }
 .ui-hidden { display: none !important; }
+
+/* Badge semantic variants (state, not financial direction) */
+.ui-badge.success { background: color-mix(in srgb, var(--success) 18%, transparent); color: var(--success); }
+.ui-badge.danger  { background: color-mix(in srgb, var(--danger) 18%, transparent);  color: var(--danger); }
+.ui-badge.warning { background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning); }
+.ui-badge.info    { background: color-mix(in srgb, var(--info) 18%, transparent);    color: var(--info); }
+
+/* Legacy .btn variants (component concern, not utilities) */
+.btn-compact { padding: 2px 8px; font-size: var(--font-size-xs); }
+.btn-outline-danger { color: var(--danger); border-color: var(--danger); background: transparent; }
+.btn-outline-danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }

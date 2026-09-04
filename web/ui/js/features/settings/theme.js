@@ -1,25 +1,15 @@
 // features/settings/theme.js
-// Multi-theme engine. Themes are sourced from openchamber, each shipped as a
-// dark + light variant. The active theme is the single source of truth via the
-// [data-theme] attribute on <html>; the selection persists in localStorage and
-// is chosen from the Settings → General theme picker.
+// Theme engine. Two supported themes only: dark (primary) and light (optional).
+// The active theme is the single source of truth via the [data-theme] attribute
+// on <html>; the selection persists in localStorage and is chosen from the
+// Settings → General theme picker. Unsupported stored values map to DEFAULT.
 
 export const THEMES = [
-  { id: "ayu-dark",          label: "Ayu · Dark",          family: "ayu",          mode: "dark" },
-  { id: "ayu-light",         label: "Ayu · Light",         family: "ayu",          mode: "light" },
-  { id: "carbonfox-dark",    label: "Carbonfox · Dark",    family: "carbonfox",    mode: "dark" },
-  { id: "carbonfox-light",   label: "Carbonfox · Light",   family: "carbonfox",    mode: "light" },
-  { id: "catppuccin-dark",   label: "Catppuccin · Dark",   family: "catppuccin",   mode: "dark" },
-  { id: "catppuccin-light",  label: "Catppuccin · Light",  family: "catppuccin",   mode: "light" },
-  { id: "gruvbox-dark",      label: "Gruvbox · Dark",      family: "gruvbox",      mode: "dark" },
-  { id: "gruvbox-light",     label: "Gruvbox · Light",     family: "gruvbox",      mode: "light" },
-  { id: "mono-dark",         label: "Mono · Dark",         family: "mono",         mode: "dark" },
-  { id: "mono-light",        label: "Mono · Light",        family: "mono",         mode: "light" },
-  { id: "openchamber-dark",  label: "OpenChamber · Dark",  family: "openchamber",  mode: "dark" },
-  { id: "openchamber-light", label: "OpenChamber · Light", family: "openchamber",  mode: "light" },
+  { id: "dark",  label: "Dark",  mode: "dark" },
+  { id: "light", label: "Light", mode: "light" },
 ];
 
-const DEFAULT_THEME = "openchamber-dark";
+const DEFAULT_THEME = "dark";
 const STORAGE_KEY = "mh-theme";
 
 function currentThemeId() {
@@ -64,20 +54,12 @@ function initThemeSettings() {
   const sel = document.getElementById("settings-theme-select");
   if (!sel) return;
 
-  const families = {};
-  for (const t of THEMES) (families[t.family] ||= []).push(t);
-
   sel.innerHTML = "";
-  for (const [family, list] of Object.entries(families)) {
-    const og = document.createElement("optgroup");
-    og.label = family.charAt(0).toUpperCase() + family.slice(1);
-    for (const t of list) {
-      const opt = document.createElement("option");
-      opt.value = t.id;
-      opt.textContent = t.mode === "dark" ? "Dark" : "Light";
-      og.appendChild(opt);
-    }
-    sel.appendChild(og);
+  for (const t of THEMES) {
+    const opt = document.createElement("option");
+    opt.value = t.id;
+    opt.textContent = t.label;
+    sel.appendChild(opt);
   }
 
   sel.value = currentThemeId();

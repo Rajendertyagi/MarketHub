@@ -106,9 +106,9 @@ async function loadAlerts() {
         return `<tr data-alert-id="${a.id}">` +
           `<td>${escDash(a.tradingsymbol)}</td><td>${cond}</td>` +
           `<td><span class="${stateCls}">${a.state}</span></td>` +
-          `<td><button class="btn alert-toggle" data-enabled="${a.enabled ? "true" : "false"}" class="btn-xs">${a.enabled ? "On" : "Off"}</button></td>` +
-          `<td><button class="btn alert-rearm btn-xs">Re-arm</button> ` +
-          `<button class="btn alert-delete btn-xs btn-outline-neg">✕</button></td></tr>`;
+          `<td><button class="btn btn-compact alert-toggle" data-enabled="${a.enabled ? "true" : "false"}">${a.enabled ? "On" : "Off"}</button></td>` +
+          `<td><button class="btn btn-compact alert-rearm">Re-arm</button> ` +
+          `<button class="btn btn-compact btn-outline-danger alert-delete">✕</button></td></tr>`;
       }).join("");
     }
     const notes = data.notifications || [];
