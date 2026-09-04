@@ -33,7 +33,7 @@ export async function pollAuthStatus() {
     if (loginBtn) {
       // Only offer login when BOTH credentials and a live feed exist.
       const ready = d.oauth_available && d.configured !== false;
-      loginBtn.style.display = ready ? "" : "none";
+      loginBtn.classList.toggle("hidden", !ready);
       if (ready) {
         loginBtn.disabled = d.auth_state === "authorizing";
         loginBtn.textContent = d.token_configured
@@ -335,7 +335,7 @@ export function initFyers() {
         loginChip.textContent = "Login Required";
         loginChip.className = "chip chip-off";
       }
-      loginBtn.style.display = d.login_available ? "" : "none";
+      loginBtn.classList.toggle("hidden", !d.login_available);
       // Feed runtime state comes from the source manager, not auth.
       try {
         const sres = await fetch("/api/sources/status");

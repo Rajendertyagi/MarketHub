@@ -13,6 +13,7 @@ import { getNewsSources, loadNewsSources } from "../../sources.js";
 import { createNewsStore } from "./state.js";
 import { aggregateSentiment, aggregateText } from "./sentiment.js";
 import { initFeedsUI } from "./feeds.js";
+import { initFiltersUI } from "./filters.js";
 import { initArticleListUI } from "./article-list.js";
 import { initReaderUI } from "./reader.js";
 
@@ -106,9 +107,7 @@ async function loadArticles({ refresh = false, resetScroll = false, resetSelecti
 
 async function refreshNews() {
   const b1 = $("news-refresh");
-  const b2 = $("news-refresh-m");
   if (b1) b1.disabled = true;
-  if (b2) b2.disabled = true;
   const errEl = $("news-error");
   try {
     await apiPost("/api/news/refresh", {});
@@ -122,7 +121,6 @@ async function refreshNews() {
     }
   }
   if (b1) b1.disabled = false;
-  if (b2) b2.disabled = false;
 }
 
 /**
@@ -147,38 +145,51 @@ function syncFilterInputs() {
   set("news-filter-source", f.sourceId);
   set("news-filter-category", f.category);
   set("news-filter-keywords", f.keywords);
-  set("news-filter-keywords-m", f.keywords);
   set("news-filter-symbol", f.symbol);
   set("news-filter-max-age", f.maxAgeH);
+}
+
+/** Canonical filter commit: merge partial updates, resolve scope, reload. */
+function commitFilters(patch, meta) {
+  const sourceChanged = !!(meta && meta.sourceChanged);
+  const prevSource = store.filters.sourceId || "";
+  const next = { ...store.filters };
+  Object.keys(patch || {}).forEach((k) => {
+    if (k in next) next[k] = patch[k] || "";
+  });
+  const scopeChanged = sourceChanged || (next.sourceId || "") !== prevSource;
+  const sameScope = !scopeChanged;
+  store.setFilters(next);
+  syncFilterInputs();
+  // Scope change → first article + scroll reset; same-scope edits
+  // preserve selection when still present (§11).
+  loadArticles({ resetScroll: !sameScope, resetSelection: scopeChanged });
+}
+
+/** Chip × / Clear all: empty one filter ("" = all filters). */
+function clearFilter(key) {
+  const patch = {};
+  if (!key) {
+    ["sourceId", "category", "symbol", "maxAgeH", "keywords"].forEach((k) => { patch[k] = ""; });
+  } else {
+    patch[key] = "";
+  }
+  commitFilters(patch, { sourceChanged: key === "" || key === "sourceId" });
 }
 
 export function initNewsUI() {
   if (_wired) return;
   _wired = true;
-  initFeedsUI(store, {
-    onFilters: (f, meta) => {
-      const sourceChanged = !!(meta && meta.sourceChanged);
-      const sameScope = !sourceChanged && store.filters.sourceId === (f.sourceId || "");
-      store.setFilters({
-        sourceId: f.sourceId || "",
-        category: f.category || "",
-        keywords: f.keywords || "",
-        symbol: f.symbol || "",
-        maxAgeH: f.maxAgeH || "",
-      });
-      syncFilterInputs();
-      // Scope change → first article + scroll reset; same-scope filter
-      // edits preserve selection when still present (§11).
-      loadArticles({ resetScroll: !sameScope, resetSelection: sourceChanged });
-    },
+  initFeedsUI(store, { onFilters: (f, meta) => commitFilters(f, meta) });
+  initFiltersUI(store, {
+    onFilters: (f, meta) => commitFilters(f, meta),
+    onClearFilter: (key) => clearFilter(key),
   });
   _list = initArticleListUI(store);
   initReaderUI(store, { onStep: (d) => { if (_list) _list.selectIndex(d); } });
 
   const r1 = $("news-refresh");
   if (r1) r1.addEventListener("click", () => refreshNews());
-  const r2 = $("news-refresh-m");
-  if (r2) r2.addEventListener("click", () => refreshNews());
   const pill = $("news-new-pill");
   if (pill) {
     pill.addEventListener("click", () => {

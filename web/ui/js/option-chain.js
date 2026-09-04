@@ -111,7 +111,7 @@ function renderOcStrikes() {
     (x.close != null && x.ltp != null) ? fmt(x.ltp - x.close) : "—",
   ].map((v) => `<td>${v}</td>`).join("") : "<td>—</td>".repeat(6);
   $("oc-body").innerHTML = rows.map((s) => {
-    const rowCls = s.atm ? ' style="background:var(--accent-dim)"' : "";
+    const rowCls = s.atm ? ' class="bg-accent-dim"' : "";
     return `<tr${rowCls}>` + side(s.call) +
       `<td><b>${fmt(s.strike)}</b></td>` + side(s.put) + "</tr>";
   }).join("");

@@ -117,7 +117,7 @@ function updateMktRow(key, q) {
   if (!row) {
     row = document.createElement("tr");
     row.dataset.key = key;
-    row.style.cursor = "pointer";
+    row.classList.add("cursor-pointer");
     row.innerHTML = `
       <td class="sym"></td><td class="ltp"></td><td class="chg"></td>
       <td class="pct"></td><td class="open"></td><td class="high"></td>
@@ -244,7 +244,7 @@ export function initFilter() {
     const term = e.target.value.toLowerCase();
     mktRows.forEach((row, key) => {
       const sym = row.querySelector(".sym").textContent.toLowerCase();
-      row.style.display = sym.includes(term) ? "" : "none";
+      row.classList.toggle("hidden", !sym.includes(term));
     });
   });
 }

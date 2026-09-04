@@ -9,6 +9,18 @@ import { $, escDash, fmt, fmtNum, fmtVol } from "./utils.js";
 
 let chartSelection = null;   // {instrument_key, exchange, tradingsymbol}
 let chartInstance = null;    // singleton ECharts instance
+let lastCandles = null;      // last rendered series, for live theme recolor
+
+// Resolve a CSS custom property to a concrete color (handles color-mix too),
+// so ECharts (canvas) can consume the active theme's tokens.
+const _colorProbe = document.createElement("div");
+_colorProbe.style.display = "none";
+document.body.appendChild(_colorProbe);
+function cssVar(name) {
+  _colorProbe.style.color = `var(${name})`;
+  const v = getComputedStyle(_colorProbe).color;
+  return v && v !== "rgba(0, 0, 0, 0)" ? v : "#888";
+}
 
 export function initCharts() {
   const search = $("chart-search");
@@ -83,6 +95,11 @@ export function initCharts() {
       msg.className = "hint err";
     }
   });
+
+  // Recolor the open chart live when the theme changes (no refetch needed).
+  window.addEventListener("mh-themechange", () => {
+    if (chartInstance && lastCandles) renderChart(lastCandles);
+  });
 }
 
 function sma(values, period) {
@@ -105,39 +122,62 @@ function renderChart(candles) {
   if (!chartInstance) {
     chartInstance = echarts.init($("chart-container"));
   }
+  lastCandles = candles;
+  const pos = cssVar("--pos");
+  const neg = cssVar("--neg");
+  const accent = cssVar("--accent");
+  const info = cssVar("--info");
+  const textMuted = cssVar("--text-muted");
+  const border = cssVar("--border");
+  const surface = cssVar("--surface-1");
+  const textColor = cssVar("--text");
   const times = candles.map((c) =>
     c.timestamp.slice(0, 16).replace("T", " "));
   const closes = candles.map((c) => c.close);
+  const opens = candles.map((c) => c.open);
   const kline = candles.map((c) => [c.open, c.close, c.low, c.high]);
-  const vols = candles.map((c) => c.volume ?? 0);
+  const vols = candles.map((c, i) => ({
+    value: c.volume ?? 0,
+    itemStyle: { color: closes[i] >= opens[i] ? pos : neg },
+  }));
   chartInstance.setOption({
     animation: false,
-    tooltip: { trigger: "axis", axisPointer: { type: "cross" } },
-    legend: { data: ["SMA20", "SMA50"], top: 0 },
+    tooltip: { trigger: "axis", axisPointer: { type: "cross" },
+      backgroundColor: surface, borderColor: border, textStyle: { color: textColor } },
+    legend: { data: ["SMA20", "SMA50"], top: 0, textStyle: { color: textMuted } },
     axisPointer: { link: [{ xAxisIndex: "all" }] },
     grid: [{ left: 60, right: 20, top: 24, height: "56%" },
            { left: 60, right: 20, top: "72%", height: "18%" }],
     xAxis: [
-      { type: "category", data: times },
+      { type: "category", data: times,
+        axisLabel: { color: textMuted },
+        axisLine: { lineStyle: { color: border } },
+        splitLine: { lineStyle: { color: border } } },
       { type: "category", gridIndex: 1, data: times,
-        axisLabel: { show: false } },
+        axisLabel: { show: false },
+        axisLine: { lineStyle: { color: border } },
+        splitLine: { show: false } },
     ],
     yAxis: [
-      { scale: true },
-      { gridIndex: 1, axisLabel: { show: false } },
+      { scale: true, axisLabel: { color: textMuted },
+        axisLine: { lineStyle: { color: border } },
+        splitLine: { lineStyle: { color: border } } },
+      { gridIndex: 1, axisLabel: { show: false },
+        axisLine: { lineStyle: { color: border } },
+        splitLine: { show: false } },
     ],
     dataZoom: [
       { type: "inside", xAxisIndex: [0, 1] },
-      { type: "slider", xAxisIndex: [0, 1], top: "92%" },
+      { type: "slider", xAxisIndex: [0, 1], top: "92%",
+        textStyle: { color: textMuted }, borderColor: border },
     ],
     series: [
       { type: "candlestick", name: "Price", data: kline,
-        itemStyle: { color: "#3fb950", color0: "#f85149",
-                     borderColor: "#3fb950", borderColor0: "#f85149" } },
+        itemStyle: { color: pos, color0: neg, borderColor: pos, borderColor0: neg } },
       { type: "line", name: "SMA20", data: sma(closes, 20),
-        showSymbol: false, lineStyle: { width: 1 } },
+        showSymbol: false, lineStyle: { width: 1, color: accent } },
       { type: "line", name: "SMA50", data: sma(closes, 50),
-        showSymbol: false, lineStyle: { width: 1 } },
+        showSymbol: false, lineStyle: { width: 1, color: info } },
       { type: "bar", xAxisIndex: 1, yAxisIndex: 1, data: vols },
     ],
   });

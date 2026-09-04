@@ -34,6 +34,7 @@ import { initSettingsUI } from "./features/settings/index.js";
 import { initGeneralSettings } from "./features/settings/general.js";
 import { initAIMCPSettings } from "./features/settings/ai-mcp.js";
 import { initBackupSettings } from "./features/settings/backup.js";
+import { initTheme } from "./features/settings/theme.js";
 import { initSplitters } from "./core/splitter.js";
 
   // ── DOM shortcuts ───────────────────────────────────────────────────────
@@ -49,25 +50,8 @@ import { initSplitters } from "./core/splitter.js";
   // feature modules that need them)
 
   // ── Theme ───────────────────────────────────────────────────────────────
-
-  function initTheme() {
-    const saved = localStorage.getItem("mh-theme") || "dark";
-    applyTheme(saved);
-    $("theme-toggle").addEventListener("click", toggleTheme);
-    $("settings-theme-toggle").addEventListener("click", toggleTheme);
-  }
-
-  function applyTheme(theme) {
-    const isLight = theme === "light";
-    // MarketHub owns theming via the [data-theme] attribute only.
-    document.documentElement.setAttribute("data-theme", isLight ? "light" : "dark");
-    localStorage.setItem("mh-theme", theme);
-  }
-
-  function toggleTheme() {
-    const cur = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
-    applyTheme(cur);
-  }
+  // Multi-theme engine lives in ./features/settings/theme.js (THEMES registry,
+  // applyTheme, initThemeSettings). initTheme() is imported and called below.
 
   // ── Navigation ──────────────────────────────────────────────────────────
   // (view state + switching live in ./router.js)
@@ -100,8 +84,7 @@ import { initSplitters } from "./core/splitter.js";
     if (!box) return null;
     const div = document.createElement("div");
     div.className = "hint " + (role === "user" ? "" : "ok");
-    div.style.whiteSpace = "pre-wrap";
-    div.style.marginBottom = "6px";
+    div.classList.add("pre-wrap", "mb-6")
     div.textContent = (role === "user" ? "You: " : "Assistant: ") + text;
     box.appendChild(div);
     box.scrollTop = box.scrollHeight;
@@ -142,7 +125,7 @@ import { initSplitters } from "./core/splitter.js";
       input.value = "";
       send.disabled = true;
       const errEl = document.getElementById("chat-error");
-      errEl.style.display = "none";
+      errEl.classList.add("hidden");
       chatAppend("user", text);
       let assistantText = "";
       const live = chatAppend("assistant", "\u2026");
@@ -177,7 +160,7 @@ import { initSplitters } from "./core/splitter.js";
               chatActivity("");
             } else if (ev.type === "error") {
               errEl.textContent = ev.message;
-              errEl.style.display = "block";
+              errEl.classList.remove("hidden");
             }
           }
         }
@@ -190,7 +173,7 @@ import { initSplitters } from "./core/splitter.js";
       } catch (e) {
         live.textContent = "Assistant: (failed)";
         errEl.textContent = String(e.message || e);
-        errEl.style.display = "block";
+        errEl.classList.remove("hidden");
       } finally {
         send.disabled = false;
         input.focus();

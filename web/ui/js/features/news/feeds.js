@@ -1,25 +1,17 @@
 /**
- * MarketHub WebUI — News feed rail (N-UI1).
+ * MarketHub WebUI — News source rail (N-UI1.1).
  *
- * Owns: source list + per-source counts (computed from the CURRENT LOADED
- * result set — never a per-source backend request), compact filter inputs,
- * and the compact tablet/phone source selector. Emits intent via callbacks;
- * renders only from store state. Source CRUD stays in sources.js/Settings.
+ * Quick source navigation ONLY. No filter form, no inputs, no debounce —
+ * those live in filters.js (single canonical toolbar). Clicking a source
+ * is equivalent to changing the Source toolbar filter: both mutate the
+ * same store.filters.sourceId. Counts come from the CURRENT LOADED result
+ * set (countsBySource); never a per-source backend request.
  */
 
 import { $, esc, escAttr } from "../../utils.js";
 
-const DEBOUNCE_MS = 400;
-
 export function initFeedsUI(store, hooks) {
   const listEl = $("news-source-list");
-  const compactSel = $("news-filter-source");
-  let debounceTimer = 0;
-
-  function sourceName(sid) {
-    const s = (store.sources || []).find((x) => x.source_id === sid);
-    return (s && s.name) || sid;
-  }
 
   function renderSources() {
     if (!listEl) return;
@@ -27,7 +19,7 @@ export function initFeedsUI(store, hooks) {
     const total = store.order.length;
     const active = store.filters.sourceId || "";
     let html = `<li><button type="button" class="news-source-item${active === "" ? " active" : ""}"` +
-      ` data-news-source="" aria-current="${active === "" ? "true" : "false"}"` +
+      ` data-news-source=""${active === "" ? ' aria-current="true"' : ""}` +
       ` title="All loaded articles"><span>All Sources</span>` +
       `<span class="count">${total}</span></button></li>`;
     (store.sources || []).forEach((s) => {
@@ -40,90 +32,22 @@ export function initFeedsUI(store, hooks) {
         `<span>${esc(s.name || sid)}</span><span class="count">${c}</span></button></li>`;
     });
     listEl.innerHTML = html;
-    if (compactSel) {
-      compactSel.innerHTML = '<option value="">All Sources</option>';
-      (store.sources || []).forEach((s) => {
-        const opt = document.createElement("option");
-        opt.value = s.source_id;
-        opt.textContent = `${s.name} (${counts.get(s.source_id) || 0})`;
-        compactSel.appendChild(opt);
-      });
-      // Mirror rail selection; unknown ids fall back to "All Sources".
-      compactSel.value = store.filters.sourceId || "";
-    }
-  }
-
-  function readInputs() {
-    // NOTE: "" means "All Sources" — never fall back to stale store state.
-    const sid = compactSel ? compactSel.value : (store.filters.sourceId || "");
-    return {
-      sourceId: sid || "",
-      category: $("news-filter-category")?.value.trim() || "",
-      keywords: $("news-filter-keywords")?.value.trim()
-        || $("news-filter-keywords-m")?.value.trim() || "",
-      symbol: $("news-filter-symbol")?.value.trim() || "",
-      maxAgeH: $("news-filter-max-age")?.value.trim() || "",
-    };
-  }
-
-  function commitFilters(sourceChanged, overrideSourceId) {
-    const f = readInputs();
-    if (overrideSourceId !== undefined) {
-      // Rail-initiated change: the rail button is authoritative, not the
-      // (possibly stale) compact selector.
-      f.sourceId = overrideSourceId;
-      if (compactSel) compactSel.value = overrideSourceId;
-    }
-    hooks.onFilters(f, { sourceChanged: !!sourceChanged });
-  }
-
-  function scheduleCommit() {
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => { debounceTimer = 0; commitFilters(false); }, DEBOUNCE_MS);
   }
 
   if (listEl) {
+    // Delegated once; the <ul> persists across re-renders.
     listEl.addEventListener("click", (e) => {
       const btn = e.target && e.target.closest ? e.target.closest("[data-news-source]") : null;
-      if (!btn) return;
-      const sid = btn.getAttribute("data-news-source") || "";
-      commitFilters(true, sid);
-    });
-  }
-  if (compactSel) {
-    compactSel.addEventListener("change", () => commitFilters(true));
-  }
-  ["news-filter-category", "news-filter-keywords", "news-filter-symbol", "news-filter-max-age"].forEach((id) => {
-    const el = $(id);
-    if (!el) return;
-    el.addEventListener("input", scheduleCommit);
-    el.addEventListener("change", () => {
-      if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = 0; }
-      commitFilters(false);
-    });
-    el.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = 0; }
-        commitFilters(false);
-      }
-    });
-  });
-  const compactKw = $("news-filter-keywords-m");
-  if (compactKw) {
-    compactKw.addEventListener("input", scheduleCommit);
-    compactKw.addEventListener("change", () => {
-      if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = 0; }
-      commitFilters(false);
-    });
-    compactKw.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = 0; }
-        commitFilters(false);
-      }
+      if (!btn || !hooks.onFilters) return;
+      // Rail is authoritative for sourceId; remaining filters merge from
+      // current store state in index.js (no stale-control fallback).
+      hooks.onFilters(
+        { sourceId: btn.getAttribute("data-news-source") || "" },
+        { sourceChanged: true });
     });
   }
 
   store.on("articles", renderSources);
   store.on("filters", renderSources);
-  return { renderSources, sourceName };
+  return { renderSources };
 }
