@@ -45,6 +45,7 @@ DEFAULTS: dict[str, Any] = {
         "fetch_interval_seconds": 600,
         "max_age_days": 30,
         "default_source_limit": 50,
+        "retention_days": 30,
         "sentiment": {
             "enabled": True,
         },

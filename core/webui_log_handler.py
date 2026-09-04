@@ -11,7 +11,34 @@ import traceback
 from typing import Any
 
 from core.log_buffer import LogBuffer, LogRecord
-from core.log_redaction import redact_message, redact_record, redact_value
+from core.log_redaction import (
+    _MAX_LOG_EXCEPTION_LEN,
+    _MAX_LOG_MESSAGE_LEN,
+    bound_string,
+    redact_message,
+    redact_record,
+    redact_value,
+)
+
+# ── Logger exclusions (SSE feedback-loop guard) ─────────────────────────────
+# Transport loggers that log the SSE byte stream itself (notably
+# ``sse_starlette``, which debug-logs every chunk it sends) must NEVER
+# enter the WebUI log pipeline: capturing them would feed each broadcast
+# chunk back into the buffer and re-broadcast it — a self-amplifying
+# CPU/memory runaway that wedges the server.  Filtering is by logger
+# NAME (never message text).  Extend this tuple if other transport
+# namespaces ever log raw stream bytes.
+_EXCLUDED_LOGGER_PREFIXES: tuple[str, ...] = (
+    "sse_starlette",
+)
+
+
+def _is_excluded_logger(name: str | None) -> bool:
+    """True when a logger namespace is excluded from WebUI capture."""
+    if not name:
+        return False
+    return any(name == p or name.startswith(p + ".")
+               for p in _EXCLUDED_LOGGER_PREFIXES)
 
 
 class WebUILogHandler(logging.Handler):
@@ -46,6 +73,10 @@ class WebUILogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         """Process a single log record."""
         try:
+            # Transport-chunk feedback guard: never capture SSE transport
+            # namespaces (see _EXCLUDED_LOGGER_PREFIXES).
+            if _is_excluded_logger(record.name):
+                return
             structured = self._structure(record)
             self._buffer.append(structured)
             if self._broker is not None:
@@ -64,8 +95,10 @@ class WebUILogHandler(logging.Handler):
         except Exception:
             message = str(record.msg)
 
-        # Redact sensitive content
-        message = redact_message(message)
+        # Redact sensitive content, then bound the payload: redact-first
+        # ordering guarantees truncation can never slice a secret into a
+        # visible fragment.
+        message = bound_string(redact_message(message), _MAX_LOG_MESSAGE_LEN)
 
         # Extract structured metadata from 'extra' dict, then redact it
         # BEFORE it enters the buffer — raw secrets must never be stored.
@@ -79,9 +112,11 @@ class WebUILogHandler(logging.Handler):
             exception_text = "".join(
                 traceback.format_exception(*record.exc_info)
             )
-            exception_text = redact_message(exception_text)
+            exception_text = bound_string(
+                redact_message(exception_text), _MAX_LOG_EXCEPTION_LEN)
         elif record.exc_text:
-            exception_text = redact_message(str(record.exc_text))
+            exception_text = bound_string(
+                redact_message(str(record.exc_text)), _MAX_LOG_EXCEPTION_LEN)
 
         return LogRecord(
             timestamp=self._fmt_ts(record.created),

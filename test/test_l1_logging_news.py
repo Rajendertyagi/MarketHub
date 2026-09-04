@@ -414,6 +414,28 @@ def _make_news_service():
             from core.persistence.modules.news import list_tombstones
             return list_tombstones(self._conn)
 
+        def upsert_news_items(self, rows):
+            from core.persistence.modules.news import upsert_news_items
+            n = upsert_news_items(self._conn, rows)
+            self._conn.commit()
+            return n
+
+        def query_news_items(self, **kw):
+            from core.persistence.modules.news import query_news_items
+            return query_news_items(self._conn, **kw)
+
+        def update_news_sentiments(self, scored):
+            from core.persistence.modules.news import update_news_sentiments
+            n = update_news_sentiments(self._conn, scored)
+            self._conn.commit()
+            return n
+
+        def prune_news_items(self, max_age_days):
+            from core.persistence.modules.news import prune_news_items
+            n = prune_news_items(self._conn, max_age_days)
+            self._conn.commit()
+            return n
+
     store = MockStore(conn)
     svc = NewsService(store=store)
     svc.register_adapter(RSSAdapter())
@@ -791,6 +813,828 @@ def test_handler_redacts_before_broadcast(r: R) -> None:
         r.ok("HANDLER:redacts_in_buffer")
     else:
         r.fail("HANDLER:redacts_in_buffer", f"got {snap[0]['message'] if snap else '?'}")
+
+# ===================================================================
+# P1-A — SSE TRANSPORT EXCLUSION
+# ===================================================================
+def _emit_named(handler, name, msg="probe"):
+    rec = logging.LogRecord(
+        name=name, level=logging.DEBUG, pathname="t.py",
+        lineno=1, msg=msg, args=(), exc_info=None,
+    )
+    handler.emit(rec)
+
+
+def test_sse_transport_excluded(r: R) -> None:
+    """P1: sse_starlette (+children) never enter the WebUI pipeline."""
+    from core.log_buffer import LogBuffer
+    from core.webui_log_handler import (
+        WebUILogHandler, _EXCLUDED_LOGGER_PREFIXES, _is_excluded_logger)
+
+    if "sse_starlette" not in _EXCLUDED_LOGGER_PREFIXES:
+        r.fail("P1:prefix_configured", f"got {_EXCLUDED_LOGGER_PREFIXES}")
+    else:
+        r.ok("P1:prefix_configured")
+    if (_is_excluded_logger("sse_starlette")
+            and _is_excluded_logger("sse_starlette.sse")
+            and not _is_excluded_logger("app.news")
+            and not _is_excluded_logger("sse.test")
+            and not _is_excluded_logger(None)):
+        r.ok("P1:prefix_matching")
+    else:
+        r.fail("P1:prefix_matching", "name matching wrong")
+
+    buf = LogBuffer(max_size=100)
+    handler = WebUILogHandler(buf, broker=None)
+    _emit_named(handler, "sse_starlette", "chunk: data: hello\n\n")
+    _emit_named(handler, "sse_starlette.sse", "chunk: data: world\n\n")
+    _emit_named(handler, "app.news", "normal application log")
+    snap = buf.snapshot(limit=10)
+    if len(snap) == 1 and snap[0]["message"] == "normal application log":
+        r.ok("P1:transport_ignored_app_flows")
+    else:
+        r.fail("P1:transport_ignored_app_flows",
+               f"got {[s['message'] for s in snap]}")
+
+
+def test_transport_debug_zero_records(r: R) -> None:
+    """P1: a burst of transport debugs yields zero WebUI records."""
+    from core.log_buffer import LogBuffer
+    from core.webui_log_handler import WebUILogHandler
+
+    buf = LogBuffer(max_size=1000)
+    handler = WebUILogHandler(buf, broker=None)
+    for i in range(50):
+        _emit_named(handler, "sse_starlette.sse", f"chunk: data: ping {i}\n\n")
+    for i in range(5):
+        _emit_named(handler, "app.worker", f"normal {i}")
+    if len(buf) == 5:
+        r.ok("P1:burst_contained")
+    else:
+        r.fail("P1:burst_contained", f"len={len(buf)}")
+
+
+def test_payload_bounds(r: R) -> None:
+    """P1: huge payloads truncated with marker; secrets still redacted."""
+    from core.log_buffer import LogBuffer
+    from core.webui_log_handler import WebUILogHandler
+
+    buf = LogBuffer(max_size=100)
+    handler = WebUILogHandler(buf, broker=None)
+
+    secret = "sk_live_" + "A" * 60
+    big_msg = "Bearer " + secret + " " + "x" * 100000
+    rec = logging.LogRecord(
+        name="app.big", level=logging.INFO, pathname="t.py",
+        lineno=1, msg=big_msg, args=(), exc_info=None,
+    )
+    rec.log_extra = {
+        "blob": "y" * 10000,
+        "nested": {"level1": {"level2": {"level3": {"level4": {
+            "level5": {"level6": {"level7": {"token": "deep"}}}}}}}},
+        "biglist": list(range(500)),
+    }
+    handler.emit(rec)
+    snap = buf.snapshot(limit=1)
+    if not snap:
+        r.fail("P1:bounds_stored", "nothing stored")
+        return
+    s = snap[0]
+    if len(s["message"]) <= 4200 and "…<truncated" in s["message"]:
+        r.ok("P1:message_bounded_marked")
+    else:
+        r.fail("P1:message_bounded_marked", f"len={len(s['message'])}")
+    if secret not in repr(s) and "sk_live_AAAA" not in repr(s):
+        r.ok("P1:huge_secret_redacted")
+    else:
+        r.fail("P1:huge_secret_redacted", "raw secret present")
+    extra = s.get("extra") or {}
+    if len(repr(extra)) < 20000 and "<max-depth-exceeded>" in repr(extra):
+        r.ok("P1:extra_bounded_depth")
+    else:
+        r.fail("P1:extra_bounded_depth", f"extra repr len={len(repr(extra))}")
+    biglist = (extra.get("biglist") or [])
+    if len(biglist) <= 201:
+        r.ok("P1:list_capped")
+    else:
+        r.fail("P1:list_capped", f"len={len(biglist)}")
+
+    # Huge exception text is bounded too
+    try:
+        raise RuntimeError("boom " + "z" * 100000)
+    except RuntimeError:
+        import sys as _sys
+        rec2 = logging.LogRecord(
+            name="app.exc", level=logging.ERROR, pathname="t.py",
+            lineno=1, msg="failed", args=(), exc_info=_sys.exc_info(),
+        )
+    buf2 = LogBuffer(max_size=10)
+    WebUILogHandler(buf2, broker=None).emit(rec2)
+    snap2 = buf2.snapshot(limit=1)
+    if (snap2 and len(snap2[0].get("exception") or "") <= 8400
+            and "…<truncated" in (snap2[0].get("exception") or "")):
+        r.ok("P1:exception_bounded")
+    else:
+        r.fail("P1:exception_bounded",
+               f"len={len(snap2[0].get('exception') or '') if snap2 else 'none'}")
+
+
+# ===================================================================
+# P2-B — SOURCE_ID CONTRACT
+# ===================================================================
+
+def test_source_id_contract(r: R) -> None:
+    """P2: identifier contract accepts normal ids, rejects unsafe ones."""
+    from api.news_routes import validate_source_id
+
+    valid = ["rss_moneycontrol", "reddit_indianstockmarket", "a-b_c9",
+             "x", "ABC-123_xyz", "a" * 64]
+    for sid in valid:
+        err = validate_source_id(sid)
+        if err is None:
+            r.ok(f"P2:accept:{sid[:20]}")
+        else:
+            r.fail(f"P2:accept:{sid[:20]}", err)
+
+    invalid = ["", "   ", "a/b", "a\\b", "../x", "a/../b", "a b",
+               "a" * 65, "a'b", 'x");alert(1);//', "a\u0001b",
+               "a\nb", "a:b", "a?b", "a*b", "<tag>", "ünïcode", None, 123]
+    for sid in invalid:
+        err = validate_source_id(sid)
+        if err is not None:
+            r.ok(f"P2:reject:{str(sid)[:16]!r}")
+        else:
+            r.fail(f"P2:reject:{str(sid)[:16]!r}", "accepted unsafe id")
+
+
+def test_invalid_id_not_persisted_routes(r: R) -> None:
+    """P2: invalid ids get 400 on POST/PUT and are never stored."""
+    from starlette.applications import Starlette
+    from starlette.testclient import TestClient
+    from api.news_routes import build_news_routes
+
+    # Dedicated service: TestClient serves requests from a portal thread,
+    # so the in-memory sqlite handle must allow cross-thread use here.
+    # (Production opens a fresh connection per call and is unaffected.)
+    import sqlite3 as _sqlite3
+    from core.persistence.modules.news import create_news_tables
+    from news.service import NewsService
+    conn = _sqlite3.connect(":memory:", check_same_thread=False)
+    create_news_tables(conn)
+
+    class _ThreadStore:
+        def list_news_sources(self, enabled_only=False):
+            from core.persistence.modules.news import list_sources
+            return list_sources(conn, enabled_only=enabled_only)
+
+        def get_news_source(self, source_id):
+            from core.persistence.modules.news import get_source
+            return get_source(conn, source_id)
+
+        def upsert_news_source(self, **kw):
+            from datetime import datetime, timezone
+            from core.persistence.modules.news import upsert_source
+            upsert_source(conn, now_iso=datetime.now(timezone.utc).isoformat(),
+                          **kw)
+            conn.commit()
+
+        def delete_news_source(self, source_id):
+            from core.persistence.modules.news import delete_source
+            res = delete_source(conn, source_id)
+            conn.commit()
+            return res
+
+        def set_news_source_enabled(self, source_id, enabled):
+            from core.persistence.modules.news import set_source_enabled
+            res = set_source_enabled(conn, source_id, enabled)
+            conn.commit()
+            return res
+
+        def list_news_source_tombstones(self):
+            from core.persistence.modules.news import list_tombstones
+            return list_tombstones(conn)
+
+    svc = NewsService(_ThreadStore())
+    app = Starlette(routes=build_news_routes(svc))
+    client = TestClient(app, raise_server_exceptions=False)
+
+    bad = {"source_id": "evil/id", "name": "Evil", "source_type": "rss",
+           "category": "t",
+           "config_json": {"url": "https://example.com/rss"}}
+    resp = client.post("/api/news/sources", json=bad)
+    if resp.status_code == 400:
+        r.ok("P2:post_slash_400")
+    else:
+        r.fail("P2:post_slash_400", f"got {resp.status_code}")
+    if svc.get_source("evil/id") is None:
+        r.ok("P2:post_not_persisted")
+    else:
+        r.fail("P2:post_not_persisted", "unsafe id stored!")
+
+    bad2 = dict(bad, source_id="bad id!")
+    resp = client.post("/api/news/sources", json=bad2)
+    if resp.status_code == 400 and svc.get_source("bad id!") is None:
+        r.ok("P2:post_space_400_unstored")
+    else:
+        r.fail("P2:post_space_400_unstored", f"got {resp.status_code}")
+
+    # PUT with unsafe path id → 400 (no slash: slashes 404 at routing).
+    resp = client.put("/api/news/sources/bad id!", json={"name": "X"})
+    if resp.status_code == 400:
+        r.ok("P2:put_unsafe_400")
+    else:
+        r.fail("P2:put_unsafe_400", f"got {resp.status_code}")
+
+    # Normal CRUD still works through the same routes.
+    good = dict(bad, source_id="rss_okid",
+                config_json={"url": "https://example.com/rss"})
+    resp = client.post("/api/news/sources", json=good)
+    if resp.status_code == 200 and svc.get_source("rss_okid") is not None:
+        r.ok("P2:routes_crud_ok")
+    else:
+        r.fail("P2:routes_crud_ok", f"got {resp.status_code}")
+
+
+# ===================================================================
+# P4/P5/P6/P7 — SQLITE NEWS STORE + INGESTION (real EventStore)
+# ===================================================================
+
+def _file_store_service(tmpdir, adapters=None, retention_days=30):
+    """Real EventStore on a temp file + NewsService. Simulates restart by
+    constructing a second EventStore on the same path."""
+    from core.persistence.store import EventStore
+    from news.service import NewsService
+    db_path = os.path.join(tmpdir, "e2e_news.db")
+    store = EventStore(db_path)
+    svc = NewsService(store, retention_days=retention_days)
+    for ad in (adapters or ()):
+        svc.register_adapter(ad)
+    return store, svc
+
+
+class _FakeRSS:
+    source_type = "rss"
+
+    def __init__(self, items=(), fail=False):
+        self._items = list(items)
+        self._fail = fail
+
+    async def fetch(self, source, *, since=None, limit=50):
+        if self._fail:
+            raise RuntimeError("rss boom")
+        return list(self._items)[:limit]
+
+
+class _FakeReddit:
+    source_type = "reddit"
+
+    def __init__(self, items=(), fail=False):
+        self._items = list(items)
+        self._fail = fail
+
+    async def fetch(self, source, *, since=None, limit=50):
+        if self._fail:
+            raise RuntimeError("reddit boom")
+        return list(self._items)[:limit]
+
+
+def _mk_rss(sid, title, guid, published=None, summary="sum"):
+    from market.models import RSSEntry
+    return RSSEntry(source_id=sid, source_name=sid, title=title,
+                    link=f"https://example.com/{guid}", published=published,
+                    summary=summary, author="a", guid=guid)
+
+
+def _mk_reddit(sid, title, permalink, created=None):
+    from market.models import RedditPost
+    return RedditPost(source_id=sid, source_name=sid, subreddit="t",
+                      title=title, score=3, num_comments=1, author="u",
+                      url=f"https://example.com{permalink}",
+                      permalink=permalink, created_utc=created,
+                      selftext="body", upvote_ratio=0.9)
+
+
+def _seed_two_sources(svc):
+    from market.models import NewsSourceConfig
+    svc.upsert_source(NewsSourceConfig(
+        source_id="s_rss", name="R", source_type="rss", category="finance",
+        enabled=True, config_json={"url": "https://example.com/rss"}))
+    svc.upsert_source(NewsSourceConfig(
+        source_id="s_red", name="D", source_type="reddit", category="markets",
+        enabled=True, config_json={"subreddit": "TestSub"}))
+
+
+def test_items_migration(r: R) -> None:
+    """P4: v15→v16 migration + fresh schema create table/indexes."""
+    import sqlite3 as _sqlite3
+    from core.persistence.modules import news as _news
+    from core.persistence.modules.schema import SCHEMA_VERSION
+
+    if SCHEMA_VERSION == 16:
+        r.ok("P4:schema_version_16")
+    else:
+        r.fail("P4:schema_version_16", f"got {SCHEMA_VERSION}")
+
+    # Simulate a v15 database (tables, no news_items), then migrate.
+    conn = _sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE news_sources (source_id TEXT PRIMARY KEY, name TEXT NOT NULL, source_type TEXT NOT NULL, category TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, config_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
+    conn.execute("CREATE TABLE news_source_tombstones (source_id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL)")
+    conn.execute("PRAGMA user_version = 15")
+    _news.migrate_v15_to_v16(conn)
+    ver = conn.execute("PRAGMA user_version").fetchone()[0]
+    tables = {row[0] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    idx = {row[0] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index'").fetchall()}
+    if ver == 16 and "news_items" in tables:
+        r.ok("P4:migrate_table_version")
+    else:
+        r.fail("P4:migrate_table_version", f"ver={ver} tables={tables}")
+    want_idx = {"idx_news_items_source", "idx_news_items_category",
+                "idx_news_items_published", "idx_news_items_fetched",
+                "idx_news_items_symbols"}
+    if want_idx <= idx:
+        r.ok("P4:migrate_indexes")
+    else:
+        r.fail("P4:migrate_indexes", f"missing={want_idx - idx}")
+    # Idempotent re-run
+    _news.migrate_v15_to_v16(conn)
+    if conn.execute("PRAGMA user_version").fetchone()[0] == 16:
+        r.ok("P4:migrate_idempotent")
+    else:
+        r.fail("P4:migrate_idempotent", "version drifted")
+    conn.close()
+
+    # Fresh EventStore carries the table too.
+    tmp = tempfile.mkdtemp()
+    try:
+        from core.persistence.store import EventStore
+        store = EventStore(os.path.join(tmp, "fresh.db"))
+        rows = store.query_news_items(limit=5)
+        if rows == []:
+            r.ok("P4:fresh_store_items")
+        else:
+            r.fail("P4:fresh_store_items", f"got {rows}")
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_ingest_dedup_restart(r: R) -> None:
+    """P5: refresh persists; repeats insert nothing; restart retains."""
+    from datetime import datetime, timezone
+    tmp = tempfile.mkdtemp()
+    try:
+        now = datetime.now(timezone.utc)
+        rss_items = [_mk_rss("s_rss", "Alpha rallies", "g-alpha", now, "bull market"),
+                     _mk_rss("s_rss", "Beta steady", "g-beta", now, "flat")]
+        red_items = [_mk_reddit("s_red", "Gamma thread", "/r/t/gamma", now)]
+        store, svc = _file_store_service(
+            tmp, adapters=[_FakeRSS(rss_items), _FakeReddit(red_items)])
+        _seed_two_sources(svc)
+
+        first = asyncio.run(svc.refresh())
+        if first["inserted"] == 3 and not first["errors"]:
+            r.ok("P5:first_refresh_inserts")
+        else:
+            r.fail("P5:first_refresh_inserts", f"got {first}")
+
+        second = asyncio.run(svc.refresh())
+        if second["inserted"] == 0:
+            r.ok("P5:repeat_no_dupes")
+        else:
+            r.fail("P5:repeat_no_dupes", f"got {second}")
+        if len(store.query_news_items(limit=100)) == 3:
+            r.ok("P5:row_count_stable")
+        else:
+            r.fail("P5:row_count_stable",
+                   f"got {len(store.query_news_items(limit=100))}")
+
+        # Restart: new store+service on the same file.
+        from core.persistence.store import EventStore
+        from news.service import NewsService
+        store2 = EventStore(os.path.join(tmp, "e2e_news.db"))
+        svc2 = NewsService(store2)
+        rows = store2.query_news_items(limit=100)
+        if len(rows) == 3:
+            r.ok("P5:restart_retains")
+        else:
+            r.fail("P5:restart_retains", f"got {len(rows)}")
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_item_ordering(r: R) -> None:
+    """P6: deterministic newest-first ordering with fetched fallback."""
+    from datetime import datetime, timedelta, timezone
+    tmp = tempfile.mkdtemp()
+    try:
+        now = datetime.now(timezone.utc)
+        old = now - timedelta(days=2)
+        items = [_mk_rss("s_rss", "Old news", "g-old", old),
+                 _mk_rss("s_rss", "New news", "g-new", now),
+                 _mk_rss("s_rss", "Undated", "g-und", None)]
+        store, svc = _file_store_service(tmp, adapters=[_FakeRSS(items)])
+        _seed_two_sources(svc)
+        asyncio.run(svc.refresh())
+        rows = store.query_news_items(limit=10)
+        titles = [row["title"] for row in rows
+                  if row["source_id"] == "s_rss"]
+        # Newest published first; undated (fetched now) sorts with now.
+        if titles[0] in ("New news", "Undated") and titles[-1] == "Old news":
+            r.ok("P6:ordering")
+        else:
+            r.fail("P6:ordering", f"got {titles}")
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_delete_keeps_history(r: R) -> None:
+    """P5: deleting a source config preserves its historical items."""
+    from datetime import datetime, timezone
+    tmp = tempfile.mkdtemp()
+    try:
+        now = datetime.now(timezone.utc)
+        store, svc = _file_store_service(
+            tmp, adapters=[_FakeRSS([_mk_rss("s_rss", "Keep me", "g-keep", now)])])
+        _seed_two_sources(svc)
+        asyncio.run(svc.refresh())
+        if not svc.delete_source("s_rss"):
+            r.fail("P5:delete_config", "delete returned False")
+            return
+        r.ok("P5:delete_config")
+        rows = [row for row in store.query_news_items(limit=100)
+                if row["source_id"] == "s_rss"]
+        if len(rows) == 1:
+            r.ok("P5:history_preserved")
+        else:
+            r.fail("P5:history_preserved", f"got {len(rows)} rows")
+        if "s_rss" in store.list_news_source_tombstones():
+            r.ok("P5:tombstone_recorded")
+        else:
+            r.fail("P5:tombstone_recorded", "no tombstone")
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_disabled_not_refreshed_and_isolation(r: R) -> None:
+    """P5/P7: disabled sources skipped; one bad source blocks nothing."""
+    from datetime import datetime, timezone
+    tmp = tempfile.mkdtemp()
+    try:
+        now = datetime.now(timezone.utc)
+        store, svc = _file_store_service(tmp, adapters=[
+            _FakeRSS([_mk_rss("s_rss", "Good", "g-good", now)]),
+            _FakeReddit([], fail=True),
+        ])
+        _seed_two_sources(svc)
+        svc.set_source_enabled("s_red", False)
+        summary = asyncio.run(svc.refresh())
+        if ("s_red" not in summary["refreshed"]
+                and summary["inserted"] == 1
+                and not summary["errors"]):
+            r.ok("P5:disabled_skipped")
+        else:
+            r.fail("P5:disabled_skipped", f"got {summary}")
+
+        # Re-enable with a failing adapter: good source still ingests.
+        svc.set_source_enabled("s_red", True)
+        summary2 = asyncio.run(svc.refresh())
+        if ("s_red" in summary2["errors"]
+                and "s_rss" in summary2["refreshed"]
+                and summary2["inserted"] == 0):
+            r.ok("P5:failure_isolated")
+        else:
+            r.fail("P5:failure_isolated", f"got {summary2}")
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ===================================================================
+# P8 — RETENTION
+# ===================================================================
+
+def test_retention(r: R) -> None:
+    """P8: expiry removes old items only; configs/tombstones survive."""
+    from datetime import datetime, timedelta, timezone
+    tmp = tempfile.mkdtemp()
+    try:
+        from core.persistence.store import EventStore
+        store = EventStore(os.path.join(tmp, "ret.db"))
+        now = datetime.now(timezone.utc)
+        old = (now - timedelta(days=40)).isoformat()
+        recent = (now - timedelta(hours=2)).isoformat()
+        now_iso = now.isoformat()
+        long_ago = (now - timedelta(days=100)).isoformat()
+        store.upsert_news_source(source_id="s_keep", name="K",
+                                 source_type="rss", category="c", enabled=True,
+                                 config_json={"url": "https://example.com/x"})
+        store.delete_news_source("s_gone")
+        tomb_before = store.list_news_source_tombstones()
+        rows = [
+            {"item_id": "old1", "source_id": "s_keep", "source_type": "rss",
+             "category": "c", "title": "Old", "summary": None, "url": None,
+             "author": None, "symbols": "", "published_at": old,
+             "fetched_at": old, "sentiment_score": None,
+             "sentiment_label": None, "provider_json": None,
+             "created_at": old, "updated_at": old},
+            {"item_id": "new1", "source_id": "s_keep", "source_type": "rss",
+             "category": "c", "title": "New", "summary": None, "url": None,
+             "author": None, "symbols": "", "published_at": recent,
+             "fetched_at": recent, "sentiment_score": None,
+             "sentiment_label": None, "provider_json": None,
+             "created_at": recent, "updated_at": recent},
+            {"item_id": "und1", "source_id": "s_keep", "source_type": "rss",
+             "category": "c", "title": "Undated", "summary": None, "url": None,
+             "author": None, "symbols": "", "published_at": None,
+             "fetched_at": long_ago, "sentiment_score": None,
+             "sentiment_label": None, "provider_json": None,
+             "created_at": long_ago, "updated_at": long_ago},
+        ]
+        if store.upsert_news_items(rows) != 3:
+            r.fail("P8:setup", "insert failed")
+            return
+        r.ok("P8:setup")
+        pruned = store.prune_news_items(30)
+        remaining = {row["item_id"] for row in store.query_news_items(limit=50)}
+        if pruned == 2 and remaining == {"new1"}:
+            r.ok("P8:expiry_semantics")
+        else:
+            r.fail("P8:expiry_semantics",
+                   f"pruned={pruned} remaining={remaining}")
+        if (store.get_news_source("s_keep") is not None
+                and store.list_news_source_tombstones() == tomb_before):
+            r.ok("P8:configs_tombstones_untouched")
+        else:
+            r.fail("P8:configs_tombstones_untouched", "config state changed")
+        if store.prune_news_items(0) == 0:
+            r.ok("P8:nonpositive_noop")
+        else:
+            r.fail("P8:nonpositive_noop", "pruned with 0 days")
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ===================================================================
+# P6-E — PERSISTED FILTERING
+# ===================================================================
+
+def test_persisted_filters(r: R) -> None:
+    """P6: source/category/symbol/include/exclude/age/limit over history."""
+    from datetime import datetime, timedelta, timezone
+    from market.models import NewsFilter
+    tmp = tempfile.mkdtemp()
+    try:
+        now = datetime.now(timezone.utc)
+        old = now - timedelta(days=3)
+        store, svc = _file_store_service(tmp, adapters=[
+            _FakeRSS([
+                _mk_rss("s_rss", "Nifty bank rally", "g-n1", now, "bull market"),
+                _mk_rss("s_rss", "Old crypto crash", "g-n2", old, "bear market"),
+            ]),
+            _FakeReddit([
+                _mk_reddit("s_red", "Bank discussion thread", "/r/t/bank", now),
+            ]),
+        ])
+        _seed_two_sources(svc)
+        asyncio.run(svc.refresh())
+
+        async def _q(**kw):
+            return await svc.news(NewsFilter(**kw))
+
+        res = asyncio.run(_q(source_ids=("s_rss",)))
+        if res.total_count == 2 and all(
+                a.source_id == "s_rss" for a in res.articles):
+            r.ok("P6F:source")
+        else:
+            r.fail("P6F:source", f"got {res.total_count}")
+
+        res = asyncio.run(_q(categories=("markets",)))
+        if res.total_count == 1:
+            r.ok("P6F:category")
+        else:
+            r.fail("P6F:category", f"got {res.total_count}")
+
+        res = asyncio.run(_q(symbol="bank"))
+        if res.total_count == 2:
+            r.ok("P6F:symbol")
+        else:
+            r.fail("P6F:symbol", f"got {res.total_count}")
+
+        res = asyncio.run(_q(keywords_include=("crash",)))
+        if res.total_count == 1:
+            r.ok("P6F:include")
+        else:
+            r.fail("P6F:include", f"got {res.total_count}")
+
+        res = asyncio.run(_q(keywords_exclude=("bank",)))
+        if res.total_count == 1:
+            r.ok("P6F:exclude")
+        else:
+            r.fail("P6F:exclude", f"got {res.total_count}")
+
+        res = asyncio.run(_q(max_age_hours=48))
+        if res.total_count == 2:
+            r.ok("P6F:max_age")
+        else:
+            r.fail("P6F:max_age", f"got {res.total_count}")
+
+        res = asyncio.run(_q(limit=1))
+        if res.total_count == 1:
+            r.ok("P6F:limit")
+        else:
+            r.fail("P6F:limit", f"got {res.total_count}")
+
+        res = asyncio.run(_q(categories=("finance",),
+                             keywords_include=("bank",),
+                             keywords_exclude=("rally",), limit=10))
+        if res.total_count == 0:
+            r.ok("P6F:combo")
+        else:
+            r.fail("P6F:combo",
+                   f"got {[a.title for a in res.articles]}")
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_symbols_sql_scope(r: R) -> None:
+    """P6: SQL symbols scope matches populated symbols columns."""
+    from datetime import datetime, timezone
+    tmp = tempfile.mkdtemp()
+    try:
+        from core.persistence.store import EventStore
+        store = EventStore(os.path.join(tmp, "sym.db"))
+        now = datetime.now(timezone.utc).isoformat()
+        base = {"source_type": "rss", "category": "finance", "summary": None,
+                "url": None, "author": None, "published_at": now,
+                "fetched_at": now, "sentiment_score": None,
+                "sentiment_label": None, "provider_json": None,
+                "created_at": now, "updated_at": now}
+        store.upsert_news_items([
+            {**base, "item_id": "sym1", "source_id": "s1",
+             "title": "Alpha", "symbols": ",BANK,NIFTY,"},
+            {**base, "item_id": "sym2", "source_id": "s1",
+             "title": "Beta", "symbols": ""},
+        ])
+        got = {row["item_id"] for row in
+               store.query_news_items(symbols=["bank"], limit=10)}
+        if got == {"sym1"}:
+            r.ok("P6F:sql_symbols")
+        else:
+            r.fail("P6F:sql_symbols", f"got {got}")
+        got2 = {row["item_id"] for row in
+                store.query_news_items(symbols=["nifty", "bank"], limit=10)}
+        if got2 == {"sym1"}:
+            r.ok("P6F:sql_symbols_multi")
+        else:
+            r.fail("P6F:sql_symbols_multi", f"got {got2}")
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ===================================================================
+# P9-F — SENTIMENT OVER PERSISTED ITEMS
+# ===================================================================
+
+def test_sentiment_persisted_no_dupes(r: R) -> None:
+    """P9: repeated ingestion never double-counts sentiment contributions."""
+    from datetime import datetime, timezone
+    from market.models import NewsFilter
+    tmp = tempfile.mkdtemp()
+    try:
+        now = datetime.now(timezone.utc)
+        store, svc = _file_store_service(tmp, adapters=[
+            _FakeRSS([
+                _mk_rss("s_rss", "Huge rally breakout", "g-pos", now, "soar"),
+                _mk_rss("s_rss", "Market flat note", "g-neu", now, "flat"),
+            ]),
+        ])
+        _seed_two_sources(svc)
+        asyncio.run(svc.refresh())
+        first = asyncio.run(svc.sentiment(NewsFilter(limit=10)))
+        asyncio.run(svc.refresh())  # repeat: zero new rows
+        second = asyncio.run(svc.sentiment(NewsFilter(limit=10)))
+        if (len(first.sentiments) == 2 == len(second.sentiments)
+                and [s.sentiment for s in first.sentiments]
+                == [s.sentiment for s in second.sentiments]):
+            r.ok("P9:stable_across_refresh")
+        else:
+            r.fail("P9:stable_across_refresh",
+                   f"got {len(first.sentiments)}/{len(second.sentiments)}")
+        labels = {s.sentiment for s in second.sentiments}
+        if labels == {"positive", "neutral"}:
+            r.ok("P9:labels")
+        else:
+            r.fail("P9:labels", f"got {labels}")
+        rows = store.query_news_items(limit=10)
+        if all(row["sentiment_label"] in ("positive", "neutral")
+               for row in rows if row["source_id"] == "s_rss"):
+            r.ok("P9:persisted_scores")
+        else:
+            r.fail("P9:persisted_scores",
+                   f"got {[(x['item_id'], x['sentiment_label']) for x in rows]}")
+
+        # Word-boundary behavior preserved: "buyers" is not "buy",
+        # while "selloff"/"panic" match as whole words.
+        from news.service import NewsService
+        label, _score, matched = NewsService._compute_sentiment(
+            "buyers face a selloff amid panic")
+        if (label == "negative" and "selloff" in matched
+                and "panic" in matched and "buy" not in matched):
+            r.ok("P9:word_boundary")
+        else:
+            r.fail("P9:word_boundary", f"got {label} {matched}")
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ===================================================================
+# P10/P11/P3-G — ES MODULES / ROUTING / HISTORY UI
+# ===================================================================
+
+def test_es_modules(r: R) -> None:
+    """P10/P11/P3: module files, imports, router boot, no inline handlers."""
+    base = os.path.join(_PROJECT_DIR, "web", "ui", "js")
+    mods = {}
+    for name in ("app.js", "utils.js", "api.js", "router.js", "logs.js",
+                 "news.js", "sources.js"):
+        try:
+            with open(os.path.join(base, name), encoding="utf-8") as fh:
+                mods[name] = fh.read()
+        except Exception as exc:
+            r.fail(f"G:readable:{name}", str(exc))
+            return
+    r.ok("G:readable")
+
+    for name in ("utils.js", "api.js", "router.js", "logs.js", "news.js",
+                 "sources.js"):
+        if "export " in mods[name]:
+            r.ok(f"G:exports:{name}")
+        else:
+            r.fail(f"G:exports:{name}", "no exports")
+
+    for imp in ('from "./router.js"', 'from "./sources.js"',
+                'from "./news.js"', 'from "./logs.js"'):
+        if imp in mods["app.js"]:
+            r.ok(f"G:app_imports:{imp}")
+        else:
+            r.fail(f"G:app_imports:{imp}", "missing import")
+
+    # Router: single-registration boot covering click + hashchange + load.
+    router = mods["router.js"]
+    if ("hashchange" in router and "_fire(_currentView())" in router
+            and "_routerBound" in router and "onViewEnter" in router):
+        r.ok("G:router_boot")
+    else:
+        r.fail("G:router_boot", "router boot wiring missing")
+
+    # No inline handlers anywhere in the news/sources path.
+    if ("onclick=" not in mods["sources.js"]
+            and "onclick=" not in mods["news.js"]):
+        r.ok("G:no_inline_handlers")
+    else:
+        r.fail("G:no_inline_handlers", "onclick present")
+
+    # History-first UI: openNews loads sources + history; refresh persists.
+    if ("openNews" in mods["news.js"] and "_loadNews" in mods["news.js"]
+            and "/api/news/refresh" in mods["news.js"]):
+        r.ok("G:history_refresh_flow")
+    else:
+        r.fail("G:history_refresh_flow", "news flow incomplete")
+
+    # Logs SSE ownership unchanged: exactly one logs stream constructor.
+    if mods["logs.js"].count('new EventSource("/api/logs/stream")') == 1:
+        r.ok("G:logs_sse_single")
+    else:
+        r.fail("G:logs_sse_single", "stream count changed")
+
+    # EventSource budget unchanged across the split (3 total, 2 in app.js).
+    total = sum(src.count("new EventSource") for src in mods.values())
+    if total == 3 and mods["app.js"].count("new EventSource") == 2:
+        r.ok("G:eventsource_budget")
+    else:
+        r.fail("G:eventsource_budget", f"total={total}")
+
+    # index.html loads app as a module (cache-busted).
+    try:
+        with open(os.path.join(_PROJECT_DIR, "web", "ui", "index.html"),
+                  encoding="utf-8") as fh:
+            html = fh.read()
+    except Exception as exc:
+        r.fail("G:html_readable", str(exc))
+        return
+    if 'type="module"' in html and "/ui/js/app.js?v=" in html:
+        r.ok("G:module_script_tag")
+    else:
+        r.fail("G:module_script_tag", "script tag not modularized")
 
 
 # ===================================================================
@@ -1181,36 +2025,50 @@ def test_sse_thread_churn(r: R) -> None:
 # D7/D8 — WEBUI STATIC WIRING REGRESSION
 # ===================================================================
 
-def test_webui_static_wiring(r: R) -> None:
-    """D7/D8: live-filter gating + delegation present, inline JS absent."""
-    app_js = os.path.join(_PROJECT_DIR, "web", "ui", "js", "app.js")
+def _read_webui(rel: str) -> str | None:
     try:
-        with open(app_js, encoding="utf-8") as fh:
-            src = fh.read()
-    except Exception as exc:
-        r.fail("WEBUI:readable", str(exc))
+        with open(os.path.join(_PROJECT_DIR, "web", "ui", "js", rel),
+                  encoding="utf-8") as fh:
+            return fh.read()
+    except Exception:
+        return None
+
+
+def test_webui_static_wiring(r: R) -> None:
+    """D7/D8: live-filter gating + delegation present, inline JS absent.
+
+    News/Logs UI now lives in ES modules (sources.js / logs.js); app.js
+    keeps only orchestration.  Assertions target the owning modules.
+    """
+    app = _read_webui("app.js")
+    sources = _read_webui("sources.js")
+    logs = _read_webui("logs.js")
+    if app is None or sources is None or logs is None:
+        r.fail("WEBUI:readable", "missing js module(s)")
         return
     r.ok("WEBUI:readable")
 
-    if "window._newsToggle" in src or "window._newsEdit" in src or "window._newsDelete" in src:
+    blob = app + sources + logs
+    if ("window._newsToggle" in blob or "window._newsEdit" in blob
+            or "window._newsDelete" in blob):
         r.fail("D8:no_window_handlers", "inline window.* news handlers remain")
     else:
         r.ok("D8:no_window_handlers")
-    if 'onclick="window._news' in src or "onclick='window._news" in src:
+    if 'onclick="window._news' in blob or "onclick='window._news" in blob:
         r.fail("D8:no_inline_onclick", "inline onclick with source id remains")
     else:
         r.ok("D8:no_inline_onclick")
-    if "data-news-action" in src and "_onNewsActionClick" in src:
+    if "data-news-action" in sources and "_onNewsActionClick" in sources:
         r.ok("D8:delegation_present")
     else:
         r.fail("D8:delegation_present", "data-attribute delegation missing")
 
-    if "_logRecordPassesFilters(record)" in src or "_logRecordPassesFilters( record )" in src:
+    if "_logRecordPassesFilters(record)" in logs:
         r.ok("D7:live_filter_gated")
     else:
         # tolerate formatting drift: check both halves co-occur in onmessage
-        i = src.find("es.onmessage")
-        window_ = src[i:i + 600] if i >= 0 else ""
+        i = logs.find("es.onmessage")
+        window_ = logs[i:i + 600] if i >= 0 else ""
         if "_logRecordPassesFilters" in window_:
             r.ok("D7:live_filter_gated")
         else:
@@ -1323,6 +2181,37 @@ def main() -> None:
 
     print("\n--- D12 run_all Registration ---")
     test_runall_registered(r)
+
+    print("\n--- P1 SSE Exclusion + Bounds ---")
+    test_sse_transport_excluded(r)
+    test_transport_debug_zero_records(r)
+    test_payload_bounds(r)
+
+    print("\n--- P2 Source-ID Contract ---")
+    test_source_id_contract(r)
+    test_invalid_id_not_persisted_routes(r)
+
+    print("\n--- P4 Migration ---")
+    test_items_migration(r)
+
+    print("\n--- P5 Ingest/Dedup/Restart/Isolation ---")
+    test_ingest_dedup_restart(r)
+    test_item_ordering(r)
+    test_delete_keeps_history(r)
+    test_disabled_not_refreshed_and_isolation(r)
+
+    print("\n--- P8 Retention ---")
+    test_retention(r)
+
+    print("\n--- P6 Persisted Filters ---")
+    test_persisted_filters(r)
+    test_symbols_sql_scope(r)
+
+    print("\n--- P9 Sentiment Persisted ---")
+    test_sentiment_persisted_no_dupes(r)
+
+    print("\n--- P10/P11/P3 ES Modules ---")
+    test_es_modules(r)
 
     print("\n" + "=" * 60)
     r.summary()

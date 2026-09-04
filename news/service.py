@@ -7,9 +7,12 @@ this service; MCP does NOT own this logic.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import json
 import logging
 import re
+import threading
 from datetime import datetime, timezone
 from typing import Any
 
@@ -50,14 +53,20 @@ _BEARISH_KEYWORDS: dict[str, float] = {
 class NewsService:
     """Generic news/sentiment service.
 
-    Adapters are registered by source type.  The service dispatches fetches
-    to the correct adapter, deduplicates articles via the store, applies
-    filters, and computes keyword-based sentiment.
+    Ingestion flow: adapter fetch → normalize → stable dedup → persist
+    (SQLite ``news_items``) → query.  ``news()`` / ``sentiment()`` read
+    persisted history (fast, no network); ``refresh()`` pulls enabled
+    sources on demand.  One bad source never blocks the others, and
+    deleting a source configuration preserves its historical items.
     """
 
-    def __init__(self, store: Any) -> None:
+    def __init__(self, store: Any, *,
+                 retention_days: int = 30) -> None:
         self._store = store
         self._adapters: dict[str, Any] = {}
+        self._retention_days = retention_days if retention_days > 0 else 30
+        self._refresh_locks: dict[str, asyncio.Lock] = {}
+        self._refresh_locks_guard = threading.Lock()
 
     # ── Adapter registration ────────────────────────────────────────────────
 
@@ -71,6 +80,15 @@ class NewsService:
 
     def get_adapter(self, source_type: str) -> Any | None:
         return self._adapters.get(source_type)
+
+    def set_retention_days(self, days: int) -> None:
+        """Configure history retention (days). Non-positive keeps default."""
+        try:
+            days = int(days)
+        except (ValueError, TypeError):
+            return
+        if days > 0:
+            self._retention_days = days
 
     # ── Source configuration (delegates to store) ───────────────────────────
 
@@ -98,50 +116,136 @@ class NewsService:
     def set_source_enabled(self, source_id: str, enabled: bool) -> bool:
         return self._store.set_news_source_enabled(source_id, enabled)
 
-    # ── Core news fetch ─────────────────────────────────────────────────────
+    # ── On-demand refresh (fetch → normalize → persist) ────────────────────
 
-    async def news(self, filters: NewsFilter | None = None) -> NewsResult:
-        """Fetch and filter news across all enabled sources.
+    def _refresh_lock_for(self, source_id: str) -> asyncio.Lock:
+        """Per-source refresh lock (prevents duplicate simultaneous fetches)."""
+        with self._refresh_locks_guard:
+            lock = self._refresh_locks.get(source_id)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._refresh_locks[source_id] = lock
+            return lock
 
-        Parameters
-        ----------
-        filters:
-            Optional filter criteria.  If None, returns latest from all
-            enabled sources with default limit.
+    async def refresh(
+        self,
+        source_ids: list[str] | None = None,
+        *,
+        limit_per_source: int = 50,
+        retention_days: int | None = None,
+    ) -> dict[str, Any]:
+        """Refresh enabled sources: fetch, dedup, persist, prune.
+
+        Only enabled sources are refreshed; one failing source never
+        blocks the others.  Repeated refreshes insert no duplicates
+        (stable ``item_id`` identity).  Retention pruning runs after a
+        successful pass.  Returns a summary dict with per-source
+        ``fetched`` / ``inserted`` / ``error`` entries.
         """
-        if filters is None:
-            filters = NewsFilter()
+        limit_per_source = max(1, min(int(limit_per_source or 50), 100))
+        sources = self.list_sources(enabled_only=True)
+        if source_ids:
+            id_set = set(source_ids)
+            sources = [s for s in sources if s.source_id in id_set]
 
-        sources = self._resolve_sources(filters)
-        all_items: list[RSSEntry | RedditPost] = []
-        sources_queried: list[str] = []
-
+        fetched_at = datetime.now(timezone.utc).isoformat()
+        summary: dict[str, Any] = {"refreshed": [], "inserted": 0, "errors": {}}
         for source in sources:
             adapter = self._adapters.get(source.source_type)
             if adapter is None:
                 logger.warning("no adapter for source type %s — skipping %s",
                                source.source_type, source.source_id)
+                summary["errors"][source.source_id] = "no adapter"
                 continue
+            lock = self._refresh_lock_for(source.source_id)
+            async with lock:
+                try:
+                    items = await adapter.fetch(source, limit=limit_per_source)
+                except Exception as exc:
+                    logger.warning("fetch failed for source %s: %s",
+                                   source.source_id, exc)
+                    summary["errors"][source.source_id] = (
+                        f"{type(exc).__name__}: {exc}")
+                    continue
+                rows = [self._normalize_item(source, it, fetched_at)
+                        for it in items]
+                rows = [r for r in rows if r]
+                try:
+                    inserted = self._store.upsert_news_items(rows)
+                except Exception as exc:
+                    logger.warning("persist failed for source %s: %s",
+                                   source.source_id, exc)
+                    summary["errors"][source.source_id] = (
+                        f"persist failed: {type(exc).__name__}")
+                    continue
+                summary["refreshed"].append(source.source_id)
+                summary["inserted"] += inserted
 
-            sources_queried.append(source.source_id)
+        days = self._retention_days if retention_days is None else retention_days
+        try:
+            summary["pruned"] = self.prune_history(days) if days > 0 else 0
+        except Exception as exc:
+            logger.warning("news retention prune failed: %s", exc)
+            summary["pruned"] = 0
+        return summary
+
+    def prune_history(self, max_age_days: int | None = None) -> int:
+        """Delete expired items (bounded, transaction-safe).
+
+        Source configurations and tombstones are never touched.
+        """
+        days = self._retention_days if max_age_days is None else max_age_days
+        if not days or days <= 0:
+            return 0
+        return self._store.prune_news_items(int(days))
+
+    # ── Core news query (persisted history) ─────────────────────────────────
+
+    async def news(self, filters: NewsFilter | None = None) -> NewsResult:
+        """Query persisted news history with filters (no network fetch).
+
+        SQL scopes source/category/symbol/age; keyword include/exclude
+        refine the bounded result set.  Ordering is deterministic:
+        newest published first (fetched_at fallback).  Use ``refresh()``
+        to pull fresh items from enabled sources first.
+        """
+        if filters is None:
+            filters = NewsFilter()
+
+        sources = self._resolve_sources(filters)
+        sources_queried = [s.source_id for s in sources]
+
+        newer_than: str | None = None
+        if filters.max_age_hours is not None:
             try:
-                items = await adapter.fetch(
-                    source,
-                    limit=filters.limit * 2,  # fetch extra for filtering
-                )
-                all_items.extend(items)
-            except Exception as exc:
-                logger.warning("fetch failed for source %s: %s",
-                               source.source_id, exc)
-                continue
+                from datetime import timedelta
+                cutoff = (datetime.now(timezone.utc)
+                          - timedelta(hours=float(filters.max_age_hours)))
+                newer_than = cutoff.isoformat()
+            except (ValueError, TypeError):
+                newer_than = None
 
-        # Dedup in-memory (by link/title hash)
-        all_items = self._dedup_items(all_items)
+        # Over-fetch headroom for application-side keyword refinement.
+        # NOTE: symbol matching stays application-side (title/summary text)
+        # because provider symbol tags are sparsely populated; the SQL
+        # symbols scope exists for stores whose symbols column is filled.
+        query_limit = max(filters.limit * 5, filters.limit + 50)
+        rows = self._store.query_news_items(
+            source_ids=[s.source_id for s in sources] or None,
+            categories=list(filters.categories) if filters.categories else None,
+            symbols=None,
+            newer_than=newer_than,
+            limit=query_limit,
+        )
+        names = {s.source_id: s.name for s in sources}
+        items = [self._row_to_item(r, names.get(r.get("source_id")))
+                 for r in rows]
+        items = [i for i in items if i is not None]
 
-        # Apply filters
-        filtered = self._apply_filters(all_items, filters)
+        # Keyword include/exclude (+ symbol text fallback) refine the set.
+        filtered = self._apply_filters(items, filters)
 
-        # Sort by published date (newest first)
+        # Deterministic order: newest published first, fetched fallback.
         filtered.sort(
             key=lambda x: getattr(x, "published", None)
             or getattr(x, "created_utc", None)
@@ -149,7 +253,9 @@ class NewsService:
             reverse=True,
         )
 
-        # Limit
+        # Stable cross-source dedup as a final guard.
+        filtered = self._dedup_items(filtered)
+
         result_items = filtered[:filters.limit]
 
         return NewsResult(
@@ -164,18 +270,26 @@ class NewsService:
     async def sentiment(
         self, filters: NewsFilter | None = None
     ) -> NewsResult:
-        """Fetch news and compute keyword-based sentiment per article.
+        """Query persisted news and compute keyword-based sentiment.
 
         Returns a NewsResult with both ``articles`` and ``sentiments``
         populated.  Sentiment is computed over title + summary/selftext
-        using weighted keyword matching with word boundaries.
+        using weighted keyword matching with word boundaries, then
+        persisted per stable item id so repeated ingestion never
+        double-counts an item.
         """
         result = await self.news(filters)
         sentiments: list[SentimentResult] = []
+        scored: list[tuple[str, float, str]] = []
+        # Stable ids (shared with the durable rows) so scores persist
+        # and repeated ingestion never double-counts an item.
+        sources = {s.source_id: s for s in self._resolve_sources(filters)}
 
         for item in result.articles:
             text = self._item_text(item)
-            item_id = self._item_id(item)
+            src = sources.get(item.source_id)
+            item_id = (self._stable_item_id(src, item) if src is not None
+                       else self._item_id(item))
             sentiment, score, matched = self._compute_sentiment(text)
             sentiments.append(SentimentResult(
                 item_id=item_id,
@@ -183,6 +297,13 @@ class NewsService:
                 score=score,
                 matched_keywords=tuple(matched),
             ))
+            scored.append((item_id, score, sentiment))
+
+        if scored:
+            try:
+                self._store.update_news_sentiments(scored)
+            except Exception as exc:
+                logger.debug("sentiment persist skipped: %s", exc)
 
         return NewsResult(
             articles=result.articles,
@@ -374,3 +495,163 @@ class NewsService:
             created_at=row.get("created_at"),
             updated_at=row.get("updated_at"),
         )
+
+    # ── Item normalization / stable identity ────────────────────────────────
+
+    @staticmethod
+    def _norm_text(text: str | None) -> str:
+        """Normalize text for hashing: lowercase, collapsed whitespace."""
+        return re.sub(r"\s+", " ", (text or "").strip().lower())
+
+    @classmethod
+    def _stable_item_id(cls, source: NewsSourceConfig,
+                        item: RSSEntry | RedditPost) -> str:
+        """Deterministic durable identity for a fetched item.
+
+        Prefers provider identity (RSS guid/link, Reddit permalink/url);
+        falls back to a normalized title+link hash.  Namespaced by source
+        type so identical provider ids across types cannot collide.
+        """
+        if isinstance(item, RSSEntry):
+            provider_id = (item.guid or item.link or "").strip()
+        else:
+            provider_id = (item.permalink or item.url or "").strip()
+        if provider_id:
+            base = f"{source.source_type}:{provider_id}"
+        else:
+            link = getattr(item, "link", "") or ""
+            base = (f"{source.source_id}|{cls._norm_text(item.title)}"
+                    f"|{cls._norm_text(link)}")
+        return hashlib.sha256(base.encode("utf-8")).hexdigest()[:32]
+
+    @classmethod
+    def _normalize_item(cls, source: NewsSourceConfig,
+                        item: RSSEntry | RedditPost,
+                        fetched_iso: str) -> dict[str, Any] | None:
+        """Map an adapter item to a news_items row dict."""
+        try:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            published = (item.published if isinstance(item, RSSEntry)
+                         else item.created_utc)
+            published_iso = published.isoformat() if published else None
+            if isinstance(item, RSSEntry):
+                provider = {
+                    "guid": item.guid,
+                    "author": item.author,
+                }
+                row = {
+                    "item_id": cls._stable_item_id(source, item),
+                    "source_id": source.source_id,
+                    "source_type": source.source_type,
+                    "category": source.category or "",
+                    "title": item.title.strip(),
+                    "summary": item.summary,
+                    "url": item.link,
+                    "author": item.author,
+                    "symbols": "",
+                    "published_at": published_iso,
+                    "fetched_at": fetched_iso,
+                    "sentiment_score": None,
+                    "sentiment_label": None,
+                    "provider_json": json.dumps(provider, ensure_ascii=False,
+                                                default=str),
+                    "created_at": now_iso,
+                    "updated_at": now_iso,
+                }
+            else:
+                provider = {
+                    "subreddit": item.subreddit,
+                    "score": item.score,
+                    "num_comments": item.num_comments,
+                    "author": item.author,
+                    "url": item.url,
+                    "permalink": item.permalink,
+                    "selftext": item.selftext,
+                    "upvote_ratio": item.upvote_ratio,
+                }
+                row = {
+                    "item_id": cls._stable_item_id(source, item),
+                    "source_id": source.source_id,
+                    "source_type": source.source_type,
+                    "category": source.category or "",
+                    "title": item.title.strip(),
+                    "summary": item.selftext,
+                    "url": item.url or item.permalink,
+                    "author": item.author,
+                    "symbols": "",
+                    "published_at": published_iso,
+                    "fetched_at": fetched_iso,
+                    "sentiment_score": None,
+                    "sentiment_label": None,
+                    "provider_json": json.dumps(provider, ensure_ascii=False,
+                                                default=str),
+                    "created_at": now_iso,
+                    "updated_at": now_iso,
+                }
+            if not row["title"]:
+                return None
+            return row
+        except Exception as exc:
+            logger.debug("normalize skipped item for %s: %s",
+                         source.source_id, exc)
+            return None
+
+    @staticmethod
+    def _parse_dt(value: Any) -> datetime | None:
+        """Parse an ISO timestamp, coercing naive values to UTC."""
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            dt = value
+        else:
+            try:
+                dt = datetime.fromisoformat(str(value))
+            except (ValueError, TypeError):
+                return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+
+    @classmethod
+    def _row_to_item(cls, row: dict[str, Any],
+                     source_name: str | None = None,
+                     ) -> RSSEntry | RedditPost | None:
+        """Reconstruct a canonical model from a persisted news_items row."""
+        try:
+            provider: dict[str, Any] = {}
+            if row.get("provider_json"):
+                try:
+                    provider = json.loads(row["provider_json"]) or {}
+                except (ValueError, TypeError):
+                    provider = {}
+            published = cls._parse_dt(row.get("published_at"))
+            name = source_name or row.get("source_name") or row["source_id"]
+            if (row.get("source_type") or "") == "reddit":
+                return RedditPost(
+                    source_id=row["source_id"],
+                    source_name=name,
+                    subreddit=str(provider.get("subreddit") or ""),
+                    title=row["title"],
+                    score=int(provider.get("score") or 0),
+                    num_comments=int(provider.get("num_comments") or 0),
+                    author=row.get("author") or provider.get("author"),
+                    url=row.get("url") or provider.get("url"),
+                    permalink=provider.get("permalink"),
+                    created_utc=published,
+                    selftext=row.get("summary") or provider.get("selftext"),
+                    upvote_ratio=provider.get("upvote_ratio"),
+                )
+            return RSSEntry(
+                source_id=row["source_id"],
+                source_name=name,
+                title=row["title"],
+                link=row.get("url") or "",
+                published=published,
+                summary=row.get("summary"),
+                author=row.get("author") or provider.get("author"),
+                guid=provider.get("guid") or row.get("url"),
+            )
+        except Exception as exc:
+            logger.debug("row_to_item skipped %s: %s",
+                         row.get("item_id"), exc)
+            return None

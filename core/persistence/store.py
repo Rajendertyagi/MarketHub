@@ -45,6 +45,7 @@ from core.persistence.modules.products import migrate_v10_to_v11, migrate_v11_to
 from core.persistence.modules.condition_alerts import migrate_v12_to_v13
 from core.persistence.modules.news import migrate_v13_to_v14
 from core.persistence.modules.news import migrate_v14_to_v15
+from core.persistence.modules.news import migrate_v15_to_v16
 from core.persistence.modules.schema import (
     SCHEMA_VERSION,
     create_v7_schema,
@@ -132,6 +133,8 @@ class EventStore:
                         migrate_v13_to_v14(conn)
                     elif current_version == 14:
                         migrate_v14_to_v15(conn)
+                    elif current_version == 15:
+                        migrate_v15_to_v16(conn)
                     else:
                         raise RuntimeError(
                             f"unsupported schema version {current_version}; "
@@ -1344,6 +1347,69 @@ class EventStore:
         conn = self._open(self._db_path)
         try:
             count = _news.prune_old_articles(conn, max_age_days)
+            conn.commit()
+            return count
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    # ─── Durable fetched-item store (news_items, schema v16) ───────────────
+
+    def upsert_news_items(self, rows: list[dict[str, Any]]) -> int:
+        """Persist fetched items; repeats dedup by stable identity."""
+        conn = self._open(self._db_path)
+        try:
+            count = _news.upsert_news_items(conn, rows)
+            conn.commit()
+            return count
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def query_news_items(self, *, source_ids: list[str] | None = None,
+                         categories: list[str] | None = None,
+                         symbols: list[str] | None = None,
+                         newer_than: str | None = None,
+                         limit: int = 50) -> list[dict[str, Any]]:
+        """Query persisted items, newest first (deterministic order)."""
+        conn = self._open(self._db_path)
+        try:
+            return _news.query_news_items(
+                conn, source_ids=source_ids, categories=categories,
+                symbols=symbols, newer_than=newer_than, limit=limit)
+        finally:
+            conn.close()
+
+    def update_news_sentiments(
+        self, scored: list[tuple[str, float, str]]
+    ) -> int:
+        """Persist computed sentiment per item id."""
+        if not scored:
+            return 0
+        conn = self._open(self._db_path)
+        try:
+            count = _news.update_news_sentiments(conn, scored)
+            conn.commit()
+            return count
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def prune_news_items(self, max_age_days: int) -> int:
+        """Delete expired items in bounded batches.
+
+        Only news_items rows expire — source configs and tombstones are
+        never touched.
+        """
+        conn = self._open(self._db_path)
+        try:
+            count = _news.prune_news_items(conn, max_age_days)
             conn.commit()
             return count
         except Exception:

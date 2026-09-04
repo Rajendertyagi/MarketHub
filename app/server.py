@@ -224,6 +224,11 @@ try:
     _news_service.seed_defaults(_DEFAULTS.get("news", {}).get("default_sources", []))
 except Exception as _exc:
     _app_logger.warning("news seed_defaults failed: %s", _exc)
+try:
+    _news_service.set_retention_days(
+        int(_DEFAULTS.get("news", {}).get("retention_days", 30)))
+except Exception as _exc:
+    _app_logger.warning("news retention config failed: %s", _exc)
 
 
 async def _on_market_quote_update(quote: Quote) -> None:
@@ -781,6 +786,10 @@ _news_service.register_adapter(_RedditAdapter())
 
 # Seed default sources on startup (idempotent — deleted defaults stay deleted).
 _news_cfg = _config.get("news", {})
+try:
+    _news_service.set_retention_days(int(_news_cfg.get("retention_days", 30)))
+except Exception:
+    _app_logger.warning("news retention config failed", exc_info=True)
 if _news_cfg.get("enabled", True):
     _defaults = _news_cfg.get("default_sources", [])
     if _defaults:

@@ -142,9 +142,11 @@ def redact_record(record_dict: dict[str, Any]) -> dict[str, Any]:
     pattern pass through unchanged.
     """
     if "message" in record_dict and record_dict["message"]:
-        record_dict["message"] = redact_message(record_dict["message"])
+        record_dict["message"] = bound_string(
+            redact_message(record_dict["message"]), _MAX_LOG_MESSAGE_LEN)
     if "exception" in record_dict and record_dict["exception"]:
-        record_dict["exception"] = redact_message(record_dict["exception"])
+        record_dict["exception"] = bound_string(
+            redact_message(record_dict["exception"]), _MAX_LOG_EXCEPTION_LEN)
     if "extra" in record_dict and record_dict["extra"] is not None:
         record_dict["extra"] = redact_value(record_dict["extra"])
     return record_dict
@@ -161,30 +163,66 @@ _SENSITIVE_KEY = re.compile(
     re.IGNORECASE,
 )
 
+# ── WebUI payload bounds ────────────────────────────────────────────────────
+# KB-scale per-string caps so one pathological record (multi-MB message,
+# exception, or nested extra) can never bloat the bounded buffer or the
+# SSE stream.  Redaction ALWAYS runs before truncation so a secret can
+# never survive by straddling the cut point.
 
-def redact_value(value: Any) -> Any:
+_MAX_LOG_MESSAGE_LEN = 4096
+_MAX_LOG_EXCEPTION_LEN = 8192
+_MAX_LOG_EXTRA_STRING_LEN = 2048
+_MAX_STRUCT_DEPTH = 6
+_MAX_STRUCT_ITEMS = 200
+
+
+def bound_string(text: str, max_len: int = _MAX_LOG_MESSAGE_LEN) -> str:
+    """Truncate an over-long string with an explicit marker (no-op if short)."""
+    if not isinstance(text, str) or len(text) <= max_len:
+        return text
+    return text[:max_len] + f"…<truncated +{len(text) - max_len} chars>"
+
+
+def redact_value(value: Any, _depth: int = 0) -> Any:
     """Recursively redact secrets in arbitrary structured values.
 
-    - strings → :func:`redact_message` (catches Bearer/URL/key patterns)
+    - strings → :func:`redact_message` (catches Bearer/URL/key patterns),
+      then bounded to KB scale with an explicit truncation marker
     - dicts → recurse; a value under a sensitive key name is replaced
-      wholesale with ``"<redacted>"``
+      wholesale with ``"<redacted>"``; containers are capped at
+      ``_MAX_STRUCT_ITEMS`` entries and ``_MAX_STRUCT_DEPTH`` depth so
+      pathological structures cannot exhaust memory
     - lists/tuples/sets → recurse element-wise, preserving container type
     - anything else (numbers, bools, None, …) → returned unchanged
     """
     if isinstance(value, str):
-        return redact_message(value)
+        return bound_string(redact_message(value), _MAX_LOG_EXTRA_STRING_LEN)
+    if _depth >= _MAX_STRUCT_DEPTH:
+        return "<max-depth-exceeded>"
     if isinstance(value, dict):
         out: dict[Any, Any] = {}
-        for k, v in value.items():
+        for i, (k, v) in enumerate(value.items()):
+            if i >= _MAX_STRUCT_ITEMS:
+                out["…<truncated>"] = f"<+{len(value) - i} entries>"
+                break
             if isinstance(k, str) and _SENSITIVE_KEY.search(k):
                 out[k] = "<redacted>"
             else:
-                out[k] = redact_value(v)
+                out[k] = redact_value(v, _depth + 1)
         return out
     if isinstance(value, list):
-        return [redact_value(v) for v in value]
+        truncated = value[:_MAX_STRUCT_ITEMS]
+        out_list = [redact_value(v, _depth + 1) for v in truncated]
+        if len(value) > _MAX_STRUCT_ITEMS:
+            out_list.append(f"…<truncated +{len(value) - _MAX_STRUCT_ITEMS} items>")
+        return out_list
     if isinstance(value, tuple):
-        return tuple(redact_value(v) for v in value)
+        truncated = value[:_MAX_STRUCT_ITEMS]
+        out_tuple = tuple(redact_value(v, _depth + 1) for v in truncated)
+        if len(value) > _MAX_STRUCT_ITEMS:
+            out_tuple = out_tuple + (f"…<truncated +{len(value) - _MAX_STRUCT_ITEMS} items>",)
+        return out_tuple
     if isinstance(value, (set, frozenset)):
-        return type(value)(redact_value(v) for v in value)
+        items = list(value)[:_MAX_STRUCT_ITEMS]
+        return type(value)(redact_value(v, _depth + 1) for v in items)
     return value

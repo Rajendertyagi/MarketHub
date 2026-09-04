@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def create_news_tables(conn: Any) -> None:
-    """Create news_sources, news_articles and tombstones tables (idempotent)."""
+    """Create news_sources, news_articles, tombstones and news_items (idempotent)."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS news_sources (
             source_id   TEXT PRIMARY KEY,
@@ -69,6 +69,57 @@ def create_news_tables(conn: Any) -> None:
             deleted_at TEXT NOT NULL
         )
     """)
+    create_news_items_table(conn)
+
+
+def create_news_items_table(conn: Any) -> None:
+    """Create the durable fetched-item store (idempotent).
+
+    One row per fetched article/post, keyed by a stable provider-derived
+    or deterministic-hash identity (``item_id`` PRIMARY KEY) so repeated
+    fetches never duplicate rows.  Deleting a *source configuration*
+    intentionally leaves its historical items intact.
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS news_items (
+            item_id        TEXT PRIMARY KEY,
+            source_id      TEXT NOT NULL,
+            source_type    TEXT NOT NULL DEFAULT '',
+            category       TEXT NOT NULL DEFAULT '',
+            title          TEXT NOT NULL,
+            summary        TEXT,
+            url            TEXT,
+            author         TEXT,
+            symbols        TEXT NOT NULL DEFAULT '',
+            published_at   TEXT,
+            fetched_at     TEXT NOT NULL,
+            sentiment_score REAL,
+            sentiment_label TEXT,
+            provider_json  TEXT,
+            created_at     TEXT NOT NULL,
+            updated_at     TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_news_items_source
+        ON news_items(source_id)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_news_items_category
+        ON news_items(category)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_news_items_published
+        ON news_items(published_at)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_news_items_fetched
+        ON news_items(fetched_at)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_news_items_symbols
+        ON news_items(symbols)
+    """)
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +147,19 @@ def migrate_v14_to_v15(conn: Any) -> None:
     conn.execute("PRAGMA user_version = 15")
     conn.commit()
     logger.info("migrated v14→v15: added news_source_tombstones")
+
+
+def migrate_v15_to_v16(conn: Any) -> None:
+    """Add the durable news_items store for fetched article history.
+
+    Existing installations migrate safely: the table starts empty, so
+    current source configs, tombstones, and legacy articles are
+    untouched; history simply accumulates from the next refresh on.
+    """
+    create_news_items_table(conn)
+    conn.execute("PRAGMA user_version = 16")
+    conn.commit()
+    logger.info("migrated v15→v16: added news_items")
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +322,129 @@ def prune_old_articles(conn: Any, max_age_days: int) -> int:
         "DELETE FROM news_articles WHERE fetched_at < datetime('now', ?)",
         (f"-{max_age_days} days",))
     return cur.rowcount
+
+
+# ---------------------------------------------------------------------------
+# Durable fetched-item store (news_items)
+# ---------------------------------------------------------------------------
+
+_ITEM_COLUMNS = (
+    "item_id", "source_id", "source_type", "category", "title",
+    "summary", "url", "author", "symbols", "published_at", "fetched_at",
+    "sentiment_score", "sentiment_label", "provider_json",
+    "created_at", "updated_at",
+)
+
+
+def upsert_news_items(conn: Any, rows: list[dict[str, Any]]) -> int:
+    """Insert fetched items, skipping already-stored identities.
+
+    Uses ``INSERT OR IGNORE`` on the ``item_id`` PRIMARY KEY so repeated
+    fetches of the same feed never duplicate rows.  Returns the number
+    of newly inserted rows.
+    """
+    inserted = 0
+    for row in rows:
+        if not row.get("item_id") or not row.get("source_id"):
+            continue
+        cur = conn.execute(f"""
+            INSERT OR IGNORE INTO news_items ({", ".join(_ITEM_COLUMNS)})
+            VALUES ({", ".join("?" for _ in _ITEM_COLUMNS)})
+        """, tuple(row.get(col) for col in _ITEM_COLUMNS))
+        inserted += cur.rowcount
+    return inserted
+
+
+def query_news_items(
+    conn: Any, *,
+    source_ids: list[str] | None = None,
+    categories: list[str] | None = None,
+    symbols: list[str] | None = None,
+    newer_than: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Query persisted items, newest published first.
+
+    SQL handles source/category/symbol/age scoping; keyword text
+    matching stays application-side (see NewsService).  Ordering is
+    deterministic: ``COALESCE(published_at, fetched_at)`` descending,
+    then ``item_id`` ascending as a stable tiebreak.  ``limit`` is
+    clamped to a sane bound so callers cannot load unbounded history.
+    """
+    limit = max(1, min(int(limit), 500))
+    clauses: list[str] = []
+    params: list[Any] = []
+    if source_ids:
+        clauses.append(
+            f"source_id IN ({', '.join('?' for _ in source_ids)})")
+        params.extend(source_ids)
+    if categories:
+        clauses.append(
+            f"category IN ({', '.join('?' for _ in categories)})")
+        params.extend(categories)
+    if symbols:
+        sym_clauses = []
+        for sym in symbols:
+            token = f"%,{sym.upper()},%"
+            sym_clauses.append("(',' || UPPER(symbols) || ',' LIKE ?)")
+            params.append(token)
+        clauses.append("(" + " OR ".join(sym_clauses) + ")")
+    if newer_than:
+        clauses.append("COALESCE(published_at, fetched_at) >= ?")
+        params.append(newer_than)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    params.append(limit)
+    rows = conn.execute(f"""
+        SELECT {", ".join(_ITEM_COLUMNS)} FROM news_items
+        {where}
+        ORDER BY COALESCE(published_at, fetched_at) DESC, item_id ASC
+        LIMIT ?
+    """, params).fetchall()
+    cols = _ITEM_COLUMNS
+    return [dict(zip(cols, r, strict=True)) for r in rows]
+
+
+def update_news_sentiments(
+    conn: Any, scored: list[tuple[str, float, str]]
+) -> int:
+    """Persist computed sentiment per item id. Returns rows updated."""
+    updated = 0
+    for item_id, score, label in scored:
+        cur = conn.execute(
+            "UPDATE news_items SET sentiment_score = ?, sentiment_label = ?, "
+            "updated_at = datetime('now') WHERE item_id = ?",
+            (score, label, item_id))
+        updated += cur.rowcount
+    return updated
+
+
+def prune_news_items(conn: Any, max_age_days: int,
+                     *, batch: int = 2000) -> int:
+    """Delete expired items in bounded batches. Returns total deleted.
+
+    Expiry uses ``COALESCE(published_at, fetched_at)`` semantics so
+    undated items age out by fetch time.  Source configs and tombstones
+    are never touched.
+    """
+    if max_age_days <= 0:
+        return 0
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days))
+    cutoff_iso = cutoff.isoformat()
+    total = 0
+    while True:
+        cur = conn.execute("""
+            DELETE FROM news_items WHERE item_id IN (
+                SELECT item_id FROM news_items
+                WHERE COALESCE(published_at, fetched_at) < ?
+                ORDER BY COALESCE(published_at, fetched_at) ASC
+                LIMIT ?
+            )
+        """, (cutoff_iso, max(1, batch)))
+        if not cur.rowcount:
+            break
+        total += cur.rowcount
+    return total
 
 
 # ---------------------------------------------------------------------------

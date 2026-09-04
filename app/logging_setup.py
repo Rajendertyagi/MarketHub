@@ -101,6 +101,16 @@ def setup_logging(
     formatter = logging.Formatter(_FORMAT)
     root.addFilter(_BenignSocketClosureFilter())
 
+    # Defense-in-depth for the WebUI live-log pipeline: the SSE transport
+    # (sse_starlette) debug-logs every chunk it sends.  The WebUI handler
+    # excludes that namespace by name, and this level-guard additionally
+    # silences the transport chatter so it never reaches any handler.
+    # Never raises; logger-level tweaks must not break startup.
+    try:
+        logging.getLogger("sse_starlette").setLevel(logging.WARNING)
+    except Exception:
+        pass
+
     # Detach handlers from previous configuration (force/idempotency).
     for handler in list(root.handlers):
         root.removeHandler(handler)

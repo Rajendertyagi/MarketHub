@@ -10,9 +10,10 @@ Provides:
     POST   /api/news/sources/{source_id}/disable  — disable source
     POST   /api/news/sources/test         — test source connectivity
 
-  News viewing:
-    GET /api/news           — fetch news articles with filters
-    GET /api/news/sentiment — fetch news with sentiment analysis
+  News viewing (persisted SQLite history — fast, no network):
+    GET /api/news           — query history with filters
+    GET /api/news/sentiment — history with sentiment analysis
+    POST /api/news/refresh  — pull enabled sources, persist, prune
 """
 
 from __future__ import annotations
@@ -32,6 +33,34 @@ logger = logging.getLogger(__name__)
 
 _VALID_SOURCE_TYPES = ("rss", "reddit")
 _SUBREDDIT_RE = re.compile(r"^[A-Za-z0-9_]{3,21}$")
+
+# ── Source-ID contract ──────────────────────────────────────────────────────
+# Source ids are identifiers, not paths.  Normal ids look like
+# ``rss_moneycontrol`` / ``reddit_indianstockmarket``: letters, digits,
+# underscore, hyphen.  Anything path-like or unsafe (``/``, ``\\``,
+# control characters, traversal segments, …) is rejected with a clear
+# validation error and is NEVER persisted.  Both POST and PUT enforce
+# this exact contract.
+_SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def validate_source_id(source_id: Any) -> str | None:
+    """Validate a news source id. Returns an error message or None if valid."""
+    if not isinstance(source_id, str):
+        return "source_id must be a string"
+    sid = source_id.strip()
+    if not sid:
+        return "source_id is required"
+    if len(sid) > 64:
+        return "source_id must be at most 64 characters"
+    if ("/" in sid or "\\" in sid or ".." in sid
+            or any(ord(c) < 32 or ord(c) == 127 for c in sid)):
+        return ("source_id must not contain path separators, traversal "
+                "segments, or control characters")
+    if not _SOURCE_ID_RE.match(sid):
+        return ("source_id may only contain letters, digits, underscore "
+                "and hyphen")
+    return None
 
 
 def validate_source_config(source_type: str,
@@ -123,6 +152,19 @@ def build_news_routes(news_service: Any) -> list[Route]:
                 status_code=400,
             )
 
+        # Source-id contract (identical rules to PUT): unsafe ids are
+        # rejected and never persisted.
+        id_error = validate_source_id(source_id)
+        if id_error:
+            return Response(
+                content=json.dumps({
+                    "status": "error",
+                    "message": id_error,
+                }),
+                media_type="application/json",
+                status_code=400,
+            )
+
         # Shared validation (identical rules to PUT)
         config_error = validate_source_config(source_type, config_json)
         if config_error:
@@ -166,6 +208,18 @@ def build_news_routes(news_service: Any) -> list[Route]:
         if not source_id:
             return Response(
                 content=json.dumps({"status": "error", "message": "missing source_id"}),
+                media_type="application/json",
+                status_code=400,
+            )
+
+        # Source-id contract (identical rules to POST).
+        id_error = validate_source_id(source_id)
+        if id_error:
+            return Response(
+                content=json.dumps({
+                    "status": "error",
+                    "message": id_error,
+                }),
                 media_type="application/json",
                 status_code=400,
             )
@@ -393,8 +447,62 @@ def build_news_routes(news_service: Any) -> list[Route]:
 
     # ── News viewing ────────────────────────────────────────────────────────
 
+    async def _refresh_sources(request: Request) -> Response:
+        """POST /api/news/refresh — pull enabled sources into history.
+
+        Body (optional JSON): { source_ids?: [...], limit_per_source?: N }
+        Refreshes only enabled sources; one failing source never blocks
+        the others; repeats insert no duplicates (stable identity).
+        Retention pruning runs after a successful pass.
+        """
+        try:
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            if not isinstance(body, dict):
+                body = {}
+        except Exception:
+            body = {}
+
+        source_ids = body.get("source_ids")
+        if source_ids is not None:
+            if not isinstance(source_ids, list):
+                return Response(
+                    content=json.dumps({
+                        "status": "error",
+                        "message": "source_ids must be a list",
+                    }),
+                    media_type="application/json",
+                    status_code=400,
+                )
+            source_ids = [str(s).strip() for s in source_ids if str(s).strip()]
+        try:
+            limit_per_source = max(
+                1, min(int(body.get("limit_per_source", 50)), 100))
+        except (ValueError, TypeError):
+            limit_per_source = 50
+
+        try:
+            summary = await news_service.refresh(
+                source_ids or None, limit_per_source=limit_per_source)
+            return Response(
+                content=json.dumps({"status": "ok", **summary}),
+                media_type="application/json",
+            )
+        except Exception as exc:
+            logger.warning("news refresh failed: %s", exc)
+            return Response(
+                content=json.dumps({"status": "error", "message": str(exc)}),
+                media_type="application/json",
+                status_code=500,
+            )
+
     async def _get_news(request: Request) -> Response:
-        """GET /api/news — fetch news articles with filters.
+        """GET /api/news — query persisted news history with filters.
+
+        Serves SQLite history (fast, no network); use
+        POST /api/news/refresh to pull fresh items first.
 
         Query params:
           source_ids     — comma-separated source IDs
@@ -427,7 +535,12 @@ def build_news_routes(news_service: Any) -> list[Route]:
             )
 
     async def _get_sentiment(request: Request) -> Response:
-        """GET /api/news/sentiment — fetch news with sentiment analysis."""
+        """GET /api/news/sentiment — persisted news with sentiment analysis.
+
+        Operates on SQLite history (deduplicated by stable identity, so
+        repeated ingestion never double-counts); scores are persisted
+        per item for future consumers.
+        """
         try:
             filters = _parse_news_filters(request.query_params)
             result = await news_service.sentiment(filters)
@@ -460,9 +573,10 @@ def build_news_routes(news_service: Any) -> list[Route]:
         Route("/api/news/sources/{source_id}/enable", endpoint=_enable_source, methods=["POST"]),
         Route("/api/news/sources/{source_id}/disable", endpoint=_disable_source, methods=["POST"]),
         Route("/api/news/sources/test", endpoint=_test_source, methods=["POST"]),
-        # News viewing
+        # News viewing (persisted history) + on-demand refresh
         Route("/api/news", endpoint=_get_news, methods=["GET"]),
         Route("/api/news/sentiment", endpoint=_get_sentiment, methods=["GET"]),
+        Route("/api/news/refresh", endpoint=_refresh_sources, methods=["POST"]),
     ]
 
 
@@ -483,11 +597,17 @@ def _source_to_dict(source: NewsSourceConfig) -> dict[str, Any]:
 
 
 def _article_to_dict(article: Any) -> dict[str, Any]:
-    """Convert RSSEntry or RedditPost to a dict for JSON response."""
+    """Convert RSSEntry or RedditPost to a dict for JSON response.
+
+    Wire contract is additive-only: every historical key is preserved,
+    plus ``item_id`` (stable provider-derived identity shared with the
+    sentiment payload and the durable store).
+    """
     from market.models import RSSEntry, RedditPost
     if isinstance(article, RSSEntry):
         return {
             "type": "rss",
+            "item_id": article.guid or article.link,
             "source_id": article.source_id,
             "source_name": article.source_name,
             "title": article.title,
@@ -499,6 +619,7 @@ def _article_to_dict(article: Any) -> dict[str, Any]:
     elif isinstance(article, RedditPost):
         return {
             "type": "reddit",
+            "item_id": article.permalink or article.url or article.title,
             "source_id": article.source_id,
             "source_name": article.source_name,
             "subreddit": article.subreddit,
