@@ -1,0 +1,147 @@
+/* MarketHub UI — application shell + page/workspace contracts + generic splitter.
+   This file OWNS: .app geometry, topbar, ticker, footer, view switching,
+   .page/.workspace, and the generic .split/.pane/.split-gutter primitive.
+   It must NOT contain feature-specific (News, Settings, …) layout. */
+
+/* ── App shell ───────────────────────────────────────────── */
+.app {
+  height: 100dvh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;            /* shell owns its own scrolling regions */
+}
+
+/* ── Top navigation ──────────────────────────────────────── */
+.app-topbar,
+.topnav {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: 0 var(--space-3);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
+  min-height: 48px;
+  flex: 0 0 auto;
+}
+.app-topbar-brand,
+.topnav-brand {
+  font-size: var(--font-size-lg); font-weight: 700; color: var(--accent);
+  margin-right: var(--space-4); white-space: nowrap; flex: 0 0 auto;
+}
+.app-topbar-brand .accent,
+.topnav-brand .accent { color: var(--text); }
+.app-topbar-links,
+.topnav-links {
+  display: flex; gap: 2px; flex: 1 1 auto;
+  overflow-x: auto; scrollbar-width: thin;
+  min-width: 0;
+}
+.nav-link {
+  background: none; border: none; color: var(--text-muted);
+  font-size: var(--font-size-md); padding: 6px 10px; cursor: pointer;
+  border-radius: var(--radius-md); transition: color var(--motion-fast), background var(--motion-fast);
+  white-space: nowrap; flex: 0 0 auto;
+}
+.nav-link:hover { color: var(--text); background: var(--surface-2); }
+.nav-link.active { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.app-topbar-right,
+.topnav-right { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; flex: 0 0 auto; }
+.indicator { font-size: var(--font-size-xs); white-space: nowrap; }
+.indicator-on { color: var(--success); }
+.indicator-off { color: var(--danger); }
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: var(--radius-md); cursor: pointer;
+  background: none; border: 1px solid var(--border); color: var(--text); font-size: 14px;
+  transition: border-color var(--motion-fast), background var(--motion-fast);
+}
+.icon-btn:hover { border-color: var(--border-strong); background: var(--surface-2); }
+
+/* ── Ticker ──────────────────────────────────────────────── */
+.app-ticker,
+.ticker-strip {
+  display: flex; align-items: center; gap: var(--space-5);
+  background: var(--surface-2); border-bottom: 1px solid var(--border);
+  padding: 0 var(--space-3); height: 32px;
+  overflow-x: auto; white-space: nowrap;
+  font-family: var(--font-mono); font-size: var(--font-size-sm);
+  flex: 0 0 auto;
+}
+.ticker-item { display: inline-flex; gap: 6px; align-items: baseline; }
+.ticker-sym { color: var(--text-muted); }
+.ticker-ltp { font-weight: 600; }
+.ticker-empty { color: var(--text-faint); }
+
+/* ── Main / views ────────────────────────────────────────── */
+.app-main {
+  flex: 1 1 auto; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+}
+.view { display: none; }
+.view.active {
+  display: flex; flex-direction: column;
+  flex: 1 1 auto; min-width: 0; min-height: 0;
+}
+/* Normal pages scroll; workspaces own their own scrolling. */
+.view.active:not(.workspace):not(:has(.workspace)) {
+  padding: var(--space-3) var(--space-4);
+  overflow: auto;
+}
+
+/* ── Footer / status bar ─────────────────────────────────── */
+.app-footer {
+  display: flex; align-items: center; gap: var(--space-3);
+  justify-content: space-between;
+  padding: 0 var(--space-3); height: 28px;
+  background: var(--surface-1); border-top: 1px solid var(--border);
+  font-size: var(--font-size-xs); color: var(--text-faint);
+  flex: 0 0 auto;
+}
+
+/* ── Page vs Workspace contracts ──────────────────────────── */
+.page { width: 100%; min-width: 0; }
+.workspace {
+  width: 100%; height: 100%; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+
+/* ── Generic split primitive (themeable, News-agnostic) ───── */
+.split {
+  display: grid;
+  grid-template-columns:
+    var(--split-start-size, 1fr)
+    var(--split-gutter-size, 6px)
+    minmax(0, 1fr);
+  min-width: 0; min-height: 0;
+}
+.split.is-vertical {
+  grid-template-rows:
+    var(--split-start-size, 1fr)
+    var(--split-gutter-size, 6px)
+    minmax(0, 1fr);
+  grid-template-columns: none;
+}
+.split > .pane {
+  min-width: 0; min-height: 0; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.split-gutter {
+  background: var(--border); position: relative;
+  transition: background var(--motion-fast);
+  touch-action: none;
+}
+.split:not(.is-vertical) > .split-gutter { cursor: col-resize; }
+.split.is-vertical > .split-gutter { cursor: row-resize; }
+.split-gutter:hover,
+.split-gutter:focus-visible { background: var(--accent); outline: none; }
+.split-gutter::after { content: ""; position: absolute; inset: 0; }
+
+/* ── Responsive shell ────────────────────────────────────── */
+@media (max-width: 760px) {
+  .app-topbar,
+  .topnav { flex-wrap: wrap; height: auto; padding: var(--space-2) var(--space-3); }
+  .app-topbar-links,
+  .topnav-links { order: 3; flex-basis: 100%; }
+  .app-ticker,
+  .ticker-strip { height: 30px; }
+}

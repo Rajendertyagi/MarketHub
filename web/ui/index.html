@@ -7,12 +7,19 @@
 <link rel="stylesheet" href="/ui/vendor/webawesome/dist/styles/webawesome.css">
 <link rel="stylesheet" href="/ui/vendor/webawesome/dist/styles/themes/default.css">
 <link rel="stylesheet" href="/ui/vendor/webawesome/dist/styles/utilities.css">
-<link rel="stylesheet" href="/ui/css/style.css?v=14">
+  <link rel="stylesheet" href="/ui/css/style.css?v=17">
+  <link rel="stylesheet" href="/ui/css/app.css?v=1">
 <script type="importmap">
 {
   "imports": {
     "@shoelace-style/animations": "/ui/vendor/shoelace-style/animations/index.js",
-    "@shoelace-style/localize": "/ui/vendor/shoelace-style/localize/index.js"
+    "@shoelace-style/localize": "/ui/vendor/shoelace-style/localize/index.js",
+    "lit": "https://esm.sh/lit@3.2.1",
+    "lit/": "https://esm.sh/lit@3.2.1/",
+    "nanoid": "https://esm.sh/nanoid",
+    "@floating-ui/dom": "https://esm.sh/@floating-ui/dom",
+    "composed-offset-position": "https://esm.sh/composed-offset-position",
+    "@ctrl/tinycolor": "https://esm.sh/@ctrl/tinycolor"
   }
 }
 </script>
@@ -20,8 +27,11 @@
 </head>
 <body>
 
+<!-- ══ APPLICATION SHELL ══ -->
+<div class="app">
+
 <!-- ══ TOP NAVIGATION ══ -->
-<nav class="topnav">
+<nav class="app-topbar">
   <div class="topnav-brand">Market<span class="accent">Hub</span></div>
   <div class="topnav-links">
     <button class="nav-link active" data-view="dashboard">Dashboard</button>
@@ -46,12 +56,12 @@
 </nav>
 
 <!-- ══ TICKER STRIP ══ -->
-<div class="ticker-strip" id="ticker-strip">
+<div class="app-ticker" id="ticker-strip">
   <span class="ticker-empty">No market data yet</span>
 </div>
 
 <!-- ══ MAIN CONTENT ══ -->
-<main id="main-content">
+<main id="main-content" class="app-main">
 
   <!-- ── DASHBOARD VIEW ── -->
   <section id="view-dashboard" class="view active">
@@ -701,63 +711,67 @@
     </div><!-- /.settings-layout -->
   </section>
 
-  <!-- ── NEWS VIEW (N-UI1: 3-pane reader) ── -->
+  <!-- ── NEWS VIEW (fluid full-height workspace) ── -->
   <section id="view-news" class="view">
-    <div class="news-shell" id="news-shell">
-      <!-- Slim strip: title + aggregate sentiment + new-arrival pill -->
-      <div class="news-strip">
+    <div class="news-shell workspace" id="news-shell">
+      <!-- Primary filter toolbar — canonical for ALL viewports (one filter state) -->
+      <div class="news-toolbar" role="search" aria-label="News filters">
         <h2>News</h2>
+        <select id="news-filter-source" class="ui-select filter-input" aria-label="News source">
+          <option value="">All Sources</option>
+        </select>
+        <input id="news-filter-category" class="ui-input filter-input" type="text" placeholder="Category…" aria-label="Category filter">
+        <input id="news-filter-symbol" class="ui-input filter-input" type="text" placeholder="Symbol…" aria-label="Symbol filter">
+        <select id="news-filter-max-age" class="ui-select filter-input" aria-label="Max age filter">
+          <option value="">Any age</option>
+          <option value="1">Last hour</option>
+          <option value="6">Last 6 hours</option>
+          <option value="24">Last 24 hours</option>
+          <option value="72">Last 3 days</option>
+          <option value="168">Last 7 days</option>
+        </select>
+        <input id="news-filter-keywords" class="ui-input filter-input news-search" type="text" placeholder="Search…" aria-label="Keywords filter">
+        <button id="news-refresh" class="ui-btn ui-btn-primary ui-btn-sm" type="button">Refresh</button>
+        <span id="news-error" class="news-error hidden" role="alert"></span>
+      </div>
+      <div class="news-subbar">
+        <span id="news-chips" class="news-chips" aria-label="Active filters"></span>
         <span id="news-agg" class="news-agg" role="status">No articles loaded</span>
         <button id="news-new-pill" class="news-new-pill hidden" type="button"></button>
-        <span id="news-error" class="news-error hidden" role="alert"></span>
-        <!-- Compact source/filter controls (tablet/phone; desktop uses rail) -->
-        <div class="news-compact">
-          <select id="news-filter-source" class="filter-input" aria-label="News source">
-            <option value="">All Sources</option>
-          </select>
-          <input type="text" id="news-filter-keywords-m" class="filter-input"
-                 placeholder="Keywords…" style="width:130px" autocomplete="off"
-                 aria-label="News keywords">
-          <button id="news-refresh-m" class="btn" type="button">Refresh</button>
-        </div>
       </div>
-      <div class="news-cols">
-        <!-- FEEDS rail (desktop) -->
-        <aside class="news-feeds" id="news-feeds" aria-label="News sources">
+      <!-- Desktop: resizable 3-pane via the generic splitter.
+           OUTER: Sources | Main   INNER: Articles | Reader -->
+      <div class="split news-split" data-split data-split-orientation="horizontal">
+        <aside class="pane news-feeds" id="news-feeds" data-pane="start" aria-label="News sources">
           <div class="news-pane-head">Sources</div>
           <ul id="news-source-list" class="news-source-list"></ul>
-          <div class="news-pane-head">Filters</div>
-          <div class="news-rail-filters">
-            <input type="text" id="news-filter-category" class="filter-input"
-                   placeholder="Category…" autocomplete="off" aria-label="Category filter">
-            <input type="text" id="news-filter-keywords" class="filter-input"
-                   placeholder="Keywords…" autocomplete="off" aria-label="Keywords filter">
-            <input type="text" id="news-filter-symbol" class="filter-input"
-                   placeholder="Symbol…" autocomplete="off" aria-label="Symbol filter">
-            <input type="text" id="news-filter-max-age" class="filter-input"
-                   placeholder="Max age (h)…" inputmode="numeric" autocomplete="off"
-                   aria-label="Max age hours filter">
-          </div>
           <div class="news-rail-actions">
-            <button id="news-refresh" class="btn" type="button">Refresh</button>
-            <a class="btn" href="#/settings/news-sources"
+            <a class="ui-btn ui-btn-sm" href="#/settings/news-sources"
                title="Add, edit, or remove news sources">Manage Sources</a>
           </div>
         </aside>
-        <!-- ARTICLE LIST (center) -->
-        <div class="news-listpane">
-          <div class="news-pane-head" id="news-list-head">Articles</div>
-          <div id="news-articles-list" class="news-list" role="listbox"
-               aria-label="News articles" tabindex="0">
-            <div class="empty-row" style="padding:20px;text-align:center">Open News to load articles</div>
+        <div class="split-gutter" data-split-gutter role="separator" tabindex="0"
+             aria-orientation="vertical" aria-label="Resize sources pane"
+             aria-controls="news-feeds news-listpane"></div>
+        <div class="pane news-main" data-pane="end">
+          <div class="split news-split-inner" data-split data-split-orientation="horizontal">
+            <div class="pane news-listpane" data-pane="start">
+              <div class="news-pane-head" id="news-list-head">Articles</div>
+              <div id="news-articles-list" class="news-list" role="listbox"
+                   aria-label="News articles" tabindex="0">
+                <div class="empty-row" style="padding:20px;text-align:center">Open News to load articles</div>
+              </div>
+            </div>
+            <div class="split-gutter" data-split-gutter role="separator" tabindex="0"
+                 aria-orientation="vertical" aria-label="Resize articles pane"
+                 aria-controls="news-listpane news-readerpane"></div>
+            <article class="pane news-readerpane" data-pane="end" aria-label="Article reader">
+              <div id="news-reader" class="news-reader">
+                <div class="empty-row" style="padding:20px;text-align:center">Select an article to read</div>
+              </div>
+            </article>
           </div>
         </div>
-        <!-- READER (right) -->
-        <article class="news-readerpane" aria-label="Article reader">
-          <div id="news-reader" class="news-reader">
-            <div class="empty-row" style="padding:20px;text-align:center">Select an article to read</div>
-          </div>
-        </article>
       </div>
     </div>
   </section>
@@ -837,7 +851,9 @@
   <span id="footer-tick"></span>
 </footer>
 
+</div><!-- /.app -->
+
 <script src="/ui/vendor/echarts/dist/echarts.min.js"></script>
-<script type="module" src="/ui/js/app.js?v=31"></script>
+<script type="module" src="/ui/js/app.js?v=32"></script>
 </body>
 </html>

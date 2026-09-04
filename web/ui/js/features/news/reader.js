@@ -15,6 +15,14 @@ function fmtDT(ts) {
   try { return new Date(ts).toLocaleString(); } catch { return ""; }
 }
 
+function isoTime(ts) {
+  if (!ts) return "";
+  try {
+    const d = new Date(ts);
+    return isNaN(d.getTime()) ? "" : d.toISOString();
+  } catch { return ""; }
+}
+
 export function initReaderUI(store, hooks) {
   const readerEl = $("news-reader");
   const shell = $("news-shell");
@@ -27,30 +35,34 @@ export function initReaderUI(store, hooks) {
     const top = keepScroll ? readerEl.scrollTop : 0;
     if (!a) {
       lastRenderedId = null;
-      readerEl.innerHTML = '<div class="empty-row" style="padding:20px;text-align:center">' +
-        (store.order.length ? "Select an article to read" : "No article available") + "</div>";
+      const msg = store.order.length ? "Select an article to read" : "No article available";
+      readerEl.innerHTML = `<div class="ui-callout neutral" style="margin:16px">${esc(msg)}</div>`;
       return;
     }
     lastRenderedId = a.item_id;
     const isReddit = a.type === "reddit";
     const typeLabel = isReddit ? "Reddit · r/" + (a.subreddit || "?") : "RSS";
     const link = a.link || a.url || a.permalink || "";
-    const time = fmtDT(a.published || a.created_utc);
+    const ts = a.published || a.created_utc;
+    const iso = isoTime(ts);
+    const timeEl = iso
+      ? esc(fmtDT(ts))
+      : esc(fmtDT(ts));
     const s = store.sentiment.byId.get(a.item_id);
     const sentHTML = s
-      ? `<span class="news-score-badge ${scoreClass(s.sentiment)}">` +
+      ? `<span class="ui-badge ${scoreClass(s.sentiment)}">` +
         `${esc(formatScore(s.score))} ${esc(labelText(s.sentiment))}</span>` +
         ((s.matched_keywords && s.matched_keywords.length)
           ? `<span class="news-reader-kw">kw: ${esc(s.matched_keywords.join(", "))}</span>` : "")
       : `<span class="news-reader-kw">sentiment unavailable</span>`;
     const summary = a.summary || a.selftext || "";
     readerEl.innerHTML =
-      `<div><button type="button" id="news-reader-back" class="btn news-reader-back">← Back</button></div>` +
+      `<div><button type="button" id="news-reader-back" class="ui-btn ui-btn-sm news-reader-back">← Back</button></div>` +
       `<div class="news-reader-type">${esc(typeLabel)}</div>` +
       `<h3 class="news-reader-title">${esc(a.title)}</h3>` +
       `<div class="news-reader-meta">` +
       `<span>${esc(a.source_name || a.source_id || "")}</span>` +
-      (time ? `<span>${esc(time)}</span>` : "") +
+      (timeEl ? `<span>${timeEl}</span>` : "") +
       (isReddit && a.score != null ? `<span>▲ ${a.score}</span>` : "") +
       (isReddit && a.num_comments != null ? `<span>${a.num_comments} comments</span>` : "") +
       (a.author ? `<span>by ${esc(a.author)}</span>` : "") +
@@ -58,10 +70,10 @@ export function initReaderUI(store, hooks) {
       `<div class="news-reader-sent">${sentHTML}</div>` +
       `<div class="news-reader-summary"></div>` +
       `<div class="news-reader-actions">` +
-      (link ? `<a class="btn" href="${escAttr(link)}" target="_blank" rel="noopener">Open Original ↗</a>` : "") +
+      (link ? `<a class="ui-btn ui-btn-sm" href="${escAttr(link)}" target="_blank" rel="noopener">Open Original ↗</a>` : "") +
       `<span class="news-reader-nav">` +
-      `<button type="button" class="btn" data-news-nav="-1" title="Previous article">‹ Prev</button>` +
-      `<button type="button" class="btn" data-news-nav="1" title="Next article">Next ›</button>` +
+      `<button type="button" class="ui-btn ui-btn-sm" data-news-nav="-1" title="Previous article">‹ Prev</button>` +
+      `<button type="button" class="ui-btn ui-btn-sm" data-news-nav="1" title="Next article">Next ›</button>` +
       `</span></div>`;
     const sumEl = readerEl.querySelector(".news-reader-summary");
     if (sumEl) sumEl.textContent = summary || "(no summary stored for this article)";

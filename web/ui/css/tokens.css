@@ -1,0 +1,121 @@
+/* MarketHub UI — design tokens.
+   Theme values live ONLY here. Components consume semantic variables.
+   Dark is the default (:root). Light is a minimal reference theme.
+   Both [data-theme] and the legacy wa-theme-* class are supported during transition. */
+
+:root,
+[data-theme="dark"],
+html.wa-theme-dark {
+  color-scheme: dark;
+
+  /* Surfaces — slightly cool near-black, layered */
+  --bg: #0f1115;
+  --surface-1: #161922;
+  --surface-2: #1d2230;
+  --surface-3: #262c3d;
+  --surface-elevated: #1f2533;
+
+  /* Text */
+  --text: #e7e9ee;
+  --text-muted: #9aa3b2;
+  --text-faint: #6b7384;
+  --text-inverse: #0f1115;
+
+  /* Borders */
+  --border: #2a3142;
+  --border-strong: #3a4256;
+
+  /* Accent — confident market blue */
+  --accent: #3b6ef5;
+  --accent-hover: #5a87ff;
+  --accent-active: #2f59cf;
+  --accent-contrast: #ffffff;
+  --accent-soft: rgba(59, 110, 245, 0.20);
+
+  /* Status */
+  --success: #25c281;
+  --danger: #ef5350;
+  --warning: #f5a623;
+  --info: #4c9bff;
+
+  /* Focus */
+  --focus-ring: 0 0 0 2px var(--accent-soft);
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-8: 48px;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+
+  /* Type */
+  --font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 13px;
+  --font-size-base: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 18px;
+  --font-size-2xl: 22px;
+  --line-height-tight: 1.3;
+  --line-height-normal: 1.5;
+
+  /* Control geometry */
+  --control-height-sm: 26px;
+  --control-height: 32px;
+  --control-height-lg: 38px;
+
+  /* Motion */
+  --motion-fast: 120ms;
+  --motion-normal: 200ms;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Z-index scale */
+  --z-topbar: 100;
+  --z-ticker: 99;
+  --z-drawer: 200;
+  --z-modal: 300;
+  --z-popover: 400;
+}
+
+/* Minimal light reference theme */
+[data-theme="light"],
+html.wa-theme-light {
+  color-scheme: light;
+
+  --bg: #ffffff;
+  --surface-1: #f7f8fa;
+  --surface-2: #eef0f4;
+  --surface-3: #e3e6ec;
+  --surface-elevated: #ffffff;
+
+  --text: #1a1d24;
+  --text-muted: #5b6472;
+  --text-faint: #8b93a3;
+  --text-inverse: #ffffff;
+
+  --border: #d9dde5;
+  --border-strong: #c2c8d4;
+
+  --accent: #2f5fe0;
+  --accent-hover: #4a78ff;
+  --accent-active: #2449b8;
+  --accent-contrast: #ffffff;
+  --accent-soft: rgba(47, 95, 224, 0.18);
+
+  --success: #1ba974;
+  --danger: #d6453f;
+  --warning: #cf8a14;
+  --info: #2f7fe0;
+
+  --focus-ring: 0 0 0 2px var(--accent-soft);
+}

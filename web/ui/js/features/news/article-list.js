@@ -23,8 +23,21 @@ function fmtTime(ts) {
   } catch { return ""; }
 }
 
+function isoTime(ts) {
+  if (!ts) return "";
+  try {
+    const d = new Date(ts);
+    return isNaN(d.getTime()) ? "" : d.toISOString();
+  } catch { return ""; }
+}
+
 function typeBadge(a) {
   return a.type === "reddit" ? "r/" + (a.subreddit || "?") : "RSS";
+}
+
+function previewText(a) {
+  const t = (a.summary || a.selftext || "").replace(/\s+/g, " ").trim();
+  return t ? t.substring(0, 140) : "";
 }
 
 export function initArticleListUI(store) {
@@ -36,30 +49,41 @@ export function initArticleListUI(store) {
     const active = store.selectedItemId === id;
     const s = store.sentiment.byId.get(id);
     const badge = s
-      ? `<span class="news-score-badge ${scoreClass(s.sentiment)} news-row-badge"` +
+      ? `<span class="ui-badge news-row-badge ${scoreClass(s.sentiment)}"` +
         ` title="${escAttr(labelText(s.sentiment))} ${(s.matched_keywords || []).join(", ")}">` +
-        `${esc(formatScore(s.score))}</span>`
+        `${esc(formatScore(s.score))} ${esc(labelText(s.sentiment))}</span>`
       : "";
-    const time = fmtTime(a.published || a.created_utc);
-    const meta = `${esc(a.source_name || "")}` +
-      (time ? ` · ${esc(time)}` : "") +
+    const ts = a.published || a.created_utc;
+    const timeEl = esc(fmtTime(ts));
+    const where = a.type === "reddit" ? typeBadge(a) : (a.source_name || "");
+    const meta = `${esc(where)}` +
+      (timeEl ? ` · ${timeEl}` : "") +
       (a.score != null ? ` · ▲ ${a.score}` : "") +
       (a.num_comments != null ? ` · ${a.num_comments} comments` : "");
+    const preview = previewText(a);
     return `<button type="button" role="option" aria-selected="${active ? "true" : "false"}"` +
       ` class="news-row${active ? " active" : ""}" data-news-item="${escAttr(id)}">` +
-      `${badge}<span class="news-row-body"><span class="news-row-title">${esc(a.title)}</span>` +
-      `<span class="news-row-meta">${esc(typeBadge(a))} · ${meta}</span></span></button>`;
+      `<span class="news-row-body"><span class="news-row-title">${esc(a.title)}</span>` +
+      (preview ? `<span class="news-row-preview">${esc(preview)}</span>` : "") +
+      `<span class="news-row-meta">${meta}</span></span>${badge}</button>`;
   }
 
   function renderList(opts = {}) {
     const keepScroll = !opts.resetScroll;
     const top = keepScroll ? listEl.scrollTop : 0;
     if (store.loading && !store.order.length) {
-      listEl.innerHTML = '<div class="empty-row" style="padding:20px;text-align:center">Loading articles…</div>';
+      let sk = "";
+      for (let i = 0; i < 6; i++) {
+        sk += `<div class="news-skeleton-row">` +
+          `<span class="ui-skeleton" style="width:85%;height:13px"></span>` +
+          `<span class="ui-skeleton" style="width:55%;height:11px"></span></div>`;
+      }
+      listEl.innerHTML = sk;
       return;
     }
     if (store.error && !store.order.length) {
-      listEl.innerHTML = `<div class="empty-row" style="padding:20px;text-align:center;color:var(--red)">Error: ${esc(store.error)}</div>`;
+      listEl.innerHTML = `<div class="empty-row" style="padding:20px;text-align:center;color:var(--red)">` +
+        `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="vertical-align:-2px;margin-right:4px"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg> Error: ${esc(store.error)}</div>`;
       return;
     }
     if (!store.order.length) {

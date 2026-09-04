@@ -1,0 +1,169 @@
+/* MarketHub UI — News feature styles ONLY.
+   This file owns News workspace geometry, source rail, article rows,
+   reader, and News-specific responsive presentation. It must NOT define
+   generic buttons/selects/badges (those live in components.css) or global
+   shell rules (shell.css). The generic .split/.pane/.split-gutter primitive
+   is provided by shell.css; News only supplies its default sizes here. */
+
+/* ── News workspace ───────────────────────────────────────── */
+.news-shell {
+  width: 100%; height: 100%; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.news-toolbar {
+  display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--surface-1); margin-bottom: var(--space-2); flex-shrink: 0;
+}
+.news-toolbar h2 { font-size: var(--font-size-lg); margin: 0 var(--space-2) 0 0; flex: 0 0 auto; }
+.news-toolbar .ui-select,
+.news-toolbar .ui-input { width: auto; flex: 0 1 180px; min-width: 120px; }
+.news-search { flex: 1 1 200px !important; min-width: 140px !important; max-width: none; }
+.news-error { font-size: var(--font-size-sm); color: var(--danger); }
+.news-error.hidden { display: none; }
+
+.news-subbar {
+  display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap;
+  padding: 0 2px var(--space-2); flex-shrink: 0;
+}
+.news-chips { display: flex; gap: var(--space-1); flex-wrap: wrap; align-items: center; }
+.news-agg { font-size: var(--font-size-sm); color: var(--text-muted); margin-left: auto; }
+.news-new-pill {
+  font-size: var(--font-size-xs); font-weight: 600; padding: 2px 10px; border-radius: 9999px;
+  background: var(--accent-soft); color: var(--accent);
+  border: 1px solid var(--accent); cursor: pointer;
+}
+.news-new-pill.hidden { display: none; }
+
+/* ── News split defaults (fluid; generic splitter overrides on drag) ── */
+.news-split {
+  flex: 1 1 auto; min-width: 0; min-height: 0;
+  --split-start-size: clamp(160px, 18%, 300px);
+  --split-gutter-size: 6px;
+  --split-min: 150px; --split-max: 320px;
+}
+.news-split-inner {
+  flex: 1 1 auto; width: 100%; min-width: 0; min-height: 0;
+  --split-start-size: clamp(300px, 42%, 560px);
+  --split-gutter-size: 6px;
+  --split-min: 280px; --split-max: 620px;
+}
+
+/* ── Source rail (pane) ───────────────────────────────────── */
+.news-feeds,
+.news-listpane,
+.news-readerpane {
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--surface-1); min-width: 0; min-height: 0;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.news-pane-head {
+  flex-shrink: 0; font-size: var(--font-size-xs); font-weight: 700;
+  text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted);
+  padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border);
+  background: var(--surface-1);
+}
+.news-source-list {
+  list-style: none; margin: 0; padding: var(--space-1); overflow-y: auto; flex: 1; min-height: 0;
+}
+.news-source-item {
+  display: flex; gap: var(--space-2); align-items: center; width: 100%;
+  background: none; border: 1px solid transparent; border-radius: var(--radius-sm);
+  color: var(--text); font-size: var(--font-size-md); padding: 7px 9px; cursor: pointer;
+  text-align: left;
+}
+.news-source-item:hover { background: var(--surface-2); }
+.news-source-item.active {
+  background: var(--surface-2); border-color: var(--border-strong); font-weight: 600;
+}
+.news-source-item .count {
+  margin-left: auto; font-size: var(--font-size-xs); color: var(--text-muted);
+  background: var(--surface-2); border-radius: 9999px; padding: 0 7px;
+}
+.news-source-item.active .count { color: var(--text); }
+.news-rail-actions { padding: var(--space-2); border-top: 1px solid var(--border); flex-shrink: 0; }
+.news-rail-actions .ui-btn { width: 100%; justify-content: center; }
+
+/* ── Article list (pane) ─────────────────────────────────── */
+.news-list { overflow-y: auto; flex: 1; min-height: 0; outline: none; }
+/* Density adapts to the LIST pane width, not article count. */
+.news-listpane { container-type: inline-size; }
+.news-row {
+  display: flex; gap: var(--space-2); align-items: flex-start; width: 100%;
+  background: none; border: none; border-bottom: 1px solid var(--border);
+  padding: 10px var(--space-3); cursor: pointer; text-align: left; color: var(--text);
+}
+.news-row:hover { background: var(--surface-2); }
+.news-row.active { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.news-row-body { flex: 1; min-width: 0; }
+.news-row-title {
+  font-size: var(--font-size-md); font-weight: 600; line-height: 1.45;
+  display: block; overflow: hidden;
+  line-clamp: 2; -webkit-line-clamp: 2; max-height: calc(1.45em * 2);
+}
+.news-row-preview {
+  display: none; font-size: var(--font-size-sm); color: var(--text-muted); line-height: 1.5;
+  margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.news-row-meta {
+  font-size: var(--font-size-xs); color: var(--text-muted); margin-top: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.news-row-badge { flex-shrink: 0; margin: 2px 0 0 auto; align-self: flex-start; }
+/* COMFORTABLE: roomy list shows one-line preview. */
+@container (min-width: 430px) {
+  .news-row-preview { display: block; }
+}
+/* COMPACT: narrow list tightens rows + single-line titles. */
+@container (max-width: 340px) {
+  .news-row { padding: 7px 9px; gap: var(--space-1); }
+  .news-row-title { line-clamp: 1; -webkit-line-clamp: 1; max-height: 1.45em; }
+}
+
+.news-skeleton-row {
+  display: flex; flex-direction: column; gap: 6px; padding: 12px var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+.news-skeleton-row .ui-skeleton { display: block; }
+
+/* ── Reader (pane) ───────────────────────────────────────── */
+.news-reader { overflow-y: auto; flex: 1; min-height: 0; padding: var(--space-4) var(--space-5); }
+.news-reader > * { max-width: 78ch; }
+.news-reader-back { display: none; margin-bottom: var(--space-3); }
+.news-reader-type {
+  display: inline-block; font-size: 10px; padding: 2px 6px; border-radius: var(--radius-sm);
+  background: var(--accent-soft); color: var(--accent); font-weight: 600;
+  text-transform: uppercase; margin-bottom: var(--space-2);
+}
+.news-reader-title { font-size: var(--font-size-2xl); font-weight: 700; line-height: 1.4; margin: 0 0 var(--space-2); }
+.news-reader-meta { font-size: var(--font-size-sm); color: var(--text-muted); display: flex;
+  gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-2); }
+.news-reader-sent { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap;
+  padding: var(--space-2) 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-3); font-size: var(--font-size-sm); }
+.news-reader-kw { font-size: var(--font-size-xs); color: var(--text-muted); }
+.news-reader-summary { font-size: var(--font-size-lg); line-height: 1.7; white-space: pre-wrap; }
+.news-reader-actions { margin-top: var(--space-4); display: flex; gap: var(--space-2); }
+.news-reader-nav { display: flex; gap: var(--space-1); margin-left: auto; }
+
+/* ── Responsive: tablet collapses Sources → Articles | Reader ──
+   Use a single-column grid so the one visible pane (main) fills width;
+   display:none on the hidden panes/gutter is safe because the grid then
+   has exactly one track. Specificity is raised (>.news-feeds) so it wins
+   over the generic `.split > .pane { display:flex }` rule. */
+@media (max-width: 1100px) {
+  .news-split { grid-template-columns: minmax(0, 1fr); }
+  .news-split > .split-gutter { display: none; }
+  .news-split > .news-feeds { display: none; }
+}
+/* ── Responsive: phone master/detail (list ↔ reader) ──────── */
+@media (max-width: 760px) {
+  .news-split-inner { grid-template-columns: minmax(0, 1fr); }
+  .news-split-inner > .split-gutter { display: none; }
+  .news-split-inner > .news-readerpane { display: none; }
+  .news-shell.news-mobile-reader .news-listpane { display: none; }
+  .news-shell.news-mobile-reader .news-readerpane { display: flex; }
+  .news-reader-back { display: inline-block; }
+  .news-toolbar h2 { font-size: var(--font-size-md); }
+}

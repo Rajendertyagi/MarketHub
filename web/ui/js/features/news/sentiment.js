@@ -7,8 +7,9 @@
  */
 
 export function scoreClass(label) {
-  return label === "positive" ? "news-score-positive"
-    : label === "negative" ? "news-score-negative" : "news-score-neutral";
+  // Maps domain sentiment to MarketHub ui-badge modifier classes.
+  return label === "positive" ? "bull"
+    : label === "negative" ? "bear" : "neutral";
 }
 
 export function formatScore(score) {

@@ -1,0 +1,11 @@
+/* MarketHub UI — CSS entry / orchestration only.
+   Loaded once from index.html. Owns import order and (optionally) @layer
+   orchestration. No component/feature rules live here.
+
+   Each import carries a ?v= cache-buster; bump it when the file changes. */
+
+@import "./tokens.css?v=1";
+@import "./base.css?v=1";
+@import "./shell.css?v=1";
+@import "./components.css?v=1";
+@import "./features/news.css?v=2";

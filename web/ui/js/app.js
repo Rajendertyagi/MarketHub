@@ -34,6 +34,7 @@ import { initSettingsUI } from "./features/settings/index.js";
 import { initGeneralSettings } from "./features/settings/general.js";
 import { initAIMCPSettings } from "./features/settings/ai-mcp.js";
 import { initBackupSettings } from "./features/settings/backup.js";
+import { initSplitters } from "./core/splitter.js";
 
   // ── DOM shortcuts ───────────────────────────────────────────────────────
   const $ = (id) => document.getElementById(id);
@@ -57,7 +58,11 @@ import { initBackupSettings } from "./features/settings/backup.js";
   }
 
   function applyTheme(theme) {
-    document.documentElement.className = theme === "light" ? "wa-theme-light" : "wa-theme-dark";
+    const isLight = theme === "light";
+    // Keep the legacy wa-theme-* class so any remaining WebAwesome content
+    // stays themed during the transition; the new foundation reads data-theme.
+    document.documentElement.className = isLight ? "wa-theme-light" : "wa-theme-dark";
+    document.documentElement.setAttribute("data-theme", isLight ? "light" : "dark");
     localStorage.setItem("mh-theme", theme);
   }
 
@@ -241,6 +246,7 @@ import { initBackupSettings } from "./features/settings/backup.js";
     initNewsUI();
     initMCPTools();
     initLogsUI();
+    initSplitters();
     // Route hooks (registered once): direct #/view loads, F5,
     // and back/forward all initialize their views; nav clicks are also
     // observed by the router (switchView uses replaceState, silent).
