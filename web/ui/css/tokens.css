@@ -14,7 +14,7 @@
   --font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --font-size-xs: 11px; --font-size-sm: 12px; --font-size-md: 13px; --font-size-base: 14px;
-  --font-size-lg: 16px; --font-size-xl: 18px; --font-size-2xl: 22px;
+   --font-size-lg: 16px; --font-size-2xl: 22px;
   --line-height-tight: 1.3; --line-height-normal: 1.5;
 
   /* Control geometry */
@@ -98,7 +98,7 @@
   --accent: oklch(72% 0.14 245);
   --accent-hover: oklch(68% 0.13 245);
   --accent-active: oklch(76% 0.14 245);
-  --accent-contrast: oklch(18% 0nt 0);
+  --accent-contrast: oklch(18% 0 0);
   --accent-soft: color-mix(in oklch, var(--accent) 50%, transparent);
   --success: oklch(70% 0.15 145);
   --danger: oklch(75% 0.14 20);
@@ -159,7 +159,7 @@
   color-scheme: light;
   --bg: oklch(98.5% 0.008 30);
   --surface-1: oklch(96% 0.012 30);
-  --surface-2: oklch(95%2030 30);
+  --surface-2: oklch(95% 0.03 30);
   --surface-3: oklch(97% 0.008 30);
   --text: oklch(30% 0.03 290);
   --text-muted: oklch(65% 0.01 290);

@@ -22,27 +22,6 @@
    truth. This keeps unported views visually coherent with the new shell.
    ═══════════════════════════════════════════════════════════════ */
 
-/* ── Reset / base ─────────────────────────────────────────────── */
-* { box-sizing: border-box; margin: 0; padding: 0; }
-html { font-size: 14px; }
-body {
-  font-family: var(--font-family);
-  font-size: var(--font-size-md);
-  background: var(--bg); color: var(--text);
-  min-height: 100dvh;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
-  line-height: var(--line-height-normal);
-}
-/* Normalize form controls + headings so typography is uniform everywhere */
-input, button, select, textarea { font-family: inherit; font-size: inherit; color: inherit; }
-h1, h2, h3, h4, h5, h6 { font-family: var(--font-family); font-weight: 600; color: var(--text); margin: 0; }
-.mono, .mcard-ltp, .mcard-chg, .setting-val, .kv-table td, .data-table td { font-variant-numeric: tabular-nums; }
-/* Generic visibility utility used by JS toggles (e.g. error/pill). */
-.hidden { display: none !important; }
-.mono { font-family: var(--font-mono); }
-
 /* ── Status strip ─────────────────────────────────────────────── */
 .status-strip {
   display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-3);
@@ -66,10 +45,15 @@ h1, h2, h3, h4, h5, h6 { font-family: var(--font-family); font-weight: 600; colo
 .mcard {
   background: var(--surface-1); border: 1px solid var(--border);
   border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); min-width: 140px;
+  transition: transform var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
+}
+.mcard:hover {
+  transform: translateY(-1px); border-color: var(--border-strong);
+  box-shadow: 0 2px 4px rgba(0,0,0,.3), 0 6px 16px rgba(0,0,0,.2);
 }
 .mcard-sym { font-size: var(--font-size-xs); color: var(--text-muted); margin-bottom: 2px; }
-.mcard-ltp { font-size: var(--font-size-xl); font-weight: 700; font-family: var(--font-mono); }
-.mcard-chg { font-size: var(--font-size-sm); font-family: var(--font-mono); }
+.mcard-ltp { font-size: var(--font-size-2xl); font-weight: 700; font-family: var(--font-mono); line-height: 1.1; }
+.mcard-chg { font-size: var(--font-size-sm); font-family: var(--font-mono); font-weight: 600; }
 .mcard-chg.up { color: var(--pos); }
 .mcard-chg.down { color: var(--neg); }
 
@@ -366,16 +350,6 @@ a.btn { text-decoration: none; display: inline-flex; }
               inset 1px 0 0 color-mix(in srgb, var(--text) 10%, transparent);
 }
 
-/* Theme-aware scrollbars */
-* { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
-*::-webkit-scrollbar { width: 10px; height: 10px; }
-*::-webkit-scrollbar-track { background: transparent; }
-*::-webkit-scrollbar-thumb {
-  background: var(--border-strong); border-radius: 9999px;
-  border: 2px solid transparent; background-clip: padding-box;
-}
-*::-webkit-scrollbar-thumb:hover { background: var(--accent); }
-
 /* Global focus visibility (inputs keep their own ring) */
 :focus-visible:not(input):not(select):not(textarea) {
   outline: 2px solid var(--accent); outline-offset: 2px;
@@ -383,15 +357,6 @@ a.btn { text-decoration: none; display: inline-flex; }
 
 /* Smoother feedback */
 .data-table tbody tr { transition: background var(--motion-fast) var(--ease); }
-.mcard {
-  transition: transform var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
-}
-.mcard:hover {
-  transform: translateY(-1px); border-color: var(--border-strong);
-  box-shadow: 0 2px 4px rgba(0,0,0,.3), 0 6px 16px rgba(0,0,0,.2);
-}
-.mcard-ltp { font-size: var(--font-size-2xl); line-height: 1.1; }
-.mcard-chg { font-weight: 600; }
 
 /* ── Utility classes (kept minimal — truly universal only) ─── */
 /* Display */
