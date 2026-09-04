@@ -13,8 +13,48 @@
  * cannot create duplicate listeners, sources, or streams.
  */
 
+import { $ } from "./utils.js";
+
 const _enterHooks = new Map();   // view -> Set<fn>
 let _routerBound = false;
+
+// ── Active view state ─────────────────────────────────────────────────────
+// Single owner of "which view is shown". Exported as a live binding so
+// feature modules (e.g. market sources) can read it without globals.
+export let currentView = "dashboard";
+
+export function initNav() {
+  document.querySelectorAll(".nav-link").forEach((btn) => {
+    btn.addEventListener("click", () => switchView(btn.dataset.view));
+  });
+  const hashView = location.hash.startsWith("#/")
+    ? location.hash.slice(2) : null;
+  let saved = null;
+  try { saved = sessionStorage.getItem("mh-last-view"); } catch {}
+  const initial = document.getElementById("view-" + hashView)
+    ? hashView
+    : (document.getElementById("view-" + saved) ? saved : "dashboard");
+  switchView(initial);
+}
+
+export function switchView(view) {
+  currentView = view;
+  document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
+  const el = $("view-" + view);
+  if (el) el.classList.add("active");
+  document.querySelectorAll(".nav-link").forEach((b) => {
+    b.classList.toggle("active", b.dataset.view === view);
+  });
+  // NOTE: the old `if (view === "sources") pollSources()` branch is gone —
+  // no `sources` view or nav entry exists, so it was dead code. Sources
+  // status keeps its boot poll + 10s interval from app initialization.
+  try {
+    sessionStorage.setItem("mh-last-view", view);
+    if (location.hash !== "#/" + view) {
+      history.replaceState(null, "", location.pathname + "#/" + view);
+    }
+  } catch { /* storage unavailable */ }
+}
 
 function _currentView() {
   const h = location.hash || "";

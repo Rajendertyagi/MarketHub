@@ -1616,12 +1616,20 @@ def test_es_modules(r: R) -> None:
     else:
         r.fail("G:logs_sse_single", "stream count changed")
 
-    # EventSource budget unchanged across the split (3 total, 2 in app.js).
-    total = sum(src.count("new EventSource") for src in mods.values())
-    if total == 3 and mods["app.js"].count("new EventSource") == 2:
+    # EventSource budget across the phase-2 split: still 3 streams total
+    # (market.js + alerts.js + logs.js), none left in app.js. This
+    # supersedes the old "3 total, 2 in app.js" layout assertion — the
+    # runtime topology is unchanged, only the file layout moved.
+    import glob as _glob
+    _all = ""
+    for _p in _glob.glob(os.path.join(base, "*.js")):
+        with open(_p, encoding="utf-8") as _fh:
+            _all += _fh.read()
+    if _all.count("new EventSource") == 3:
         r.ok("G:eventsource_budget")
     else:
-        r.fail("G:eventsource_budget", f"total={total}")
+        r.fail("G:eventsource_budget",
+               f"total={_all.count('new EventSource')}")
 
     # index.html loads app as a module (cache-busted).
     try:
