@@ -59,15 +59,13 @@ import { initSplitters } from "./core/splitter.js";
 
   function applyTheme(theme) {
     const isLight = theme === "light";
-    // Keep the legacy wa-theme-* class so any remaining WebAwesome content
-    // stays themed during the transition; the new foundation reads data-theme.
-    document.documentElement.className = isLight ? "wa-theme-light" : "wa-theme-dark";
+    // MarketHub owns theming via the [data-theme] attribute only.
     document.documentElement.setAttribute("data-theme", isLight ? "light" : "dark");
     localStorage.setItem("mh-theme", theme);
   }
 
   function toggleTheme() {
-    const cur = document.documentElement.classList.contains("wa-theme-light") ? "dark" : "light";
+    const cur = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
     applyTheme(cur);
   }
 

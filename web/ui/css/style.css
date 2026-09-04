@@ -108,18 +108,6 @@ body {
 }
 .filter-input::placeholder { color: var(--text-faint); }
 .filter-input:focus { border-color: var(--accent); box-shadow: var(--focus-ring); }
-/* Native <select> wearing a fake .wa-* class: render as a proper MarketHub
-   select (no WA dependency). */
-.wa-select {
-  background: var(--surface-2); border: 1px solid var(--border-strong);
-  color: var(--text); padding: 0 var(--space-2); padding-right: 28px; border-radius: var(--radius-md);
-  font-size: var(--font-size-md); height: var(--control-height); cursor: pointer;
-  -webkit-appearance: none; appearance: none; outline: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239aa3b2' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat: no-repeat; background-position: right 10px center;
-  transition: border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
-}
-.wa-select:focus { border-color: var(--accent); box-shadow: var(--focus-ring); }
 
 /* ── Buttons (unified with .ui-btn geometry/tokens) ───────────── */
 .btn {

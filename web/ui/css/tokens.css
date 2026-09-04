@@ -1,11 +1,10 @@
 /* MarketHub UI — design tokens.
    Theme values live ONLY here. Components consume semantic variables.
    Dark is the default (:root). Light is a minimal reference theme.
-   Both [data-theme] and the legacy wa-theme-* class are supported during transition. */
+   Theme state is owned exclusively by the [data-theme] attribute. */
 
 :root,
-[data-theme="dark"],
-html.wa-theme-dark {
+[data-theme="dark"] {
   color-scheme: dark;
 
   /* Surfaces — slightly cool near-black, layered */
@@ -88,8 +87,7 @@ html.wa-theme-dark {
 }
 
 /* Minimal light reference theme */
-[data-theme="light"],
-html.wa-theme-light {
+[data-theme="light"] {
   color-scheme: light;
 
   --bg: #ffffff;

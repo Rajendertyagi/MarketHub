@@ -1,29 +1,11 @@
 <!DOCTYPE html>
-<html lang="en" class="wa-theme-dark">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MarketHub</title>
-<link rel="stylesheet" href="/ui/vendor/webawesome/dist/styles/webawesome.css">
-<link rel="stylesheet" href="/ui/vendor/webawesome/dist/styles/themes/default.css">
-<link rel="stylesheet" href="/ui/vendor/webawesome/dist/styles/utilities.css">
   <link rel="stylesheet" href="/ui/css/style.css?v=18">
   <link rel="stylesheet" href="/ui/css/app.css?v=1">
-<script type="importmap">
-{
-  "imports": {
-    "@shoelace-style/animations": "/ui/vendor/shoelace-style/animations/index.js",
-    "@shoelace-style/localize": "/ui/vendor/shoelace-style/localize/index.js",
-    "lit": "https://esm.sh/lit@3.2.1",
-    "lit/": "https://esm.sh/lit@3.2.1/",
-    "nanoid": "https://esm.sh/nanoid",
-    "@floating-ui/dom": "https://esm.sh/@floating-ui/dom",
-    "composed-offset-position": "https://esm.sh/composed-offset-position",
-    "@ctrl/tinycolor": "https://esm.sh/@ctrl/tinycolor"
-  }
-}
-</script>
-<script type="module" src="/ui/vendor/webawesome/dist/webawesome.loader.js"></script>
 </head>
 <body>
 
@@ -119,7 +101,7 @@
   <section id="view-instruments" class="view">
     <div class="toolbar">
       <input type="text" id="instr-search" aria-label="Search instrument catalog" placeholder="Search symbol or name (e.g. RELIANCE, NIFTY)…" class="filter-input" style="width:320px">
-      <select id="instr-exchange" class="wa-select">
+      <select id="instr-exchange" class="ui-select">
         <option value="">All exchanges</option>
         <option>NSE</option><option>NFO</option><option>BSE</option><option>MCX</option>
       </select>
@@ -142,7 +124,7 @@
   <!-- ── WATCHLISTS VIEW ── -->
   <section id="view-watchlists" class="view">
     <div class="toolbar">
-      <select id="wl-select" class="wa-select"></select>
+      <select id="wl-select" class="ui-select"></select>
       <input type="text" id="wl-new-name" aria-label="New watchlist name" placeholder="New watchlist name…" class="filter-input">
       <button id="wl-create" class="btn">Create</button>
       <button id="wl-rename" class="btn">Rename</button>
@@ -164,9 +146,9 @@
   <section id="view-options" class="view">
     <div class="toolbar">
       <input type="text" id="oc-underlying-search" aria-label="Search option underlying" placeholder="Search underlying (e.g. NIFTY)…" class="filter-input" style="width:240px">
-      <select id="oc-underlying-select" class="wa-select"><option value="">Underlying…</option></select>
-      <select id="oc-expiry-select" class="wa-select" disabled><option value="">Expiry…</option></select>
-      <select id="oc-window" class="wa-select">
+      <select id="oc-underlying-select" class="ui-select"><option value="">Underlying…</option></select>
+      <select id="oc-expiry-select" class="ui-select" disabled><option value="">Expiry…</option></select>
+      <select id="oc-window" class="ui-select">
         <option value="5">±5 strikes</option>
         <option value="10">±10 strikes</option>
         <option value="0" selected>All</option>
@@ -198,12 +180,12 @@
   <section id="view-charts" class="view">
     <div class="toolbar">
       <input type="text" id="chart-search" aria-label="Search chart instrument" placeholder="Search instrument (e.g. RELIANCE)…" class="filter-input" style="width:240px">
-      <select id="chart-instrument-select" class="wa-select"><option value="">Instrument…</option></select>
-      <select id="chart-provider" class="wa-select">
+      <select id="chart-instrument-select" class="ui-select"><option value="">Instrument…</option></select>
+      <select id="chart-provider" class="ui-select">
         <option value="upstox" selected>Upstox</option>
         <option value="fyers">Fyers</option>
       </select>
-      <select id="chart-unit" class="wa-select">
+      <select id="chart-unit" class="ui-select">
         <option value="minutes">Minutes</option>
         <option value="hours" selected>Hours</option>
         <option value="days">Days</option>
@@ -211,7 +193,7 @@
         <option value="months">Months</option>
       </select>
       <input type="number" id="chart-interval" aria-label="Chart interval" value="1" min="1" class="filter-input" style="width:70px">
-      <select id="chart-range" class="wa-select">
+      <select id="chart-range" class="ui-select">
         <option value="1">1D</option>
         <option value="5">5D</option>
         <option value="30" selected>1M</option>
@@ -230,13 +212,13 @@
     <div class="toolbar">
       <input type="text" id="alert-token" aria-label="Alert instrument token" placeholder="Instrument token…" class="filter-input" style="width:220px">
       <input type="text" id="alert-symbol" aria-label="Alert trading symbol" placeholder="Symbol…" class="filter-input" style="width:120px">
-      <select id="alert-field" class="wa-select">
+      <select id="alert-field" class="ui-select">
         <option value="ltp">LTP</option>
         <option value="change_percent">Change %</option>
         <option value="volume">Volume</option>
         <option value="oi_change_percent">OI Change %</option>
       </select>
-      <select id="alert-operator" class="wa-select">
+      <select id="alert-operator" class="ui-select">
         <option value="gt">&gt;</option>
         <option value="lt">&lt;</option>
       </select>
