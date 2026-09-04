@@ -6,6 +6,6 @@
 
 @import "./tokens.css?v=1";
 @import "./base.css?v=1";
-@import "./shell.css?v=1";
+@import "./shell.css?v=2";
 @import "./components.css?v=1";
-@import "./features/news.css?v=2";
+@import "./features/news.css?v=3";

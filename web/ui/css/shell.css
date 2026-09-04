@@ -37,13 +37,17 @@
   min-width: 0;
 }
 .nav-link {
-  background: none; border: none; color: var(--text-muted);
-  font-size: var(--font-size-md); padding: 6px 10px; cursor: pointer;
-  border-radius: var(--radius-md); transition: color var(--motion-fast), background var(--motion-fast);
+  background: none; border: 1px solid transparent; color: var(--text-muted);
+  font-size: var(--font-size-md); padding: 6px 11px; cursor: pointer; line-height: 1.2;
+  border-radius: var(--radius-md); transition: color var(--motion-fast), background var(--motion-fast), border-color var(--motion-fast);
   white-space: nowrap; flex: 0 0 auto;
 }
 .nav-link:hover { color: var(--text); background: var(--surface-2); }
-.nav-link.active { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.nav-link:focus-visible { outline: none; border-color: var(--accent); color: var(--text); }
+.nav-link.active {
+  color: var(--accent); background: var(--accent-soft); font-weight: 600;
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
 .app-topbar-right,
 .topnav-right { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; flex: 0 0 auto; }
 .indicator { font-size: var(--font-size-xs); white-space: nowrap; }
@@ -60,17 +64,29 @@
 /* ── Ticker ──────────────────────────────────────────────── */
 .app-ticker,
 .ticker-strip {
-  display: flex; align-items: center; gap: var(--space-5);
+  display: flex; align-items: center;
   background: var(--surface-2); border-bottom: 1px solid var(--border);
   padding: 0 var(--space-3); height: 32px;
-  overflow-x: auto; white-space: nowrap;
+  overflow-x: auto; white-space: nowrap; scrollbar-width: none;
   font-family: var(--font-mono); font-size: var(--font-size-sm);
   flex: 0 0 auto;
 }
-.ticker-item { display: inline-flex; gap: 6px; align-items: baseline; }
+.app-ticker::-webkit-scrollbar,
+.ticker-strip::-webkit-scrollbar { display: none; }
+.ticker-item {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  padding: 0 var(--space-3); position: relative; flex: 0 0 auto;
+}
+.ticker-item:not(:last-child)::after {
+  content: ""; position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+  width: 1px; height: 14px; background: var(--border-strong);
+}
 .ticker-sym { color: var(--text-muted); }
-.ticker-ltp { font-weight: 600; }
-.ticker-empty { color: var(--text-faint); }
+.ticker-ltp { font-weight: 600; color: var(--text); }
+.ticker-chg { color: var(--text-faint); }
+.ticker-chg.up { color: var(--success); }
+.ticker-chg.down { color: var(--danger); }
+.ticker-empty { color: var(--text-faint); padding: 0 var(--space-3); }
 
 /* ── Main / views ────────────────────────────────────────── */
 .app-main {
@@ -126,15 +142,24 @@
   display: flex; flex-direction: column;
 }
 .split-gutter {
-  background: var(--border); position: relative;
-  transition: background var(--motion-fast);
+  background: var(--border-strong); position: relative;
+  transition: background var(--motion-fast), box-shadow var(--motion-fast);
   touch-action: none;
 }
 .split:not(.is-vertical) > .split-gutter { cursor: col-resize; }
 .split.is-vertical > .split-gutter { cursor: row-resize; }
+.split-gutter::after { content: ""; position: absolute; inset: 0; }
+.split-gutter::before {
+  content: ""; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  border-radius: 2px; background: var(--text-faint);
+  transition: background var(--motion-fast);
+}
+.split:not(.is-vertical) > .split-gutter::before { width: 2px; height: 22px; }
+.split.is-vertical > .split-gutter::before { width: 22px; height: 2px; }
 .split-gutter:hover,
 .split-gutter:focus-visible { background: var(--accent); outline: none; }
-.split-gutter::after { content: ""; position: absolute; inset: 0; }
+.split-gutter:hover::before,
+.split-gutter:focus-visible::before { background: var(--accent-contrast); }
 
 /* ── Responsive shell ────────────────────────────────────── */
 @media (max-width: 760px) {
