@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="/ui/vendor/webawesome/dist/styles/webawesome.css">
 <link rel="stylesheet" href="/ui/vendor/webawesome/dist/styles/themes/default.css">
 <link rel="stylesheet" href="/ui/vendor/webawesome/dist/styles/utilities.css">
-<link rel="stylesheet" href="/ui/css/style.css?v=13">
+<link rel="stylesheet" href="/ui/css/style.css?v=14">
 <script type="importmap">
 {
   "imports": {
@@ -523,6 +523,7 @@
         <h2>News Sources</h2>
         <button id="news-add-source" class="btn" style="margin-left:auto">Add Source</button>
       </div>
+      <div class="table-scroll">
       <table class="data-table" id="news-sources-table">
         <thead>
           <tr>
@@ -539,6 +540,8 @@
           <tr><td colspan="7" class="empty-row">Loading…</td></tr>
         </tbody>
       </table>
+      </div>
+    </div>
     </div>
 
     <!-- Source Edit Modal -->
@@ -588,7 +591,6 @@
         </div>
       </div>
     </div>
-      </div>
 
       <div class="set-panel hidden" id="set-panel-market-sources">
     <div class="panel">
@@ -705,7 +707,7 @@
     <div class="panel">
       <div class="panel-header">
         <h2>News</h2>
-        <div style="display:flex;gap:6px;align-items:center;margin-left:auto">
+        <div class="news-toolbar">
           <select id="news-filter-source" class="filter-input" style="width:130px">
             <option value="">All Sources</option>
           </select>

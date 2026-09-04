@@ -111,6 +111,12 @@ def test_router_subroutes(r: R) -> None:
         r.ok("ROUTER:base_fallback")
     else:
         r.fail("ROUTER:base_fallback", "no base fallback")
+    # Back/forward: hash-only changes must activate the base view,
+    # otherwise the URL and the visible view disagree.
+    if ".view.active" in router and "switchView(v)" in router:
+        r.ok("ROUTER:hash_activates_view")
+    else:
+        r.fail("ROUTER:hash_activates_view", "hashchange never switches view")
 
 
 # ===================================================================
@@ -355,8 +361,51 @@ def test_app_budget(r: R) -> None:
 
 
 # ===================================================================
-# MAIN
+# Visual structure (regression guards for live-found defects)
 # ===================================================================
+
+def test_settings_dom_balance(r: R) -> None:
+    """Every settings panel's divs balance; layout nesting is intact.
+
+    Guards the live-found bug where one extra </div> ejected six panels
+    out of .settings-content (broke narrow layout + panel context).
+    """
+    import re
+    html = _read(os.path.join(_UI, "index.html"))
+    seg = html[html.find('id="view-settings"'):html.find("NEWS VIEW")]
+    opens = len(re.findall(r"<div\b", seg))
+    closes = len(re.findall(r"</div>", seg))
+    if opens == closes:
+        r.ok(f"DOM:settings_balanced:{opens}")
+    else:
+        r.fail("DOM:settings_balanced", f"open={opens} close={closes}")
+    seg_n = html[html.find('id="view-news"'):html.find("LOGS VIEW")]
+    opens_n = len(re.findall(r"<div\b", seg_n))
+    closes_n = len(re.findall(r"</div>", seg_n))
+    if opens_n == closes_n:
+        r.ok(f"DOM:news_balanced:{opens_n}")
+    else:
+        r.fail("DOM:news_balanced", f"open={opens_n} close={closes_n}")
+
+
+def test_responsive_rules(r: R) -> None:
+    """Narrow-viewport CSS contract: column layout, wrapped nav/toolbar,
+    in-panel table scroll, no global horizontal breakage from settings."""
+    css = _read(os.path.join(_UI, "css", "style.css"))
+    for marker in ("@media (max-width: 760px)",
+                   ".settings-layout { flex-direction: column; align-items: stretch; }",
+                   ".table-scroll { overflow-x: auto; }",
+                   ".news-toolbar",
+                   "flex-wrap: wrap"):
+        if marker in css:
+            r.ok(f"CSS:has:{marker[:28]}")
+        else:
+            r.fail(f"CSS:has:{marker[:28]}", "missing")
+    html = _read(os.path.join(_UI, "index.html"))
+    if 'class="table-scroll"' in html and 'class="news-toolbar"' in html:
+        r.ok("CSS:wired")
+    else:
+        r.fail("CSS:wired", "scroll/toolbar wrappers missing")
 
 def main() -> None:
     r = R()
@@ -388,6 +437,10 @@ def main() -> None:
 
     print("\n--- H app.js budget ---")
     test_app_budget(r)
+
+    print("\n--- Visual structure ---")
+    test_settings_dom_balance(r)
+    test_responsive_rules(r)
 
     print("\n" + "=" * 60)
     r.summary()

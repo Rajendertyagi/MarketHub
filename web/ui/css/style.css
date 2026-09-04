@@ -448,9 +448,15 @@ html.wa-theme-light .logs-component { color: var(--text-muted); }
 }
 .settings-content { flex: 1; min-width: 0; }
 .set-panel.hidden { display: none; }
+.set-panel { min-width: 0; }
+/* Wide tables (e.g. News Sources) scroll inside the panel instead of
+   breaking the page layout on narrow viewports. */
+.table-scroll { overflow-x: auto; }
 a.btn { text-decoration: none; display: inline-block; }
+/* News toolbar wraps instead of overflowing on narrow viewports. */
+.news-toolbar { display: flex; gap: 6px; align-items: center; margin-left: auto; flex-wrap: wrap; }
 @media (max-width: 760px) {
-  .settings-layout { flex-direction: column; }
+  .settings-layout { flex-direction: column; align-items: stretch; }
   .settings-nav {
     flex-direction: row; flex-wrap: wrap; min-width: 0; position: static;
   }
