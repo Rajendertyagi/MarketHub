@@ -1604,8 +1604,18 @@ def test_es_modules(r: R) -> None:
         r.fail("G:no_inline_handlers", "onclick present")
 
     # History-first UI: openNews loads sources + history; refresh persists.
-    if ("openNews" in mods["news.js"] and "_loadNews" in mods["news.js"]
-            and "/api/news/refresh" in mods["news.js"]):
+    # N-UI1: news.js is a thin compat shim; orchestration lives in
+    # features/news/index.js, selection state in features/news/state.js.
+    try:
+        with open(os.path.join(base, "features", "news", "index.js"),
+                  encoding="utf-8") as fh:
+            mods["news/index.js"] = fh.read()
+    except Exception as exc:
+        r.fail("G:readable:features/news/index.js", str(exc))
+        return
+    if ("openNews" in mods["news.js"]
+            and "openNews" in mods["news/index.js"]
+            and "/api/news/refresh" in mods["news/index.js"]):
         r.ok("G:history_refresh_flow")
     else:
         r.fail("G:history_refresh_flow", "news flow incomplete")

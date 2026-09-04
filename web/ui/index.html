@@ -701,42 +701,63 @@
     </div><!-- /.settings-layout -->
   </section>
 
-  <!-- ── NEWS VIEW ── -->
+  <!-- ── NEWS VIEW (N-UI1: 3-pane reader) ── -->
   <section id="view-news" class="view">
-    <!-- News Articles View -->
-    <div class="panel">
-      <div class="panel-header">
+    <div class="news-shell" id="news-shell">
+      <!-- Slim strip: title + aggregate sentiment + new-arrival pill -->
+      <div class="news-strip">
         <h2>News</h2>
-        <div class="news-toolbar">
-          <select id="news-filter-source" class="filter-input" style="width:130px">
+        <span id="news-agg" class="news-agg" role="status">No articles loaded</span>
+        <button id="news-new-pill" class="news-new-pill hidden" type="button"></button>
+        <span id="news-error" class="news-error hidden" role="alert"></span>
+        <!-- Compact source/filter controls (tablet/phone; desktop uses rail) -->
+        <div class="news-compact">
+          <select id="news-filter-source" class="filter-input" aria-label="News source">
             <option value="">All Sources</option>
           </select>
-          <input type="text" id="news-filter-category" class="filter-input"
-                 placeholder="Category…" style="width:100px" autocomplete="off">
-          <input type="text" id="news-filter-keywords" class="filter-input"
-                 placeholder="Keywords…" style="width:130px" autocomplete="off">
-          <input type="text" id="news-filter-symbol" class="filter-input"
-                 placeholder="Symbol…" style="width:90px" autocomplete="off">
-          <input type="text" id="news-filter-max-age" class="filter-input"
-                 placeholder="Max age (h)…" style="width:90px" autocomplete="off"
-                 inputmode="numeric">
-          <button id="news-refresh" class="btn">Refresh</button>
-          <a class="btn" href="#/settings/news-sources" title="Add, edit, or remove news sources">Manage Sources</a>
+          <input type="text" id="news-filter-keywords-m" class="filter-input"
+                 placeholder="Keywords…" style="width:130px" autocomplete="off"
+                 aria-label="News keywords">
+          <button id="news-refresh-m" class="btn" type="button">Refresh</button>
         </div>
       </div>
-      <div id="news-articles-list" class="news-list">
-        <div class="empty-row" style="padding:20px;text-align:center">Click Refresh to load news</div>
-      </div>
-    </div>
-
-    <!-- Sentiment View -->
-    <div class="panel" style="margin-top:12px">
-      <div class="panel-header">
-        <h2>Sentiment</h2>
-        <button id="news-sentiment-btn" class="btn" style="margin-left:auto">Analyze Sentiment</button>
-      </div>
-      <div id="news-sentiment-result" class="news-sentiment">
-        <div class="empty-row" style="padding:20px;text-align:center">Click Analyze to compute sentiment</div>
+      <div class="news-cols">
+        <!-- FEEDS rail (desktop) -->
+        <aside class="news-feeds" id="news-feeds" aria-label="News sources">
+          <div class="news-pane-head">Sources</div>
+          <ul id="news-source-list" class="news-source-list"></ul>
+          <div class="news-pane-head">Filters</div>
+          <div class="news-rail-filters">
+            <input type="text" id="news-filter-category" class="filter-input"
+                   placeholder="Category…" autocomplete="off" aria-label="Category filter">
+            <input type="text" id="news-filter-keywords" class="filter-input"
+                   placeholder="Keywords…" autocomplete="off" aria-label="Keywords filter">
+            <input type="text" id="news-filter-symbol" class="filter-input"
+                   placeholder="Symbol…" autocomplete="off" aria-label="Symbol filter">
+            <input type="text" id="news-filter-max-age" class="filter-input"
+                   placeholder="Max age (h)…" inputmode="numeric" autocomplete="off"
+                   aria-label="Max age hours filter">
+          </div>
+          <div class="news-rail-actions">
+            <button id="news-refresh" class="btn" type="button">Refresh</button>
+            <a class="btn" href="#/settings/news-sources"
+               title="Add, edit, or remove news sources">Manage Sources</a>
+          </div>
+        </aside>
+        <!-- ARTICLE LIST (center) -->
+        <div class="news-listpane">
+          <div class="news-pane-head" id="news-list-head">Articles</div>
+          <div id="news-articles-list" class="news-list" role="listbox"
+               aria-label="News articles" tabindex="0">
+            <div class="empty-row" style="padding:20px;text-align:center">Open News to load articles</div>
+          </div>
+        </div>
+        <!-- READER (right) -->
+        <article class="news-readerpane" aria-label="Article reader">
+          <div id="news-reader" class="news-reader">
+            <div class="empty-row" style="padding:20px;text-align:center">Select an article to read</div>
+          </div>
+        </article>
       </div>
     </div>
   </section>
@@ -817,6 +838,6 @@
 </footer>
 
 <script src="/ui/vendor/echarts/dist/echarts.min.js"></script>
-<script type="module" src="/ui/js/app.js?v=30"></script>
+<script type="module" src="/ui/js/app.js?v=31"></script>
 </body>
 </html>

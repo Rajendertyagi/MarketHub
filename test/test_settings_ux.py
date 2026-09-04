@@ -133,16 +133,21 @@ def test_news_slim(r: R) -> None:
     html = _read(os.path.join(_UI, "index.html"))
     news = _news_section(html)
     for gone in ("news-sources-panel", "news-source-modal", "news-add-source",
-                 "news-test-source", "news-modal-save", "news-src-id"):
+                  "news-test-source", "news-modal-save", "news-src-id",
+                  # N-UI1: standalone sentiment dashboard panel is gone
+                  # (sentiment is row/reader/strip metadata now).
+                  "news-sentiment-btn", "news-sentiment-result"):
         if gone not in news:
             r.ok(f"NEWS:removed:{gone}")
         else:
             r.fail(f"NEWS:removed:{gone}", "CRUD still on News page")
     for kept in ("news-filter-source", "news-filter-category",
-                 "news-filter-keywords", "news-filter-symbol",
-                 "news-filter-max-age", "news-refresh",
-                 "news-articles-list", "news-sentiment-btn",
-                 "news-sentiment-result"):
+                  "news-filter-keywords", "news-filter-symbol",
+                  "news-filter-max-age", "news-refresh",
+                  "news-articles-list",
+                  # N-UI1 3-pane shell ids.
+                  "news-shell", "news-source-list", "news-reader",
+                  "news-agg", "news-new-pill"):
         if kept in news:
             r.ok(f"NEWS:kept:{kept}")
         else:
@@ -151,13 +156,15 @@ def test_news_slim(r: R) -> None:
         r.ok("NEWS:manage_link")
     else:
         r.fail("NEWS:manage_link", "Manage Sources link missing")
-    # news.js consumes the new toolbar inputs.
-    src = _js("news.js")
-    if "news-filter-category" in src and "news-filter-max-age" in src:
+    # N-UI1: filter wiring lives in the news feature modules; news.js is
+    # a thin compat shim delegating to features/news/index.js.
+    feat = _read(os.path.join(_JS, "features", "news", "feeds.js"))
+    idx = _read(os.path.join(_JS, "features", "news", "index.js"))
+    if "news-filter-category" in feat and "news-filter-max-age" in feat:
         r.ok("NEWS:toolbar_wired")
     else:
         r.fail("NEWS:toolbar_wired", "category/max-age not read")
-    if "max_age_hours" in src and "categories" in src:
+    if "max_age_hours" in idx and "categories" in idx:
         r.ok("NEWS:params_sent")
     else:
         r.fail("NEWS:params_sent", "filter params missing")
@@ -395,17 +402,18 @@ def test_responsive_rules(r: R) -> None:
     for marker in ("@media (max-width: 760px)",
                    ".settings-layout { flex-direction: column; align-items: stretch; }",
                    ".table-scroll { overflow-x: auto; }",
-                   ".news-toolbar",
+                   # N-UI1: old stacked toolbar replaced by wrapping strip.
+                   ".news-strip",
                    "flex-wrap: wrap"):
         if marker in css:
             r.ok(f"CSS:has:{marker[:28]}")
         else:
             r.fail(f"CSS:has:{marker[:28]}", "missing")
     html = _read(os.path.join(_UI, "index.html"))
-    if 'class="table-scroll"' in html and 'class="news-toolbar"' in html:
+    if 'class="table-scroll"' in html and 'class="news-strip"' in html:
         r.ok("CSS:wired")
     else:
-        r.fail("CSS:wired", "scroll/toolbar wrappers missing")
+        r.fail("CSS:wired", "scroll/strip wrappers missing")
 
 def main() -> None:
     r = R()
