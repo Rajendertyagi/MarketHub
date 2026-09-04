@@ -357,8 +357,23 @@
     </div>
   </section>
   <section id="view-settings" class="view">
+    <div class="settings-layout">
+      <nav class="settings-nav" aria-label="Settings sections">
+        <button class="set-nav-link active" data-section="general">General</button>
+        <button class="set-nav-link" data-section="brokers">Brokers</button>
+        <button class="set-nav-link" data-section="news-sources">News Sources</button>
+        <button class="set-nav-link" data-section="market-sources">Market Sources</button>
+        <button class="set-nav-link" data-section="alerts">Alerts</button>
+        <button class="set-nav-link" data-section="ai-mcp">AI / MCP</button>
+        <button class="set-nav-link" data-section="data-retention">Data &amp; Retention</button>
+        <button class="set-nav-link" data-section="logging">Logging</button>
+        <button class="set-nav-link" data-section="backup">Backup</button>
+      </nav>
+      <div class="settings-content">
+
+      <div class="set-panel" id="set-panel-general">
     <div class="panel">
-      <div class="panel-header"><h2>Settings</h2></div>
+      <div class="panel-header"><h2>General</h2></div>
       <div class="setting-row">
         <label>Theme</label>
         <button id="settings-theme-toggle" class="btn">Toggle Dark / Light</button>
@@ -371,14 +386,39 @@
         <label>SSE Endpoint</label>
         <span class="setting-val mono">/api/market/stream</span>
       </div>
-      <div class="setting-row">
-        <label>Database Backup</label>
-        <button id="db-backup" class="btn">Backup Database</button>
-      </div>
-      <div id="backup-message" class="hint"></div>
     </div>
 
     <div class="panel" style="margin-top:10px">
+      <div class="panel-header"><h2>Application</h2></div>
+      <div class="auth-form">
+        <p class="hint" style="padding:0 0 10px 0">
+          Public base URL used to build OAuth callback URLs. Must match the
+          address you open MarketHub from. Changing it requires a restart.
+        </p>
+        <div class="auth-row">
+          <label>Effective Base URL</label>
+          <span id="app-base-url" class="chip chip-off">—</span>
+        </div>
+        <div class="auth-row">
+          <label>Fyers Callback</label>
+          <span id="app-fyers-callback" class="chip chip-off">—</span>
+        </div>
+        <div class="auth-row">
+          <label for="app-base-url-input">Public Base URL</label>
+          <input type="text" id="app-base-url-input" class="filter-input"
+                 placeholder="http://localhost:7070" autocomplete="off">
+        </div>
+        <div class="auth-row">
+          <label></label>
+          <button id="app-save" class="btn">Save Application Settings</button>
+        </div>
+        <div id="app-message" class="hint"></div>
+      </div>
+    </div>
+      </div>
+
+      <div class="set-panel hidden" id="set-panel-brokers">
+    <div class="panel">
       <div class="panel-header"><h2>Upstox</h2></div>
       <div class="auth-form">
         <p class="hint" style="padding:0 0 10px 0">
@@ -397,8 +437,6 @@
           <label>Feed State</label>
           <span id="auth-feed-state" class="setting-val">—</span>
         </div>
-        <div id="upstox-src-detail" style="margin-top:10px"></div>
-        <div id="upstox-src-msg" class="hint"></div>
         <div class="auth-row">
           <label for="cred-api-key">API Key</label>
           <input type="text" id="cred-api-key" class="filter-input"
@@ -449,8 +487,6 @@
           <label>Feed State</label>
           <span id="fyers-feed-state" class="setting-val">—</span>
         </div>
-        <div id="fyers-src-detail" style="margin-top:10px"></div>
-        <div id="fyers-src-msg" class="hint"></div>
         <div class="auth-row">
           <label for="fyers-app-id">App ID</label>
           <input type="text" id="fyers-app-id" class="filter-input"
@@ -479,73 +515,9 @@
         <div id="fyers-message" class="hint"></div>
       </div>
     </div>
-
-    <div class="panel" style="margin-top:10px">
-      <div class="panel-header"><h2>AI Provider</h2></div>
-      <div class="auth-form">
-        <p class="hint" style="padding:0 0 10px 0">
-          OpenAI-compatible endpoint for Chat. API key is stored
-          encrypted on this computer only.
-        </p>
-        <div class="auth-row">
-          <label for="ai-endpoint">Endpoint</label>
-          <input type="text" id="ai-endpoint" aria-label="AI endpoint"
-                 placeholder="https://api.openai.com/v1" autocomplete="off"
-                 class="filter-input">
-        </div>
-        <div class="auth-row">
-          <label for="ai-model">Model</label>
-          <input type="text" id="ai-model" aria-label="AI model"
-                 placeholder="gpt-4o-mini" autocomplete="off"
-                 class="filter-input">
-        </div>
-        <div class="auth-row">
-          <label for="ai-key">API Key</label>
-          <input type="password" id="ai-key" aria-label="AI API key"
-                 placeholder="Paste API key\u2026" autocomplete="new-password"
-                 class="filter-input">
-        </div>
-        <div class="auth-row">
-          <label></label>
-          <button id="ai-save" class="btn">Save AI Settings</button>
-        </div>
-        <div id="ai-message" class="hint"></div>
       </div>
-    </div>
 
-<div class="panel" style="margin-top:10px">
-      <div class="panel-header"><h2>Application</h2></div>
-      <div class="auth-form">
-        <p class="hint" style="padding:0 0 10px 0">
-          Public base URL used to build OAuth callback URLs. Must match the
-          address you open MarketHub from. Changing it requires a restart.
-        </p>
-        <div class="auth-row">
-          <label>Effective Base URL</label>
-          <span id="app-base-url" class="chip chip-off">—</span>
-        </div>
-        <div class="auth-row">
-          <label>Fyers Callback</label>
-          <span id="app-fyers-callback" class="chip chip-off">—</span>
-        </div>
-        <div class="auth-row">
-          <label for="app-base-url-input">Public Base URL</label>
-          <input type="text" id="app-base-url-input" class="filter-input"
-                 placeholder="http://localhost:7070" autocomplete="off">
-        </div>
-        <div class="auth-row">
-          <label></label>
-          <button id="app-save" class="btn">Save Application Settings</button>
-        </div>
-        <div id="app-message" class="hint"></div>
-      </div>
-    </div>
-
-      </section>
-
-  <!-- ── NEWS VIEW ── -->
-  <section id="view-news" class="view">
-    <!-- Sources Management Sub-view -->
+      <div class="set-panel hidden" id="set-panel-news-sources">
     <div id="news-sources-panel" class="panel" style="margin-bottom:12px">
       <div class="panel-header">
         <h2>News Sources</h2>
@@ -616,7 +588,119 @@
         </div>
       </div>
     </div>
+      </div>
 
+      <div class="set-panel hidden" id="set-panel-market-sources">
+    <div class="panel">
+      <div class="panel-header"><h2>Market Sources</h2></div>
+      <p class="hint" style="padding:0 0 10px 0">
+        Live broker feed lifecycle. Status refreshes automatically;
+        use Start / Stop / Restart per source. Deleting a market source
+        is not offered here — disable its feed instead.
+      </p>
+      <div class="panel-header"><h2>Upstox</h2></div>
+      <div id="upstox-src-detail" style="margin-top:10px"></div>
+      <div id="upstox-src-msg" class="hint"></div>
+      <div class="panel-header" style="margin-top:10px"><h2>Fyers</h2></div>
+      <div id="fyers-src-detail" style="margin-top:10px"></div>
+      <div id="fyers-src-msg" class="hint"></div>
+    </div>
+      </div>
+
+      <div class="set-panel hidden" id="set-panel-alerts">
+    <div class="panel">
+      <div class="panel-header"><h2>Alerts</h2></div>
+      <p class="hint" style="padding:0 0 10px 0">
+        Price alerts are managed on the operational Alerts screen, where
+        active alerts, trigger history, and live push notifications live.
+      </p>
+      <a class="btn" href="#/alerts">Open Alerts</a>
+    </div>
+      </div>
+
+      <div class="set-panel hidden" id="set-panel-ai-mcp">
+    <div class="panel">
+      <div class="panel-header"><h2>AI Provider</h2></div>
+      <div class="auth-form">
+        <p class="hint" style="padding:0 0 10px 0">
+          OpenAI-compatible endpoint for Chat. API key is stored
+          encrypted on this computer only.
+        </p>
+        <div class="auth-row">
+          <label for="ai-endpoint">Endpoint</label>
+          <input type="text" id="ai-endpoint" aria-label="AI endpoint"
+                 placeholder="https://api.openai.com/v1" autocomplete="off"
+                 class="filter-input">
+        </div>
+        <div class="auth-row">
+          <label for="ai-model">Model</label>
+          <input type="text" id="ai-model" aria-label="AI model"
+                 placeholder="gpt-4o-mini" autocomplete="off"
+                 class="filter-input">
+        </div>
+        <div class="auth-row">
+          <label for="ai-key">API Key</label>
+          <input type="password" id="ai-key" aria-label="AI API key"
+                 placeholder="Paste API key\u2026" autocomplete="new-password"
+                 class="filter-input">
+        </div>
+        <div class="auth-row">
+          <label></label>
+          <button id="ai-save" class="btn">Save AI Settings</button>
+        </div>
+        <div id="ai-message" class="hint"></div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:10px">
+      <div class="panel-header"><h2>MCP Tools</h2></div>
+      <p class="hint" style="padding:0 0 10px 0">
+        The MCP tool registry reference lives on its own page.
+      </p>
+      <a class="btn" href="#/mcp">Open MCP Tools</a>
+    </div>
+      </div>
+
+      <div class="set-panel hidden" id="set-panel-data-retention">
+    <div class="panel">
+      <div class="panel-header"><h2>Data &amp; Retention</h2></div>
+      <p class="hint" style="padding:0 0 10px 0">
+        Storage lifecycle policies (news retention, cache policy, sync
+        frequency, cleanup) are currently compiled-in defaults and will
+        become configurable here in a later phase. Nothing on this panel
+        changes behavior yet.
+      </p>
+    </div>
+      </div>
+
+      <div class="set-panel hidden" id="set-panel-logging">
+    <div class="panel">
+      <div class="panel-header"><h2>Logging</h2></div>
+      <p class="hint" style="padding:0 0 10px 0">
+        Live log viewing lives on the operational Logs page, fed by the
+        in-memory ring buffer and SSE stream.
+      </p>
+      <a class="btn" href="#/logs">Open Live Logs</a>
+    </div>
+      </div>
+
+      <div class="set-panel hidden" id="set-panel-backup">
+    <div class="panel">
+      <div class="panel-header"><h2>Backup</h2></div>
+      <div class="setting-row">
+        <label>Database Backup</label>
+        <button id="db-backup" class="btn">Backup Database</button>
+      </div>
+      <div id="backup-message" class="hint"></div>
+    </div>
+      </div>
+
+      </div><!-- /.settings-content -->
+    </div><!-- /.settings-layout -->
+  </section>
+
+  <!-- ── NEWS VIEW ── -->
+  <section id="view-news" class="view">
     <!-- News Articles View -->
     <div class="panel">
       <div class="panel-header">
@@ -625,11 +709,17 @@
           <select id="news-filter-source" class="filter-input" style="width:130px">
             <option value="">All Sources</option>
           </select>
+          <input type="text" id="news-filter-category" class="filter-input"
+                 placeholder="Category…" style="width:100px" autocomplete="off">
           <input type="text" id="news-filter-keywords" class="filter-input"
                  placeholder="Keywords…" style="width:130px" autocomplete="off">
           <input type="text" id="news-filter-symbol" class="filter-input"
                  placeholder="Symbol…" style="width:90px" autocomplete="off">
+          <input type="text" id="news-filter-max-age" class="filter-input"
+                 placeholder="Max age (h)…" style="width:90px" autocomplete="off"
+                 inputmode="numeric">
           <button id="news-refresh" class="btn">Refresh</button>
+          <a class="btn" href="#/settings/news-sources" title="Add, edit, or remove news sources">Manage Sources</a>
         </div>
       </div>
       <div id="news-articles-list" class="news-list">

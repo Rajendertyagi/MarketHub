@@ -31,19 +31,24 @@ export function initNav() {
     ? location.hash.slice(2) : null;
   let saved = null;
   try { saved = sessionStorage.getItem("mh-last-view"); } catch {}
+  // Deep links ("settings/brokers") resolve against their base view.
+  const baseOf = (v) => v && v.indexOf("/") > 0 ? v.slice(0, v.indexOf("/")) : v;
   const initial = document.getElementById("view-" + hashView)
     ? hashView
-    : (document.getElementById("view-" + saved) ? saved : "dashboard");
+    : (document.getElementById("view-" + baseOf(hashView)) ? hashView
+    : (document.getElementById("view-" + saved) ? saved : "dashboard"));
   switchView(initial);
 }
 
 export function switchView(view) {
   currentView = view;
+  // Sub-routes ("settings/brokers") activate their base view section.
+  const base = view.indexOf("/") > 0 ? view.slice(0, view.indexOf("/")) : view;
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
-  const el = $("view-" + view);
+  const el = $("view-" + base);
   if (el) el.classList.add("active");
   document.querySelectorAll(".nav-link").forEach((b) => {
-    b.classList.toggle("active", b.dataset.view === view);
+    b.classList.toggle("active", b.dataset.view === view || b.dataset.view === base);
   });
   // NOTE: the old `if (view === "sources") pollSources()` branch is gone —
   // no `sources` view or nav entry exists, so it was dead code. Sources
@@ -63,13 +68,23 @@ function _currentView() {
 
 function _fire(view) {
   if (!view) return;
-  const hooks = _enterHooks.get(view);
-  if (!hooks) return;
-  hooks.forEach((fn) => {
-    try {
-      const r = fn(view);
-      if (r && typeof r.catch === "function") r.catch(() => {});
-    } catch { /* a view hook must never break routing */ }
+  // Fire exact-view hooks, then base-segment hooks so a generic handler
+  // (e.g. "settings") also runs for deep links ("settings/brokers").
+  // Each set fires once; duplicate registrations collapse via Set.
+  const seen = new Set();
+  const slash = view.indexOf("/");
+  const names = slash > 0 ? [view, view.slice(0, slash)] : [view];
+  names.forEach((name) => {
+    if (seen.has(name)) return;
+    seen.add(name);
+    const hooks = _enterHooks.get(name);
+    if (!hooks) return;
+    hooks.forEach((fn) => {
+      try {
+        const r = fn(view);
+        if (r && typeof r.catch === "function") r.catch(() => {});
+      } catch { /* a view hook must never break routing */ }
+    });
   });
 }
 
@@ -88,8 +103,21 @@ export function initRouter() {
   document.querySelectorAll(".nav-link[data-view]").forEach((btn) => {
     btn.addEventListener("click", () => _fire(btn.dataset.view));
   });
-  // Back/forward buttons.
-  window.addEventListener("hashchange", () => _fire(_currentView()));
+  // Back/forward buttons: activate the base view when it changed (nav
+  // clicks go through switchView directly; hash-only changes otherwise
+  // leave a stale view active), then fire enter hooks.
+  window.addEventListener("hashchange", () => {
+    const v = _currentView();
+    if (v) {
+      const base = v.indexOf("/") > 0 ? v.slice(0, v.indexOf("/")) : v;
+      const active = document.querySelector(".view.active");
+      if (document.getElementById("view-" + base) &&
+          (!active || active.id !== "view-" + base)) {
+        switchView(v);
+      }
+    }
+    _fire(v);
+  });
   // Direct load / F5 with a #/view hash.
   _fire(_currentView());
 }

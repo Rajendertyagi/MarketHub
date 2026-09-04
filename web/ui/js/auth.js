@@ -12,7 +12,7 @@
 
 import { $ } from "./utils.js";
 import { switchView } from "./router.js";
-import { pollSources } from "./market-sources.js";
+import { friendlyState, pollSources } from "./market-sources.js";
 
 let lastAuthStatus = null;   // /api/auth/upstox/status snapshot
 
@@ -292,4 +292,99 @@ export function initCredentialDelete() {
       delBtn.disabled = false;
     }
   });
+}
+
+// ── Fyers credentials + login (Settings → Brokers) ────────────────────────
+
+export function initFyers() {
+  const saveBtn = $("fyers-save");
+  if (!saveBtn) return;
+  const msg = $("fyers-message");
+  const loginBtn = $("fyers-login-btn");
+
+  async function refresh() {
+    try {
+      const res = await fetch("/api/settings/fyers");
+      const d = await res.json();
+      // App Credentials: are App ID + Secret saved (encrypted)?
+      const credChip = $("fyers-status");
+      if (d.store_error) {
+        credChip.textContent = "Credential Store Error";
+        credChip.className = "chip chip-off";
+        msg.textContent =
+          "Encrypted credentials exist but the current master.key cannot " +
+          "read them. Restore the matching master.key backup — do NOT " +
+          "re-save credentials over them unless you intend to replace.";
+        msg.className = "hint err";
+      } else if (d.app_id_configured && d.secret_configured) {
+        credChip.textContent = "Configured";
+        credChip.className = "chip chip-on";
+      } else {
+        credChip.textContent = "Not configured";
+        credChip.className = "chip chip-off";
+      }
+      // Daily Login: distinct from credentials — is a session usable now?
+      const loginChip = $("fyers-login-status");
+      if (!d.login_available) {
+        loginChip.textContent = "Credentials Required";
+        loginChip.className = "chip chip-off";
+      } else if (d.access_token_active) {
+        loginChip.textContent = "Daily Login Active";
+        loginChip.className = "chip chip-on";
+      } else {
+        loginChip.textContent = "Login Required";
+        loginChip.className = "chip chip-off";
+      }
+      loginBtn.style.display = d.login_available ? "" : "none";
+      // Feed runtime state comes from the source manager, not auth.
+      try {
+        const sres = await fetch("/api/sources/status");
+        const sd = await sres.json();
+        const src = (sd.sources || []).find(
+          (s) => s.name === "fyers" || (s.type || "").indexOf("fyers") >= 0);
+        $("fyers-feed-state").textContent =
+          src ? friendlyState(src.state || "unknown") : "source not configured";
+      } catch { /* keep placeholder */ }
+    } catch { /* silent */ }
+  }
+
+  saveBtn.addEventListener("click", async () => {
+    const appId = $("fyers-app-id").value.trim();
+    const secret = $("fyers-secret").value.trim();
+    msg.textContent = "";
+    msg.className = "hint";
+    if (!appId || !secret) {
+      msg.textContent = "Both App ID and Secret Key are required.";
+      msg.className = "hint err";
+      return;
+    }
+    saveBtn.disabled = true;
+    try {
+      const pin = ($("fyers-pin") || {}).value?.trim() || "";
+      const res = await fetch("/api/settings/fyers", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ app_id: appId, secret_id: secret,
+                               pin: pin }) });
+      const d = await res.json();
+      if (res.ok && d.configured) {
+        $("fyers-app-id").value = "";
+        $("fyers-secret").value = "";
+        msg.textContent = "Fyers credentials saved.";
+        msg.className = "hint ok";
+        refresh();
+      } else {
+        msg.textContent = d.error || "Failed to save Fyers credentials.";
+        msg.className = "hint err";
+      }
+    } catch {
+      msg.textContent = "Network error saving Fyers credentials.";
+      msg.className = "hint err";
+    } finally { saveBtn.disabled = false; }
+  });
+
+  loginBtn.addEventListener("click", () => {
+    window.location.href = "/api/auth/fyers/login";
+  });
+
+  refresh();
 }

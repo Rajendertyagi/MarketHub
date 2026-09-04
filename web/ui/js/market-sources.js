@@ -54,14 +54,15 @@ export async function pollSources() {
 
     renderMovers();
     renderMarketStatus();
-    // Update per-broker source detail tables inside Settings (single page).
-    if (currentView === "settings") {
+    // Update per-broker source detail tables inside Settings (single page,
+    // any subsection — currentView may be "settings" or "settings/<sec>").
+    if (currentView === "settings" || currentView.startsWith("settings/")) {
       renderAllSourceDetails(sources);
     }
   } catch { /* silent */ }
 }
 
-function friendlyState(state) {
+export function friendlyState(state) {
   const map = {
     auth_required: "Stopped — daily login required",
     failed: "Failed",

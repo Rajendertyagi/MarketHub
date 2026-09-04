@@ -137,6 +137,7 @@ _TEST_FILES: dict[str, str] = {
     "mcp_registry_consistency": "test_mcp_registry_consistency.py",
     "l1_logging_news": "test_l1_logging_news.py",
     "webui_modules": "test_webui_modules.py",
+    "settings_ux": "test_settings_ux.py",
 }
 
 # Group -> ordered list of module keys. Order matters (fast/stable first).
@@ -195,6 +196,7 @@ GROUPS: dict[str, list[str]] = {
         "mcp_registry_consistency",
         "l1_logging_news",
         "webui_modules",
+        "settings_ux",
     ],
     "source": ["source_lifecycle", "source_dedup", "source_controls", "alert_history", "fyers_config", "release_hardening"],
     "consumer": ["consumers", "acknowledgement"],

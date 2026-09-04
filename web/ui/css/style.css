@@ -427,3 +427,32 @@ html.wa-theme-light .logs-component { color: var(--text-muted); }
   display: flex; gap: 10px; align-items: center;
 }
 .news-sentiment-item:last-child { border-bottom: none; }
+
+/* ── Settings workspace (sidebar + panels) ─────────────────────────────── */
+.settings-layout {
+  display: flex; gap: 14px; align-items: flex-start;
+}
+.settings-nav {
+  display: flex; flex-direction: column; gap: 4px;
+  min-width: 168px; position: sticky; top: 8px;
+}
+.set-nav-link {
+  display: block; width: 100%; text-align: left;
+  background: none; border: 1px solid transparent; border-radius: 6px;
+  color: var(--text-muted); font-size: 13px; padding: 7px 10px; cursor: pointer;
+}
+.set-nav-link:hover { color: var(--text); background: var(--bg-panel-alt); }
+.set-nav-link.active {
+  color: var(--text); background: var(--bg-panel-alt);
+  border-color: var(--border-light); font-weight: 600;
+}
+.settings-content { flex: 1; min-width: 0; }
+.set-panel.hidden { display: none; }
+a.btn { text-decoration: none; display: inline-block; }
+@media (max-width: 760px) {
+  .settings-layout { flex-direction: column; }
+  .settings-nav {
+    flex-direction: row; flex-wrap: wrap; min-width: 0; position: static;
+  }
+  .set-nav-link { width: auto; }
+}

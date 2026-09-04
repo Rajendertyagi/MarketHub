@@ -32,11 +32,17 @@ async function _loadNews() {
 
   const params = new URLSearchParams();
   const src = $("news-filter-source")?.value;
+  const cat = $("news-filter-category")?.value?.trim();
   const kw = $("news-filter-keywords")?.value?.trim();
   const sym = $("news-filter-symbol")?.value?.trim();
+  const age = $("news-filter-max-age")?.value?.trim();
   if (src) params.set("source_ids", src);
+  if (cat) params.set("categories", cat);
   if (kw) params.set("keywords_include", kw);
   if (sym) params.set("symbol", sym);
+  if (age && !isNaN(Number(age)) && Number(age) > 0) {
+    params.set("max_age_hours", String(Number(age)));
+  }
   params.set("limit", "50");
 
   try {
@@ -95,8 +101,10 @@ async function _loadSentiment() {
 
   const params = new URLSearchParams();
   const src = $("news-filter-source")?.value;
+  const cat = $("news-filter-category")?.value?.trim();
   const kw = $("news-filter-keywords")?.value?.trim();
   if (src) params.set("source_ids", src);
+  if (cat) params.set("categories", cat);
   if (kw) params.set("keywords_include", kw);
   params.set("limit", "30");
 
