@@ -36,7 +36,7 @@ export function initInstruments() {
         `<td>${escDash(r.exchange)}</td><td>${escDash(r.instrument_type) || "—"}</td>` +
         `<td>${escDash(r.expiry) || "—"}</td><td>${r.strike != null ? r.strike : "—"}</td>` +
         `<td>${r.lot_size != null ? r.lot_size : "—"}</td><td>${escDash(r.provider)}</td>` +
-        `<td><button class="btn wl-add" style="padding:2px 8px;font-size:11px">+ Watchlist</button></td></tr>`
+        `<td><button class="btn wl-add btn-xs">+ Watchlist</button></td></tr>`
       ).join("");
     } catch { /* silent */ }
   };

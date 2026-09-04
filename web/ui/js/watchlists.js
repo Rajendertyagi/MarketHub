@@ -46,7 +46,7 @@ function renderWatchlistItems(watchlists) {
       `<td>${q ? fmtVol(q.volume) : "—"}</td>` +
       `<td>${q && q.best_bid != null ? fmt(q.best_bid) : "—"}</td>` +
       `<td>${q && q.best_ask != null ? fmt(q.best_ask) : "—"}</td>` +
-      `<td><button class="btn wl-remove" style="padding:2px 8px;font-size:11px">✕</button></td></tr>`;
+      `<td><button class="btn wl-remove btn-xs">✕</button></td></tr>`;
   }).join("");
 }
 

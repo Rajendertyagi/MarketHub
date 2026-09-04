@@ -71,7 +71,7 @@ async function _loadAIConsumers() {
     const list = data.consumers || [];
     if (!list.length) { loadEl.classList.add("hidden"); emptyEl.classList.remove("hidden"); return; }
     cardsEl.innerHTML = list.map(c => `
-      <div class="d-inline-block bg-surface-2 border rounded pad-12-16 m-4-8-4-0 min-w-220">
+       <div class="d-inline-block bg-surface-2 border rounded pad-12-16 m-4-8-4-0 min-col-220">
         <div class="fw-600 mb-6">${c.consumer_id}</div>
         <div class="text-sm text-muted">
           <div>Pending: <strong class="${c.pending_count > 0 ? 'text-warning' : 'text-pos'}">${c.pending_count}</strong></div>
