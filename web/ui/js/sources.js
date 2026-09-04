@@ -47,14 +47,14 @@ function _renderNewsSources() {
   _newsSources.forEach(s => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td class="mono" style="font-size:11px">${esc(s.source_id)}</td>
+      <td class="mono text-xs">${esc(s.source_id)}</td>
       <td>${esc(s.name)}</td>
       <td><span class="news-action-btn">${esc(s.source_type)}</span></td>
       <td>${esc(s.category || "—")}</td>
       <td>${s.enabled
         ? '<span class="news-status-on">ON</span>'
         : '<span class="news-status-off">OFF</span>'}</td>
-      <td class="mono" style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${
+      <td class="mono text-xs max-col-180 truncate">${
         s.source_type === "rss"
           ? esc((s.config_json?.url || "").substring(0, 50))
           : "r/" + esc(s.config_json?.subreddit || "")
@@ -143,7 +143,7 @@ async function _testSource() {
   const resultEl = $("news-test-result");
   resultEl.textContent = "Testing…";
   resultEl.className = "hint";
-  resultEl.style.color = "";
+  resultEl.className = "hint";
 
   try {
     const resp = await fetch("/api/news/sources/test", {
@@ -156,16 +156,16 @@ async function _testSource() {
       resultEl.textContent = `✓ ${data.message}` +
         (data.sample_titles ? ` — "${data.sample_titles[0]}"` : "");
       resultEl.className = "hint";
-      resultEl.style.color = "var(--green)";
+      resultEl.className = "hint ok";
     } else {
       resultEl.textContent = `✗ ${data.message}`;
       resultEl.className = "hint err";
-      resultEl.style.color = "var(--red)";
+      resultEl.className = "hint err";
     }
   } catch (e) {
     resultEl.textContent = "Test failed: " + e.message;
     resultEl.className = "hint err";
-    resultEl.style.color = "var(--red)";
+    resultEl.className = "hint err";
   }
 }
 

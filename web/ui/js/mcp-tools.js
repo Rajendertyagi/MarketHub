@@ -7,16 +7,16 @@
  */
 
 const _MCP_CAT_COLORS = {
-  "Market": "var(--green)", "Market Alerts": "var(--cyan)",
-  "Alerts": "var(--yellow)", "Condition Alerts": "var(--accent)",
-  "Compute": "var(--magenta)", "Pricing": "var(--cyan)",
-  "Analytics": "var(--yellow)", "Events": "var(--green)",
-  "Consumer": "var(--text-muted)", "System": "var(--text-muted)",
-  "Other": "var(--text-muted)",
+  "Market": "bg-pos", "Market Alerts": "bg-info",
+  "Alerts": "bg-warning", "Condition Alerts": "bg-accent",
+  "Compute": "bg-info", "Pricing": "bg-info",
+  "Analytics": "bg-warning", "Events": "bg-pos",
+  "Consumer": "bg-surface-2", "System": "bg-surface-2",
+  "Other": "bg-surface-2",
 };
 function _mcpCatBadge(cat) {
-  const c = _MCP_CAT_COLORS[cat] || "var(--text-muted)";
-  return `<span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;background:${c};color:#000">${cat}</span>`;
+  const c = _MCP_CAT_COLORS[cat] || "bg-surface-2";
+  return `<span class="badge ${c} text-inverse">${cat}</span>`;
 }
 
 async function _loadMCPTools() {
@@ -25,15 +25,15 @@ async function _loadMCPTools() {
   const errEl = document.getElementById("mcp-tools-error");
   const tblEl = document.getElementById("mcp-tools-table");
   const bodyEl = document.getElementById("mcp-tools-body");
-  if (!loadEl) return;
-  loadEl.style.display = ""; emptyEl.style.display = "none";
-  errEl.style.display = "none"; tblEl.style.display = "none";
+  if (!loadEl || !emptyEl || !errEl || !tblEl || !bodyEl) return;
+  loadEl.classList.remove("hidden"); emptyEl.classList.add("hidden");
+  errEl.classList.add("hidden"); tblEl.classList.add("hidden");
   try {
     const res = await fetch("/api/mcp/tools");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const list = data.tools || [];
-    if (!list.length) { loadEl.style.display = "none"; emptyEl.style.display = ""; return; }
+    if (!list.length) { loadEl.classList.add("hidden"); emptyEl.classList.remove("hidden"); return; }
     // Group by category from API
     const categories = {};
     list.forEach(t => {
@@ -58,15 +58,15 @@ async function _loadMCPTools() {
         html += `<tr>
           <td><code>${t.name}</code></td>
           <td>${_mcpCatBadge(t.category)}</td>
-          <td style="max-width:320px;font-size:12px" title="${(t.description||'').replace(/"/g,'&quot;')}">${desc}</td>
-          <td style="font-size:11px;color:var(--text-muted)">${params}${required ? ' <span style="color:var(--yellow)" title="required">('+required+')</span>' : ''}</td>
+          <td class="max-col-320 text-sm" title="${(t.description||'').replace(/"/g,'&quot;')}">${desc}</td>
+          <td class="text-xs text-muted">${params}${required ? ' <span class="text-warning" title="required">('+required+')</span>' : ''}</td>
         </tr>`;
       });
     });
     bodyEl.innerHTML = html;
-    loadEl.style.display = "none"; tblEl.style.display = "";
+    loadEl.classList.add("hidden"); tblEl.classList.remove("hidden");
   } catch (e) {
-    loadEl.style.display = "none"; errEl.textContent = e.message; errEl.style.display = "";
+    loadEl.classList.add("hidden"); errEl.textContent = e.message; errEl.classList.remove("hidden");
   }
 }
 
@@ -76,6 +76,6 @@ export function openMCPTools() {
 }
 
 export function initMCPTools() {
-  const refreshBtn = document.getElementById("mcp-tools-refresh");
-  if (refreshBtn) refreshBtn.addEventListener("click", _loadMCPTools);
+  const btn = document.getElementById("mcp-tools-refresh");
+  if (btn) btn.addEventListener("click", _loadMCPTools);
 }

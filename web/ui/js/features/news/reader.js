@@ -36,7 +36,7 @@ export function initReaderUI(store, hooks) {
     if (!a) {
       lastRenderedId = null;
       const msg = store.order.length ? "Select an article to read" : "No article available";
-      readerEl.innerHTML = `<div class="ui-callout neutral" style="margin:16px">${esc(msg)}</div>`;
+       readerEl.innerHTML = `<div class="ui-callout neutral p-20">${esc(msg)}</div>`;
       return;
     }
     lastRenderedId = a.item_id;

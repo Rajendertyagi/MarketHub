@@ -126,7 +126,7 @@ function sourceButtonsHtml(s) {
   const busy = (action, label) =>
     `<button class="btn" data-src-action="${action}" data-src-name="${name}"` +
     `${inflight ? " disabled" : ""}` +
-    `${inflight === action ? ` style="opacity:.6">${label}…</button>` : `>${label}</button>`}`;
+    `${inflight === action ? ` class="opacity-60">${label}…</button>` : `>${label}</button>`}`;
   let html = "";
   // Daily-auth required (fresh boot with placeholder OR broker-rejected):
   // offer Login FIRST, keep Start disabled.
@@ -161,12 +161,12 @@ function renderSourceDetail(provider, sources) {
   // feed task exited without reporting (never hide this).
   const stale = s.task_running === false && ACTIVE_STATES.has(state);
   const staleHint = stale
-    ? `<tr><td style="color:var(--text-muted)"></td>` +
-      `<td style="color:var(--red)">Feed task exited — status may be stale` +
+    ? `<tr><td class="text-muted"></td>` +
+      `<td class="text-neg">Feed task exited — status may be stale` +
       `${s.last_exit_reason ? ` (${escDash(s.last_exit_reason)})` : ""}</td></tr>`
     : "";
   const authHint = state === "auth_required"
-    ? '<tr><td style="color:var(--text-muted)"></td>' +
+    ? '<tr><td class="text-muted"></td>' +
       '<td>Daily login required — use Login with Upstox below</td></tr>'
     : "";
   const creds = (s.provider || "") === "upstox"
@@ -180,27 +180,27 @@ function renderSourceDetail(provider, sources) {
     : `${s.configured_instruments ?? 0} desired`;
   el.innerHTML = `
     <table class="data-table">
-      <tr><td style="width:180px;color:var(--text-muted)">Provider</td><td>${escDash(s.provider)}</td></tr>
-      <tr><td style="color:var(--text-muted)">App Credentials</td><td>${creds}</td></tr>
-      <tr><td style="color:var(--text-muted)">Daily Login</td><td>${dailyLogin}</td></tr>
-      <tr><td style="color:var(--text-muted)">Feed State</td><td><span class="${stateCls}">${stateFriendly}</span></td></tr>
-      <tr><td style="color:var(--text-muted)">Task Running</td><td>${s.task_running == null ? "—" : (s.task_running ? "Yes" : "No")}</td></tr>
+      <tr><td class="col-180 text-muted">Provider</td><td>${escDash(s.provider)}</td></tr>
+      <tr><td class="text-muted">App Credentials</td><td>${creds}</td></tr>
+      <tr><td class="text-muted">Daily Login</td><td>${dailyLogin}</td></tr>
+      <tr><td class="text-muted">Feed State</td><td><span class="${stateCls}">${stateFriendly}</span></td></tr>
+      <tr><td class="text-muted">Task Running</td><td>${s.task_running == null ? "—" : (s.task_running ? "Yes" : "No")}</td></tr>
       ${staleHint}
       ${authHint}
-      <tr><td style="color:var(--text-muted)">Mode</td><td>${escDash(s.mode)}</td></tr>
-      <tr><td style="color:var(--text-muted)">Instruments</td><td>${subd}</td></tr>
-      <tr><td style="color:var(--text-muted)">Connect Attempts</td><td>${s.connect_attempts ?? 0}</td></tr>
-      <tr><td style="color:var(--text-muted)">Reconnects</td><td>${s.reconnect_count ?? 0}${s.reconnecting ? " (reconnecting now)" : ""}</td></tr>
-      <tr><td style="color:var(--text-muted)">Frames Received</td><td>${s.frames_received ?? 0}</td></tr>
-      <tr><td style="color:var(--text-muted)">Malformed Frames</td><td>${s.malformed_frames ?? 0}</td></tr>
-      <tr><td style="color:var(--text-muted)">Last Connected</td><td>${escDash(s.last_connected_at)}</td></tr>
-      <tr><td style="color:var(--text-muted)">Last Message</td><td>${escDash(s.last_message_at)}</td></tr>
-      <tr><td style="color:var(--text-muted)">Last Error</td><td>${escDash(s.last_error)}</td></tr>
-      <tr><td style="color:var(--text-muted)">Last Exit</td><td>${escDash(s.last_exit_reason)}${s.last_exit_at ? ` at ${escDash(s.last_exit_at)}` : ""}</td></tr>
-      <tr><td style="color:var(--text-muted)">Stop Reason</td><td>${stopReasonLabel(s.stop_reason)}</td></tr>
-      ${s.not_ready_reason ? `<tr><td style="color:var(--text-muted)">Not Ready</td><td>${escDash(s.not_ready_reason)}</td></tr>` : ""}
+      <tr><td class="text-muted">Mode</td><td>${escDash(s.mode)}</td></tr>
+      <tr><td class="text-muted">Instruments</td><td>${subd}</td></tr>
+      <tr><td class="text-muted">Connect Attempts</td><td>${s.connect_attempts ?? 0}</td></tr>
+      <tr><td class="text-muted">Reconnects</td><td>${s.reconnect_count ?? 0}${s.reconnecting ? " (reconnecting now)" : ""}</td></tr>
+      <tr><td class="text-muted">Frames Received</td><td>${s.frames_received ?? 0}</td></tr>
+      <tr><td class="text-muted">Malformed Frames</td><td>${s.malformed_frames ?? 0}</td></tr>
+      <tr><td class="text-muted">Last Connected</td><td>${escDash(s.last_connected_at)}</td></tr>
+      <tr><td class="text-muted">Last Message</td><td>${escDash(s.last_message_at)}</td></tr>
+      <tr><td class="text-muted">Last Error</td><td>${escDash(s.last_error)}</td></tr>
+      <tr><td class="text-muted">Last Exit</td><td>${escDash(s.last_exit_reason)}${s.last_exit_at ? ` at ${escDash(s.last_exit_at)}` : ""}</td></tr>
+      <tr><td class="text-muted">Stop Reason</td><td>${stopReasonLabel(s.stop_reason)}</td></tr>
+      ${s.not_ready_reason ? `<tr><td class="text-muted">Not Ready</td><td>${escDash(s.not_ready_reason)}</td></tr>` : ""}
       ${renderTransitions(s.recent_transitions)}
-      <tr><td style="color:var(--text-muted)">Controls</td><td>${sourceButtonsHtml(s)}</td></tr>
+      <tr><td class="text-muted">Controls</td><td>${sourceButtonsHtml(s)}</td></tr>
     </table>`;
 }
 
@@ -224,10 +224,10 @@ function renderTransitions(transitions) {
   const rows = transitions.slice(-8).reverse().map((t) => {
     const at = (t.at || "").replace("T", " ").slice(0, 19);
     const reason = t.reason ? ` (${escDash(t.reason)})` : "";
-    return `<div style="font-family:var(--mono);font-size:11px;color:var(--text-muted)">` +
+    return `<div class="font-mono text-xs text-muted">` +
       `${escDash(at)} &nbsp; ${escDash(t.from)} → ${escDash(t.to)}${reason}</div>`;
   }).join("");
-  return `<tr><td style="color:var(--text-muted);vertical-align:top">Recent Transitions</td>` +
+  return `<tr><td class="text-muted align-top">Recent Transitions</td>` +
     `<td>${rows}</td></tr>`;
 }
 

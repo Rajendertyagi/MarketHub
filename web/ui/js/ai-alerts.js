@@ -9,36 +9,32 @@
  */
 
 function _aiStateBadge(state) {
-  const colors = {
-    unknown: "var(--text-dim)",
-    true: "var(--green)",
-    false: "var(--red)",
-  };
+  const colors = { unknown: "text-muted", true: "text-pos", false: "text-neg" };
   const labels = { unknown: "Unknown", true: "Triggered", false: "Normal" };
   const c = colors[state] || colors.unknown;
   const l = labels[state] || state;
-  return `<span style="color:${c};font-weight:600">${l}</span>`;
+   return `<span class="${c} ui-label">${l}</span>`;
 }
 
 function _aiDeliveryBadge(state) {
   const map = {
-    acknowledged: { bg: "var(--green)", fg: "#000", label: "Acknowledged" },
-    pending: { bg: "var(--yellow)", fg: "#000", label: "Pending" },
-    persisted: { bg: "var(--accent)", fg: "#000", label: "Persisted" },
+    acknowledged: { bg: "bg-pos", fg: "text-inverse", label: "Acknowledged" },
+    pending: { bg: "bg-warning", fg: "text-inverse", label: "Pending" },
+    persisted: { bg: "bg-accent", fg: "text-inverse", label: "Persisted" },
   };
   const s = map[state] || map.persisted;
-  return `<span style="background:${s.bg};color:${s.fg};padding:1px 6px;border-radius:3px;font-size:11px;font-weight:600">${s.label}</span>`;
+  return `<span class="badge ${s.bg} ${s.fg}">${s.label}</span>`;
 }
 
 function _aiEnabledBadge(enabled) {
   return enabled
-    ? '<span style="color:var(--green)">ON</span>'
-    : '<span style="color:var(--text-dim)">OFF</span>';
+    ? '<span class="text-pos">ON</span>'
+    : '<span class="text-muted">OFF</span>';
 }
 
 function _aiModeBadge(mode) {
-  const c = mode === "repeat" ? "var(--accent)" : "var(--yellow)";
-  return `<span style="color:${c}">${mode}</span>`;
+  const c = mode === "repeat" ? "text-accent" : "text-warning";
+  return `<span class="${c}">${mode}</span>`;
 }
 
 function _aiShortId(id) {
@@ -68,26 +64,26 @@ async function _loadAIConsumers() {
   const emptyEl = document.getElementById("ai-consumers-empty");
   const errEl = document.getElementById("ai-consumers-error");
   const cardsEl = document.getElementById("ai-consumers-cards");
-  loadEl.style.display = ""; emptyEl.style.display = "none";
-  errEl.style.display = "none"; cardsEl.style.display = "none";
+  loadEl.classList.remove("hidden"); emptyEl.classList.add("hidden");
+  errEl.classList.add("hidden"); cardsEl.classList.add("hidden");
   try {
     const data = await _aiFetchJSON("/api/ai-alerts/consumers");
     const list = data.consumers || [];
-    if (!list.length) { loadEl.style.display = "none"; emptyEl.style.display = ""; return; }
+    if (!list.length) { loadEl.classList.add("hidden"); emptyEl.classList.remove("hidden"); return; }
     cardsEl.innerHTML = list.map(c => `
-      <div style="display:inline-block;background:var(--bg-panel-alt);border:1px solid var(--border);border-radius:6px;padding:12px 16px;margin:4px 8px 4px 0;min-width:220px">
-        <div style="font-weight:600;margin-bottom:6px">${c.consumer_id}</div>
-        <div style="font-size:12px;color:var(--text-muted)">
-          <div>Pending: <strong style="color:${c.pending_count > 0 ? 'var(--yellow)' : 'var(--green)'}">${c.pending_count}</strong></div>
+      <div class="d-inline-block bg-surface-2 border rounded pad-12-16 m-4-8-4-0 min-w-220">
+        <div class="fw-600 mb-6">${c.consumer_id}</div>
+        <div class="text-sm text-muted">
+          <div>Pending: <strong class="${c.pending_count > 0 ? 'text-warning' : 'text-pos'}">${c.pending_count}</strong></div>
           <div>Unacked: <strong>${c.unacknowledged_count}</strong></div>
           <div>Last trigger: ${c.last_triggered ? _aiTimeAgo(c.last_triggered.trigger_time) : '—'}</div>
           <div>Checkpoint: ${c.last_checkpoint ? '#' + c.last_checkpoint.last_sequence : '—'}</div>
         </div>
       </div>
     `).join("");
-    loadEl.style.display = "none"; cardsEl.style.display = "";
+    loadEl.classList.add("hidden"); cardsEl.classList.remove("hidden");
   } catch (e) {
-    loadEl.style.display = "none"; errEl.textContent = e.message; errEl.style.display = "";
+    loadEl.classList.add("hidden"); errEl.textContent = e.message; errEl.classList.remove("hidden");
   }
 }
 
@@ -97,27 +93,27 @@ async function _loadAIAlerts() {
   const errEl = document.getElementById("ai-alerts-error");
   const tblEl = document.getElementById("ai-alerts-table");
   const bodyEl = document.getElementById("ai-alerts-body");
-  loadEl.style.display = ""; emptyEl.style.display = "none";
-  errEl.style.display = "none"; tblEl.style.display = "none";
+  loadEl.classList.remove("hidden"); emptyEl.classList.add("hidden");
+  errEl.classList.add("hidden"); tblEl.classList.add("hidden");
   try {
     const data = await _aiFetchJSON("/api/ai-alerts");
     const list = data.alerts || [];
-    if (!list.length) { loadEl.style.display = "none"; emptyEl.style.display = ""; return; }
+    if (!list.length) { loadEl.classList.add("hidden"); emptyEl.classList.remove("hidden"); return; }
     bodyEl.innerHTML = list.map(a => `<tr>
       <td class="mono" title="${a.alert_id}">${_aiShortId(a.alert_id)}</td>
       <td>${a.consumer_id}</td>
       <td>${a.instrument || '—'}</td>
-      <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${a.condition_summary}">${a.condition_summary}</td>
+       <td class="max-col-260 truncate" title="${a.condition_summary}">${a.condition_summary}</td>
       <td>${_aiModeBadge(a.trigger_mode)}</td>
       <td>${_aiStateBadge(a.current_state)}</td>
       <td>${_aiEnabledBadge(a.enabled)}</td>
-      <td style="text-align:right">${a.trigger_count}</td>
+      <td class="text-right">${a.trigger_count}</td>
       <td>${_aiTimeAgo(a.last_triggered_at)}</td>
       <td>${_aiTimeAgo(a.created_at)}</td>
     </tr>`).join("");
-    loadEl.style.display = "none"; tblEl.style.display = "";
+    loadEl.classList.add("hidden"); tblEl.classList.remove("hidden");
   } catch (e) {
-    loadEl.style.display = "none"; errEl.textContent = e.message; errEl.style.display = "";
+    loadEl.classList.add("hidden"); errEl.textContent = e.message; errEl.classList.remove("hidden");
   }
 }
 
@@ -127,25 +123,25 @@ async function _loadAIEvents() {
   const errEl = document.getElementById("ai-events-error");
   const tblEl = document.getElementById("ai-events-table");
   const bodyEl = document.getElementById("ai-events-body");
-  loadEl.style.display = ""; emptyEl.style.display = "none";
-  errEl.style.display = "none"; tblEl.style.display = "none";
+  loadEl.classList.remove("hidden"); emptyEl.classList.add("hidden");
+  errEl.classList.add("hidden"); tblEl.classList.add("hidden");
   try {
     const data = await _aiFetchJSON("/api/ai-alerts/events?limit=200");
     const list = data.events || [];
-    if (!list.length) { loadEl.style.display = "none"; emptyEl.style.display = ""; return; }
+    if (!list.length) { loadEl.classList.add("hidden"); emptyEl.classList.remove("hidden"); return; }
     bodyEl.innerHTML = list.map(e => `<tr>
       <td class="mono" title="${e.event_id}">${_aiShortId(e.event_id)}</td>
       <td class="mono" title="${e.alert_id}">${_aiShortId(e.alert_id)}</td>
       <td>${e.consumer_id}</td>
       <td>${e.instrument || '—'}</td>
-      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${e.condition_summary}">${e.condition_summary}</td>
+       <td class="max-col-200 truncate" title="${e.condition_summary}">${e.condition_summary}</td>
       <td>${_aiDeliveryBadge(e.delivery_state)}</td>
       <td>${_aiTimeAgo(e.trigger_time)}</td>
       <td>${e.acknowledged_at ? _aiTimeAgo(e.acknowledged_at) : '—'}</td>
     </tr>`).join("");
-    loadEl.style.display = "none"; tblEl.style.display = "";
+    loadEl.classList.add("hidden"); tblEl.classList.remove("hidden");
   } catch (e) {
-    loadEl.style.display = "none"; errEl.textContent = e.message; errEl.style.display = "";
+    loadEl.classList.add("hidden"); errEl.textContent = e.message; errEl.classList.remove("hidden");
   }
 }
 

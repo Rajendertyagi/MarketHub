@@ -126,5 +126,16 @@
 .ui-callout.success { border-left-color: var(--success); }
 .ui-callout.danger { border-left-color: var(--danger); }
 
+/* ── Semantic typography ─────────────────────────────────── */
+.ui-label { font-size: var(--font-size-xs); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.ui-meta { font-size: var(--font-size-xs); color: var(--text-muted); }
+.ui-caption { font-size: var(--font-size-sm); color: var(--text-muted); }
+
+/* ── Semantic layout helpers ─────────────────────────────── */
+.ui-stack { display: flex; flex-direction: column; gap: var(--space-2); }
+.ui-row { display: flex; align-items: center; gap: var(--space-2); }
+.ui-spaced { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+
+/* ── State ───────────────────────────────────────────────── */
 .ui-error { color: var(--danger); font-size: var(--font-size-sm); }
 .ui-hidden { display: none !important; }
