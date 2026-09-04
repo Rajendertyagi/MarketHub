@@ -135,11 +135,56 @@ def redact_message(text: str) -> str:
 def redact_record(record_dict: dict[str, Any]) -> dict[str, Any]:
     """Redact a structured log record dict before WebUI exposure.
 
-    Redacts the ``message`` and ``exception`` fields.  Structured
-    metadata fields (event, request_id, etc.) are never redacted.
+    Redacts the ``message`` and ``exception`` string fields and
+    recursively redacts the structured ``extra`` metadata so secrets
+    smuggled in nested dicts/lists cannot reach the buffer, REST, or SSE.
+    Plain correlation ids (event, request_id, …) that carry no secret
+    pattern pass through unchanged.
     """
     if "message" in record_dict and record_dict["message"]:
         record_dict["message"] = redact_message(record_dict["message"])
     if "exception" in record_dict and record_dict["exception"]:
         record_dict["exception"] = redact_message(record_dict["exception"])
+    if "extra" in record_dict and record_dict["extra"] is not None:
+        record_dict["extra"] = redact_value(record_dict["extra"])
     return record_dict
+
+
+# ── Recursive structured redaction ──────────────────────────────────────────
+# Secrets hidden in structured ``extra`` metadata (nested dicts/lists) must
+# never reach the WebUI buffer, REST responses, or the SSE stream.
+
+_SENSITIVE_KEY = re.compile(
+    r"(token|authoriz|api[_-]?key|apikey|api[_-]?secret|secret|password|"
+    r"passwd|pwd|pin|mpin|otp|security[_-]?code|cookie|session|client[_-]?secret|"
+    r"credential|private[_-]?key|auth)",
+    re.IGNORECASE,
+)
+
+
+def redact_value(value: Any) -> Any:
+    """Recursively redact secrets in arbitrary structured values.
+
+    - strings → :func:`redact_message` (catches Bearer/URL/key patterns)
+    - dicts → recurse; a value under a sensitive key name is replaced
+      wholesale with ``"<redacted>"``
+    - lists/tuples/sets → recurse element-wise, preserving container type
+    - anything else (numbers, bools, None, …) → returned unchanged
+    """
+    if isinstance(value, str):
+        return redact_message(value)
+    if isinstance(value, dict):
+        out: dict[Any, Any] = {}
+        for k, v in value.items():
+            if isinstance(k, str) and _SENSITIVE_KEY.search(k):
+                out[k] = "<redacted>"
+            else:
+                out[k] = redact_value(v)
+        return out
+    if isinstance(value, list):
+        return [redact_value(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(redact_value(v) for v in value)
+    if isinstance(value, (set, frozenset)):
+        return type(value)(redact_value(v) for v in value)
+    return value

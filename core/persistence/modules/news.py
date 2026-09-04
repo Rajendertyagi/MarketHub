@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def create_news_tables(conn: Any) -> None:
-    """Create news_sources and news_articles tables (idempotent)."""
+    """Create news_sources, news_articles and tombstones tables (idempotent)."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS news_sources (
             source_id   TEXT PRIMARY KEY,
@@ -63,6 +63,12 @@ def create_news_tables(conn: Any) -> None:
         CREATE INDEX IF NOT EXISTS idx_news_articles_fetched_at
         ON news_articles(fetched_at)
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS news_source_tombstones (
+            source_id  TEXT PRIMARY KEY,
+            deleted_at TEXT NOT NULL
+        )
+    """)
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +82,20 @@ def migrate_v13_to_v14(conn: Any) -> None:
     conn.execute("PRAGMA user_version = 14")
     conn.commit()
     logger.info("migrated v13→v14: added news_sources + news_articles")
+
+
+def migrate_v14_to_v15(conn: Any) -> None:
+    """Add news_source_tombstones so user-deleted sources stay deleted.
+
+    Tombstones are durable deletion markers consulted by seed_defaults().
+    Existing installations migrate safely: the table starts empty, so
+    currently-present sources are unaffected; only deletions performed
+    after this migration are remembered.
+    """
+    create_news_tables(conn)  # idempotent; adds the tombstones table
+    conn.execute("PRAGMA user_version = 15")
+    conn.commit()
+    logger.info("migrated v14→v15: added news_source_tombstones")
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +122,11 @@ def upsert_source(conn: Any, *, source_id: str, name: str,
             updated_at = excluded.updated_at
     """, (source_id, name, source_type, category,
           1 if enabled else 0, config_blob, now_iso, now_iso))
+    # An explicit user upsert revives the id: clear any tombstone so a
+    # re-added source is treated as live again.
+    conn.execute(
+        "DELETE FROM news_source_tombstones WHERE source_id = ?",
+        (source_id,))
 
 
 def list_sources(conn: Any, *, enabled_only: bool = False) -> list[dict[str, Any]]:
@@ -124,9 +149,27 @@ def get_source(conn: Any, source_id: str) -> dict[str, Any] | None:
 
 
 def delete_source(conn: Any, source_id: str) -> bool:
-    """Delete a news source. Returns True if a row was deleted."""
+    """Delete a news source. Returns True if a row was deleted.
+
+    A durable tombstone is recorded so seed_defaults() will not
+    resurrect the id on restart.  Re-adding the id explicitly via
+    upsert clears the tombstone.
+    """
     cur = conn.execute("DELETE FROM news_sources WHERE source_id = ?", (source_id,))
-    return cur.rowcount > 0
+    if cur.rowcount > 0:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT OR REPLACE INTO news_source_tombstones (source_id, deleted_at)"
+            " VALUES (?, ?)",
+            (source_id, now_iso))
+        return True
+    return False
+
+
+def list_tombstones(conn: Any) -> list[str]:
+    """Return all tombstoned (user-deleted) source ids."""
+    rows = conn.execute("SELECT source_id FROM news_source_tombstones").fetchall()
+    return [r[0] for r in rows]
 
 
 def set_source_enabled(conn: Any, source_id: str, enabled: bool) -> bool:

@@ -197,14 +197,21 @@ class NewsService:
     def seed_defaults(self, defaults: list[dict[str, Any]]) -> None:
         """Insert default sources that don't already exist.
 
-        Deleted defaults are NOT re-created on restart.  This is
-        idempotent: calling it multiple times is safe.
+        Durable semantics: ids the user has deleted are recorded as
+        tombstones in the store and are NEVER re-created by seeding —
+        across restarts and repeated calls.  Explicitly re-adding an id
+        via upsert clears its tombstone.  This is idempotent: calling it
+        multiple times is safe.
         """
         existing = {s.source_id for s in self.list_sources()}
-        now_iso = datetime.now(timezone.utc).isoformat()
+        try:
+            tombstoned = set(self._store.list_news_source_tombstones())
+        except Exception:
+            tombstoned = set()
+            logger.debug("tombstone list unavailable — seeding without it")
         for cfg in defaults:
             sid = cfg.get("source_id", "")
-            if sid in existing:
+            if not sid or sid in existing or sid in tombstoned:
                 continue
             self._store.upsert_news_source(
                 source_id=sid,
@@ -267,7 +274,7 @@ class NewsService:
         # Keyword exclude (any match → drop)
         if filters.keywords_exclude:
             patterns = [
-                re.compile(re.compile(re.escape(kw)), re.IGNORECASE)
+                re.compile(re.escape(kw), re.IGNORECASE)
                 for kw in filters.keywords_exclude
             ]
             result = [
@@ -283,16 +290,10 @@ class NewsService:
                 if sym_pat.search(self._item_text(item))
             ]
 
-        # Max age
+        # Max age (absolute UTC cutoff; items without a timestamp are kept)
         if filters.max_age_hours is not None:
-            cutoff = datetime.now(timezone.utc).replace(
-                hour=datetime.now(timezone.utc).hour - filters.max_age_hours
-                if filters.max_age_hours <= datetime.now(timezone.utc).hour
-                else 0
-            )
-            # Simpler: compute absolute cutoff
-            import datetime as _dt
-            cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(
+            from datetime import timedelta
+            cutoff = datetime.now(timezone.utc) - timedelta(
                 hours=filters.max_age_hours)
             result = [
                 item for item in result

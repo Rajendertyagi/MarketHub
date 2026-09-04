@@ -2,12 +2,18 @@
 
 Covers:
   - Logging redaction (Bearer, API keys, passwords, PINs, cookies, URL tokens)
-  - Duplicate handler prevention
+  - Recursive structured redaction (D5: nested dict/list/tuple)
+  - Handler lifecycle: dedup, force-reset rebind, no stale globals (D6)
   - Buffer bound and concurrency
-  - SSE subscriber cleanup
+  - SSE live delivery (D2) + subscriber cleanup/concurrency (D10)
   - News source CRUD
   - Enable/disable
-  - Source deletion
+  - Source deletion + durable tombstones across restart (D3)
+  - Exclude-keyword filtering without crash (D1)
+  - RSS UTC timestamps (D4)
+  - Shared POST/PUT source validation (D9)
+  - WebUI static wiring: live filters + no inline onclick (D7/D8)
+  - L1 suite registration in run_all.py (D12)
   - Source test success/failure
   - RSS/Reddit validation
   - WebUI API payloads
@@ -143,13 +149,31 @@ def test_redaction(r: R) -> None:
 # HANDLER DEDUP TESTS
 # ===================================================================
 
+def _remove_webui_handlers():
+    """Detach all WebUILogHandler instances from the root logger."""
+    from core.webui_log_handler import WebUILogHandler
+    root = logging.getLogger()
+    removed = [h for h in root.handlers if isinstance(h, WebUILogHandler)]
+    for h in removed:
+        try:
+            root.removeHandler(h)
+            h.close()
+        except Exception:
+            pass
+    return len(removed)
+
+
+def _count_webui_handlers():
+    from core.webui_log_handler import WebUILogHandler
+    root = logging.getLogger()
+    return sum(1 for h in root.handlers if isinstance(h, WebUILogHandler))
+
+
 def test_handler_dedup(r: R) -> None:
-    from app.logging_setup import attach_webui_handler, _L1_HANDLER_ATTACHED
+    from app.logging_setup import attach_webui_handler
     from core.log_buffer import LogBuffer
 
-    # Reset dedup guard
-    import app.logging_setup as ls
-    ls._L1_HANDLER_ATTACHED = False
+    _remove_webui_handlers()
 
     buf = LogBuffer(max_size=100)
     h1 = attach_webui_handler(buf)
@@ -158,23 +182,76 @@ def test_handler_dedup(r: R) -> None:
     else:
         r.fail("DEDUP:first_attach", "handler is None")
 
-    h2 = attach_webui_handler(buf)
-    if h2 is None or h2 is h1:
-        r.ok("DEDUP:second_attach_idempotent")
+    # Second attach rebinds (same instance) instead of duplicating
+    buf2 = LogBuffer(max_size=100)
+    h2 = attach_webui_handler(buf2)
+    if h2 is h1:
+        r.ok("DEDUP:second_attach_rebinds")
     else:
-        r.fail("DEDUP:second_attach_idempotent", "got different handler")
+        r.fail("DEDUP:second_attach_rebinds", "got different handler")
 
-    # Count WebUI handlers on root
+    if _count_webui_handlers() == 1:
+        r.ok("DEDUP:handler_count_eq_1")
+    else:
+        r.fail("DEDUP:handler_count_eq_1", f"got {_count_webui_handlers()}")
+
+    _remove_webui_handlers()
+
+
+def test_handler_force_rebind(r: R) -> None:
+    """D6: handler survives setup_logging(force=True)-style handler wipe."""
+    from app.logging_setup import attach_webui_handler
+    from core.log_buffer import LogBuffer
+
+    _remove_webui_handlers()
+    buf1 = LogBuffer(max_size=100)
+    h1 = attach_webui_handler(buf1)
+    if h1 is None:
+        r.fail("REBIND:attach", "handler is None")
+        return
+    r.ok("REBIND:attach")
+
+    # Simulate setup_logging(force=True): all root handlers stripped.
+    _remove_webui_handlers()
+    if _count_webui_handlers() == 0:
+        r.ok("REBIND:wiped")
+    else:
+        r.fail("REBIND:wiped", "handlers remain")
+
+    # Re-attach must create a FRESH handler bound to the NEW buffer
+    # (a stale module-global flag would return None here).
+    buf2 = LogBuffer(max_size=100)
+    h2 = attach_webui_handler(buf2, broker=None)
+    if h2 is not None and h2 is not h1:
+        r.ok("REBIND:fresh_after_wipe")
+    else:
+        r.fail("REBIND:fresh_after_wipe", f"got {h2!r}")
+
+    # Emit routes to the new buffer only, exactly once
+    rec = logging.LogRecord(
+        name="rebind.test", level=logging.INFO, pathname="t.py",
+        lineno=1, msg="rebind probe", args=(), exc_info=None,
+    )
+    h2.emit(rec)
+    if len(buf2) == 1 and len(buf1) == 0:
+        r.ok("REBIND:routes_to_new_buffer")
+    else:
+        r.fail("REBIND:routes_to_new_buffer",
+               f"buf1={len(buf1)} buf2={len(buf2)}")
+
+    # Duplicate collapse: plant an extra handler, attach collapses to one
     from core.webui_log_handler import WebUILogHandler
-    root = logging.getLogger()
-    webui_count = sum(1 for h in root.handlers if isinstance(h, WebUILogHandler))
-    if webui_count <= 1:
-        r.ok("DEDUP:handler_count_le_1")
+    from core.log_buffer import LogBuffer as _LB
+    dup = WebUILogHandler(_LB(max_size=10))
+    logging.getLogger().addHandler(dup)
+    h3 = attach_webui_handler(buf2)
+    if h3 is h2 and _count_webui_handlers() == 1:
+        r.ok("REBIND:collapse_duplicates")
     else:
-        r.fail("DEDUP:handler_count_le_1", f"got {webui_count}")
+        r.fail("REBIND:collapse_duplicates",
+               f"same={h3 is h2} count={_count_webui_handlers()}")
 
-    # Reset for other tests
-    ls._L1_HANDLER_ATTACHED = False
+    _remove_webui_handlers()
 
 
 # ===================================================================
@@ -332,6 +409,10 @@ def _make_news_service():
             result = set_source_enabled(self._conn, source_id, enabled)
             self._conn.commit()
             return result
+
+        def list_news_source_tombstones(self):
+            from core.persistence.modules.news import list_tombstones
+            return list_tombstones(self._conn)
 
     store = MockStore(conn)
     svc = NewsService(store=store)
@@ -713,6 +794,456 @@ def test_handler_redacts_before_broadcast(r: R) -> None:
 
 
 # ===================================================================
+# D1 — EXCLUDE-KEYWORD FILTER REGRESSION
+# ===================================================================
+
+def test_exclude_filter_no_crash(r: R) -> None:
+    """D1: keywords_exclude must filter without raising ValueError."""
+    from market.models import NewsFilter, RSSEntry, RedditPost
+
+    items = [
+        RSSEntry(source_id="s1", source_name="S1", title="Nifty rallies today",
+                 link="https://x/1", published=None, summary="bull market",
+                 author=None, guid="g1"),
+        RSSEntry(source_id="s1", source_name="S1", title="Spam coin promo",
+                 link="https://x/2", published=None, summary="buy spam now",
+                 author=None, guid="g2"),
+        RedditPost(source_id="s2", source_name="S2", subreddit="t",
+                   title="Bank stocks gain", score=5, num_comments=2,
+                   author="u", url="https://x/3", permalink="/r/t/3",
+                   created_utc=None, selftext=None, upvote_ratio=None),
+    ]
+    svc = _make_news_service()
+    try:
+        out = svc._apply_filters(items, NewsFilter(keywords_exclude=["spam"]))
+    except Exception as exc:
+        r.fail("D1:no_crash", f"{type(exc).__name__}: {exc}")
+        return
+    r.ok("D1:no_crash")
+    titles = [i.title for i in out]
+    if "Spam coin promo" not in titles and len(out) == 2:
+        r.ok("D1:actually_excludes")
+    else:
+        r.fail("D1:actually_excludes", f"got {titles}")
+
+    # Include + exclude combined
+    out2 = svc._apply_filters(
+        items, NewsFilter(keywords_include=["nifty", "bank", "spam"],
+                          keywords_exclude=["spam"]))
+    titles2 = [i.title for i in out2]
+    if "Spam coin promo" not in titles2 and len(out2) == 2:
+        r.ok("D1:include_exclude_combo")
+    else:
+        r.fail("D1:include_exclude_combo", f"got {titles2}")
+
+
+# ===================================================================
+# D2 — LIVE SSE DELIVERY REGRESSION
+# ===================================================================
+
+def test_live_sse_delivery(r: R) -> None:
+    """D2: handler.emit must deliver a (redacted) record to SSE subscribers."""
+    from core.log_buffer import LogBuffer
+    from core.sse_broker import EventBroker
+    from core.webui_log_handler import WebUILogHandler
+
+    buf = LogBuffer(max_size=100)
+    broker = EventBroker(queue_size=64)
+    handler = WebUILogHandler(buf, broker=broker)
+
+    async def _run():
+        async with broker.subscribe() as lines:
+            rec = logging.LogRecord(
+                name="sse.test", level=logging.WARNING, pathname="t.py",
+                lineno=1,
+                msg="live probe api_key = sk_live0987654321abcdef0987654321",
+                args=(), exc_info=None,
+            )
+            handler.emit(rec)  # running loop: schedules broadcast
+            try:
+                line = await asyncio.wait_for(anext(lines), timeout=5)
+                return line
+            except asyncio.TimeoutError:
+                return None
+
+    line = asyncio.run(_run())
+    if line is None:
+        r.fail("D2:live_delivery", "no SSE line received within 5s")
+        return
+    r.ok("D2:live_delivery")
+    if "sk_live0987" not in line and "<redacted>" in line:
+        r.ok("D2:payload_redacted")
+    else:
+        r.fail("D2:payload_redacted", f"got {line[:160]!r}")
+
+
+# ===================================================================
+# D3 — TOMBSTONE / RESTART REGRESSION
+# ===================================================================
+
+def test_seed_tombstone_restart(r: R) -> None:
+    """D3: deleted seeded sources stay deleted across store restart."""
+    from news.service import NewsService
+    from core.persistence.modules.news import create_news_tables
+
+    tmp = tempfile.mkdtemp()
+    try:
+        db_path = os.path.join(tmp, "news_restart.db")
+
+        # Build two service generations over the same DB file
+        import news.service as _ns
+        from news.adapters.rss import RSSAdapter
+        from news.adapters.reddit import RedditAdapter
+        from core.persistence.modules import news as _news_mod
+
+        class FileStore:
+            def __init__(self, path):
+                self._path = path
+
+            def _conn(self):
+                c = sqlite3.connect(self._path)
+                create_news_tables(c)
+                return c
+
+            def list_news_sources(self, enabled_only=False):
+                c = self._conn()
+                try:
+                    return _news_mod.list_sources(c, enabled_only=enabled_only)
+                finally:
+                    c.close()
+
+            def get_news_source(self, source_id):
+                c = self._conn()
+                try:
+                    return _news_mod.get_source(c, source_id)
+                finally:
+                    c.close()
+
+            def upsert_news_source(self, **kw):
+                from datetime import datetime, timezone
+                c = self._conn()
+                try:
+                    _news_mod.upsert_source(c, now_iso=datetime.now(timezone.utc).isoformat(), **kw)
+                    c.commit()
+                finally:
+                    c.close()
+
+            def delete_news_source(self, source_id):
+                c = self._conn()
+                try:
+                    res = _news_mod.delete_source(c, source_id)
+                    c.commit()
+                    return res
+                finally:
+                    c.close()
+
+            def set_news_source_enabled(self, source_id, enabled):
+                c = self._conn()
+                try:
+                    res = _news_mod.set_source_enabled(c, source_id, enabled)
+                    c.commit()
+                    return res
+                finally:
+                    c.close()
+
+            def list_news_source_tombstones(self):
+                c = self._conn()
+                try:
+                    return _news_mod.list_tombstones(c)
+                finally:
+                    c.close()
+
+        defaults = [
+            {"source_id": "seed_a", "name": "Seed A", "source_type": "rss",
+             "category": "finance", "config_json": {"url": "https://example.com/a"}},
+            {"source_id": "seed_b", "name": "Seed B", "source_type": "reddit",
+             "category": "markets", "config_json": {"subreddit": "TestSub"}},
+        ]
+
+        # Generation 1: seed, then user deletes seed_a
+        svc1 = _ns.NewsService(store=FileStore(db_path))
+        svc1.register_adapter(RSSAdapter())
+        svc1.register_adapter(RedditAdapter())
+        svc1.seed_defaults(defaults)
+        if svc1.get_source("seed_a") is None:
+            r.fail("D3:seeded", "seed_a missing after seed")
+            return
+        r.ok("D3:seeded")
+        svc1.delete_source("seed_a")
+        del svc1  # simulate shutdown
+
+        # Generation 2 (restart): seed again — seed_a must NOT reappear
+        svc2 = _ns.NewsService(store=FileStore(db_path))
+        svc2.register_adapter(RSSAdapter())
+        svc2.register_adapter(RedditAdapter())
+        svc2.seed_defaults(defaults)
+        if svc2.get_source("seed_a") is None and svc2.get_source("seed_b") is not None:
+            r.ok("D3:stays_deleted_after_restart")
+        else:
+            r.fail("D3:stays_deleted_after_restart",
+                   f"seed_a={svc2.get_source('seed_a')} seed_b={svc2.get_source('seed_b') is not None}")
+
+        # Explicit re-add revives the id (tombstone cleared)
+        from market.models import NewsSourceConfig
+        svc2.upsert_source(NewsSourceConfig(
+            source_id="seed_a", name="Seed A2", source_type="rss",
+            category="finance", enabled=True,
+            config_json={"url": "https://example.com/a2"}))
+        svc3 = _ns.NewsService(store=FileStore(db_path))
+        svc3.seed_defaults(defaults)
+        got = svc3.get_source("seed_a")
+        if got is not None and got.name == "Seed A2":
+            r.ok("D3:explicit_readd_revives")
+        else:
+            r.fail("D3:explicit_readd_revives", f"got {got}")
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ===================================================================
+# D4 — RSS UTC TIMESTAMP REGRESSION
+# ===================================================================
+
+def test_rss_utc_conversion(r: R) -> None:
+    """D4: feedparser UTC tuples convert to exact UTC datetimes."""
+    import calendar
+    from datetime import datetime, timezone
+    from unittest.mock import patch
+    from news.adapters.rss import RSSAdapter
+
+    entry = {"published_parsed": (2024, 1, 15, 12, 30, 0, 0, 15, 0)}
+    expected = datetime.fromtimestamp(
+        calendar.timegm((2024, 1, 15, 12, 30, 0, 0, 15, 0)), tz=timezone.utc)
+    got = RSSAdapter._parse_datetime(entry)
+    if got == expected and got.tzinfo is not None:
+        r.ok("D4:utc_exact")
+    else:
+        r.fail("D4:utc_exact", f"got {got!r} want {expected!r}")
+
+    # Prove the conversion goes through the UTC-safe function even if the
+    # host timezone differs: patch calendar.timegm to observe the call.
+    seen = {}
+    real_timegm = calendar.timegm
+
+    def _spy(tp):
+        seen["called"] = True
+        return real_timegm(tp)
+
+    with patch("news.adapters.rss.calendar.timegm", side_effect=_spy):
+        RSSAdapter._parse_datetime(entry)
+    if seen.get("called"):
+        r.ok("D4:uses_timegm")
+    else:
+        r.fail("D4:uses_timegm", "calendar.timegm was not used")
+
+
+# ===================================================================
+# D5 — RECURSIVE STRUCTURED REDACTION REGRESSION
+# ===================================================================
+
+def test_recursive_redaction(r: R) -> None:
+    """D5: nested secrets never enter WebUI buffer/SSE output."""
+    from core.log_redaction import redact_value, redact_record
+
+    nested = {
+        "event": "auth",
+        "credentials": {"api_key": "sk_nested_TOPSECRET_1234567890",
+                        "user": "alice"},
+        "items": [{"token": "tok_nested_SECRET_abcdef123456"},
+                  "plain",
+                  ("pin", "pin = 999888")],
+        "meta": {"note": "Bearer nested_bearer_zzzYYYxxx111222333"},
+    }
+    out = redact_value(nested)
+    blob = repr(out)
+    leaked = [s for s in ("sk_nested_TOPSECRET", "tok_nested_SECRET",
+                          "nested_bearer_zzzYYYxxx", "999888")
+              if s in blob]
+    if not leaked and out["items"][1] == "plain" and out["event"] == "auth":
+        r.ok("D5:recursive_value")
+    else:
+        r.fail("D5:recursive_value", f"leaked={leaked} out={blob[:200]}")
+
+    # redact_record recurses into extra
+    rec = redact_record({
+        "message": "hello",
+        "extra": {"session": {"secret": "sess_SUPERSECRET_1234567890abcdef"}},
+    })
+    if "sess_SUPERSECRET" not in repr(rec["extra"]):
+        r.ok("D5:record_extra")
+    else:
+        r.fail("D5:record_extra", f"got {rec['extra']!r}")
+
+    # Handler path: log_extra secrets must not land in the buffer
+    from core.log_buffer import LogBuffer
+    from core.webui_log_handler import WebUILogHandler
+    buf = LogBuffer(max_size=100)
+    handler = WebUILogHandler(buf, broker=None)
+    record = logging.LogRecord(
+        name="x", level=logging.INFO, pathname="t.py",
+        lineno=1, msg="login attempt", args=(), exc_info=None,
+    )
+    record.log_extra = {"auth": {"password": "hunter2_hunter2_hunter2_x"},
+                        "event": "login"}
+    handler.emit(record)
+    snap = buf.snapshot(limit=1)
+    if snap and "hunter2" not in repr(snap[0]):
+        r.ok("D5:handler_extra_redacted")
+    else:
+        r.fail("D5:handler_extra_redacted", f"got {snap[0] if snap else None!r}")
+
+
+# ===================================================================
+# D9 — SHARED POST/PUT VALIDATION REGRESSION
+# ===================================================================
+
+def test_shared_source_validation(r: R) -> None:
+    """D9: POST and PUT enforce identical validation rules."""
+    from api.news_routes import validate_source_config
+
+    cases = [
+        (("bogus", {}), True, "D9:bad_type"),
+        (("rss", None), True, "D9:rss_missing_cfg"),
+        (("rss", {"url": "ftp://example.com/x"}), True, "D9:rss_bad_scheme"),
+        (("rss", {"url": "https://example.com/rss"}), False, "D9:rss_ok"),
+        (("reddit", {}), True, "D9:reddit_missing_cfg"),
+        (("reddit", {"subreddit": "ab"}), True, "D9:reddit_too_short"),
+        (("reddit", {"subreddit": "bad name!"}), True, "D9:reddit_bad_chars"),
+        (("reddit", {"subreddit": "IndianStockMarket"}), False, "D9:reddit_ok"),
+        (("rss", "not-a-dict"), True, "D9:cfg_not_dict"),
+    ]
+    for (stype, cfg), expect_err, name in cases:
+        err = validate_source_config(stype, cfg)
+        if (err is not None) == expect_err:
+            r.ok(name)
+        else:
+            r.fail(name, f"err={err!r}")
+
+
+# ===================================================================
+# D10 — SUBSCRIBER CONCURRENCY REGRESSION
+# ===================================================================
+
+def test_sse_thread_churn(r: R) -> None:
+    """D10: threaded broadcast + subscribe churn is safe and contained."""
+    from core.sse_broker import EventBroker
+
+    broker = EventBroker(queue_size=8)
+    errors = []
+
+    async def _churn(n):
+        try:
+            for _ in range(n):
+                async with broker.subscribe():
+                    pass
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"churn: {exc}")
+
+    def _blast(n):
+        try:
+            for i in range(n):
+                broker.broadcast(f"data: {i}\n\n")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"blast: {exc}")
+
+    async def _run():
+        await asyncio.gather(*[_churn(30) for _ in range(4)])
+
+    threads = [threading.Thread(target=_blast, args=(300,)) for _ in range(4)]
+    for t in threads:
+        t.start()
+    asyncio.run(_run())
+    for t in threads:
+        t.join(timeout=10)
+
+    if not errors and broker.subscriber_count == 0:
+        r.ok("D10:churn_safe_and_clean")
+    else:
+        r.fail("D10:churn_safe_and_clean",
+               f"errors={errors[:3]} count={broker.subscriber_count}")
+
+    # Full-queue subscribers are dropped, never block the publisher
+    async def _fill():
+        async with broker.subscribe():
+            for _ in range(50):
+                broker.broadcast("data: x\n\n")
+            return broker.subscriber_count
+
+    asyncio.run(_fill())
+    if broker.subscriber_count == 0:
+        r.ok("D10:full_queue_no_leak")
+    else:
+        r.fail("D10:full_queue_no_leak", f"count={broker.subscriber_count}")
+
+
+# ===================================================================
+# D7/D8 — WEBUI STATIC WIRING REGRESSION
+# ===================================================================
+
+def test_webui_static_wiring(r: R) -> None:
+    """D7/D8: live-filter gating + delegation present, inline JS absent."""
+    app_js = os.path.join(_PROJECT_DIR, "web", "ui", "js", "app.js")
+    try:
+        with open(app_js, encoding="utf-8") as fh:
+            src = fh.read()
+    except Exception as exc:
+        r.fail("WEBUI:readable", str(exc))
+        return
+    r.ok("WEBUI:readable")
+
+    if "window._newsToggle" in src or "window._newsEdit" in src or "window._newsDelete" in src:
+        r.fail("D8:no_window_handlers", "inline window.* news handlers remain")
+    else:
+        r.ok("D8:no_window_handlers")
+    if 'onclick="window._news' in src or "onclick='window._news" in src:
+        r.fail("D8:no_inline_onclick", "inline onclick with source id remains")
+    else:
+        r.ok("D8:no_inline_onclick")
+    if "data-news-action" in src and "_onNewsActionClick" in src:
+        r.ok("D8:delegation_present")
+    else:
+        r.fail("D8:delegation_present", "data-attribute delegation missing")
+
+    if "_logRecordPassesFilters(record)" in src or "_logRecordPassesFilters( record )" in src:
+        r.ok("D7:live_filter_gated")
+    else:
+        # tolerate formatting drift: check both halves co-occur in onmessage
+        i = src.find("es.onmessage")
+        window_ = src[i:i + 600] if i >= 0 else ""
+        if "_logRecordPassesFilters" in window_:
+            r.ok("D7:live_filter_gated")
+        else:
+            r.fail("D7:live_filter_gated", "onmessage bypasses filters")
+
+
+# ===================================================================
+# D12 — RUN_ALL REGISTRATION REGRESSION
+# ===================================================================
+
+def test_runall_registered(r: R) -> None:
+    """D12: the L1 suite is reachable through test/run_all.py."""
+    run_all = os.path.join(_SCRIPT_DIR, "run_all.py")
+    try:
+        with open(run_all, encoding="utf-8") as fh:
+            src = fh.read()
+    except Exception as exc:
+        r.fail("D12:readable", str(exc))
+        return
+    if '"l1_logging_news": "test_l1_logging_news.py"' in src:
+        r.ok("D12:mapped")
+    else:
+        r.fail("D12:mapped", "key missing from _TEST_FILES")
+    fast_start = src.find('"fast"')
+    fast_end = src.find("],", fast_start)
+    fast_block = src[fast_start:fast_end] if 0 <= fast_start < fast_end else ""
+    if '"l1_logging_news"' in fast_block:
+        r.ok("D12:in_fast_group")
+    else:
+        r.fail("D12:in_fast_group", "not in fast group")
+
+
+# ===================================================================
 # MAIN
 # ===================================================================
 
@@ -727,6 +1258,7 @@ def main() -> None:
 
     print("\n--- Handler Dedup ---")
     test_handler_dedup(r)
+    test_handler_force_rebind(r)
 
     print("\n--- Buffer Bound ---")
     test_buffer_bound(r)
@@ -764,6 +1296,33 @@ def main() -> None:
 
     print("\n--- Handler Redaction ---")
     test_handler_redacts_before_broadcast(r)
+
+    print("\n--- D1 Exclude Filter ---")
+    test_exclude_filter_no_crash(r)
+
+    print("\n--- D2 Live SSE ---")
+    test_live_sse_delivery(r)
+
+    print("\n--- D3 Tombstone Restart ---")
+    test_seed_tombstone_restart(r)
+
+    print("\n--- D4 RSS UTC ---")
+    test_rss_utc_conversion(r)
+
+    print("\n--- D5 Recursive Redaction ---")
+    test_recursive_redaction(r)
+
+    print("\n--- D9 Shared Validation ---")
+    test_shared_source_validation(r)
+
+    print("\n--- D10 SSE Concurrency ---")
+    test_sse_thread_churn(r)
+
+    print("\n--- D7/D8 WebUI Wiring ---")
+    test_webui_static_wiring(r)
+
+    print("\n--- D12 run_all Registration ---")
+    test_runall_registered(r)
 
     print("\n" + "=" * 60)
     r.summary()

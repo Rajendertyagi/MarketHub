@@ -11,7 +11,7 @@ import traceback
 from typing import Any
 
 from core.log_buffer import LogBuffer, LogRecord
-from core.log_redaction import redact_message, redact_record
+from core.log_redaction import redact_message, redact_record, redact_value
 
 
 class WebUILogHandler(logging.Handler):
@@ -32,6 +32,16 @@ class WebUILogHandler(logging.Handler):
     def set_broker(self, broker: Any) -> None:
         """Late-bind the SSE broker (avoids circular import at init)."""
         self._broker = broker
+
+    def set_buffer(self, buffer: LogBuffer) -> None:
+        """Rebind to a different buffer (handler reattachment support)."""
+        self._buffer = buffer
+
+    def rebind(self, buffer: LogBuffer, broker: Any = None) -> None:
+        """Rebind buffer (and optionally broker) after app re-initialization."""
+        self._buffer = buffer
+        if broker is not None:
+            self._broker = broker
 
     def emit(self, record: logging.LogRecord) -> None:
         """Process a single log record."""
@@ -57,8 +67,13 @@ class WebUILogHandler(logging.Handler):
         # Redact sensitive content
         message = redact_message(message)
 
-        # Extract structured metadata from 'extra' dict
+        # Extract structured metadata from 'extra' dict, then redact it
+        # BEFORE it enters the buffer — raw secrets must never be stored.
         extra = getattr(record, "log_extra", None) or {}
+        try:
+            extra = redact_value(extra) if extra else {}
+        except Exception:
+            extra = {}
         exception_text = None
         if record.exc_info and record.exc_info[1] is not None:
             exception_text = "".join(
@@ -84,22 +99,35 @@ class WebUILogHandler(logging.Handler):
         )
 
     def _broadcast_dict(self, record_dict: dict) -> None:
-        """Send redacted record dict to SSE broker (fire-and-forget)."""
+        """Send redacted record dict to SSE broker (fire-and-forget).
+
+        Thread-safe delivery: the record is handed to the loop thread via
+        ``call_soon_threadsafe`` when an event loop is running; otherwise
+        a direct (internally locked) broadcast is attempted.  The broker
+        itself is safe to call from any thread (see EventBroker).
+        Failures are swallowed — logging must never break the app.
+        """
         import asyncio
         import json
         try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return  # no event loop — skip SSE broadcast
-        if loop.is_closed():
+            data = json.dumps(record_dict, default=str)
+        except Exception:
             return
-        data = json.dumps(record_dict, default=str)
-        # Fire-and-forget: schedule without waiting
-        loop.call_soon_threadsafe(
-            lambda: asyncio.ensure_future(
-                self._broker.broadcast(f"data: {data}\n\n")
-            )
-        )
+        line = f"data: {data}\n\n"
+        broker = self._broker
+        if broker is None:
+            return
+        try:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop is not None and not loop.is_closed():
+                loop.call_soon_threadsafe(broker.broadcast, line)
+            else:
+                broker.broadcast(line)
+        except Exception:
+            pass
 
     @staticmethod
     def _fmt_ts(epoch: float) -> str:

@@ -8,11 +8,11 @@ parsing — never for network I/O.
 from __future__ import annotations
 
 import asyncio
+import calendar
 import hashlib
 import html
 import logging
 import re
-import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -204,12 +204,17 @@ class RSSAdapter:
 
     @staticmethod
     def _parse_datetime(entry: Any) -> datetime | None:
-        """Extract a tz-aware datetime from a feedparser entry."""
+        """Extract a tz-aware datetime from a feedparser entry.
+
+        feedparser ``*_parsed`` tuples are in UTC, so they must be
+        converted with ``calendar.timegm`` (``time.mktime`` would
+        misinterpret them as local time on non-UTC hosts).
+        """
         for key in ("published_parsed", "updated_parsed"):
             tp = entry.get(key)
             if tp is not None:
                 try:
-                    ts = time.mktime(tp)
+                    ts = calendar.timegm(tp)
                     return datetime.fromtimestamp(ts, tz=timezone.utc)
                 except (OverflowError, ValueError):
                     continue

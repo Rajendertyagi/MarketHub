@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from starlette.requests import Request
@@ -28,6 +29,42 @@ from starlette.routing import Route
 from market.models import NewsFilter, NewsSourceConfig
 
 logger = logging.getLogger(__name__)
+
+_VALID_SOURCE_TYPES = ("rss", "reddit")
+_SUBREDDIT_RE = re.compile(r"^[A-Za-z0-9_]{3,21}$")
+
+
+def validate_source_config(source_type: str,
+                           config_json: Any) -> str | None:
+    """Validate a source config. Returns an error message or None if valid.
+
+    Shared by POST (create) and PUT (update) so both endpoints enforce
+    identical rules:
+
+    - source_type must be ``rss`` or ``reddit``
+    - rss requires ``config_json.url`` (http/https URL)
+    - reddit requires ``config_json.subreddit`` (valid subreddit name)
+    """
+    if source_type not in _VALID_SOURCE_TYPES:
+        return "source_type must be 'rss' or 'reddit'"
+    cfg = config_json or {}
+    if not isinstance(cfg, dict):
+        return "config_json must be an object"
+    if source_type == "rss":
+        url = (cfg.get("url") or "")
+        if not isinstance(url, str) or not url.strip():
+            return "RSS source requires config_json.url"
+        scheme = url.strip().lower()
+        if not (scheme.startswith("http://") or scheme.startswith("https://")):
+            return "RSS config_json.url must be an http(s) URL"
+    else:  # reddit
+        sub = cfg.get("subreddit") or ""
+        if not isinstance(sub, str) or not sub.strip():
+            return "Reddit source requires config_json.subreddit"
+        if not _SUBREDDIT_RE.match(sub.strip()):
+            return ("Reddit config_json.subreddit must be 3-21 chars: "
+                    "letters, digits, underscore")
+    return None
 
 
 def build_news_routes(news_service: Any) -> list[Route]:
@@ -86,39 +123,17 @@ def build_news_routes(news_service: Any) -> list[Route]:
                 status_code=400,
             )
 
-        if source_type not in ("rss", "reddit"):
+        # Shared validation (identical rules to PUT)
+        config_error = validate_source_config(source_type, config_json)
+        if config_error:
             return Response(
                 content=json.dumps({
                     "status": "error",
-                    "message": "source_type must be 'rss' or 'reddit'",
+                    "message": config_error,
                 }),
                 media_type="application/json",
                 status_code=400,
             )
-
-        # Validate config_json
-        if source_type == "rss":
-            url = (config_json or {}).get("url", "")
-            if not url:
-                return Response(
-                    content=json.dumps({
-                        "status": "error",
-                        "message": "RSS source requires config_json.url",
-                    }),
-                    media_type="application/json",
-                    status_code=400,
-                )
-        elif source_type == "reddit":
-            subreddit = (config_json or {}).get("subreddit", "")
-            if not subreddit:
-                return Response(
-                    content=json.dumps({
-                        "status": "error",
-                        "message": "Reddit source requires config_json.subreddit",
-                    }),
-                    media_type="application/json",
-                    status_code=400,
-                )
 
         try:
             source = NewsSourceConfig(
@@ -179,11 +194,13 @@ def build_news_routes(news_service: Any) -> list[Route]:
         enabled = body.get("enabled", existing.enabled)
         config_json = body.get("config_json", existing.config_json)
 
-        if source_type not in ("rss", "reddit"):
+        # Shared validation (identical rules to POST)
+        config_error = validate_source_config(source_type, config_json)
+        if config_error:
             return Response(
                 content=json.dumps({
                     "status": "error",
-                    "message": "source_type must be 'rss' or 'reddit'",
+                    "message": config_error,
                 }),
                 media_type="application/json",
                 status_code=400,

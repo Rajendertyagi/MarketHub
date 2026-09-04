@@ -44,6 +44,7 @@ from core.persistence.modules import source_state as _source_state
 from core.persistence.modules.products import migrate_v10_to_v11, migrate_v11_to_v12
 from core.persistence.modules.condition_alerts import migrate_v12_to_v13
 from core.persistence.modules.news import migrate_v13_to_v14
+from core.persistence.modules.news import migrate_v14_to_v15
 from core.persistence.modules.schema import (
     SCHEMA_VERSION,
     create_v7_schema,
@@ -129,6 +130,8 @@ class EventStore:
                         migrate_v12_to_v13(conn)
                     elif current_version == 13:
                         migrate_v13_to_v14(conn)
+                    elif current_version == 14:
+                        migrate_v14_to_v15(conn)
                     else:
                         raise RuntimeError(
                             f"unsupported schema version {current_version}; "
@@ -1298,6 +1301,14 @@ class EventStore:
         except Exception:
             conn.rollback()
             raise
+        finally:
+            conn.close()
+
+    def list_news_source_tombstones(self) -> list[str]:
+        """Return ids of user-deleted sources (never re-seed these)."""
+        conn = self._open(self._db_path)
+        try:
+            return _news.list_tombstones(conn)
         finally:
             conn.close()
 

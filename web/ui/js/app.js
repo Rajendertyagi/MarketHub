@@ -2132,6 +2132,7 @@ function initBackup() {
 
   // ── News view ─────────────────────────────────────────────────────────────
   let _newsSources = [];
+  let _newsActionsBound = false;
 
   function initNews() {
     const addBtn = $("news-add-source");
@@ -2150,6 +2151,13 @@ function initBackup() {
     if (sentimentBtn) sentimentBtn.addEventListener("click", _loadSentiment);
     const typeSelect = $("news-src-type");
     if (typeSelect) typeSelect.addEventListener("change", _toggleSourceTypeFields);
+    // Delegated action handling for the sources table (no inline JS:
+    // source ids are untrusted input and must never enter onclick).
+    if (!_newsActionsBound) {
+      _newsActionsBound = true;
+      const tbody = $("news-sources-body");
+      if (tbody) tbody.addEventListener("click", _onNewsActionClick);
+    }
     // Load sources when News view is opened
     const navBtns = document.querySelectorAll('[data-view="news"]');
     navBtns.forEach(btn => {
@@ -2200,15 +2208,32 @@ function initBackup() {
             : "r/" + _esc(s.config_json?.subreddit || "")
         }</td>
         <td>
-          <button class="news-action-btn" onclick="window._newsToggle('${_esc(s.source_id)}', ${!s.enabled})">${s.enabled ? "Disable" : "Enable"}</button>
-          <button class="news-action-btn" onclick="window._newsEdit('${_esc(s.source_id)}')">Edit</button>
-          <button class="news-action-btn danger" onclick="window._newsDelete('${_esc(s.source_id)}')">Del</button>
+          <button class="news-action-btn" data-news-action="toggle" data-news-id="${_escAttr(s.source_id)}" data-news-enable="${s.enabled ? 0 : 1}">${s.enabled ? "Disable" : "Enable"}</button>
+          <button class="news-action-btn" data-news-action="edit" data-news-id="${_escAttr(s.source_id)}">Edit</button>
+          <button class="news-action-btn danger" data-news-action="delete" data-news-id="${_escAttr(s.source_id)}">Del</button>
         </td>`;
       tbody.appendChild(tr);
     });
   }
 
   function _esc(s) { return String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+  function _escAttr(s) { return _esc(s).replace(/'/g,"&#39;"); }
+
+  function _onNewsActionClick(e) {
+    const btn = e.target && e.target.closest
+      ? e.target.closest("[data-news-action]") : null;
+    if (!btn) return;
+    const action = btn.getAttribute("data-news-action");
+    const sourceId = btn.getAttribute("data-news-id") || "";
+    if (action === "toggle") {
+      _newsToggle(sourceId, btn.getAttribute("data-news-enable") === "1");
+    } else if (action === "edit") {
+      _newsEdit(sourceId);
+    } else if (action === "delete") {
+      _newsDelete(sourceId);
+    }
+  }
 
   function _populateSourceFilter() {
     const sel = $("news-filter-source");
@@ -2314,15 +2339,15 @@ function initBackup() {
     }
   }
 
-  window._newsToggle = async function(sourceId, enable) {
+  async function _newsToggle(sourceId, enable) {
     const action = enable ? "enable" : "disable";
     try {
-      await fetch(`/api/news/sources/${sourceId}/${action}`, { method: "POST" });
+      await fetch(`/api/news/sources/${encodeURIComponent(sourceId)}/${action}`, { method: "POST" });
       _loadNewsSources();
     } catch { /* ignore */ }
-  };
+  }
 
-  window._newsEdit = function(sourceId) {
+  function _newsEdit(sourceId) {
     const src = _newsSources.find(s => s.source_id === sourceId);
     if (!src) return;
     $("news-modal-title").textContent = "Edit Source";
@@ -2336,15 +2361,15 @@ function initBackup() {
     $("news-test-result").textContent = "";
     _toggleSourceTypeFields();
     $("news-source-modal").classList.remove("hidden");
-  };
+  }
 
-  window._newsDelete = async function(sourceId) {
+  async function _newsDelete(sourceId) {
     if (!confirm("Delete source " + sourceId + "?")) return;
     try {
-      await fetch(`/api/news/sources/${sourceId}`, { method: "DELETE" });
+      await fetch(`/api/news/sources/${encodeURIComponent(sourceId)}`, { method: "DELETE" });
       _loadNewsSources();
     } catch { /* ignore */ }
-  };
+  }
 
   async function _loadNews() {
     const listEl = $("news-articles-list");
@@ -2503,9 +2528,22 @@ function initBackup() {
       if (logsPaused) return;
       try {
         const record = JSON.parse(e.data);
+        // Apply the same active filters as the history view so live
+        // rows never bypass Level / Component / Search.
+        if (!_logRecordPassesFilters(record)) return;
         _appendLogRow(record);
       } catch { /* malformed — skip */ }
     };
+  }
+
+  function _logRecordPassesFilters(record) {
+    const level = ($("logs-level")?.value || "").trim().toUpperCase();
+    if (level && String(record.level || "").toUpperCase() !== level) return false;
+    const comp = ($("logs-component")?.value || "").trim().toLowerCase();
+    if (comp && !String(record.logger || "").toLowerCase().includes(comp)) return false;
+    const search = ($("logs-search")?.value || "").trim().toLowerCase();
+    if (search && !String(record.message || "").toLowerCase().includes(search)) return false;
+    return true;
   }
 
   function _appendLogRow(record) {

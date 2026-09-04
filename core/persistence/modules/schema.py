@@ -12,7 +12,7 @@ import sqlite3
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 
 def get_schema_version(conn: sqlite3.Connection) -> int:
@@ -116,6 +116,7 @@ def create_v7_schema(conn: sqlite3.Connection) -> None:
     from core.persistence.modules.condition_alerts import create_condition_alert_tables
     create_condition_alert_tables(conn)
     # v14: news sources + articles (N1 foundation).
+    # v15: news source tombstones (deleted seeds stay deleted).
     from core.persistence.modules.news import create_news_tables
     create_news_tables(conn)
 
