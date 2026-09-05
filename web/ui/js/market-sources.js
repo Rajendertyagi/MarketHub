@@ -11,7 +11,7 @@
 
 import { $, escDash } from "./utils.js";
 import { currentView } from "./router.js";
-import { renderMarketStatus, renderMovers } from "./market.js";
+import { renderMarketStatus, renderMovers } from "./market.js?v=37";
 import { getAuthStatus } from "./auth.js?v=36";
 
 let lastSourcesSnapshot = [];            // latest /api/sources/status payload

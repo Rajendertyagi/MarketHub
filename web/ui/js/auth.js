@@ -12,7 +12,7 @@
 
 import { $ } from "./utils.js";
 import { switchView } from "./router.js";
-import { friendlyState, pollSources } from "./market-sources.js";
+import { friendlyState, pollSources } from "./market-sources.js?v=37";
 
 let lastAuthStatus = null;   // /api/auth/upstox/status snapshot
 

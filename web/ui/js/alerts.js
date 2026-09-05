@@ -8,7 +8,7 @@
  */
 
 import { $, escDash } from "./utils.js";
-import { pollSources } from "./market-sources.js";
+import { pollSources } from "./market-sources.js?v=37";
 
 let alertPushSource = null;              // /events/stream (alert push)
 let _alertsInitDone = false;

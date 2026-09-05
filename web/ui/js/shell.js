@@ -19,8 +19,8 @@
  */
 
 import { $, chgClass, escAttr, fmt, nowStr } from "./utils.js";
-import { getQuote, onQuote, onSseChange } from "./market.js";
-import { getSourcesSnapshot, onSourcesUpdate } from "./market-sources.js";
+import { getQuote, onQuote, onSseChange } from "./market.js?v=37";
+import { getSourcesSnapshot, onSourcesUpdate } from "./market-sources.js?v=37";
 
 // Catalog tradingsymbol → header label, in stable menu order. Only entries
 // actually present in the catalog are exposed (never fabricated).

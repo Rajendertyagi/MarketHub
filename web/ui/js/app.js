@@ -17,7 +17,7 @@ import { initSourcesUI } from "./sources.js";
 import { initNewsUI, openNews } from "./news.js";
 import { initSentimentUI, openSentiment } from "./sentiment.js";
 import { initLogsUI, openLogs } from "./logs.js";
-import { connectSSE, initFilter, loadInitialQuotes } from "./market.js";
+import { connectSSE, initFilter, loadInitialQuotes } from "./market.js?v=37";
 import { initDrawer } from "./quotes.js";
 import { initCharts } from "./charts.js";
 import { initAlerts, initAlertPush } from "./alerts.js";
@@ -26,7 +26,7 @@ import { initMCPTools, openMCPTools } from "./mcp-tools.js";
 import { initInstruments } from "./instruments.js";
 import { initWatchlists } from "./watchlists.js";
 import { initOptionChain } from "./option-chain.js?v=35";
-import { initSourceControls, pollSources } from "./market-sources.js";
+import { initSourceControls, pollSources } from "./market-sources.js?v=37";
 import {
   initAuth, initCredentialDelete, initCredentialSettings, initFyers,
   pollAuthStatus,

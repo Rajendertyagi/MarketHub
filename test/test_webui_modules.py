@@ -49,7 +49,7 @@ _APP_IMPORTS = (
     'from "./sources.js"',
     'from "./news.js"',
     'from "./logs.js"',
-    'from "./market.js"',
+    'from "./market.js?v=37"',
     'from "./quotes.js"',
     'from "./charts.js"',
     'from "./alerts.js"',
@@ -58,7 +58,7 @@ _APP_IMPORTS = (
     'from "./instruments.js"',
     'from "./watchlists.js"',
     'from "./option-chain.js"',
-    'from "./market-sources.js"',
+    'from "./market-sources.js?v=37"',
     'from "./auth.js"',
 )
 

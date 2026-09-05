@@ -7,7 +7,7 @@
  */
 
 import { $, fmt, fmtNum, fmtTs } from "./utils.js";
-import { getQuote, quotes } from "./market.js";
+import { getQuote, quotes } from "./market.js?v=37";
 
 const kvRow = (label, value) =>
   `<tr><td>${label}</td><td>${value ?? "—"}</td></tr>`;

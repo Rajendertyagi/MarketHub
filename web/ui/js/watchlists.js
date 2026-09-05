@@ -7,7 +7,7 @@
  */
 
 import { $, chgClass, escDash, fmt, fmtVol } from "./utils.js";
-import { getQuote } from "./market.js";
+import { getQuote } from "./market.js?v=37";
 
 let currentWatchlistId = null;
 let _watchlistsInitDone = false;
