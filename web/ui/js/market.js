@@ -51,15 +51,21 @@ export function connectSSE() {
 
   es.onopen = () => {
     setIndicator("sse-indicator", true, "● SSE");
-    $("chip-sse").textContent = "Connected";
-    $("chip-sse").className = "chip chip-on";
+    const sseChip = $("chip-sse");
+    if (sseChip) {
+      sseChip.textContent = "Connected";
+      sseChip.className = "chip chip-on";
+    }
     notifySse(true);
   };
 
   es.onerror = () => {
     setIndicator("sse-indicator", false, "● SSE");
-    $("chip-sse").textContent = "Reconnecting";
-    $("chip-sse").className = "chip chip-off";
+    const sseChip = $("chip-sse");
+    if (sseChip) {
+      sseChip.textContent = "Reconnecting";
+      sseChip.className = "chip chip-off";
+    }
     notifySse(false);
   };
 

@@ -37,7 +37,6 @@ const SUPPORTED = [
 
 const STORAGE_KEY = "mh.header-indices.v1";
 const DEFAULT_SELECTION = ["NIFTY", "BANKNIFTY"];
-const MAX_VISIBLE = 4;          // strip shows around 2–4 tiles
 const STALE_MIN = 5;            // same freshness threshold as market.js
 
 let registry = [];              // [{label, exchange, tradingsymbol, key}]
@@ -130,12 +129,12 @@ function paintTile(tile, q) {
     return;
   }
   tile.classList.remove("is-stale");
-  valEl.textContent = fmt(q.ltp);
+  valEl.textContent = fmt(q.ltp, 0);
   const chg = q.change ?? 0;
   const arrow = chg > 0 ? "▲" : chg < 0 ? "▼" : "•";
   const pct = q.change_percent != null ? fmt(q.change_percent) + "%" : "—";
   const sign = chg > 0 ? "+" : "";
-  chgEl.textContent = `${arrow} ${sign}${fmt(chg)} (${sign}${pct})`;
+  chgEl.textContent = `${arrow} ${sign}${fmt(chg, 0)} (${sign}${pct})`;
   chgEl.className = "idx-chg " + chgClass(chg);
 }
 
@@ -150,7 +149,9 @@ function renderStrip() {
     strip.appendChild(hint);
     return;
   }
-  const visible = selected.slice(0, MAX_VISIBLE);
+  // The strip sizes to content and scrolls — every selected index stays
+  // visible, no hardcoded visible-count cap.
+  const visible = selected;
   if (!visible.length) {
     const hint = document.createElement("span");
     hint.className = "idx-empty";
@@ -220,12 +221,6 @@ function renderMenu() {
     tick.textContent = meta.exchange + ":" + meta.tradingsymbol;
     item.append(box, name, tick);
     menu.appendChild(item);
-  }
-  if (selected.length > MAX_VISIBLE) {
-    const note = document.createElement("div");
-    note.className = "index-menu-note";
-    note.textContent = `First ${MAX_VISIBLE} shown in the header`;
-    menu.appendChild(note);
   }
 }
 

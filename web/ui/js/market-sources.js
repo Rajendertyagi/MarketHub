@@ -50,9 +50,12 @@ export async function pollSources() {
     const upstox = sources.find((s) => s.name === "upstox") || sources[0];
     if (upstox) {
       const st = upstox.state || "unknown";
-      $("chip-upstox").textContent = friendlyShort(st);
-      $("chip-upstox").className = "chip " +
-        (st === "streaming" ? "chip-on" : st === "failed" ? "chip-off" : "");
+      const upChip = $("chip-upstox");
+      if (upChip) {
+        upChip.textContent = friendlyShort(st);
+        upChip.className = "chip " +
+          (st === "streaming" ? "chip-on" : st === "failed" ? "chip-off" : "");
+      }
       $("chip-instruments").textContent = upstox.configured_instruments ?? 0;
       $("chip-reconnects").textContent = upstox.reconnect_count ?? 0;
     }
@@ -63,9 +66,12 @@ export async function pollSources() {
       sources.reduce((a, s) => a + (s.frames_received || 0), 0);
     const labels = sources.map((s) => `${s.name}: ${friendlyShort(s.state || "unknown")}`);
     const anyStreaming = sources.some((s) => s.state === "streaming");
-    $("broker-indicator").textContent = "● " + (labels.join("  |  ") || "no sources");
-    $("broker-indicator").className = "indicator " +
-      (anyStreaming ? "indicator-on" : "indicator-off");
+    const brokerEl = $("broker-indicator");
+    if (brokerEl) {
+      brokerEl.textContent = "● " + (labels.join("  |  ") || "no sources");
+      brokerEl.className = "indicator " +
+        (anyStreaming ? "indicator-on" : "indicator-off");
+    }
 
     renderMovers();
     renderMarketStatus();
