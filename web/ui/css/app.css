@@ -9,6 +9,7 @@
 @import "./shell.css?v=3";
 @import "./components.css?v=2";
 @import "./features/news.css?v=4";
+@import "./features/sentiment.css?v=1";
 @import "./features/ai-alerts.css?v=1";
 @import "./features/mcp-tools.css?v=1";
 @import "./features/market-sources.css?v=1";

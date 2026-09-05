@@ -15,6 +15,7 @@
 import { initRouter, onViewEnter, initNav } from "./router.js";
 import { initSourcesUI } from "./sources.js";
 import { initNewsUI, openNews } from "./news.js";
+import { initSentimentUI, openSentiment } from "./sentiment.js";
 import { initLogsUI, openLogs } from "./logs.js";
 import { connectSSE, initFilter, loadInitialQuotes } from "./market.js";
 import { initDrawer } from "./quotes.js";
@@ -225,6 +226,7 @@ import { initSplitters } from "./core/splitter.js";
     initAIAlerts();
     initSourcesUI();
     initNewsUI();
+    initSentimentUI();
     initMCPTools();
     initLogsUI();
     initSplitters();
@@ -232,6 +234,7 @@ import { initSplitters } from "./core/splitter.js";
     // and back/forward all initialize their views; nav clicks are also
     // observed by the router (switchView uses replaceState, silent).
     onViewEnter("news", openNews);
+    onViewEnter("sentiment", openSentiment);
     onViewEnter("logs", openLogs);
     onViewEnter("ai-alerts", openAIAlerts);
     onViewEnter("mcp", openMCPTools);
