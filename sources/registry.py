@@ -61,8 +61,21 @@ def _create_upstox_feed(config: dict, *, market_service: Any = None) -> Any:
         logger.info(
             'upstox access_token not configured - source will gate on OAuth login')
 
+    # Optional expiry metadata (from a restored durable session). When present
+    # the credentials carry a known expiry so is_ready_to_start() can correctly
+    # gate startup without forcing a re-login after a MarketHub restart.
+    expires_at: Any = None
+    exp_ref = config.get("access_token_expires_at")
+    if isinstance(exp_ref, str) and exp_ref.strip():
+        try:
+            from datetime import datetime, timezone
+            expires_at = datetime.fromisoformat(exp_ref)
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+        except Exception:
+            expires_at = None
 
-    credentials = UpstoxCredentials(access_token=token)
+    credentials = UpstoxCredentials(access_token=token, expires_at=expires_at)
     rest = UpstoxRest()
 
     # -- validate instruments -------------------------------------------------

@@ -944,7 +944,8 @@ def build_fyers_auth_routes(cred_store: Any,
                             redirect_uri: str = (
         "http://localhost:7070/auth/fyers/callback"),
                             runtime_token: dict[str, str] | None = None,
-                            restart_fn: Any = None) -> list[Route]:
+                            restart_fn: Any = None,
+                            restore_state: dict[str, Any] | None = None) -> list[Route]:
     """Fyers credential storage + OAuth login/callback (encrypted store).
 
     Fyers semantics (official v3): callback carries ``auth_code`` (not
@@ -980,13 +981,32 @@ def build_fyers_auth_routes(cred_store: Any,
             creds = None
         has_refresh = bool(await asyncio.to_thread(
             cred_store.load_fyers_refresh_token))
+        pin_stored = bool(await asyncio.to_thread(cred_store.load_fyers_pin))
+        stored_access = await asyncio.to_thread(
+            cred_store.load_fyers_access_token)
         store = await asyncio.to_thread(cred_store.store_status)
+        # Restart recovery works only when BOTH a refresh token AND the PIN
+        # (required by Fyers' refresh endpoint) are durably stored.
+        restart_recovery = has_refresh and pin_stored
+        login_required = not (_fyers_runtime_token["access_token"]
+                              or (has_refresh and pin_stored))
         return _json({
             "app_id_configured": bool(creds and creds.get("app_id")),
             "secret_configured": bool(creds and creds.get("app_secret")),
             "login_available": bool(creds),
             "access_token_active": bool(_fyers_runtime_token["access_token"]),
             "refresh_token_stored": has_refresh,
+            "pin_stored": pin_stored,
+            # Durable session / restart-safety signals.
+            "session_persisted": stored_access is not None,
+            "restart_recovery": restart_recovery,
+            "session_restored": bool(
+                restore_state.get("fyers_restored")) if restore_state else False,
+            "last_auth_status": await asyncio.to_thread(
+                cred_store.load_last_auth_status, "fyers"),
+            "access_token_expires_at": (
+                stored_access or {}).get("expires_at"),
+            "login_required": login_required,
             # "key_missing"/"decrypt_failed": ciphertext exists but the
             # current master.key cannot read it — a store ERROR, distinct
             # from ordinary "not configured".
@@ -1101,6 +1121,16 @@ def build_fyers_auth_routes(cred_store: Any,
                 cred_store.save_fyers_refresh_token, bundle["refresh_token"])
         except Exception:
             return _fail("error")
+        # Persist the access token (encrypted) so a MarketHub restart can
+        # reuse it directly instead of spending the refresh token again.
+        try:
+            await asyncio.to_thread(
+                cred_store.save_fyers_access_token,
+                bundle["access_token"], bundle.get("expires_at"))
+            await asyncio.to_thread(
+                cred_store.save_last_auth_status, "fyers", "authenticated")
+        except Exception:
+            logger.warning("failed to persist fyers access token")
         _fyers_runtime_token["access_token"] = bundle["access_token"]
         # Operator login path complete: (re)start the Fyers feed so it picks
         # up the freshly-available token via its access_token_getter gate.
@@ -1111,12 +1141,32 @@ def build_fyers_auth_routes(cred_store: Any,
                 logger.warning("fyers feed restart after login failed")
         return RedirectResponse("/ui/?fyers_auth=ok#/settings", status_code=302)
 
+    async def _forget_session(request: Request) -> Response:  # noqa: ARG001
+        """Forget saved Fyers SESSION material (token/PIN/refresh).
+
+        Keeps the App ID/Secret credentials so the operator does not have to
+        re-enter them; only the restart-recovery session is wiped. The runtime
+        token is dropped so the feed gates on a fresh login.
+        """
+        try:
+            await asyncio.to_thread(cred_store.clear_fyers_session)
+            await asyncio.to_thread(
+                cred_store.save_last_auth_status, "fyers", "forgotten")
+        except Exception:
+            return _json({"error": "failed to forget session"}, 500)
+        _fyers_runtime_token["access_token"] = ""
+        if restore_state is not None:
+            restore_state["fyers_restored"] = False
+        return _json({"ok": True})
+
     return [
         Route("/api/settings/fyers", endpoint=_status, methods=["GET"]),
         Route("/api/settings/fyers", endpoint=_save, methods=["POST"]),
         Route("/api/settings/fyers", endpoint=_delete, methods=["DELETE"]),
         Route("/api/auth/fyers/login", endpoint=_login, methods=["GET"]),
         Route("/auth/fyers/callback", endpoint=_callback, methods=["GET"]),
+        Route("/api/auth/fyers/session", endpoint=_forget_session,
+              methods=["DELETE"]),
     ]
 
 

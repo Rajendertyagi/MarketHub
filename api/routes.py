@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from sse_starlette import EventSourceResponse
@@ -32,6 +33,27 @@ __all__ = [
 
 def _json(data: Any, status: int = 200) -> JSONResponse:
     return JSONResponse(data, status_code=status)
+
+
+def _persist_upstox_session(creds: Any, cred_store: Any) -> None:
+    """Best-effort: encrypt + persist the Upstox session token.
+
+    Failure to persist must NEVER break the login that just succeeded — the
+    runtime token is already live; persistence only enables restart recovery.
+    """
+    if cred_store is None or creds is None:
+        return
+    try:
+        expires_at = creds.expires_at
+        expires_iso = expires_at.isoformat() if expires_at is not None else None
+        cred_store.save_upstox_session_token(
+            token=creds.access_token,
+            expires_at_iso=expires_iso,
+            issued_at_iso=datetime.now(timezone.utc).isoformat(),
+        )
+        cred_store.save_last_auth_status("upstox", "authenticated")
+    except Exception:
+        logger.warning("failed to persist upstox session token", exc_info=True)
 
 
 def build_market_routes(
@@ -427,6 +449,7 @@ def build_auth_routes(
     rest: Any = None,
     cred_store: Any = None,
     sources_cfg: dict[str, Any] | None = None,
+    restore_state: dict[str, Any] | None = None,
 ) -> list[Route]:
     """Build auth routes for runtime token management.
 
@@ -489,9 +512,26 @@ def build_auth_routes(
             "feed_enabled": (
                 bool(_feed_cfg.get("enabled")) if isinstance(_feed_cfg, dict) else False),
         }
+        # Durable session material (restart-safe auth state).
+        session = None
+        if cred_store is not None:
+            try:
+                session = cred_store.load_upstox_session_token()
+            except Exception:
+                session = None
+        base["session_persisted"] = session is not None
+        # Restart recovery is enabled once a session token has been persisted;
+        # a MarketHub restart will then auto-restore the Upstox feed.
+        base["restart_recovery"] = session is not None
+        base["session_restored"] = bool(
+            restore_state.get("upstox_restored")) if restore_state else False
+        base["last_auth_status"] = (
+            cred_store.load_last_auth_status("upstox")
+            if cred_store is not None else None)
         if feed is None:
             base.update({"source": "upstox", "auth_mode": "none",
-                         "token_configured": False})
+                         "token_configured": False,
+                         "login_required": True})
             return _json(base)
         creds = feed._credentials
         status = creds.status()
@@ -511,7 +551,38 @@ def build_auth_routes(
         # PIN-mode: an authorization code is waiting for the operator's PIN.
         base["auth_code_pending"] = bool(
             cred_store and cred_store.load_upstox_auth_code())
+        # "Login required" is a precise combination of the independent states:
+        # a restart can auto-restore, so only require login when there is no
+        # usable token and no durable session to restore from.
+        base["login_required"] = not (
+            base["token_configured"] and base.get("expired") is not True
+            and base.get("state") not in ("auth_required",))
         return _json(base)
+
+    async def _forget_session(request: Request) -> Response:  # noqa: ARG001
+        """Forget the durably stored Upstox session (does NOT delete API creds).
+
+        Clears the encrypted session token and drops the runtime token back to
+        the placeholder so the feed gates on a fresh login. Safe to call at any
+        time; never raises.
+        """
+        if cred_store is not None:
+            try:
+                cred_store.clear_upstox_session_token()
+                cred_store.save_last_auth_status("upstox", "forgotten")
+            except Exception:
+                logger.exception("failed to clear upstox session")
+        feed = feed_ref.get("feed")
+        if feed is not None:
+            try:
+                from brokers.upstox.auth import UpstoxCredentials
+                feed.update_credentials(
+                    UpstoxCredentials(access_token="PENDING-OAUTH-LOGIN"))
+            except Exception:
+                logger.exception("failed to reset upstox runtime creds")
+        if restore_state is not None:
+            restore_state["upstox_restored"] = False
+        return _json({"ok": True})
 
     async def _oauth_login(request: Request) -> Response:  # noqa: ARG001
         if not _oauth_ready():
@@ -622,6 +693,9 @@ def build_auth_routes(
             logger.exception("oauth callback: feed restart failed")
             return _fail("restart")
 
+        # Persist the session token (encrypted) so a MarketHub restart can
+        # auto-restore the feed without forcing the user to log in again.
+        _persist_upstox_session(creds, cred_store)
         return RedirectResponse("/ui/?auth=ok#/settings", status_code=302)
 
     async def _pin_login(request: Request) -> Response:
@@ -684,6 +758,7 @@ def build_auth_routes(
             logger.exception("pin login: feed restart failed")
             return _fail("restart")
 
+        _persist_upstox_session(creds, cred_store)
         return RedirectResponse("/ui/?auth=ok#/settings", status_code=302)
 
     async def _submit_token(request: Request) -> Response:
@@ -718,6 +793,10 @@ def build_auth_routes(
                 logger.exception("submit_token: feed restart failed")
                 outcome = "restart_failed"
 
+        # External tokens have unknown issuance time -> no computed expiry, but
+        # persist what we have so restart recovery is still possible when the
+        # token happens to remain valid.
+        _persist_upstox_session(creds, cred_store)
         return _json({"configured": True, "outcome": outcome})
 
     return [
@@ -726,4 +805,6 @@ def build_auth_routes(
         Route("/auth/upstox/callback", endpoint=_oauth_callback, methods=["GET"]),
         Route("/api/auth/upstox/token", endpoint=_submit_token, methods=["POST"]),
         Route("/api/auth/upstox/pin", endpoint=_pin_login, methods=["POST"]),
+        Route("/api/auth/upstox/session", endpoint=_forget_session,
+              methods=["DELETE"]),
     ]

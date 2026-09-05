@@ -656,6 +656,14 @@ class EventStore:
         finally:
             conn.close()
 
+    def delete_secret(self, provider: str, name: str) -> int:
+        """Delete a single (provider, name) secret row. Returns rows removed."""
+        conn = self._open(self._db_path)
+        try:
+            return _secrets.delete_secret(conn, provider, name)
+        finally:
+            conn.close()
+
     # ─── Product tables: instruments / watchlists / alerts (v11) ──────────────
 
     def replace_provider_instruments(self, provider: str,

@@ -142,6 +142,11 @@ REPLAY_CFG = _config["replay"]
 SOURCES_CFG = _config.get("sources", {})
 RETENTION_CFG = _config["retention"]
 
+# Shared, mutable broker auth/restore state surfaced (read-only) by the auth
+# status endpoints. Populated during startup restore so the WebUI can show
+# whether a session was auto-restored after a MarketHub restart.
+_broker_restore: dict[str, Any] = {}
+
 # ── Transport security (DNS-rebinding protection) ────────────────────────────
 # Explicit construction removes ambiguity vs. SDK auto-detection.
 # Defaults match what the SDK applies when host is localhost and no settings
@@ -353,23 +358,72 @@ async def _restart_fyers_source() -> None:
         raise
 
 
-async def _try_restore_fyers_token() -> None:
-    """Best-effort: regain a Fyers access token from the stored refresh token.
+def _save_fyers_auth_status(status: str) -> None:
+    """Durably record the last Fyers auth/restore outcome (forensics)."""
+    try:
+        _credential_store.save_last_auth_status("fyers", status)
+    except Exception:
+        pass
 
-    Runs at startup (before sources start). If a refresh token is stored,
-    exchange it for a fresh access token so the Fyers feed is READY without
-    forcing the operator to re-log in after every restart.
+
+async def _try_restore_fyers_token() -> None:
+    """Best-effort: regain a Fyers access token across a MarketHub restart.
+
+    Preference order (only the first that succeeds is used):
+      1. A durably stored access token that is still within its validity
+         window — reuse it directly, no network refresh spent.
+      2. The supported refresh-token flow (Fyers v3), including the encrypted
+         PIN when the operator saved one. The resulting access token is
+         persisted for (1) on the next restart.
+
+    On any failure the runtime token is left empty so the feed reports
+    auth_required ("Daily Login Required") instead of a generic error — the
+    operator is only prompted to log in when restoration genuinely fails.
     """
     try:
-        refresh_token = _credential_store.load_fyers_refresh_token()
         app_creds = _credential_store.load_fyers_credentials()
     except Exception:
+        app_creds = None
+    if not app_creds or not app_creds.get("app_id") or not app_creds.get("app_secret"):
+        _broker_restore["fyers_last_status"] = "credentials_missing"
+        _save_fyers_auth_status("credentials_missing")
         return
-    if not refresh_token or not app_creds:
-        return
-    app_id = app_creds.get("app_id")
-    secret_id = app_creds.get("app_secret")
-    if not (refresh_token and app_id and secret_id):
+    app_id = app_creds["app_id"]
+    secret_id = app_creds["app_secret"]
+
+    # 1) Reuse a still-valid stored access token first.
+    try:
+        _stored_access = _credential_store.load_fyers_access_token()
+    except Exception:
+        _stored_access = None
+    if _stored_access and _stored_access.get("access_token"):
+        _exp = _stored_access.get("expires_at")
+        _still_valid = True
+        if _exp:
+            try:
+                _exp_dt = datetime.fromisoformat(_exp)
+                if _exp_dt.tzinfo is None:
+                    _exp_dt = _exp_dt.replace(tzinfo=timezone.utc)
+                if _exp_dt <= datetime.now(timezone.utc):
+                    _still_valid = False
+            except Exception:
+                _still_valid = False
+        if _still_valid:
+            _fyers_runtime_token["access_token"] = _stored_access["access_token"]
+            _broker_restore["fyers_restored"] = True
+            _broker_restore["fyers_last_status"] = "restored_access_token"
+            _save_fyers_auth_status("restored_access_token")
+            _app_logger.info("fyers access token restored from encrypted store")
+            return
+
+    # 2) Fall back to the supported refresh-token flow.
+    try:
+        refresh_token = _credential_store.load_fyers_refresh_token()
+    except Exception:
+        refresh_token = None
+    if not refresh_token:
+        _broker_restore["fyers_last_status"] = "refresh_token_missing"
+        _save_fyers_auth_status("refresh_token_missing")
         return
     try:
         from brokers.fyers.auth import FyersAuth
@@ -386,12 +440,24 @@ async def _try_restore_fyers_token() -> None:
                                  ).refresh_access_token(refresh_token,
                                                         pin=pin)
         _fyers_runtime_token["access_token"] = bundle["access_token"]
-        _app_logger.info("fyers access token restored from refresh token")
+        # Persist the freshly obtained access token so the NEXT restart can
+        # reuse it directly (path 1) without spending the refresh token.
+        try:
+            _credential_store.save_fyers_access_token(
+                bundle["access_token"], expires_at_iso=bundle.get("expires_at"))
+        except Exception:
+            _app_logger.warning("failed to persist fyers access token")
+        _broker_restore["fyers_restored"] = True
+        _broker_restore["fyers_last_status"] = "refreshed"
+        _save_fyers_auth_status("refreshed")
+        _app_logger.info("fyers access token restored via refresh token")
     except Exception as exc:
-        # Refresh failed/revoked: leave the token empty so the feed reports
-        # auth_required ("Daily Login Required") instead of a generic failure.
-        _app_logger.warning("fyers token restore failed: %s",
-                            type(exc).__name__)
+        _exc_name = type(exc).__name__
+        _status = ("pin_missing" if "pin" in _exc_name.lower()
+                   else "refresh_failed")
+        _broker_restore["fyers_last_status"] = _status
+        _save_fyers_auth_status(_status)
+        _app_logger.warning("fyers token restore failed: %s", _exc_name)
 
 # Wire low-frequency source lifecycle events into the generic EventBroker
 # (WP22). Feeds call their optional on_state_change listener; we broadcast a
@@ -616,6 +682,56 @@ _credential_store = _CredentialStore(
 FYERS_REDIRECT_URI = oauth_callback_url(
     get_public_base_url(_config), "fyers")
 _inject_fyers_source_config(SOURCES_CFG)
+
+# ── Upstox durable session restore (before source-manager construction) ─────
+# If an encrypted Upstox access token was persisted at a previous login, load
+# it and inject it into the Upstox source config so the feed registers with a
+# usable token and MarketHub restart does NOT force a re-login. An expired
+# token is cleared (marked invalid) so we never start a feed with a dead token.
+try:
+    _upstox_session = _credential_store.load_upstox_session_token()
+except Exception:
+    _upstox_session = None
+    _app_logger.warning("upstox session load failed", exc_info=True)
+if _upstox_session:
+    _upx_token = _upstox_session.get("access_token")
+    _upx_exp = _upstox_session.get("expires_at")
+    _upx_valid = bool(_upx_token)
+    if _upx_exp:
+        try:
+            _exp_dt = datetime.fromisoformat(_upx_exp)
+            if _exp_dt.tzinfo is None:
+                _exp_dt = _exp_dt.replace(tzinfo=timezone.utc)
+            if _exp_dt <= datetime.now(timezone.utc):
+                _upx_valid = False
+        except Exception:
+            _upx_valid = False
+    _upx_cfg = SOURCES_CFG.get("upstox")
+    if _upx_valid and isinstance(_upx_cfg, dict):
+        # Inject into a copy so we never mutate the source dict in place in a
+        # way that surprises the settings routes (they hold the same ref, but
+        # we only add the token — feed enable still owns enabled/instruments).
+        _upx_cfg = dict(_upx_cfg)
+        _upx_cfg["access_token"] = _upx_token
+        if _upx_exp:
+            _upx_cfg["access_token_expires_at"] = _upx_exp
+        SOURCES_CFG["upstox"] = _upx_cfg
+        _broker_restore["upstox_restored"] = True
+        _app_logger.info("upstox session restored from encrypted store")
+        try:
+            _credential_store.save_last_auth_status("upstox", "restored")
+        except Exception:
+            pass
+    else:
+        # Expired (or no matching source): clear so restart recovery is honest.
+        try:
+            _credential_store.clear_upstox_session_token()
+            _credential_store.save_last_auth_status("upstox", "expired")
+        except Exception:
+            pass
+        _app_logger.info("upstox stored session token expired or unusable; cleared")
+        _broker_restore["upstox_restored"] = False
+
 _source_manager = _build_source_manager()
 
 # Hold a reference to the Upstox feed for runtime auth management.
@@ -962,6 +1078,7 @@ app = Starlette(
         rest=_oauth_rest,
         cred_store=_credential_store,
         sources_cfg=SOURCES_CFG,
+        restore_state=_broker_restore,
     )
     + build_settings_routes(
         _oauth_cfg_ref,
@@ -982,6 +1099,7 @@ app = Starlette(
         runtime_token=_fyers_runtime_token,
         restart_fn=_restart_fyers_source,
         redirect_uri=FYERS_REDIRECT_URI,
+        restore_state=_broker_restore,
     )
     + _build_app_settings_routes(str(CONFIG_PATH))
     + _build_chat_routes(str(CONFIG_PATH), _credential_store, _chat_tools)

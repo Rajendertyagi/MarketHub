@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -419,6 +420,84 @@ class CredentialStore:
         except Exception:
             pass
 
+    # -- Upstox durable session token (restart-safe auth state) ---------------
+    #
+    # The daily access token is persisted ENCRYPTED here so a MarketHub
+    # restart can restore the Upstox runtime/feed WITHOUT forcing the user to
+    # re-log in. Upstox provides NO refresh token in this auth flow, so the
+    # access token itself is the durable session artifact. Expiry/issued
+    # metadata travels alongside it (also encrypted) so startup can decide
+    # whether the stored token is still usable.
+
+    def save_upstox_session_token(
+        self,
+        token: str,
+        expires_at_iso: str | None = None,
+        issued_at_iso: str | None = None,
+    ) -> None:
+        """Encrypt + persist the Upstox access token and its metadata."""
+        if not isinstance(token, str) or not token.strip():
+            raise ValueError("access token must be a non-empty string")
+        enc = self._get_encryption(allow_generate=True)
+        if enc is None:
+            raise CredentialDecryptError(
+                "master key unavailable; cannot encrypt session token")
+        items: dict[str, tuple[str, str]] = {
+            "access_token": (enc.encrypt(token.strip()), ENCRYPTION_SCHEME),
+            "token_saved_at": (
+                enc.encrypt(datetime.now(timezone.utc).isoformat()),
+                ENCRYPTION_SCHEME),
+        }
+        if expires_at_iso is not None:
+            items["token_expires_at"] = (
+                enc.encrypt(str(expires_at_iso)), ENCRYPTION_SCHEME)
+        if issued_at_iso is not None:
+            items["token_issued_at"] = (
+                enc.encrypt(str(issued_at_iso)), ENCRYPTION_SCHEME)
+        self._store.upsert_secrets("upstox", items)
+
+    def load_upstox_session_token(self) -> dict[str, str] | None:
+        """Return the stored Upstox session, or None if absent/unreadable.
+
+        Never raises: an undecryptable token is reported as None (the caller
+        treats absence and unreadable identically — re-login required).
+        """
+        enc = self._get_encryption(allow_generate=False)
+        if enc is None:
+            return None
+        row = self._store.get_secret("upstox", "access_token")
+        if row is None:
+            return None
+        try:
+            token = enc.decrypt(row[0])
+        except Exception:
+            return None
+
+        def _dec(name: str) -> str | None:
+            r = self._store.get_secret("upstox", name)
+            if r is None:
+                return None
+            try:
+                return enc.decrypt(r[0])
+            except Exception:
+                return None
+
+        return {
+            "access_token": token,
+            "expires_at": _dec("token_expires_at"),
+            "issued_at": _dec("token_issued_at"),
+            "saved_at": _dec("token_saved_at"),
+        }
+
+    def clear_upstox_session_token(self) -> None:
+        """Remove only the durable session rows (keep API key/secret)."""
+        for _n in ("access_token", "token_expires_at", "token_issued_at",
+                   "token_saved_at"):
+            try:
+                self._store.delete_secret("upstox", _n)
+            except Exception:
+                pass
+
     def load_fyers_credentials(self) -> dict[str, str] | None:
         """Return {'app_id', 'app_secret'} or None if not configured."""
         creds = self.load_app_credentials("fyers")
@@ -464,6 +543,90 @@ class CredentialStore:
             except Exception:
                 return None
         return None
+
+    # -- Fyers durable access token (restart-safe auth state) -------------------
+    #
+    # Fyers access tokens are short-lived (daily). When one is successfully
+    # obtained (login or refresh) it is persisted ENCRYPTED so a restart can
+    # reuse it directly without spending the refresh token again. This is a
+    # best-effort cache layered on top of the authoritative refresh token.
+
+    def save_fyers_access_token(
+        self, token: str, expires_at_iso: str | None = None,
+    ) -> None:
+        """Encrypt + persist the Fyers access token and its expiry."""
+        if not isinstance(token, str) or not token.strip():
+            raise ValueError("access token must be a non-empty string")
+        enc = self._get_encryption(allow_generate=True)
+        if enc is None:
+            raise CredentialDecryptError(
+                "master key unavailable; cannot encrypt access token")
+        items: dict[str, tuple[str, str]] = {
+            "access_token": (enc.encrypt(token.strip()), ENCRYPTION_SCHEME),
+        }
+        if expires_at_iso is not None:
+            items["token_expires_at"] = (
+                enc.encrypt(str(expires_at_iso)), ENCRYPTION_SCHEME)
+        self._store.upsert_secrets("fyers", items)
+
+    def load_fyers_access_token(self) -> dict[str, str] | None:
+        """Return the stored Fyers access token, or None if absent/unreadable."""
+        enc = self._get_encryption(allow_generate=False)
+        if enc is None:
+            return None
+        row = self._store.get_secret("fyers", "access_token")
+        if row is None:
+            return None
+        try:
+            token = enc.decrypt(row[0])
+        except Exception:
+            return None
+        exp = None
+        r = self._store.get_secret("fyers", "token_expires_at")
+        if r is not None:
+            try:
+                exp = enc.decrypt(r[0])
+            except Exception:
+                exp = None
+        return {"access_token": token, "expires_at": exp}
+
+    def clear_fyers_session(self) -> None:
+        """Forget saved Fyers SESSION material only (keep App ID/Secret).
+
+        Removes the access token, refresh token and PIN so the next restart
+        cannot silently restore a session. App credentials are retained.
+        """
+        for _n in ("access_token", "token_expires_at", "refresh_token", "pin"):
+            try:
+                self._store.delete_secret("fyers", _n)
+            except Exception:
+                pass
+
+    # -- Last auth/restore status (forensic, redacted) -------------------------
+    #
+    # A short status code describing the most recent auth or restore attempt
+    # for a provider. Not a secret; stored encrypted anyway to reuse the one
+    # existing table and avoid a schema migration.
+
+    def save_last_auth_status(self, provider: str, status: str) -> None:
+        enc = self._get_encryption(allow_generate=True)
+        if enc is None:
+            return
+        self._store.upsert_secrets(provider, {
+            "last_auth_status": (enc.encrypt(str(status)), ENCRYPTION_SCHEME),
+        })
+
+    def load_last_auth_status(self, provider: str) -> str | None:
+        enc = self._get_encryption(allow_generate=False)
+        if enc is None:
+            return None
+        row = self._store.get_secret(provider, "last_auth_status")
+        if row is None:
+            return None
+        try:
+            return enc.decrypt(row[0])
+        except Exception:
+            return None
 
 
 def build_default_store() -> "CredentialStore":

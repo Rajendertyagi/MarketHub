@@ -150,3 +150,11 @@
 .btn-compact { padding: 2px 8px; font-size: var(--font-size-xs); }
 .btn-outline-danger { color: var(--danger); border-color: var(--danger); background: transparent; }
 .btn-outline-danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+
+
+/* Broker session/restart state grid (Settings -> Brokers) */
+.state-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.state-chip { font-size: var(--font-size-xs); padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-dim); white-space: nowrap; }
+.state-chip.is-on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.state-chip.is-off { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 50%, transparent); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.state-chip.is-warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); background: color-mix(in srgb, var(--warn) 12%, transparent); }

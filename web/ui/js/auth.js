@@ -21,6 +21,14 @@ export function getAuthStatus() {
   return lastAuthStatus;
 }
 
+/** Set a state-chip's label + on/off/warn class (idempotent). */
+function setChip(id, label, cls) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = label;
+  el.className = "state-chip" + (cls ? " " + cls : "");
+}
+
 // ── Upstox auth (token submit) ──────────────────────────────────────────
 
 export async function pollAuthStatus() {
@@ -69,6 +77,41 @@ export async function pollAuthStatus() {
     $("auth-feed-state").textContent = feedLabel;
     // Feed configuration + runtime status are distinct from broker/auth state.
     pollUpstoxFeed();
+
+    // ── Broker state grid: eight independent real states (never one bool) ──
+    setChip("upx-configured",
+      d.feed_configured ? "Configured" : "Not Configured",
+      d.feed_configured ? "is-on" : "is-off");
+    setChip("upx-creds",
+      d.oauth_available ? "Credentials Saved" : "No Credentials",
+      d.oauth_available ? "is-on" : "is-off");
+    const upxAuthed = !!d.token_configured && d.expired !== true
+      && d.state !== "auth_required";
+    setChip("upx-auth",
+      upxAuthed ? "Authenticated" : "Not Authenticated",
+      upxAuthed ? "is-on" : "is-off");
+    setChip("upx-restored",
+      d.session_restored ? "Session Restored" : "No Session Restore",
+      d.session_restored ? "is-on" : "is-off");
+    const upxRunning = !!d.configured && d.state
+      && !["stopped", "auth_required"].includes(d.state);
+    setChip("upx-feed",
+      upxRunning ? "Feed Active" : "Feed Inactive",
+      upxRunning ? "is-on" : "is-off");
+    if (d.expires_at) {
+      setChip("upx-expiry", "Expiry " + new Date(d.expires_at).toLocaleString(),
+        "is-warn");
+    } else if (d.expiry_known && d.expired) {
+      setChip("upx-expiry", "Expired", "is-off");
+    } else {
+      setChip("upx-expiry", "Expiry —", "");
+    }
+    setChip("upx-recovery",
+      d.restart_recovery ? "Restart Recovery On" : "Restart Recovery Off",
+      d.restart_recovery ? "is-on" : "is-off");
+    setChip("upx-loginreq",
+      d.login_required ? "Login Required" : "No Login Needed",
+      d.login_required ? "is-off" : "is-on");
   } catch { /* silent */ }
 }
 
@@ -325,6 +368,49 @@ export function initAuth() {
     });
   }
 
+  // Forget the durably stored Upstox session (keeps API credentials).
+  const forgetUpstox = $("upstox-forget-session");
+  const upxMsg = $("upstox-session-msg");
+  if (forgetUpstox) {
+    forgetUpstox.addEventListener("click", async () => {
+      if (!confirm("Forget the saved Upstox session? You will need to log in again after the next restart.")) return;
+      forgetUpstox.disabled = true;
+      try {
+        const res = await fetch("/api/auth/upstox/session", { method: "DELETE" });
+        if (res.ok) {
+          upxMsg.textContent = "Saved Upstox session forgotten.";
+          upxMsg.className = "hint ok";
+          pollAuthStatus();
+        } else {
+          upxMsg.textContent = "Failed to forget session.";
+          upxMsg.className = "hint err";
+        }
+      } catch {
+        upxMsg.textContent = "Network error.";
+        upxMsg.className = "hint err";
+      } finally { forgetUpstox.disabled = false; }
+    });
+  }
+  // Reconnect the Upstox feed through the source manager (no full restart).
+  const reconnectUpstox = $("upstox-reconnect");
+  if (reconnectUpstox) {
+    reconnectUpstox.addEventListener("click", async () => {
+      reconnectUpstox.disabled = true;
+      try {
+        const res = await fetch("/api/sources/upstox/restart", { method: "POST" });
+        const data = await res.json();
+        upxMsg.textContent = data.ok
+          ? "Feed reconnect triggered."
+          : (data.error || "Reconnect failed.");
+        upxMsg.className = "hint " + (data.ok ? "ok" : "err");
+        if (typeof pollSources === "function") pollSources();
+      } catch {
+        upxMsg.textContent = "Network error.";
+        upxMsg.className = "hint err";
+      } finally { reconnectUpstox.disabled = false; }
+    });
+  }
+
   handleAuthCallbackParam();
   pollAuthStatus();
 }
@@ -496,14 +582,48 @@ export function initFyers() {
       }
       loginBtn.classList.toggle("hidden", !d.login_available);
       // Feed runtime state comes from the source manager, not auth.
+      let src = null;
       try {
         const sres = await fetch("/api/sources/status");
         const sd = await sres.json();
-        const src = (sd.sources || []).find(
+        src = (sd.sources || []).find(
           (s) => s.name === "fyers" || (s.type || "").indexOf("fyers") >= 0);
         $("fyers-feed-state").textContent =
           src ? friendlyState(src.state || "unknown") : "source not configured";
       } catch { /* keep placeholder */ }
+
+      // ── Broker state grid: eight independent real states ──
+      const fyCreds = d.app_id_configured && d.secret_configured;
+      setChip("fy-configured",
+        fyCreds ? "Configured" : "Not Configured",
+        fyCreds ? "is-on" : "is-off");
+      setChip("fy-creds",
+        fyCreds ? "Credentials Saved" : "No Credentials",
+        fyCreds ? "is-on" : "is-off");
+      setChip("fy-auth",
+        d.access_token_active ? "Authenticated" : "Not Authenticated",
+        d.access_token_active ? "is-on" : "is-off");
+      setChip("fy-restored",
+        d.session_restored ? "Session Restored" : "No Session Restore",
+        d.session_restored ? "is-on" : "is-off");
+      const fyRunning = src && src.state
+        && !["stopped", "auth_required"].includes(src.state);
+      setChip("fy-feed",
+        fyRunning ? "Feed Active" : "Feed Inactive",
+        fyRunning ? "is-on" : "is-off");
+      if (d.access_token_expires_at) {
+        setChip("fy-expiry",
+          "Expiry " + new Date(d.access_token_expires_at).toLocaleString(),
+          "is-warn");
+      } else {
+        setChip("fy-expiry", "Expiry —", "");
+      }
+      setChip("fy-recovery",
+        d.restart_recovery ? "Restart Recovery On" : "Restart Recovery Off",
+        d.restart_recovery ? "is-on" : "is-off");
+      setChip("fy-loginreq",
+        d.login_required ? "Login Required" : "No Login Needed",
+        d.login_required ? "is-off" : "is-on");
     } catch { /* silent */ }
   }
 
@@ -544,6 +664,50 @@ export function initFyers() {
   loginBtn.addEventListener("click", () => {
     window.location.href = "/api/auth/fyers/login";
   });
+
+  // Forget the saved Fyers session (keeps App ID/Secret credentials).
+  const forgetFyers = $("fyers-forget-session");
+  const fyMsg = $("fyers-session-msg");
+  if (forgetFyers) {
+    forgetFyers.addEventListener("click", async () => {
+      if (!confirm("Forget the saved Fyers session? You will need to log in again after the next restart.")) return;
+      forgetFyers.disabled = true;
+      try {
+        const res = await fetch("/api/auth/fyers/session", { method: "DELETE" });
+        if (res.ok) {
+          fyMsg.textContent = "Saved Fyers session forgotten.";
+          fyMsg.className = "hint ok";
+          refresh();
+        } else {
+          fyMsg.textContent = "Failed to forget session.";
+          fyMsg.className = "hint err";
+        }
+      } catch {
+        fyMsg.textContent = "Network error.";
+        fyMsg.className = "hint err";
+      } finally { forgetFyers.disabled = false; }
+    });
+  }
+  // Reconnect the Fyers feed through the source manager (no full restart).
+  const reconnectFyers = $("fyers-reconnect");
+  if (reconnectFyers) {
+    reconnectFyers.addEventListener("click", async () => {
+      reconnectFyers.disabled = true;
+      try {
+        const res = await fetch("/api/sources/fyers/restart", { method: "POST" });
+        const data = await res.json();
+        fyMsg.textContent = data.ok
+          ? "Feed reconnect triggered."
+          : (data.error || "Reconnect failed.");
+        fyMsg.className = "hint " + (data.ok ? "ok" : "err");
+        refresh();
+        if (typeof pollSources === "function") pollSources();
+      } catch {
+        fyMsg.textContent = "Network error.";
+        fyMsg.className = "hint err";
+      } finally { reconnectFyers.disabled = false; }
+    });
+  }
 
   refresh();
 }

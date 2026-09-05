@@ -116,6 +116,20 @@ def delete_provider_secrets(
     return cur.rowcount
 
 
+def delete_secret(
+    conn: sqlite3.Connection,
+    provider: str,
+    name: str,
+) -> int:
+    """Delete a single (provider, name) secret row. Returns rows removed."""
+    cur = conn.execute(
+        "DELETE FROM secrets WHERE provider = ? AND name = ?",
+        (provider, name),
+    )
+    conn.commit()
+    return cur.rowcount
+
+
 def migrate_v9_to_v10(conn: sqlite3.Connection) -> None:
     """Add generic encrypted-secrets table."""
     create_secrets_table(conn)
