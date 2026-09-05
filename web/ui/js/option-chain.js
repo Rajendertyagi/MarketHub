@@ -1,20 +1,28 @@
 /**
- * MarketHub WebUI — option chain.
+ * MarketHub WebUI — option chain (F&O).
  *
- * Owns underlying search, expiry loading, chain fetch and the ATM-aware
- * strike table. Selection state is module-local (declared — never
- * implicit globals).
+ * Connects the screen to the canonical option-chain backend
+ * (GET /api/options/chain/view), which is catalog-driven and works without a
+ * live broker: it always returns the real strike ladder (CE/PE), spot and ATM,
+ * and attaches a live `quote` to each contract when a market feed is connected.
+ *
+ * Selection state is module-local (never implicit globals). Analytics are
+ * derived client-side from the returned quotes so they work whenever market
+ * data is present and show "—" honestly when it is not.
  */
 
-import { $, fmt, fmtNum, fmtVol } from "./utils.js";
+import { $, fmt, fmtVol, chgClass, esc } from "./utils.js";
+import { apiGet } from "./api.js";
 
 let ocUnderlying = null;
-let ocFullStrikes = [];
+let ocExpiry = null;
+let ocLoading = false;
 
 export function initOptionChain() {
   const search = $("oc-underlying-search");
   const sel = $("oc-underlying-select");
   const expSel = $("oc-expiry-select");
+  const winSel = $("oc-window");
   const msg = $("oc-message");
 
   let debounce = null;
@@ -24,13 +32,13 @@ export function initOptionChain() {
       const q = search.value.trim();
       if (!q) return;
       try {
-        const res = await fetch("/api/options/underlyings?q=" +
-          encodeURIComponent(q));
-        const d = await res.json();
+        const d = await apiGet(
+          "/api/options/underlyings?q=" + encodeURIComponent(q));
+        const list = d.underlyings || [];
         sel.innerHTML = '<option value="">Underlying…</option>' +
-          (d.underlyings || []).map((u) =>
-            `<option value="${u}">${u}</option>`).join("");
-      } catch { /* silent */ }
+          list.map((u) => `<option value="${esc(u)}">${esc(u)}</option>`).join("");
+        if (!list.length) setMsg("No matching underlyings in catalog.", true);
+      } catch { /* silent — keep prior list */ }
     }, 300);
   });
 
@@ -38,81 +46,171 @@ export function initOptionChain() {
     ocUnderlying = sel.value;
     expSel.innerHTML = '<option value="">Expiry…</option>';
     expSel.disabled = true;
-    if (!ocUnderlying) return;
+    ocExpiry = null;
+    if (!ocUnderlying) { renderEmpty(); return; }
     try {
-      const res = await fetch("/api/options/expiries?underlying=" +
-        encodeURIComponent(ocUnderlying));
-      const d = await res.json();
+      const d = await apiGet(
+        "/api/options/expiries?underlying=" + encodeURIComponent(ocUnderlying));
+      const exps = d.expiries || [];
       expSel.innerHTML = '<option value="">Expiry…</option>' +
-        (d.expiries || []).map((e) =>
-          `<option value="${e}">${e}</option>`).join("");
-      expSel.disabled = !(d.expiries || []).length;
-    } catch { /* silent */ }
+        exps.map((e) => `<option value="${esc(e)}">${esc(e)}</option>`).join("");
+      expSel.disabled = !exps.length;
+      if (exps.length) {
+        expSel.value = exps[0];
+        ocExpiry = exps[0];
+        await loadChain();
+      } else {
+        setMsg(`No listed option expiries for ${ocUnderlying}.`, true);
+        renderEmpty();
+      }
+    } catch (e) {
+      setMsg(e.message || "Failed to load expiries.", true);
+      renderEmpty();
+    }
   });
 
-  $("oc-load").addEventListener("click", async () => {
-    const expiry = expSel.value;
-    msg.textContent = "";
-    msg.className = "hint";
-    if (!ocUnderlying || !expiry) {
-      msg.textContent = "Pick an underlying and expiry first.";
-      msg.className = "hint err";
-      return;
-    }
-    // Resolve the underlying's instrument key from catalog search.
-    try {
-      const sres = await fetch("/api/instruments/search?q=" +
-        encodeURIComponent(ocUnderlying) + "&limit=5");
-      const sd = await sres.json();
-      const hit = (sd.results || []).find(
-        (r) => r.name === ocUnderlying || r.tradingsymbol === ocUnderlying)
-        || (sd.results || [])[0];
-      if (!hit) {
-        msg.textContent = "Underlying not found in catalog.";
-        msg.className = "hint err";
-        return;
-      }
-      const res = await fetch("/api/options/chain?instrument_key=" +
-        encodeURIComponent(hit.instrument_token) + "&exchange=" +
-        encodeURIComponent(hit.exchange) + "&tradingsymbol=" +
-        encodeURIComponent(hit.tradingsymbol) + "&expiry=" + expiry);
-      const d = await res.json();
-      if (!res.ok) {
-        msg.textContent = d.error || "Chain load failed.";
-        msg.className = "hint err";
-        return;
-      }
-      $("oc-spot").textContent = d.spot_price != null
-        ? fmt(d.spot_price) : "—";
-      $("oc-atm").textContent = d.atm_strike != null
-        ? fmt(d.atm_strike) : "—";
-      ocFullStrikes = d.strikes || [];
-      renderOcStrikes();
-    } catch {
-      msg.textContent = "Network error loading chain.";
-      msg.className = "hint err";
-    }
+  expSel.addEventListener("change", async () => {
+    ocExpiry = expSel.value;
+    if (ocUnderlying && ocExpiry) await loadChain();
+  });
+
+  winSel.addEventListener("change", () => {
+    if (ocUnderlying && ocExpiry) loadChain();
+  });
+
+  $("oc-load").addEventListener("click", () => {
+    if (ocUnderlying && ocExpiry) loadChain();
+    else setMsg("Pick an underlying and expiry first.", true);
   });
 }
 
-function renderOcStrikes() {
+async function loadChain() {
+  if (ocLoading || !ocUnderlying || !ocExpiry) return;
+  ocLoading = true;
+  setMsg("Loading option chain…", false, true);
   const win = Number($("oc-window").value) || 0;
-  let rows = ocFullStrikes;
-  if (win > 0 && ocFullStrikes.length) {
-    const atmIdx = ocFullStrikes.findIndex((s) => s.atm);
-    const center = atmIdx >= 0 ? atmIdx : Math.floor(rows.length / 2);
-    rows = ocFullStrikes.slice(Math.max(0, center - win),
-                               center + win + 1);
+  const url = "/api/options/chain/view?underlying=" +
+    encodeURIComponent(ocUnderlying) +
+    "&expiry=" + encodeURIComponent(ocExpiry) +
+    "&window=" + (win || 250);
+  try {
+    const d = await apiGet(url);
+    if (d.error) { setMsg(d.error, true); renderEmpty(); return; }
+    renderChain(d);
+    const basis = d.spot_basis && d.spot_basis !== "live"
+      ? `Spot is ${d.spot_basis} (no live feed — strike ladder is real catalog data).`
+      : "";
+    setMsg(basis, false);
+  } catch (e) {
+    setMsg(e.message || "Failed to load chain.", true);
+    renderEmpty();
+  } finally {
+    ocLoading = false;
   }
-  const side = (x) => x ? [
-    fmtVol(x.oi), fmtNum(x.oi_change), fmtVol(x.volume),
-    x.iv != null ? fmt(x.iv) : "—",
-    x.ltp != null ? fmt(x.ltp) : "—",
-    (x.close != null && x.ltp != null) ? fmt(x.ltp - x.close) : "—",
-  ].map((v) => `<td>${v}</td>`).join("") : "<td>—</td>".repeat(6);
-  $("oc-body").innerHTML = rows.map((s) => {
-    const rowCls = s.atm ? ' class="option-chain-atm"' : "";
-    return `<tr${rowCls}>` + side(s.call) +
-      `<td><b>${fmt(s.strike)}</b></td>` + side(s.put) + "</tr>";
-  }).join("");
+}
+
+function renderChain(d) {
+  $("oc-spot").textContent = d.spot != null ? fmt(d.spot) : "—";
+  $("oc-atm").textContent = d.atm_strike != null ? fmt(d.atm_strike) : "—";
+  $("oc-exp-label").textContent = d.expiry || "—";
+  const rows = d.rows || [];
+  $("oc-strikes").textContent = rows.length
+    ? `${rows.length} / ${d.strikes_total_listed != null ? d.strikes_total_listed : rows.length}`
+    : "—";
+
+  const side = (leg) => {
+    if (!leg) return "<td>—</td>".repeat(7);
+    const q = leg.quote || null;
+    const oi = q ? q.open_interest : null;
+    const oiChg = q ? q.oi_change : null;
+    const vol = q ? q.volume : null;
+    const iv = q ? q.iv : null;
+    const ltp = q ? q.ltp : null;
+    const chg = q ? q.change : null;
+    const greeks = q ? greeksStr(q) : null;
+    const cell = (v, cls) => `<td class="${cls || ""}">${
+      v != null ? v : "—"}</td>`;
+    return [
+      cell(oi != null ? fmtVol(oi) : null),
+      cell(oiChg != null ? fmtVol(oiChg) : null, chgClass(oiChg)),
+      cell(vol != null ? fmtVol(vol) : null),
+      cell(iv != null ? (iv * 100).toFixed(2) + "%" : null),
+      cell(ltp != null ? fmt(ltp) : null, chgClass(chg)),
+      cell(chg != null ? fmt(chg) : null, chgClass(chg)),
+      cell(greeks, "oc-greeks"),
+    ].join("");
+  };
+
+  if (!rows.length) {
+    $("oc-body").innerHTML =
+      '<tr><td colspan="15" class="empty-row">No option contracts listed for this expiry.</td></tr>';
+  } else {
+    $("oc-body").innerHTML = rows.map((r) => {
+      const rowCls = r.atm ? ' class="option-chain-atm"' : "";
+      return `<tr${rowCls}>` + side(r.call) +
+        `<td class="strike-col"><b>${fmt(r.strike)}</b></td>` +
+        side(r.put) + "</tr>";
+    }).join("");
+  }
+  renderAnalytics(rows);
+}
+
+function greeksStr(q) {
+  const parts = [];
+  if (q.delta != null) parts.push("D" + q.delta.toFixed(2));
+  if (q.gamma != null) parts.push("G" + q.gamma.toFixed(3));
+  if (q.theta != null) parts.push("T" + q.theta.toFixed(2));
+  if (q.vega != null) parts.push("V" + q.vega.toFixed(2));
+  if (q.rho != null) parts.push("R" + q.rho.toFixed(2));
+  return parts.length ? parts.join(" ") : null;
+}
+
+function renderAnalytics(rows) {
+  let callOI = 0, putOI = 0, callDOI = 0, putDOI = 0;
+  let hasOI = false, hasDOI = false;
+  let atmCallLtp = null, atmPutLtp = null;
+  for (const r of rows) {
+    if (r.call && r.call.quote) {
+      const q = r.call.quote;
+      if (q.open_interest != null) { callOI += q.open_interest; hasOI = true; }
+      if (q.oi_change != null) { callDOI += q.oi_change; hasDOI = true; }
+      if (r.atm && q.ltp != null) atmCallLtp = q.ltp;
+    }
+    if (r.put && r.put.quote) {
+      const q = r.put.quote;
+      if (q.open_interest != null) { putOI += q.open_interest; hasOI = true; }
+      if (q.oi_change != null) { putDOI += q.oi_change; hasDOI = true; }
+      if (r.atm && q.ltp != null) atmPutLtp = q.ltp;
+    }
+  }
+  $("oc-pcr").textContent = (hasOI && callOI > 0)
+    ? (putOI / callOI).toFixed(3) : "—";
+  $("oc-ce-oi").textContent = hasOI ? fmtVol(callOI) : "—";
+  $("oc-pe-oi").textContent = hasOI ? fmtVol(putOI) : "—";
+  $("oc-ce-doi").textContent = hasDOI ? fmtVol(callDOI) : "—";
+  $("oc-pe-doi").textContent = hasDOI ? fmtVol(putDOI) : "—";
+  const straddle = (atmCallLtp != null && atmPutLtp != null)
+    ? atmCallLtp + atmPutLtp : null;
+  $("oc-straddle").textContent = straddle != null ? fmt(straddle) : "—";
+}
+
+function renderEmpty() {
+  $("oc-spot").textContent = "—";
+  $("oc-atm").textContent = "—";
+  $("oc-exp-label").textContent = "—";
+  $("oc-strikes").textContent = "—";
+  $("oc-pcr").textContent = "—";
+  $("oc-ce-oi").textContent = "—";
+  $("oc-pe-oi").textContent = "—";
+  $("oc-ce-doi").textContent = "—";
+  $("oc-pe-doi").textContent = "—";
+  $("oc-straddle").textContent = "—";
+  $("oc-body").innerHTML =
+    '<tr><td colspan="15" class="empty-row">Search an underlying, pick an expiry, then Load Chain.</td></tr>';
+}
+
+function setMsg(text, isError, isLoading) {
+  const msg = $("oc-message");
+  msg.textContent = text || "";
+  msg.className = "hint" + (isError ? " err" : isLoading ? " loading" : "");
 }

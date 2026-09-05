@@ -8,7 +8,8 @@
 async function _readError(resp, fallback) {
   try {
     const data = await resp.json();
-    if (data && data.message) return data.message;
+    if (data && (data.message || data.error))
+      return data.message || data.error;
   } catch { /* not JSON — fall through */ }
   return `${fallback} (HTTP ${resp.status})`;
 }

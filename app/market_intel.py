@@ -440,10 +440,19 @@ class MarketIntel:
                          ("change_percent", "change_percent"),
                          ("volume", "volume"),
                          ("open_interest", "open_interest"),
+                         ("oi_change", "oi_change"),
                          ("best_bid", "bid"), ("best_ask", "ask")):
             value = getattr(quote, src, None)
             if value is not None:
                 out[dst] = value
+        greeks = getattr(quote, "greeks", None)
+        if greeks is not None:
+            for gsrc, gdst in (("iv", "iv"), ("delta", "delta"),
+                               ("gamma", "gamma"), ("theta", "theta"),
+                               ("vega", "vega"), ("rho", "rho")):
+                value = getattr(greeks, gsrc, None)
+                if value is not None:
+                    out[gdst] = value
         ts = getattr(quote, "received_ts", None)
         if ts is not None:
             out["received_at"] = ts.isoformat() if hasattr(

@@ -1,5 +1,9 @@
 /* Option Chain feature — composition only. */
 
 .option-chain-atm { background: var(--accent-soft); }
+.option-chain-atm .strike-col { color: var(--accent); }
+.strike-col { text-align: center; font-family: var(--font-mono); }
+.oc-greeks { font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--text-muted); white-space: nowrap; }
 .option-chain-scroll { overflow-x: auto; }
 .oc-underlying { width: 240px; max-width: 100%; }
+.hint.loading { color: var(--text-muted); font-style: italic; }
