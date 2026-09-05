@@ -1222,7 +1222,7 @@ app = Starlette(
         config_path=str(CONFIG_PATH),
         sources_cfg=SOURCES_CFG,
     )
-    + _build_intel_routes(_market_intel)
+    + _build_intel_routes(_market_intel, provider_md=_provider_market_data)
     + _build_instrument_routes(_instrument_catalog, store=_store)
     + _build_watchlist_routes(_store, subscription=_feed_subscription)
     + _build_watchlist_portability_routes(_store)

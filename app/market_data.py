@@ -129,12 +129,16 @@ class ProviderMarketData:
             raise ProviderMarketDataError("expiry must be YYYY-MM-DD")
         rest, creds = self._auth()
         from market.normalize.upstox import option_chain_from_rest
+        from urllib.parse import urlencode
 
+        # Upstox serves the option chain as a REST snapshot (GET + query
+        # params). It returns last-session OI/LTP/IV/greeks even when the
+        # market is closed, so the chain is viewable on weekends too.
+        qs = urlencode({"instrument_key": instrument_key,
+                        "expiry_date": expiry})
+        url = f"{_CHAIN_URL}?{qs}"
         payload = await rest.authenticated_request(
-            method="PUT", url=_CHAIN_URL,
-            access_token=creds.access_token,
-            json_body={"instrument_key": instrument_key,
-                       "expiry_date": expiry})
+            method="GET", url=url, access_token=creds.access_token)
         return option_chain_from_rest(
             payload, instrument_token=instrument_key, exchange=exchange,
             tradingsymbol=tradingsymbol, expiry=expiry)

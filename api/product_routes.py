@@ -8,6 +8,7 @@ secrets, no trading.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import os
 from typing import Any, Callable
@@ -281,7 +282,86 @@ def build_diagnostics_routes(version: str,
     return [Route("/api/diagnostics", endpoint=_diagnostics, methods=["GET"])]
 
 
-def build_intel_routes(market_intel: Any) -> list[Route]:
+# Liquid-index symbols -> Upstox index instrument key. The catalog is
+# Fyers-sourced, so it carries no Upstox keys; this small, well-known map
+# lets the live Upstox provider snapshot drive real option quotes for the
+# indices traders actually use. Unknown symbols fall back to the catalog
+# ladder (no live quotes) rather than fabricating data.
+_UPTOX_INDEX_KEYS = {
+    "NIFTY": ("NSE_INDEX|Nifty 50", "NSE_INDEX", "Nifty 50"),
+    "BANKNIFTY": ("NSE_INDEX|Nifty Bank", "NSE_INDEX", "Nifty Bank"),
+    "FINNIFTY": ("NSE_INDEX|Nifty Fin Service", "NSE_INDEX",
+                 "Nifty Fin Service"),
+    "MIDCPNIFTY": ("NSE_INDEX|Nifty Midcap 50", "NSE_INDEX",
+                   "Nifty Midcap 50"),
+}
+
+
+def _upstox_index_key(underlying: str):
+    key = (underlying or "").strip().upper()
+    return _UPTOX_INDEX_KEYS.get(key)
+
+
+async def _enrich_chain_with_provider_quotes(
+        result: dict[str, Any], provider_md: Any,
+        underlying: str, expiry: str | None) -> None:
+    """Merge real provider option quotes into the catalog chain rows.
+
+    Populates each row's ``call["quote"]`` / ``put["quote"]`` with the fields
+    the WebUI already renders (oi, oi_change, volume, iv, ltp, bid, ask,
+    delta, gamma, theta, vega). ``rho``/``change`` are not in the snapshot, so
+    they stay absent (rendered as "—", never fabricated).
+    """
+    idx = _upstox_index_key(underlying)
+    if idx is None or not expiry:
+        return
+    instrument_key, exchange, tradingsymbol = idx
+    snap = await provider_md.option_chain(
+        instrument_key=instrument_key, exchange=exchange,
+        tradingsymbol=tradingsymbol, expiry=expiry, provider="upstox")
+    if snap is None:
+        return
+    by_key: dict[tuple[float, str], Any] = {}
+    for s in getattr(snap, "strikes", []) or []:
+        if s.strike is None:
+            continue
+        if s.call is not None:
+            by_key[(s.strike, "CE")] = s.call
+        if s.put is not None:
+            by_key[(s.strike, "PE")] = s.put
+
+    def to_quote(c):
+        if c is None:
+            return None
+        return {
+            "open_interest": getattr(c, "oi", None),
+            "oi_change": getattr(c, "oi_change", None),
+            "volume": getattr(c, "volume", None),
+            "iv": getattr(c, "iv", None),
+            "ltp": getattr(c, "ltp", None),
+            "change": None,
+            "bid": getattr(c, "bid", None),
+            "ask": getattr(c, "ask", None),
+            "delta": getattr(c, "delta", None),
+            "gamma": getattr(c, "gamma", None),
+            "theta": getattr(c, "theta", None),
+            "vega": getattr(c, "vega", None),
+            "rho": None,
+        }
+
+    for row in result.get("rows", []):
+        strike = row.get("strike")
+        for side, otype in (("call", "CE"), ("put", "PE")):
+            leg = row.get(side)
+            if not leg:
+                continue
+            contract = by_key.get((strike, otype))
+            if contract is not None:
+                leg["quote"] = to_quote(contract)
+
+
+def build_intel_routes(market_intel: Any,
+                       provider_md: Any = None) -> list[Route]:
     """Unified market-intelligence routes (shared with MCP/Chat logic).
 
     GET /api/market/search   — structured instrument search
@@ -344,6 +424,18 @@ def build_intel_routes(market_intel: Any) -> list[Route]:
             status = 404 if "unknown underlying" in str(result["error"]) \
                 or "not listed" in str(result["error"]) else 400
             return _json(result, status)
+        # Attach real, last-session option quotes from the live provider
+        # snapshot (Upstox) when available. The catalog is Fyers-sourced, so
+        # we resolve the liquid-index symbol to its Upstox index key and merge
+        # by (strike, option_type). Failures here never break the catalog
+        # ladder — they just leave quote fields empty.
+        if provider_md is not None and result.get("rows"):
+            try:
+                await _enrich_chain_with_provider_quotes(
+                    result, provider_md, underlying, result.get("expiry"))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("option chain provider enrichment skipped: %s",
+                               exc)
         return _json(result)
 
     return [
@@ -753,27 +845,29 @@ def build_market_data_routes(provider_md: Any) -> list[Route]:
                 exchange=qp["exchange"],
                 tradingsymbol=qp.get("tradingsymbol", ""),
                 expiry=qp["expiry"])
+            from market.serialization import quote_to_dict as _q2d
+            strikes = []
+            for s in snap.strikes:
+                strikes.append({
+                    "strike": s.strike, "atm": s.atm,
+                    "call": dataclasses.asdict(s.call) if s.call else None,
+                    "put": dataclasses.asdict(s.put) if s.put else None,
+                })
+            return _json({
+                "instrument_token": snap.instrument_token,
+                "exchange": snap.exchange,
+                "tradingsymbol": snap.tradingsymbol,
+                "expiry": snap.expiry,
+                "spot_price": snap.spot_price,
+                "atm_strike": snap.atm_strike,
+                "strikes": strikes,
+            })
         except ProviderMarketDataError as exc:
             return _json({"error": str(exc)}, 400)
-        except Exception:
-            return _json({"error": "option chain fetch failed"}, 502)
-        from market.serialization import quote_to_dict as _q2d
-        strikes = []
-        for s in snap.strikes:
-            strikes.append({
-                "strike": s.strike, "atm": s.atm,
-                "call": s.call.__dict__ if s.call else None,
-                "put": s.put.__dict__ if s.put else None,
-            })
-        return _json({
-            "instrument_token": snap.instrument_token,
-            "exchange": snap.exchange,
-            "tradingsymbol": snap.tradingsymbol,
-            "expiry": snap.expiry,
-            "spot_price": snap.spot_price,
-            "atm_strike": snap.atm_strike,
-            "strikes": strikes,
-        })
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("option chain provider failed")
+            return _json({"error": f"option chain failed: "
+                                   f"{type(exc).__name__}: {exc}"}, 500)
 
     async def _margin(request: Request) -> Response:
         try:
