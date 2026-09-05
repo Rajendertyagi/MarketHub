@@ -169,13 +169,16 @@ function renderStrip() {
     const sym = document.createElement("span");
     sym.className = "idx-sym";
     sym.textContent = label;
+    const quote = document.createElement("span");
+    quote.className = "idx-quote";
     const val = document.createElement("span");
     val.className = "idx-val";
     val.textContent = "—";
     const chg = document.createElement("span");
     chg.className = "idx-chg stale";
     chg.textContent = "No quote";
-    tile.append(sym, val, chg);
+    quote.append(val, chg);
+    tile.append(sym, quote);
     strip.appendChild(tile);
     paintTile(tile, getQuote(meta.key));
   }
