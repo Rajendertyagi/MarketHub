@@ -588,9 +588,23 @@ export function initFyers() {
         const sd = await sres.json();
         src = (sd.sources || []).find(
           (s) => s.name === "fyers" || (s.type || "").indexOf("fyers") >= 0);
-        $("fyers-feed-state").textContent =
-          src ? friendlyState(src.state || "unknown") : "source not configured";
       } catch { /* keep placeholder */ }
+      const fySrcState = d.source_state || (src && src.state) || "unknown";
+      $("fyers-feed-state").textContent =
+        d.source_registered ? friendlyState(fySrcState) : "source not configured";
+      // Feed enable/disable toggle reflects the durable source config.
+      const fyToggle = $("fyers-feed-toggle");
+      const fyChip = $("fyers-feed-chip");
+      if (fyToggle) {
+        const en = !!d.source_enabled;
+        fyToggle.textContent = en ? "Disable Feed" : "Enable Feed";
+        fyToggle.classList.toggle("btn-outline-danger", en);
+      }
+      if (fyChip) {
+        const en = !!d.source_enabled;
+        fyChip.textContent = en ? "Enabled" : "Disabled";
+        fyChip.className = "chip " + (en ? "chip-on" : "chip-off");
+      }
 
       // ── Broker state grid: eight independent real states ──
       const fyCreds = d.app_id_configured && d.secret_configured;
@@ -606,8 +620,8 @@ export function initFyers() {
       setChip("fy-restored",
         d.session_restored ? "Session Restored" : "No Session Restore",
         d.session_restored ? "is-on" : "is-off");
-      const fyRunning = src && src.state
-        && !["stopped", "auth_required"].includes(src.state);
+      const fyRunning = d.source_registered && fySrcState
+        && !["stopped", "auth_required"].includes(fySrcState);
       setChip("fy-feed",
         fyRunning ? "Feed Active" : "Feed Inactive",
         fyRunning ? "is-on" : "is-off");
@@ -706,6 +720,41 @@ export function initFyers() {
         fyMsg.textContent = "Network error.";
         fyMsg.className = "hint err";
       } finally { reconnectFyers.disabled = false; }
+    });
+  }
+
+  // Fyers feed enable/disable (durable config + runtime apply, no restart).
+  const fyFeedToggle = $("fyers-feed-toggle");
+  const fyFeedMsg = $("fyers-feed-msg");
+  if (fyFeedToggle) {
+    fyFeedToggle.addEventListener("click", async () => {
+      fyFeedMsg.textContent = "";
+      fyFeedMsg.className = "hint";
+      const enabling = !fyFeedToggle.textContent.includes("Disable");
+      fyFeedToggle.disabled = true;
+      try {
+        const res = await fetch("/api/settings/fyers/feed", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: enabling }),
+        });
+        const d2 = await res.json();
+        if (res.ok) {
+          fyFeedMsg.textContent = enabling
+            ? "Fyers feed enabled." : "Fyers feed disabled.";
+          fyFeedMsg.className = "hint ok";
+          refresh();
+          if (typeof pollSources === "function") pollSources();
+        } else {
+          fyFeedMsg.textContent = d2.error || "Failed to update Fyers feed.";
+          fyFeedMsg.className = "hint err";
+        }
+      } catch {
+        fyFeedMsg.textContent = "Network error updating Fyers feed.";
+        fyFeedMsg.className = "hint err";
+      } finally {
+        fyFeedToggle.disabled = false;
+      }
     });
   }
 

@@ -945,7 +945,12 @@ def build_fyers_auth_routes(cred_store: Any,
         "http://localhost:7070/auth/fyers/callback"),
                             runtime_token: dict[str, str] | None = None,
                             restart_fn: Any = None,
-                            restore_state: dict[str, Any] | None = None) -> list[Route]:
+                            restore_state: dict[str, Any] | None = None,
+                            source_manager: Any = None,
+                            sources_cfg: dict[str, Any] | None = None,
+                            register_source_fn: Any = None,
+                            start_source_fn: Any = None,
+                            persist_source_fn: Any = None) -> list[Route]:
     """Fyers credential storage + OAuth login/callback (encrypted store).
 
     Fyers semantics (official v3): callback carries ``auth_code`` (not
@@ -990,6 +995,21 @@ def build_fyers_auth_routes(cred_store: Any,
         restart_recovery = has_refresh and pin_stored
         login_required = not (_fyers_runtime_token["access_token"]
                               or (has_refresh and pin_stored))
+        # Source (feed) registration — distinct from credentials/login. A
+        # broker can be fully authenticated yet report "source not configured"
+        # when no FyersFeed is registered in the runtime SourceManager.
+        _fy_cfg = (sources_cfg or {}).get("fyers")
+        configured = isinstance(_fy_cfg, dict)
+        enabled = bool(_fy_cfg.get("enabled")) if configured else False
+        registered = False
+        source_state = None
+        task_running = None
+        if source_manager is not None:
+            registered = "fyers" in (source_manager.enabled_sources or {})
+            _st = source_manager.get_status().get("fyers")
+            if isinstance(_st, dict):
+                source_state = _st.get("state")
+                task_running = _st.get("task_running")
         return _json({
             "app_id_configured": bool(creds and creds.get("app_id")),
             "secret_configured": bool(creds and creds.get("app_secret")),
@@ -1011,6 +1031,13 @@ def build_fyers_auth_routes(cred_store: Any,
             # current master.key cannot read it — a store ERROR, distinct
             # from ordinary "not configured".
             "store_error": store.get("reason"),
+            # Source/feed lifecycle state (separate concept from auth).
+            "source_configured": configured,
+            "source_enabled": enabled,
+            "source_registered": registered,
+            "source_state": source_state,
+            "task_running": task_running,
+            "restart_required": configured and not registered,
         })
 
     async def _save(request: Request) -> Response:
@@ -1159,10 +1186,116 @@ def build_fyers_auth_routes(cred_store: Any,
             restore_state["fyers_restored"] = False
         return _json({"ok": True})
 
+    async def _feed_status(request: Request) -> Response:  # noqa: ARG001
+        _fy_cfg = (sources_cfg or {}).get("fyers")
+        configured = isinstance(_fy_cfg, dict)
+        registered = False
+        source_state = None
+        task_running = None
+        if source_manager is not None:
+            registered = "fyers" in (source_manager.enabled_sources or {})
+            _st = source_manager.get_status().get("fyers")
+            if isinstance(_st, dict):
+                source_state = _st.get("state")
+                task_running = _st.get("task_running")
+        return _json({
+            "configured": configured,
+            "enabled": bool(_fy_cfg.get("enabled")) if configured else False,
+            "registered": registered,
+            "state": source_state,
+            "task_running": task_running,
+            "restart_required": configured and not registered,
+        })
+
+    async def _save_feed(request: Request) -> Response:
+        try:
+            body = await request.json()
+        except Exception:
+            return _json({"error": "invalid JSON body"}, 400)
+        enabled = bool(body.get("enabled", True))
+        instruments = body.get("instruments")
+        if not isinstance(instruments, list) or not instruments:
+            existing = (sources_cfg or {}).get("fyers", {}).get("instruments")
+            instruments = existing if isinstance(existing, list) and existing \
+                else [
+                    {"key": "NSE:NIFTY50-INDEX", "exchange": "NSE",
+                     "tradingsymbol": "NIFTY 50"},
+                    {"key": "NSE:BANKNIFTY-INDEX", "exchange": "NSE",
+                     "tradingsymbol": "BANKNIFTY"},
+                ]
+        feed_cfg = {
+            "type": "fyers_feed",
+            "enabled": enabled,
+            "mode": "full",
+            "instruments": instruments,
+        }
+        if sources_cfg is not None:
+            sources_cfg["fyers"] = feed_cfg
+        if persist_source_fn is not None:
+            try:
+                persist_source_fn(feed_cfg)
+            except Exception:
+                logger.warning("failed to persist fyers source config")
+        result: dict[str, Any] = {
+            "configured": True,
+            "enabled": enabled,
+            "registered": False,
+        }
+        if enabled:
+            # Register + start at runtime (no server restart required).
+            if start_source_fn is not None:
+                try:
+                    await start_source_fn()
+                except Exception:
+                    logger.exception("fyers feed start failed")
+            result["registered"] = (
+                "fyers" in (source_manager.enabled_sources or {})
+                if source_manager is not None else False)
+            result["restart_required"] = not result["registered"]
+        else:
+            # Disable: stop the running source; keep the (stopped) registration
+            # and remove the durable config so a restart won't auto-start it.
+            if source_manager is not None and \
+                    "fyers" in (source_manager.enabled_sources or {}):
+                try:
+                    await source_manager.stop_source("fyers")
+                except Exception:
+                    logger.exception("fyers feed stop failed")
+            if sources_cfg is not None:
+                sources_cfg.pop("fyers", None)
+            if persist_source_fn is not None:
+                try:
+                    persist_source_fn(None)
+                except Exception:
+                    logger.warning("failed to remove fyers source config")
+        return _json(result)
+
+    async def _delete_feed(request: Request) -> Response:  # noqa: ARG001
+        if source_manager is not None and \
+                "fyers" in (source_manager.enabled_sources or {}):
+            try:
+                await source_manager.stop_source("fyers")
+            except Exception:
+                logger.exception("fyers feed stop failed")
+        if sources_cfg is not None:
+            sources_cfg.pop("fyers", None)
+        if persist_source_fn is not None:
+            try:
+                persist_source_fn(None)
+            except Exception:
+                logger.warning("failed to remove fyers source config")
+        return _json({"configured": False, "enabled": False})
+
     return [
         Route("/api/settings/fyers", endpoint=_status, methods=["GET"]),
         Route("/api/settings/fyers", endpoint=_save, methods=["POST"]),
         Route("/api/settings/fyers", endpoint=_delete, methods=["DELETE"]),
+        Route("/api/settings/fyers/feed", endpoint=_feed_status,
+              methods=["GET"]),
+        Route("/api/settings/fyers/feed", endpoint=_save_feed,
+              methods=["POST"]),
+        Route("/api/settings/fyers/feed", endpoint=_delete_feed,
+              methods=["DELETE"]),
         Route("/api/auth/fyers/login", endpoint=_login, methods=["GET"]),
         Route("/auth/fyers/callback", endpoint=_callback, methods=["GET"]),
         Route("/api/auth/fyers/session", endpoint=_forget_session,

@@ -535,10 +535,17 @@ def build_auth_routes(
             return _json(base)
         creds = feed._credentials
         status = creds.status()
+        # The placeholder token ("PENDING-OAUTH-LOGIN") is NOT a real session:
+        # reporting token_present=True for it makes the UI claim "Authenticated"
+        # while the feed is correctly gated on token_pending. Treat the
+        # placeholder as "not configured" so the UI shows Login Required.
+        _is_placeholder = (getattr(creds, "access_token", "") ==
+                           "PENDING-OAUTH-LOGIN")
         base.update({
             "source": feed.name,
             "auth_mode": status.get("auth_mode", "unknown"),
-            "token_configured": status.get("token_present", False),
+            "token_configured": (
+                status.get("token_present", False) and not _is_placeholder),
             "expiry_known": status.get("expiry_known", False),
             "expires_at": status.get("expires_at"),
             "expired": status.get("expired"),

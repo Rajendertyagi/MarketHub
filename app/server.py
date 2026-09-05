@@ -348,6 +348,10 @@ def _build_source_manager() -> SourceManager:
 async def _restart_fyers_source() -> None:
     """Restart the Fyers source through SourceManager (lifecycle owner)."""
     if _fyers_source_name is None:
+        # Source may not exist yet (Fyers has no default sources entry). Build
+        # and register it at runtime so login/OAuth can (re)start the feed.
+        _ensure_fyers_source_registered()
+    if _fyers_source_name is None:
         _app_logger.warning(
             "oauth restart skipped: no fyers source registered")
         return
@@ -481,6 +485,128 @@ def _on_source_state_change(
         _event_broker.broadcast(json.dumps(envelope, ensure_ascii=False))
     except Exception:  # pragma: no cover - broadcast must never break a feed
         _app_logger.debug("source state change broadcast failed", exc_info=True)
+
+
+# ── Fyers source runtime registration (no restart required) ──────────────────
+# Fyers is authenticated via Settings but, unlike Upstox, has no canonical
+# ``sources.fyers`` entry by default and no runtime registration path. Without
+# this, the Fyers feed is never constructed, so it reports "source not
+# configured" even though credentials/session exist. These helpers register a
+# FyersFeed in the SAME SourceManager at runtime (reusing the existing source
+# lifecycle) and persist a durable (secret-free) source config so a restart
+# keeps it enabled.
+_DEFAULT_FYERS_INSTRUMENTS = [
+    {"key": "NSE:NIFTY50-INDEX", "exchange": "NSE", "tradingsymbol": "NIFTY 50"},
+    {"key": "NSE:BANKNIFTY-INDEX", "exchange": "NSE", "tradingsymbol": "BANKNIFTY"},
+]
+
+
+def _persist_fyers_source_config(feed_cfg: dict[str, Any] | None = None) -> None:
+    """Write (or remove, when None) the durable ``sources.fyers`` config.
+
+    Secrets NEVER touch config.json — only the source shape (type/enabled/
+    mode/instruments). Mirrors the Upstox feed-config persistence.
+
+    SAFETY: writes are atomic (temp file + os.replace) so a failed write can
+    never truncate or corrupt the live config. If the current config cannot be
+    read we ABORT rather than overwriting a good config with an empty one.
+    """
+    import tempfile
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as _f:
+            _cfg = json.load(_f)
+    except Exception:
+        # Never wipe a config we cannot read — leave the file untouched.
+        _app_logger.warning(
+            "fyers source config not persisted: could not read %s", CONFIG_PATH)
+        return
+    if not isinstance(_cfg, dict):
+        _cfg = {}
+    _sources = _cfg.get("sources")
+    if not isinstance(_sources, dict):
+        _sources = {}
+    if feed_cfg is None:
+        _sources.pop("fyers", None)
+    else:
+        _sources["fyers"] = feed_cfg
+    if _sources:
+        _cfg["sources"] = _sources
+    else:
+        _cfg.pop("sources", None)
+    # Atomic write: a failed dump must never truncate the live config file.
+    _dir = os.path.dirname(str(CONFIG_PATH)) or "."
+    _fd, _tmp = tempfile.mkstemp(dir=_dir, prefix=".config.", suffix=".tmp")
+    try:
+        with os.fdopen(_fd, "w", encoding="utf-8") as _f:
+            json.dump(_cfg, _f, indent=2)
+            _f.flush()
+            os.fsync(_f.fileno())
+        os.replace(_tmp, str(CONFIG_PATH))
+    except Exception:
+        try:
+            os.unlink(_tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _ensure_fyers_source_registered() -> str | None:
+    """Register a Fyers source in the SourceManager at runtime (idempotent).
+
+    Returns the registered source name, or None if the feed cannot be built.
+    Reuses the existing source lifecycle — no second registry, no parallel
+    runtime, no duplicate feed manager.
+    """
+    global _fyers_source_name
+    # Already registered (name "fyers" or a FyersFeed instance)?
+    for _n, _s in _source_manager.enabled_sources.items():
+        if _n == "fyers" or getattr(_s, "__class__", None).__name__ == "FyersFeed":
+            _fyers_source_name = _n
+            return _n
+    # Build the durable-ish source config (secrets stay in the encrypted store).
+    _fy_cfg = dict(SOURCES_CFG.get("fyers") or {})
+    if not _fy_cfg.get("type"):
+        _fy_cfg["type"] = "fyers_feed"
+    _fy_cfg.setdefault("enabled", True)
+    _fy_cfg.setdefault("mode", "full")
+    _fy_cfg.setdefault("instruments", list(_DEFAULT_FYERS_INSTRUMENTS))
+    _fy_cfg["source_name"] = "fyers"
+    # Inject runtime-only wiring (getter / store / redirect). Never secrets.
+    _inject_fyers_source_config({"fyers": _fy_cfg})
+    try:
+        from sources.registry import _create_fyers_feed
+        _feed = _create_fyers_feed(_fy_cfg, market_service=_market_service)
+    except Exception:
+        _app_logger.exception("failed to build fyers feed at runtime")
+        return None
+    _source_manager.register(_feed)
+    try:
+        _feed.on_state_change = _on_source_state_change
+    except Exception:
+        pass
+    # Persist a secret-free source config so a restart keeps it enabled.
+    try:
+        _persist_fyers_source_config(_fy_cfg)
+    except Exception:
+        _app_logger.warning("failed to persist fyers source config")
+    SOURCES_CFG["fyers"] = _fy_cfg
+    _fyers_source_name = "fyers"
+    return "fyers"
+
+
+async def _start_fyers_source() -> None:
+    """Register (if needed) and start the Fyers source via SourceManager."""
+    name = _ensure_fyers_source_registered()
+    if name is None:
+        _app_logger.warning("fyers source could not be registered; cannot start")
+        return
+    if _source_manager.task_running(name):
+        return
+    try:
+        await _source_manager.start_source(name)
+    except Exception:
+        _app_logger.exception("fyers source start failed")
+        raise
 
 
 # ── Product services: instrument catalog, alerts ─────────────────────────────
@@ -1030,6 +1156,16 @@ async def _lifespan(app: Starlette) -> None:
     # SDK starts sources, so an enabled Fyers feed is READY without re-login.
     await _try_restore_fyers_token()
 
+    # Auto-register + start a Fyers feed when a usable session already exists
+    # (restored access token), so an authenticated Fyers broker runs without a
+    # manual enable click and without editing config.json. Registration is
+    # idempotent and writes a secret-free durable source config.
+    if _fyers_runtime_token.get("access_token"):
+        try:
+            await _start_fyers_source()
+        except Exception:
+            _app_logger.warning("fyers source auto-start failed", exc_info=True)
+
     # Start the analytics scheduler.
     try:
         await _analytics_service.start(_bg_task_manager)
@@ -1100,6 +1236,11 @@ app = Starlette(
         restart_fn=_restart_fyers_source,
         redirect_uri=FYERS_REDIRECT_URI,
         restore_state=_broker_restore,
+        source_manager=_source_manager,
+        sources_cfg=SOURCES_CFG,
+        register_source_fn=_ensure_fyers_source_registered,
+        start_source_fn=_start_fyers_source,
+        persist_source_fn=_persist_fyers_source_config,
     )
     + _build_app_settings_routes(str(CONFIG_PATH))
     + _build_chat_routes(str(CONFIG_PATH), _credential_store, _chat_tools)
