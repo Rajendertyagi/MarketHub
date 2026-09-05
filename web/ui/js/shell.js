@@ -18,7 +18,7 @@
  * localStorage (same pattern as the theme engine). No credentials/tokens.
  */
 
-import { $, chgClass, escAttr, fmt, nowStr } from "./utils.js";
+import { $, chgClass, escAttr, fmt } from "./utils.js";
 import { getQuote, onQuote, onSseChange } from "./market.js?v=37";
 import { getSourcesSnapshot, onSourcesUpdate } from "./market-sources.js?v=37";
 
@@ -328,15 +328,6 @@ function renderMarket() {
   }
 }
 
-function renderUpdated(data) {
-  const el = $("sb-updated");
-  if (!el) return;
-  const lastMs = Date.parse((data && data.received_ts) || "") || 0;
-  const ageMin = lastMs ? (Date.now() - lastMs) / 60000 : 999;
-  el.textContent = "Last update " +
-    (ageMin > STALE_MIN ? "[STALE] " : "") + nowStr();
-}
-
 // ── Init ────────────────────────────────────────────────────────────────
 
 export function initShell() {
@@ -348,7 +339,6 @@ export function initShell() {
   onQuote((key, data) => {
     lastQuoteAt = Date.now();
     updateTileForQuote(key, data);
-    renderUpdated(data);
     renderMarket();
   });
   onSseChange((connected) => {
