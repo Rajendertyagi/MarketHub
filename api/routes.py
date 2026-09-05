@@ -347,15 +347,19 @@ def build_settings_routes(
             "enabled": enabled,
             "registered": _feed_registered(),
         }
-        if enabled and not result["registered"]:
-            # New source: start it if already registered, else require restart.
+        if enabled:
             if _feed_registered():
+                # Already-registered source: restart it now so the feed comes
+                # back up without a full process restart.
                 try:
                     await source_manager.restart_source("upstox")
                 except Exception:
                     logger.exception("upstox feed restart failed")
-            result["restart_required"] = not _feed_registered()
-        elif not enabled and _feed_registered():
+                result["restart_required"] = False
+            else:
+                # Not yet registered: a restart is required to register + start.
+                result["restart_required"] = True
+        elif _feed_registered():
             # Stop the running source immediately; config keeps it disabled.
             try:
                 await source_manager.stop_source("upstox")
