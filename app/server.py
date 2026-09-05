@@ -960,8 +960,15 @@ app = Starlette(
         restart_fn=_restart_upstox_source,
         oauth=_oauth_cfg_ref,
         rest=_oauth_rest,
+        cred_store=_credential_store,
+        sources_cfg=SOURCES_CFG,
     )
-    + build_settings_routes(_oauth_cfg_ref)
+    + build_settings_routes(
+        _oauth_cfg_ref,
+        source_manager=_source_manager,
+        config_path=str(CONFIG_PATH),
+        sources_cfg=SOURCES_CFG,
+    )
     + _build_intel_routes(_market_intel)
     + _build_instrument_routes(_instrument_catalog, store=_store)
     + _build_watchlist_routes(_store, subscription=_feed_subscription)

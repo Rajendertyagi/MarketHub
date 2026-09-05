@@ -11,6 +11,7 @@ app.state.
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any, Callable
 
 from sse_starlette import EventSourceResponse
@@ -200,6 +201,9 @@ def build_source_control_routes(source_manager: Any) -> list[Route]:
 def build_settings_routes(
     oauth_ref: dict[str, Any],
     cred_store: Any = None,
+    source_manager: Any = None,
+    config_path: str | None = None,
+    sources_cfg: dict[str, Any] | None = None,
 ) -> list[Route]:
     """Build settings routes for persistent Upstox app-credential management.
 
@@ -208,11 +212,149 @@ def build_settings_routes(
     ``cred_store`` is an app.secrets_store.CredentialStore (encrypted
     SQLite-backed); injected so tests can use isolated instances.
 
+    Feed configuration routes manage the EXISTING Upstox feed source through
+    the canonical config.json ``sources`` section (durable storage) and the
+    runtime SourceManager. No second config system is introduced; secrets are
+    never written to config.json.
+
     Responses NEVER contain credential values, ciphertext, or master key.
     """
     if cred_store is None:
         from app import secrets_store as _ss
         cred_store = _ss.build_default_store()
+
+    # Default instruments so the Upstox feed factory (which requires a
+    # non-empty instruments list) can register the source on enable. The
+    # operator can refine instruments later; this keeps WebUI enable simple.
+    _DEFAULT_UPSTOX_INSTRUMENTS = [
+        {"key": "NSE:NIFTY50-INDEX", "exchange": "NSE", "tradingsymbol": "NIFTY 50"},
+        {"key": "NSE:BANKNIFTY-INDEX", "exchange": "NSE", "tradingsymbol": "BANKNIFTY"},
+    ]
+
+    def _read_raw_config() -> dict[str, Any]:
+        if not config_path:
+            return {}
+        try:
+            with open(config_path, "r", encoding="utf-8") as _f:
+                return json.load(_f)
+        except FileNotFoundError:
+            return {}
+        except Exception:
+            return {}
+
+    def _write_upstox_feed(feed_cfg: dict[str, Any]) -> None:
+        if not config_path:
+            raise RuntimeError("config path unavailable")
+        _cfg = _read_raw_config()
+        if not isinstance(_cfg, dict):
+            _cfg = {}
+        _sources = _cfg.get("sources")
+        if not isinstance(_sources, dict):
+            _sources = {}
+        _sources["upstox"] = feed_cfg
+        _cfg["sources"] = _sources
+        with open(config_path, "w", encoding="utf-8") as _f:
+            json.dump(_cfg, _f, indent=2)
+
+    def _remove_upstox_feed() -> None:
+        if not config_path:
+            return
+        _cfg = _read_raw_config()
+        if not isinstance(_cfg, dict):
+            return
+        _sources = _cfg.get("sources")
+        if isinstance(_sources, dict) and "upstox" in _sources:
+            del _sources["upstox"]
+            if not _sources:
+                _cfg.pop("sources", None)
+            with open(config_path, "w", encoding="utf-8") as _f:
+                json.dump(_cfg, _f, indent=2)
+
+    def _feed_registered() -> bool:
+        if source_manager is None:
+            return False
+        return "upstox" in (source_manager.enabled_sources or {})
+
+    async def _feed_status(request: Request) -> Response:  # noqa: ARG001
+        _cfg = (sources_cfg or {}).get("upstox")
+        configured = isinstance(_cfg, dict)
+        enabled = bool(_cfg.get("enabled")) if configured else False
+        registered = _feed_registered()
+        # Restart is required only when config changed but the runtime does
+        # not yet have the source registered (sources are built at startup).
+        restart_required = configured and not registered
+        return _json({
+            "configured": configured,
+            "enabled": enabled,
+            "type": _cfg.get("type") if configured else None,
+            "instruments": _cfg.get("instruments", []) if configured else [],
+            "registered": registered,
+            "restart_required": restart_required,
+        })
+
+    async def _save_feed(request: Request) -> Response:
+        try:
+            body = await request.json()
+        except Exception:
+            return _json({"error": "invalid JSON body"}, 400)
+        enabled = bool(body.get("enabled", True))
+        instruments = body.get("instruments")
+        if not isinstance(instruments, list) or not instruments:
+            # Reuse existing instruments when toggling, else seed defaults.
+            existing = (sources_cfg or {}).get("upstox", {}).get("instruments")
+            instruments = existing if isinstance(existing, list) and existing \
+                else list(_DEFAULT_UPSTOX_INSTRUMENTS)
+
+        feed_cfg = {
+            "type": "upstox_feed",
+            "enabled": enabled,
+            "mode": "full",
+            "instruments": instruments,
+        }
+        try:
+            _write_upstox_feed(feed_cfg)
+        except Exception:
+            return _json({"error": "failed to persist feed configuration"}, 500)
+        # Reflect in the in-memory sources dict so status is immediate
+        # (the runtime registers the source on next restart).
+        if sources_cfg is not None:
+            sources_cfg["upstox"] = feed_cfg
+
+        result: dict[str, Any] = {
+            "configured": True,
+            "enabled": enabled,
+            "registered": _feed_registered(),
+        }
+        if enabled and not result["registered"]:
+            # New source: start it if already registered, else require restart.
+            if _feed_registered():
+                try:
+                    await source_manager.restart_source("upstox")
+                except Exception:
+                    logger.exception("upstox feed restart failed")
+            result["restart_required"] = not _feed_registered()
+        elif not enabled and _feed_registered():
+            # Stop the running source immediately; config keeps it disabled.
+            try:
+                await source_manager.stop_source("upstox")
+            except Exception:
+                logger.exception("upstox feed stop failed")
+            result["restart_required"] = False
+        return _json(result)
+
+    async def _delete_feed(request: Request) -> Response:  # noqa: ARG001
+        try:
+            _remove_upstox_feed()
+        except Exception:
+            return _json({"error": "failed to remove feed configuration"}, 500)
+        if sources_cfg is not None:
+            sources_cfg.pop("upstox", None)
+        if _feed_registered():
+            try:
+                await source_manager.stop_source("upstox")
+            except Exception:
+                logger.exception("upstox feed stop failed")
+        return _json({"configured": False, "enabled": False})
 
     async def _settings_status(request: Request) -> Response:  # noqa: ARG001
         status = cred_store.status()
@@ -269,6 +411,12 @@ def build_settings_routes(
               methods=["POST"]),
         Route("/api/settings/upstox", endpoint=_delete_credentials,
               methods=["DELETE"]),
+        Route("/api/settings/upstox/feed", endpoint=_feed_status,
+              methods=["GET"]),
+        Route("/api/settings/upstox/feed", endpoint=_save_feed,
+              methods=["POST"]),
+        Route("/api/settings/upstox/feed", endpoint=_delete_feed,
+              methods=["DELETE"]),
     ]
 
 
@@ -277,6 +425,8 @@ def build_auth_routes(
     restart_fn: Callable[[], Any] | None = None,
     oauth: dict[str, Any] | None = None,
     rest: Any = None,
+    cred_store: Any = None,
+    sources_cfg: dict[str, Any] | None = None,
 ) -> list[Route]:
     """Build auth routes for runtime token management.
 
@@ -295,6 +445,7 @@ def build_auth_routes(
 
     _STATE_TTL_S = 600  # 10 minutes
     _pending_states: dict[str, float] = {}  # state -> monotonic expiry
+    _pending_pin: dict[str, bool] = {}      # state -> PIN-mode (prompt WebUI PIN)
 
     async def _classify_post_restart(feed: Any) -> str:
         """Classify the feed's state shortly after a credential-driven restart.
@@ -327,9 +478,16 @@ def build_auth_routes(
 
     async def _auth_status(request: Request) -> Response:  # noqa: ARG001
         feed = feed_ref.get("feed")
+        _feed_cfg = (sources_cfg or {}).get("upstox")
         base = {
             "configured": feed is not None,
             "oauth_available": _oauth_ready(),
+            # Distinct from runtime registration: the feed may be configured in
+            # durable config (sources.upstox) without yet being registered in
+            # this runtime, and vice-versa. Never collapse these into one bool.
+            "feed_configured": isinstance(_feed_cfg, dict),
+            "feed_enabled": (
+                bool(_feed_cfg.get("enabled")) if isinstance(_feed_cfg, dict) else False),
         }
         if feed is None:
             base.update({"source": "upstox", "auth_mode": "none",
@@ -350,6 +508,9 @@ def build_auth_routes(
         # tokens report False so the UI never shows Active on a fresh boot.
         ready = getattr(feed, "is_ready_to_start", None)
         base["ready_to_start"] = bool(ready()) if callable(ready) else None
+        # PIN-mode: an authorization code is waiting for the operator's PIN.
+        base["auth_code_pending"] = bool(
+            cred_store and cred_store.load_upstox_auth_code())
         return _json(base)
 
     async def _oauth_login(request: Request) -> Response:  # noqa: ARG001
@@ -357,14 +518,20 @@ def build_auth_routes(
             return _json({"error": "oauth not configured"}, 503)
         from brokers.upstox.auth import UpstoxOAuth
 
+        # PIN-mode: after the redirect, store the code and prompt the operator
+        # for their Upstox PIN in the WebUI instead of auto-exchanging.
+        pin_mode = bool(request.query_params.get("pin"))
+
         # Prune expired states (memory hygiene).
         now = time.monotonic()
         expired = [s for s, exp in _pending_states.items() if exp <= now]
         for s in expired:
             del _pending_states[s]
+            _pending_pin.pop(s, None)
 
         state = secrets.token_urlsafe(32)
         _pending_states[state] = now + _STATE_TTL_S
+        _pending_pin[state] = pin_mode
         try:
             url = UpstoxOAuth(
                 api_key=oauth["api_key"],
@@ -372,6 +539,7 @@ def build_auth_routes(
             ).authorization_url(state=state)
         except Exception:
             _pending_states.pop(state, None)
+            _pending_pin.pop(state, None)
             return _json({"error": "failed to build authorization URL"}, 500)
         from starlette.responses import RedirectResponse
         return RedirectResponse(url, status_code=302)
@@ -402,8 +570,23 @@ def build_auth_routes(
             return _fail("retry")   # invalid or replayed state
         if expiry < time.monotonic():
             del _pending_states[matched]
+            _pending_pin.pop(matched, None)
             return _fail("expired")  # sat on the login page too long
         del _pending_states[matched]
+        pin_mode = _pending_pin.pop(matched, False)
+
+        # PIN-mode: persist the single-use code so the WebUI can complete the
+        # exchange with the operator's PIN via /api/auth/upstox/pin.
+        if pin_mode:
+            if cred_store is None:
+                return _fail("error")
+            try:
+                cred_store.save_upstox_auth_code(code.strip())
+            except Exception:
+                logger.exception("oauth callback: failed to store auth code")
+                return _fail("error")
+            return RedirectResponse(
+                "/ui/?auth=pin_required#/settings", status_code=302)
 
         feed = feed_ref.get("feed")
         if feed is None or rest is None:
@@ -437,6 +620,68 @@ def build_auth_routes(
                     return _fail("stopped")
         except Exception:
             logger.exception("oauth callback: feed restart failed")
+            return _fail("restart")
+
+        return RedirectResponse("/ui/?auth=ok#/settings", status_code=302)
+
+    async def _pin_login(request: Request) -> Response:
+        """Complete a PIN-mode login: validate the stored auth code with the
+        operator-supplied Upstox PIN and start the feed."""
+        from starlette.responses import RedirectResponse
+
+        def _fail(reason: str) -> Response:
+            return RedirectResponse(
+                    f"/ui/?auth=failed&reason={reason}#/settings",
+                    status_code=302)
+
+        if cred_store is None or rest is None or not _oauth_ready():
+            return _json({"error": "oauth not configured"}, 503)
+        try:
+            body = await request.json()
+        except Exception:
+            return _json({"error": "invalid JSON body"}, 400)
+        pin = (body or {}).get("pin", "")
+        if not isinstance(pin, str) or not pin.strip():
+            return _json({"error": "pin is required"}, 400)
+
+        code = cred_store.load_upstox_auth_code()
+        if not code:
+            return _json(
+                {"error": "no pending Upstox login — click Login with Upstox (PIN) again"},
+                400)
+
+        try:
+            creds = await rest.exchange_with_pin(
+                code=code.strip(),
+                pin=pin.strip(),
+                client_id=oauth["api_key"].strip(),
+                client_secret=oauth["api_secret"].strip(),
+                redirect_uri=oauth["redirect_uri"].strip(),
+            )
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            if isinstance(status, int) and 400 <= status < 500:
+                return _json({"error": "Upstox rejected the PIN or login"}, 400)
+            return _json({"error": "could not reach Upstox during login"}, 400)
+        finally:
+            cred_store.clear_upstox_auth_code()
+
+        feed = feed_ref.get("feed")
+        if feed is None:
+            return _fail("error")
+        try:
+            feed.update_credentials(creds)
+            if restart_fn is not None:
+                await restart_fn()
+                outcome = await _classify_post_restart(feed)
+                if outcome == "rejected":
+                    return _fail("rejected")
+                if outcome == "protocol":
+                    return _fail("protocol")
+                if outcome == "stopped":
+                    return _fail("stopped")
+        except Exception:
+            logger.exception("pin login: feed restart failed")
             return _fail("restart")
 
         return RedirectResponse("/ui/?auth=ok#/settings", status_code=302)
@@ -480,4 +725,5 @@ def build_auth_routes(
         Route("/api/auth/upstox/login", endpoint=_oauth_login, methods=["GET"]),
         Route("/auth/upstox/callback", endpoint=_oauth_callback, methods=["GET"]),
         Route("/api/auth/upstox/token", endpoint=_submit_token, methods=["POST"]),
+        Route("/api/auth/upstox/pin", endpoint=_pin_login, methods=["POST"]),
     ]

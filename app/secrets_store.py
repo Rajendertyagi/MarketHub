@@ -380,6 +380,45 @@ class CredentialStore:
         except Exception:
             return None
 
+    # -- Upstox daily-login auth code (single-use, encrypted) -----------------
+    #
+    # After the OAuth redirect returns an authorization code, it is stored
+    # here (encrypted, TTL-bounded) so the WebUI can prompt for the account
+    # PIN and complete the exchange via Upstox's validate endpoint. The code
+    # is consumed on first use and never returned by any API.
+
+    def save_upstox_auth_code(self, code: str) -> None:
+        """Encrypt + persist the single-use Upstox authorization code."""
+        if not isinstance(code, str) or not code.strip():
+            raise ValueError("auth code must be a non-empty string")
+        enc = self._get_encryption(allow_generate=True)
+        if enc is None:
+            raise CredentialDecryptError(
+                "master key unavailable; cannot encrypt auth code")
+        self._store.upsert_secrets("upstox", {
+            "auth_code": (enc.encrypt(code.strip()), ENCRYPTION_SCHEME),
+        })
+
+    def load_upstox_auth_code(self) -> str | None:
+        """Return the stored Upstox auth code, or None when absent/unreadable."""
+        enc = self._get_encryption(allow_generate=False)
+        if enc is None:
+            return None
+        row = self._store.get_secret("upstox", "auth_code")
+        if row is None:
+            return None
+        try:
+            return enc.decrypt(row[0])
+        except Exception:
+            return None
+
+    def clear_upstox_auth_code(self) -> None:
+        """Best-effort removal of any stored Upstox auth code."""
+        try:
+            self._store.delete_secret("upstox", "auth_code")
+        except Exception:
+            pass
+
     def load_fyers_credentials(self) -> dict[str, str] | None:
         """Return {'app_id', 'app_secret'} or None if not configured."""
         creds = self.load_app_credentials("fyers")

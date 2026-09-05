@@ -30,15 +30,25 @@ export async function pollAuthStatus() {
     lastAuthStatus = d;   // consumed by the Sources page controls
     const chip = $("auth-token-status");
     const loginBtn = $("oauth-login-btn");
+    const pinLoginBtn = $("oauth-login-pin-btn");
+    const pinRow = $("upstox-pin-row");
+    // Login UI is offered once Upstox API credentials are configured. The
+    // auth code may already be pending (PIN-mode), in which case surface the
+    // PIN field regardless of credential state.
+    const ready = d.oauth_available;
     if (loginBtn) {
-      // Only offer login when BOTH credentials and a live feed exist.
-      const ready = d.oauth_available && d.configured !== false;
       loginBtn.classList.toggle("hidden", !ready);
       if (ready) {
         loginBtn.disabled = d.auth_state === "authorizing";
         loginBtn.textContent = d.token_configured
           ? "Login with Upstox (renew)" : "Login with Upstox";
       }
+    }
+    if (pinLoginBtn) {
+      pinLoginBtn.classList.toggle("hidden", !ready);
+    }
+    if (pinRow) {
+      pinRow.classList.toggle("hidden", !d.auth_code_pending);
     }
     let label, cls;
     if (!d.oauth_available) {
@@ -57,6 +67,58 @@ export async function pollAuthStatus() {
     let feedLabel = d.state || "—";
     if (feedLabel === "auth_required") feedLabel = "Stopped (login required)";
     $("auth-feed-state").textContent = feedLabel;
+    // Feed configuration + runtime status are distinct from broker/auth state.
+    pollUpstoxFeed();
+  } catch { /* silent */ }
+}
+
+// Reflect the Upstox feed's four independent states in the Brokers UI:
+//   feed configured (durable config) / enabled / authenticated / runtime active.
+// These are NEVER collapsed into a single boolean.
+async function pollUpstoxFeed() {
+  try {
+    const [fRes, sRes] = await Promise.all([
+      fetch("/api/settings/upstox/feed"),
+      fetch("/api/auth/upstox/status"),
+    ]);
+    const f = await fRes.json();
+    const s = await sRes.json();
+
+    const toggle = $("upstox-feed-toggle");
+    const chip = $("upstox-feed-chip");
+    const cfgChip = $("upstox-feed-configured");
+    const authChip = $("upstox-auth-chip");
+    const rtChip = $("upstox-feed-runtime");
+    const msg = $("upstox-feed-msg");
+
+    if (toggle) {
+      toggle.textContent = f.enabled ? "Disable Feed" : "Enable Feed";
+      toggle.classList.toggle("btn-outline-danger", !!f.enabled);
+    }
+    if (chip) {
+      chip.textContent = f.enabled ? "Enabled" : "Disabled";
+      chip.className = "chip " + (f.enabled ? "chip-on" : "chip-off");
+    }
+    if (cfgChip) {
+      cfgChip.textContent = f.configured ? "Configured" : "Not configured";
+      cfgChip.className = "chip " + (f.configured ? "chip-on" : "chip-off");
+    }
+    if (authChip) {
+      const authed = !!s.token_configured;
+      authChip.textContent = authed ? "Authenticated" : "Not authenticated";
+      authChip.className = "chip " + (authed ? "chip-on" : "chip-off");
+    }
+    if (rtChip) {
+      const running = !!s.configured && s.state
+        && !["stopped", "auth_required"].includes(s.state);
+      rtChip.textContent = running ? "Running" : "Not running";
+      rtChip.className = "chip " + (running ? "chip-on" : "chip-off");
+    }
+    // Surface a restart requirement only when not already shown.
+    if (msg && !msg.textContent.trim() && f.restart_required) {
+      msg.textContent = "Feed configuration saved — restart MarketHub to apply.";
+      msg.className = "hint";
+    }
   } catch { /* silent */ }
 }
 
@@ -86,6 +148,11 @@ function handleAuthCallbackParam() {
   } else if (auth === "ok") {
     msg.textContent = "Upstox authentication successful. Connecting market feed…";
     msg.className = "hint ok";
+  } else if (auth === "pin_required") {
+    msg.textContent = "Upstox authorization received — enter your Upstox PIN to complete login.";
+    msg.className = "hint ok";
+    const pinInput = $("upstox-pin");
+    if (pinInput) pinInput.focus();
   } else if (auth === "failed") {
     const reason = params.get("reason");
     let text;
@@ -124,6 +191,56 @@ export function initAuth() {
   if (loginBtn) {
     loginBtn.addEventListener("click", () => {
       window.location.href = "/api/auth/upstox/login";
+    });
+  }
+  const pinLoginBtn = $("oauth-login-pin-btn");
+  if (pinLoginBtn) {
+    pinLoginBtn.addEventListener("click", () => {
+      window.location.href = "/api/auth/upstox/login?pin=1";
+    });
+  }
+  const pinBtn = $("upstox-pin-btn");
+  const pinInput = $("upstox-pin");
+  if (pinBtn && pinInput) {
+    pinBtn.addEventListener("click", async () => {
+      const pin = pinInput.value.trim();
+      msg.textContent = "";
+      msg.className = "hint";
+      if (!pin) {
+        msg.textContent = "Please enter your Upstox PIN.";
+        msg.className = "hint err";
+        return;
+      }
+      pinBtn.disabled = true;
+      pinBtn.textContent = "Logging in…";
+      try {
+        const res = await fetch("/api/auth/upstox/pin", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pin }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          pinInput.value = "";           // clear immediately — never retain
+          msg.textContent = "Upstox login successful. Connecting market feed…";
+          msg.className = "hint ok";
+          pollAuthStatus();
+          if (typeof pollSources === "function") pollSources();
+        } else {
+          msg.textContent = data.error ||
+            "PIN login failed. Check your PIN and try again.";
+          msg.className = "hint err";
+        }
+      } catch {
+        msg.textContent = "Network error during PIN login.";
+        msg.className = "hint err";
+      } finally {
+        pinBtn.disabled = false;
+        pinBtn.textContent = "Login with PIN";
+      }
+    });
+    pinInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") pinBtn.click();
     });
   }
   btn.addEventListener("click", async () => {
@@ -166,6 +283,48 @@ export function initAuth() {
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") btn.click();
   });
+
+  // Upstox feed enable/disable (durable config + runtime apply).
+  const feedToggle = $("upstox-feed-toggle");
+  const feedMsg = $("upstox-feed-msg");
+  if (feedToggle) {
+    feedToggle.addEventListener("click", async () => {
+      feedMsg.textContent = "";
+      feedMsg.className = "hint";
+      const enabling = !feedToggle.textContent.includes("Disable");
+      feedToggle.disabled = true;
+      try {
+        const res = await fetch("/api/settings/upstox/feed", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: enabling }),
+        });
+        const d = await res.json();
+        if (res.ok) {
+          if (d.restart_required) {
+            feedMsg.textContent = enabling
+              ? "Upstox feed enabled — restart MarketHub to activate it."
+              : "Upstox feed disabled — restart MarketHub to fully stop it.";
+            feedMsg.className = "hint";
+          } else {
+            feedMsg.textContent = enabling
+              ? "Upstox feed enabled." : "Upstox feed disabled.";
+            feedMsg.className = "hint ok";
+          }
+          pollUpstoxFeed();
+        } else {
+          feedMsg.textContent = d.error || "Failed to update feed configuration.";
+          feedMsg.className = "hint err";
+        }
+      } catch {
+        feedMsg.textContent = "Network error updating feed.";
+        feedMsg.className = "hint err";
+      } finally {
+        feedToggle.disabled = false;
+      }
+    });
+  }
+
   handleAuthCallbackParam();
   pollAuthStatus();
 }

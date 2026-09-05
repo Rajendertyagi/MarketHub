@@ -51,6 +51,7 @@ __all__ = ["UpstoxRest"]
 
 _AUTHORIZE_URL = "https://api.upstox.com/v3/feed/market-data-feed/authorize"
 _TOKEN_URL = "https://api.upstox.com/v2/login/authorization/token"
+_VALIDATE_URL = "https://api.upstox.com/v2/login/validate"
 _AUTHORIZE_TIMEOUT_S = 10.0   # project choice — Upstox documents no timeout guidance
 _EXCHANGE_TIMEOUT_S = 15.0    # project choice — Upstox documents no timeout guidance
 _MAX_PROVIDER_MESSAGE = 200
@@ -386,6 +387,67 @@ class UpstoxRest:
         payload = _require_success_json(response, operation)
 
         access_token = payload.get("access_token")
+        if not isinstance(access_token, str) or not access_token.strip():
+            raise UpstoxRestError(
+                f"upstox {operation} failed: missing access_token",
+                status_code=response.status, retryable=False,
+            )
+
+        acquired_at = _validate_utc_clock(self._utc_now())
+        return UpstoxCredentials(
+            access_token=access_token.strip(),
+            expires_at=upstox_token_expiry(acquired_at),
+        )
+
+    async def exchange_with_pin(
+        self,
+        *,
+        code: str,
+        pin: str,
+        client_id: str,
+        client_secret: str,
+        redirect_uri: str,
+    ) -> UpstoxCredentials:
+        """Complete a daily login by validating the OAuth authorization code
+        together with the account PIN (Upstox ``/api/v2/validate``).
+
+        The PIN is supplied by the operator through the WebUI; the code is the
+        single-use authorization code obtained from the OAuth redirect. All
+        inputs are method-local; nothing is retained on the client.
+        """
+        for label, value in (
+            ("code", code),
+            ("pin", pin),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+            ("redirect_uri", redirect_uri),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise UpstoxAuthError(f"{label} must be a non-empty string")
+
+        body = json.dumps({
+            "token": code.strip(),
+            "pin": pin.strip(),
+        }).encode("utf-8")
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        operation = "validate-with-pin"
+        try:
+            response = await asyncio.to_thread(
+                self._transport, "POST", _VALIDATE_URL, headers, body,
+                _EXCHANGE_TIMEOUT_S,
+            )
+        except OSError as exc:
+            raise _wrap_network_error(operation, exc) from exc
+
+        if response.status != 200:
+            _raise_for_status(response, operation)
+        payload = _require_success_json(response, operation)
+
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        access_token = payload.get("access_token") or data.get("access_token")
         if not isinstance(access_token, str) or not access_token.strip():
             raise UpstoxRestError(
                 f"upstox {operation} failed: missing access_token",
