@@ -118,51 +118,76 @@ function renderChain(d) {
     ? `${rows.length} / ${d.strikes_total_listed != null ? d.strikes_total_listed : rows.length}`
     : "—";
 
-  const side = (leg) => {
-    if (!leg) return "<td>—</td>".repeat(7);
+  const CELL = (v, cls) =>
+    `<td class="${cls || ""}">${v != null ? v : "—"}</td>`;
+
+  // Render one side (CE or PE) as 12 aligned cells. Columns are shown only
+  // when the canonical/live quote actually carries them; missing values render
+  // "—" honestly (never fabricated).
+  function sideCells(leg, kind) {
+    if (!leg) return CELL(null).repeat(12);
     const q = leg.quote || null;
-    const oi = q ? q.open_interest : null;
-    const oiChg = q ? q.oi_change : null;
-    const vol = q ? q.volume : null;
-    const iv = q ? q.iv : null;
-    const ltp = q ? q.ltp : null;
-    const chg = q ? q.change : null;
-    const greeks = q ? greeksStr(q) : null;
-    const cell = (v, cls) => `<td class="${cls || ""}">${
-      v != null ? v : "—"}</td>`;
-    return [
-      cell(oi != null ? fmtVol(oi) : null),
-      cell(oiChg != null ? fmtVol(oiChg) : null, chgClass(oiChg)),
-      cell(vol != null ? fmtVol(vol) : null),
-      cell(iv != null ? (iv * 100).toFixed(2) + "%" : null),
-      cell(ltp != null ? fmt(ltp) : null, chgClass(chg)),
-      cell(chg != null ? fmt(chg) : null, chgClass(chg)),
-      cell(greeks, "oc-greeks"),
-    ].join("");
-  };
+    const num = (v) => (v != null ? v : null);
+    const oi = q ? num(q.open_interest) : null;
+    const oiChg = q ? num(q.oi_change) : null;
+    const vol = q ? num(q.volume) : null;
+    const iv = q && q.iv != null ? (q.iv * 100).toFixed(2) + "%" : null;
+    const ltp = q ? num(q.ltp) : null;
+    const chg = q ? num(q.change) : null;
+    const bid = q ? num(q.bid) : null;
+    const ask = q ? num(q.ask) : null;
+    const delta = q ? num(q.delta) : null;
+    const gamma = q ? num(q.gamma) : null;
+    const theta = q ? num(q.theta) : null;
+    const vega = q ? num(q.vega) : null;
+    const rho = q ? num(q.rho) : null;
+    const f2 = (v) => (v != null ? v.toFixed(2) : null);
+    const f3 = (v) => (v != null ? v.toFixed(3) : null);
+    const fv = (v) => (v != null ? fmt(v) : null);
+    const fvol = (v) => (v != null ? fmtVol(v) : null);
+    const call = [
+      CELL(fvol(oi)),
+      CELL(fvol(oiChg), chgClass(oiChg)),
+      CELL(fvol(vol)),
+      CELL(iv),
+      CELL(fv(ltp), chgClass(chg)),
+      CELL(fv(bid)),
+      CELL(fv(ask)),
+      CELL(f2(delta)),
+      CELL(f3(gamma)),
+      CELL(f2(theta)),
+      CELL(f2(vega)),
+      CELL(f2(rho)),
+    ];
+    const put = [
+      CELL(fv(ltp), chgClass(chg)),
+      CELL(fv(bid)),
+      CELL(fv(ask)),
+      CELL(iv),
+      CELL(fvol(vol)),
+      CELL(fvol(oiChg), chgClass(oiChg)),
+      CELL(fvol(oi)),
+      CELL(f2(delta)),
+      CELL(f3(gamma)),
+      CELL(f2(theta)),
+      CELL(f2(vega)),
+      CELL(f2(rho)),
+    ];
+    return (kind === "call" ? call : put).join("");
+  }
 
   if (!rows.length) {
     $("oc-body").innerHTML =
-      '<tr><td colspan="15" class="empty-row">No option contracts listed for this expiry.</td></tr>';
+      '<tr><td colspan="25" class="empty-row">No option contracts listed for this expiry.</td></tr>';
   } else {
     $("oc-body").innerHTML = rows.map((r) => {
       const rowCls = r.atm ? ' class="option-chain-atm"' : "";
-      return `<tr${rowCls}>` + side(r.call) +
+      return `<tr${rowCls}>` + sideCells(r.call, "call") +
         `<td class="strike-col"><b>${fmt(r.strike)}</b></td>` +
-        side(r.put) + "</tr>";
+        sideCells(r.put, "put") + "</tr>";
     }).join("");
   }
   renderAnalytics(rows);
-}
-
-function greeksStr(q) {
-  const parts = [];
-  if (q.delta != null) parts.push("D" + q.delta.toFixed(2));
-  if (q.gamma != null) parts.push("G" + q.gamma.toFixed(3));
-  if (q.theta != null) parts.push("T" + q.theta.toFixed(2));
-  if (q.vega != null) parts.push("V" + q.vega.toFixed(2));
-  if (q.rho != null) parts.push("R" + q.rho.toFixed(2));
-  return parts.length ? parts.join(" ") : null;
 }
 
 function renderAnalytics(rows) {
@@ -206,7 +231,7 @@ function renderEmpty() {
   $("oc-pe-doi").textContent = "—";
   $("oc-straddle").textContent = "—";
   $("oc-body").innerHTML =
-    '<tr><td colspan="15" class="empty-row">Search an underlying, pick an expiry, then Load Chain.</td></tr>';
+    '<tr><td colspan="25" class="empty-row">Search an underlying, pick an expiry, then Load Chain.</td></tr>';
 }
 
 function setMsg(text, isError, isLoading) {
