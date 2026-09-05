@@ -161,12 +161,75 @@
 .split-gutter:hover::before,
 .split-gutter:focus-visible::before { background: var(--accent-contrast); }
 
+/* ── Header index strip + menu ─────────────────────────────── */
+.topnav-indices {
+  display: flex; align-items: stretch; gap: var(--space-2);
+  flex: 1 1 auto; min-width: 0;
+  overflow-x: auto; scrollbar-width: thin;
+}
+.topnav-links { flex: 0 1 auto; margin-left: auto; }
+.idx-tile {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  padding: 2px var(--space-2); flex: 0 0 auto; white-space: nowrap;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono); font-size: var(--font-size-sm);
+}
+.idx-sym { color: var(--text-muted); font-weight: 600; }
+.idx-val { color: var(--text); font-weight: 600; }
+.idx-chg { color: var(--text-faint); }
+.idx-chg.up { color: var(--pos); }
+.idx-chg.down { color: var(--neg); }
+.idx-chg.stale { color: var(--text-faint); }
+.idx-empty { color: var(--text-faint); font-size: var(--font-size-sm); white-space: nowrap; }
+.index-menu-wrap { position: relative; flex: 0 0 auto; }
+.index-menu {
+  position: absolute; top: calc(100% + var(--space-1)); right: 0;
+  min-width: 230px; max-height: 320px; overflow-y: auto;
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: var(--radius-md); padding: var(--space-1);
+  z-index: var(--z-modal);
+}
+.index-menu-item {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: 4px var(--space-2); border-radius: var(--radius-sm);
+  cursor: pointer; font-size: var(--font-size-sm);
+}
+.index-menu-item:hover { background: var(--surface-2); }
+.index-menu-name { color: var(--text); font-weight: 600; }
+.index-menu-key {
+  color: var(--text-faint); font-family: var(--font-mono);
+  font-size: var(--font-size-xs); margin-left: auto; white-space: nowrap;
+}
+.index-menu-note,
+.index-menu-empty {
+  color: var(--text-faint); font-size: var(--font-size-xs);
+  padding: 4px var(--space-2);
+}
+
+/* ── Status bar items ──────────────────────────────────────── */
+.app-footer {
+  gap: var(--space-2); overflow-x: auto; white-space: nowrap;
+  scrollbar-width: none;
+}
+.app-footer::-webkit-scrollbar { display: none; }
+.sb-item { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.sb-label { color: var(--text-faint); }
+.sb-updated { color: var(--text-faint); flex: 0 0 auto; }
+.sb-spacer { flex: 1 1 auto; min-width: var(--space-2); }
+
 /* ── Responsive shell ────────────────────────────────────── */
+@media (max-width: 1100px) {
+  .topnav-indices .idx-tile:nth-child(n+4) { display: none; }
+}
 @media (max-width: 760px) {
   .app-topbar,
   .topnav { flex-wrap: wrap; height: auto; padding: var(--space-2) var(--space-3); }
   .app-topbar-links,
   .topnav-links { order: 3; flex-basis: 100%; }
+  .topnav-indices { order: 2; }
+  .index-menu-wrap { order: 2; }
+  .topnav-indices .idx-tile:nth-child(n+3) { display: none; }
   .app-ticker,
   .ticker-strip { height: 30px; }
 }

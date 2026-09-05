@@ -17,6 +17,28 @@ let es = null;                     // market EventSource (singleton)
 const dashRows = new Map();        // key → <tr> element (in-place update)
 const mktRows = new Map();
 
+// Subscriber hooks for shell surfaces (header index strip, status bar).
+// These reuse the single market SSE stream — they never open connections,
+// poll, or fetch. Shell modules register; market.js notifies in place.
+const quoteListeners = new Set();
+const sseListeners = new Set();
+
+export function onQuote(cb) {
+  quoteListeners.add(cb);
+  return () => quoteListeners.delete(cb);
+}
+
+export function onSseChange(cb) {
+  sseListeners.add(cb);
+  return () => sseListeners.delete(cb);
+}
+
+function notifySse(connected) {
+  for (const cb of sseListeners) {
+    try { cb(connected); } catch { /* shell render fault — skip */ }
+  }
+}
+
 export function getQuote(key) {
   return quotes.get(key);
 }
@@ -31,12 +53,14 @@ export function connectSSE() {
     setIndicator("sse-indicator", true, "● SSE");
     $("chip-sse").textContent = "Connected";
     $("chip-sse").className = "chip chip-on";
+    notifySse(true);
   };
 
   es.onerror = () => {
     setIndicator("sse-indicator", false, "● SSE");
     $("chip-sse").textContent = "Reconnecting";
     $("chip-sse").className = "chip chip-off";
+    notifySse(false);
   };
 
   es.addEventListener("quote", (e) => {
@@ -61,6 +85,11 @@ export function handleQuoteUpdate(data) {
   updateTicker(key, data);
   // Update market cards (dashboard top).
   updateCards(key, data);
+
+  // Notify shell subscribers (header index strip, status bar) in place.
+  for (const cb of quoteListeners) {
+    try { cb(key, data); } catch { /* shell render fault — skip */ }
+  }
 
   // Stale-data indicator: quote timestamps older than 5 minutes are
   // marked explicitly so old prices never read as live ticks.

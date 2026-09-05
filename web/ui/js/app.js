@@ -37,6 +37,7 @@ import { initAIMCPSettings } from "./features/settings/ai-mcp.js";
 import { initBackupSettings } from "./features/settings/backup.js";
 import { initTheme } from "./features/settings/theme.js";
 import { initSplitters } from "./core/splitter.js";
+import { initShell } from "./shell.js";
 
   // ── DOM shortcuts ───────────────────────────────────────────────────────
   const $ = (id) => document.getElementById(id);
@@ -230,6 +231,7 @@ import { initSplitters } from "./core/splitter.js";
     initMCPTools();
     initLogsUI();
     initSplitters();
+    initShell();   // header index strip + bottom status bar (no new streams)
     // Route hooks (registered once): direct #/view loads, F5,
     // and back/forward all initialize their views; nav clicks are also
     // observed by the router (switchView uses replaceState, silent).

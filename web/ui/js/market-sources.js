@@ -17,6 +17,21 @@ import { getAuthStatus } from "./auth.js?v=36";
 let lastSourcesSnapshot = [];            // latest /api/sources/status payload
 const sourceActionInFlight = new Map();  // source name → in-flight action
 
+// Subscriber hook for shell surfaces (bottom status bar). Notified after
+// each existing 10 s source-status poll — never a new poll or stream.
+const sourcesListeners = new Set();
+
+export function onSourcesUpdate(cb) {
+  sourcesListeners.add(cb);
+  return () => sourcesListeners.delete(cb);
+}
+
+function notifySources(sources) {
+  for (const cb of sourcesListeners) {
+    try { cb(sources); } catch { /* shell render fault — skip */ }
+  }
+}
+
 export function getSourcesSnapshot() {
   return lastSourcesSnapshot;
 }
@@ -54,6 +69,7 @@ export async function pollSources() {
 
     renderMovers();
     renderMarketStatus();
+    notifySources(sources);
     // Update per-broker source detail tables inside Settings (single page,
     // any subsection — currentView may be "settings" or "settings/<sec>").
     if (currentView === "settings" || currentView.startsWith("settings/")) {
