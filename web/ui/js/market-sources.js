@@ -12,7 +12,7 @@
 import { $, escDash } from "./utils.js";
 import { currentView } from "./router.js";
 import { renderMarketStatus, renderMovers } from "./market.js";
-import { getAuthStatus } from "./auth.js";
+import { getAuthStatus } from "./auth.js?v=36";
 
 let lastSourcesSnapshot = [];            // latest /api/sources/status payload
 const sourceActionInFlight = new Map();  // source name → in-flight action

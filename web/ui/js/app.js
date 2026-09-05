@@ -30,7 +30,7 @@ import { initSourceControls, pollSources } from "./market-sources.js";
 import {
   initAuth, initCredentialDelete, initCredentialSettings, initFyers,
   pollAuthStatus,
-} from "./auth.js";
+} from "./auth.js?v=36";
 import { initSettingsUI } from "./features/settings/index.js";
 import { initGeneralSettings } from "./features/settings/general.js";
 import { initAIMCPSettings } from "./features/settings/ai-mcp.js";

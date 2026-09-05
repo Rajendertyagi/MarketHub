@@ -194,6 +194,13 @@ function handleAuthCallbackParam() {
   } else if (auth === "pin_required") {
     msg.textContent = "Upstox authorization received — enter your Upstox PIN to complete login.";
     msg.className = "hint ok";
+    // The PIN field lives on the Brokers sub-panel, which is NOT the default
+    // Settings section. Jump straight to it so the field is actually visible.
+    try { switchView("settings/brokers"); } catch { /* view switch best-effort */ }
+    const pinRow = $("upstox-pin-row");
+    if (pinRow) pinRow.classList.remove("hidden");
+    const pinMsg = $("upstox-pin-msg");
+    if (pinMsg) pinMsg.classList.remove("hidden");
     const pinInput = $("upstox-pin");
     if (pinInput) pinInput.focus();
   } else if (auth === "failed") {
