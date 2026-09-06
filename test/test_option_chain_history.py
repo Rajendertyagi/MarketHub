@@ -203,9 +203,9 @@ async def test_oc10_chain_happy_path(runner: R) -> None:
     runner.assert_eq("OC10-strikes", len(snap.strikes), 2)
     runner.assert_eq("OC10-atm", snap.atm_strike, 24500.0)
     call = fake.calls[0]
-    runner.assert_eq("OC10-method-PUT", call["method"], "PUT")
-    runner.assert_eq("OC10-body-expiry",
-                     call["json_body"]["expiry_date"], "2026-09-24")
+    runner.assert_eq("OC10-method-GET", call["method"], "GET")
+    runner.assert_eq("OC10-url-expiry",
+                     "expiry_date=2026-09-24" in call["url"], True)
 
 
 # -- main -------------------------------------------------------------------------

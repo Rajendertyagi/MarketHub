@@ -44,6 +44,20 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
 
 from helpers.runner import R  # noqa: E402
 
+# Resolve the composed app objects at import time so the tests also work when
+# collected directly by pytest (the own-runner path sets these inside main()).
+try:
+    from app.server import (  # noqa: E402
+        app as _mse_app,
+        _market_service as _mse_service,
+        _market_event_broker as _mse_broker,
+    )
+    app = _mse_app
+    market_service = _mse_service
+    market_broker = _mse_broker
+except Exception:  # pragma: no cover - import-time safety net
+    app = market_service = market_broker = None
+
 HEAD_TIMEOUT = 10.0
 READ_TIMEOUT = 10.0
 
