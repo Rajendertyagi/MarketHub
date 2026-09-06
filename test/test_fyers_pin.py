@@ -73,17 +73,16 @@ def test_pin3_restore_uses_stored_pin(runner: R) -> None:
     orig = fauth.FyersAuth.refresh_access_token
     fauth.FyersAuth.refresh_access_token = fake_refresh
     old_store = getattr(srv, "_credential_store", None)
-    old_token = dict(srv._fyers_runtime_token)
+    old_token = srv._fyers_runtime_auth.get_access_token()
     restored_value = None
     try:
         srv._credential_store = cstore
-        srv._fyers_runtime_token["access_token"] = ""
+        srv._fyers_runtime_auth.clear_access_token()
         asyncio.run(srv._try_restore_fyers_token())
-        restored_value = srv._fyers_runtime_token["access_token"]
+        restored_value = srv._fyers_runtime_auth.get_access_token()
     finally:
         srv._credential_store = old_store
-        srv._fyers_runtime_token.clear()
-        srv._fyers_runtime_token.update(old_token)
+        srv._fyers_runtime_auth.set_access_token(old_token)
         fauth.FyersAuth.refresh_access_token = orig
 
     runner.assert_eq("PIN3-refresh-passed", captured.get("refresh"), "REF-R")
@@ -112,19 +111,18 @@ def test_pin4_no_pin_still_safe_fallback(runner: R) -> None:
     orig = fauth.FyersAuth.refresh_access_token
     fauth.FyersAuth.refresh_access_token = fake_refresh
     old_store = getattr(srv, "_credential_store", None)
-    old_token = dict(srv._fyers_runtime_token)
+    old_token = srv._fyers_runtime_auth.get_access_token()
     try:
         srv._credential_store = cstore
-        srv._fyers_runtime_token["access_token"] = ""
+        srv._fyers_runtime_auth.clear_access_token()
         asyncio.run(srv._try_restore_fyers_token())
     finally:
         srv._credential_store = old_store
-        srv._fyers_runtime_token.clear()
-        srv._fyers_runtime_token.update(old_token)
+        srv._fyers_runtime_auth.set_access_token(old_token)
         fauth.FyersAuth.refresh_access_token = orig
 
     runner.assert_eq("PIN4-safe-fallback-empty",
-                     srv._fyers_runtime_token["access_token"], "")
+                     srv._fyers_runtime_auth.get_access_token(), "")
 
 
 if __name__ == "__main__":

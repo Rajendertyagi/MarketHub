@@ -13,6 +13,8 @@ import logging
 import os
 from typing import Any, Callable
 
+from app.fyers_runtime_auth import FyersRuntimeAuth
+
 logger = logging.getLogger(__name__)
 
 from starlette.requests import Request
@@ -1035,7 +1037,7 @@ def build_api_meta_routes() -> list[Route]:
 def build_fyers_auth_routes(cred_store: Any,
                             redirect_uri: str = (
         "http://localhost:7070/auth/fyers/callback"),
-                            runtime_token: dict[str, str] | None = None,
+                            runtime_auth: "FyersRuntimeAuth | None" = None,
                             restart_fn: Any = None,
                             restore_state: dict[str, Any] | None = None,
                             source_manager: Any = None,
@@ -1052,9 +1054,9 @@ def build_fyers_auth_routes(cred_store: Any,
     Args:
         cred_store: encrypted credential store.
         redirect_uri: OAuth redirect target.
-        runtime_token: optional dict shared with the Fyers feed's
-            ``access_token_getter`` so a successful login immediately
-            unblocks the feed. When None, an internal dict is used.
+        runtime_auth: the single owner of Fyers runtime auth state, shared with
+            the Fyers feed's ``access_token_getter`` so a successful login
+            immediately unblocks the feed. When None, an internal owner is used.
         restart_fn: optional coroutine called after a successful login to
             (re)start the Fyers source through SourceManager.
     """
@@ -1064,10 +1066,10 @@ def build_fyers_auth_routes(cred_store: Any,
 
     # Runtime-only access token (never persisted). Refresh token lives
     # encrypted in the credential store under provider "fyers_refresh".
-    # When ``runtime_token`` is supplied it is the SAME object the feed's
-    # getter closes over, so login here unblocks the running feed.
-    _fyers_runtime_token: dict[str, str] = (
-        runtime_token if runtime_token is not None else {"access_token": ""})
+    # ``runtime_auth`` is the single owner of Fyers runtime auth state; the
+    # feed's getter closes over it, so login here unblocks the running feed.
+    _fyers_runtime_auth = (
+        runtime_auth if runtime_auth is not None else FyersRuntimeAuth())
     _pending: dict[str, float] = {}
     _TTL = 600
 
@@ -1085,7 +1087,7 @@ def build_fyers_auth_routes(cred_store: Any,
         # Restart recovery works only when BOTH a refresh token AND the PIN
         # (required by Fyers' refresh endpoint) are durably stored.
         restart_recovery = has_refresh and pin_stored
-        login_required = not (_fyers_runtime_token["access_token"]
+        login_required = not (_fyers_runtime_auth.get_access_token()
                               or (has_refresh and pin_stored))
         # Source (feed) registration — distinct from credentials/login. A
         # broker can be fully authenticated yet report "source not configured"
@@ -1106,7 +1108,7 @@ def build_fyers_auth_routes(cred_store: Any,
             "app_id_configured": bool(creds and creds.get("app_id")),
             "secret_configured": bool(creds and creds.get("app_secret")),
             "login_available": bool(creds),
-            "access_token_active": bool(_fyers_runtime_token["access_token"]),
+            "access_token_active": _fyers_runtime_auth.has_access_token(),
             "refresh_token_stored": has_refresh,
             "pin_stored": pin_stored,
             # Durable session / restart-safety signals.
@@ -1250,7 +1252,7 @@ def build_fyers_auth_routes(cred_store: Any,
                 cred_store.save_last_auth_status, "fyers", "authenticated")
         except Exception:
             logger.warning("failed to persist fyers access token")
-        _fyers_runtime_token["access_token"] = bundle["access_token"]
+        _fyers_runtime_auth.set_access_token(bundle["access_token"])
         # Operator login path complete: (re)start the Fyers feed so it picks
         # up the freshly-available token via its access_token_getter gate.
         if restart_fn is not None:
@@ -1273,7 +1275,7 @@ def build_fyers_auth_routes(cred_store: Any,
                 cred_store.save_last_auth_status, "fyers", "forgotten")
         except Exception:
             return _json({"error": "failed to forget session"}, 500)
-        _fyers_runtime_token["access_token"] = ""
+        _fyers_runtime_auth.clear_access_token()
         if restore_state is not None:
             restore_state["fyers_restored"] = False
         return _json({"ok": True})

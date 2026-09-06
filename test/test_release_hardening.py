@@ -346,6 +346,7 @@ def test_store_error_surfaced_by_api(runner: R) -> None:
     from starlette.testclient import TestClient
 
     from api.product_routes import build_fyers_auth_routes
+    from app.fyers_runtime_auth import FyersRuntimeAuth
     from app.secrets_store import CredentialStore
     from core.persistence.store import EventStore
 
@@ -365,7 +366,7 @@ def test_store_error_surfaced_by_api(runner: R) -> None:
 
     app = Starlette(routes=build_fyers_auth_routes(
         CredentialStore(EventStore(_db), data_dir=Path(_dir)),
-        runtime_token={"access_token": ""},
+        runtime_auth=FyersRuntimeAuth(),
         redirect_uri="http://localhost:7070/auth/fyers/callback"))
     d = TestClient(app).get("/api/settings/fyers").json()
     runner.assert_eq("SE-api-store-error", d.get("store_error"),
@@ -376,7 +377,7 @@ def test_store_error_surfaced_by_api(runner: R) -> None:
                 os.path.join(_dir, "master.key"))
     app = Starlette(routes=build_fyers_auth_routes(
         CredentialStore(EventStore(_db), data_dir=Path(_dir)),
-        runtime_token={"access_token": ""},
+        runtime_auth=FyersRuntimeAuth(),
         redirect_uri="http://localhost:7070/auth/fyers/callback"))
     d = TestClient(app).get("/api/settings/fyers").json()
     runner.assert_eq("SE-api-recovered", d.get("store_error"), None)

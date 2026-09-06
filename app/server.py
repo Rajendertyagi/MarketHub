@@ -271,14 +271,12 @@ _market_service = MarketService(on_quote_update=_on_market_quote_update)
 
 # ── Source Manager (needs _market_service for UpstoxFeed injection) ─────────
 # Fyers feed requires a runtime access_token_getter (it cannot be expressed
-# in static JSON config). Share ONE mutable dict between the getter and the
-# Fyers OAuth callback so a successful login immediately unblocks the feed.
-_fyers_runtime_token: dict[str, str] = {"access_token": ""}
+# in static JSON config). The runtime access token is owned by ONE object so
+# both the startup/session-restore path and the login/clear path mutate the
+# same controlled owner (never a shared raw dict). The feed only reads it.
+from app.fyers_runtime_auth import FyersRuntimeAuth as _FyersRuntimeAuth
 
-
-def _fyers_token_getter() -> str:
-    """Return the current Fyers access token (runtime-memory-only)."""
-    return _fyers_runtime_token.get("access_token", "")
+_fyers_runtime_auth = _FyersRuntimeAuth()
 
 
 def _inject_fyers_source_config(sources_cfg: dict[str, Any]) -> None:
@@ -303,7 +301,7 @@ def _inject_fyers_source_config(sources_cfg: dict[str, Any]) -> None:
             continue
         if _cfg.get("type") != "fyers_feed" and _name != "fyers":
             continue
-        _cfg["access_token_getter"] = _fyers_token_getter
+        _cfg["access_token_getter"] = _fyers_runtime_auth.get_access_token
         _cfg["credential_store"] = _credential_store
         _cfg["redirect_uri"] = FYERS_REDIRECT_URI
 
@@ -413,7 +411,8 @@ async def _try_restore_fyers_token() -> None:
             except Exception:
                 _still_valid = False
         if _still_valid:
-            _fyers_runtime_token["access_token"] = _stored_access["access_token"]
+            _fyers_runtime_auth.set_access_token(
+                _stored_access["access_token"])
             _broker_restore["fyers_restored"] = True
             _broker_restore["fyers_last_status"] = "restored_access_token"
             _save_fyers_auth_status("restored_access_token")
@@ -443,7 +442,7 @@ async def _try_restore_fyers_token() -> None:
                                  redirect_uri=FYERS_REDIRECT_URI
                                  ).refresh_access_token(refresh_token,
                                                         pin=pin)
-        _fyers_runtime_token["access_token"] = bundle["access_token"]
+        _fyers_runtime_auth.set_access_token(bundle["access_token"])
         # Persist the freshly obtained access token so the NEXT restart can
         # reuse it directly (path 1) without spending the refresh token.
         try:
@@ -1164,7 +1163,7 @@ async def _lifespan(app: Starlette) -> None:
     # (restored access token), so an authenticated Fyers broker runs without a
     # manual enable click and without editing config.json. Registration is
     # idempotent and writes a secret-free durable source config.
-    if _fyers_runtime_token.get("access_token"):
+    if _fyers_runtime_auth.has_access_token():
         try:
             await _start_fyers_source()
         except Exception:
@@ -1237,7 +1236,7 @@ app = Starlette(
     + _build_admin_routes(_store, PROJECT_ROOT / DATA_DIR)
     + _build_fyers_auth_routes(
         _credential_store,
-        runtime_token=_fyers_runtime_token,
+        runtime_auth=_fyers_runtime_auth,
         restart_fn=_restart_fyers_source,
         redirect_uri=FYERS_REDIRECT_URI,
         restore_state=_broker_restore,

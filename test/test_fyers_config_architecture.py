@@ -12,6 +12,8 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
 
 from helpers.runner import R
 
+from app.fyers_runtime_auth import FyersRuntimeAuth
+
 
 # ---------------------------------------------------------------------------
 # 1. config.example.json contains NO secret fields
@@ -139,7 +141,7 @@ def test_oauth_and_feed_share_store(runner: R) -> None:
     _store.save_fyers_credentials("APP-SHARED", "SEC-SHARED")
 
     _app = Starlette(routes=build_fyers_auth_routes(
-        _store, runtime_token={"access_token": ""},
+        _store, runtime_auth=FyersRuntimeAuth(),
         redirect_uri="http://localhost:7070/auth/fyers/callback"))
     _c = TestClient(_app)
     _r = _c.get("/api/settings/fyers")
@@ -180,7 +182,7 @@ def test_login_route_uses_configured_redirect(runner: R) -> None:
             return "https://api.fyers.in/login?redirect_uri=" + self._redirect_uri
         _fauth.FyersAuth.login_url = _fake_login_url
         _app = Starlette(routes=build_fyers_auth_routes(
-            _store, runtime_token={"access_token": ""},
+            _store, runtime_auth=FyersRuntimeAuth(),
             redirect_uri=_CUSTOM))
         _c = TestClient(_app, follow_redirects=False)
         _r = _c.get("/api/auth/fyers/login")
@@ -206,7 +208,7 @@ def test_refresh_restore_and_failure(runner: R) -> None:
     _store.save_fyers_refresh_token("REF-R")
 
     _srv._credential_store = _store
-    _srv._fyers_runtime_token["access_token"] = ""
+    _srv._fyers_runtime_auth.clear_access_token()
 
     async def _ok_refresh(self, rt, pin=None):
         return {"access_token": "TOK-RESTORED", "refresh_token": rt}
@@ -218,13 +220,13 @@ def test_refresh_restore_and_failure(runner: R) -> None:
         _fauth.FyersAuth.refresh_access_token = _ok_refresh
         asyncio.run(_srv._try_restore_fyers_token())
         runner.assert_eq("RR-token-set",
-                         _srv._fyers_runtime_token["access_token"],
+                         _srv._fyers_runtime_auth.get_access_token(),
                          "TOK-RESTORED")
-        _srv._fyers_runtime_token["access_token"] = ""
+        _srv._fyers_runtime_auth.clear_access_token()
         _fauth.FyersAuth.refresh_access_token = _bad_refresh
         asyncio.run(_srv._try_restore_fyers_token())
         runner.assert_eq("RR-failure-no-token",
-                         _srv._fyers_runtime_token["access_token"], "")
+                         _srv._fyers_runtime_auth.get_access_token(), "")
     finally:
         _fauth.FyersAuth.refresh_access_token = _orig
 
