@@ -244,3 +244,239 @@ During work: do not cross into protected zones (§5).
 If crossing is required: STOP and report instead of editing (§5 escalation).
 After work: inspect `git diff` and verify only the affected boundary + protected
 baseline. Login must not regress.
+
+---
+
+## 12. Change Zones (practical, file-level)
+
+A zone is a set of files a task is allowed to touch. Ownership is explicit; a
+file being *shared* does **not** grant every task permission to modify it (§14).
+
+| Zone | Owned files | Allowed deps | Protected deps (read-only / never modify) | Red-zone files | Verify if touched |
+|---|---|---|---|---|---|
+| **PROTECTED AUTH** | `app/secrets_store.py`, `brokers/upstox/auth.py`, `brokers/fyers/auth.py`, `api/routes.py::build_auth_routes`, `api/product_routes.py::build_fyers_auth_routes` | encrypted store, broker adapters | — | `app/secrets_store.py`, `brokers/*/auth.py`, auth route funcs | login + restart restore + forget-session |
+| **PROTECTED STARTUP/RUNTIME** | `app/server.py`, `sources/registry.py`, `core/runtime.py` | services it composes | AUTH internals (call, don't rewrite) | `app/server.py`, `sources/registry.py` | full startup + Upstox & Fyers feed start + restore |
+| **BROKER ADAPTERS** | `brokers/upstox/*`, `brokers/fyers/*` | canonical models, `market/normalize` | AUTH store (via injected store) | `brokers/upstox/feed.py`, `brokers/fyers/feed.py` | representative feed connect/stream |
+| **CANONICAL MARKET DATA** | `market/service.py`, `market/models.py`, `market/serialization.py`, `market/normalize/*`, `app/market_data.py`, `app/market_identity.py` | `core/sse_broker.py` | WebUI/API (never import) | `market/service.py`, `market/models.py` | representative canonical quote + SSE reconcile |
+| **OPTIONS** | `market/analytics/option_chain.py`, `market/analytics/strategies.py`, `mcp_server/tools/options_analytics_tools.py` | canonical market, instruments | auth/secrets/adapters | (none red — feature-local) | Option Chain only |
+| **NEWS** | `news/*`, `api/news_routes.py`, `web/ui/js/news.js`, `web/ui/js/sentiment.js` | canonical models, persistence | broker auth/secrets/config | (none red — feature-local) | News reader + sentiment |
+| **ALERTS** | `app/alerts.py`, `app/condition_alerts.py`, `core/alerts.py`, `core/persistence/modules/{alerts,condition_alerts,delivery,consumers}.py` | market data, persistence | auth/secrets | `app/condition_alerts.py` | alert trigger + ACK |
+| **TRANSPORT/API** | `api/routes.py`, `api/product_routes.py`, `api/{chat,ai_alert,log,news}_routes.py`, `core/sse_broker.py` | canonical services (injected) | broker adapter internals (except designated auth surface) | `api/routes.py`, `api/product_routes.py` | affected endpoints only |
+| **WEBUI SHELL** | `web/ui/js/{app,shell,router}.js`, `web/ui/index.html`, `web/ui/css/{shell,style,base,components,tokens,app}.css` | feature modules (composition), REST/SSE | broker adapters, secrets | `web/ui/js/app.js`, `web/ui/js/router.js`, `web/ui/js/shell.js` | all routes render + active-view-only |
+| **WEBUI FEATURES** | `web/ui/js/{option-chain,news,sentiment,alerts,ai-alerts,charts,watchlists,instruments,market,market-sources,sources,quotes,logs,mcp-tools,auth}.js`, `web/ui/js/features/settings/*`, `web/ui/css/features/*` | utils, api, sibling read-helpers | auth internals (beyond stable `getAuthStatus`/`pollAuthStatus` read) | (feature-local) | feature only |
+| **CONFIG/PERSISTENCE** | `app/config.py`, `config.json`, `core/persistence/*` | stdlib (config), store API (persistence) | secrets must never enter `config.json` | `core/persistence/store.py`, `core/persistence/modules/schema.py` | config loads; secrets unchanged |
+
+---
+
+## 13. Protected-Core Rule (mandatory declaration)
+
+Every future task MUST begin by declaring:
+
+```
+TASK ZONE:            <one zone from §12>
+ALLOWED CHANGE SURFACE: <specific files>
+PROTECTED/OUT-OF-SCOPE ZONES: <zones this task must NOT touch>
+```
+
+If completing the task *requires* modifying a protected/out-of-scope zone,
+**STOP**. Do not edit. Report:
+
+1. required file
+2. owning subsystem
+3. why the current task needs it
+4. the exact dependency forcing the need
+5. expected regression risk
+
+Then wait for a separate approved task. This applies even when the protected
+file *looks* like the quickest fix.
+
+Example:
+
+```
+TASK: Option Chain CSS layout
+TASK ZONE: WEBUI FEATURES
+ALLOWED: web/ui/js/option-chain.js, web/ui/css/features/option-chain.css
+PROTECTED: auth, secrets, startup, broker lifecycle, MarketService, config,
+           unrelated WebUI features, router/shell unless nav behavior changes
+```
+
+If the agent thinks `app/server.py` must change → STOP and escalate, not edit.
+
+---
+
+## 14. Shared File ≠ Permission
+
+A file being shared does **not** mean every task may modify it.
+
+- `api/routes.py` contains auth + settings + market + source-control. An Option
+  Chain task does **not** gain permission to modify its auth/settings portions.
+- `app/server.py` composes everything. A News task does **not** gain permission
+  to change startup/restore logic.
+- `config.json` is shared. A feature task must not casually write credentials or
+  feed config there.
+- `web/ui/js/app.js` imports all features. A feature task edits its *own* module,
+  not the bootstrap, unless navigation behavior changes (then WEBUI SHELL).
+
+---
+
+## 15. Minimum Verification Matrix (targeted, not whole-suite)
+
+| Red zone changed | Minimum verification |
+|---|---|
+| AUTH | credential/session save + login + restart restore + forget-session |
+| STARTUP/RUNTIME | backend startup + auth restoration + source/feed state |
+| BROKER RUNTIME | source start/stop/restart + reconnect + representative feed |
+| CANONICAL MARKET | canonical identity + representative quote + SSE reconcile |
+| SSE | framing + reconnect/reset + representative event |
+| MCP | canonical-service parity (tool contracts) |
+| WEBUI SHELL | route/view lifecycle (all views reachable, inactive hidden) |
+| OPTION CHAIN FEATURE | Option Chain only — login needs NO full retest because auth/startup were not touched |
+| NEWS FEATURE | News reader + sentiment only |
+
+Isolation first; targeted verification second.
+
+---
+
+## 16. Future Task Change-Surface Examples
+
+For each: ALLOWED / PROTECTED / RED-ZONE ESCALATION / MINIMUM VERIFICATION.
+
+**A. Option Chain CSS/layout**
+- ALLOWED: `web/ui/js/option-chain.js`, `web/ui/css/features/option-chain.css`
+- PROTECTED: auth, secrets, startup, broker lifecycle, MarketService, config,
+  unrelated features, global CSS
+- ESCALATION: none unless global CSS or router must change
+- VERIFY: Option Chain renders/updates
+
+**B. Option Chain backend calculation**
+- ALLOWED: `market/analytics/option_chain.py`, `market/analytics/strategies.py`
+- PROTECTED: auth/secrets/adapters (guard-enforced)
+- ESCALATION: STOP if it needs broker auth or config secrets
+- VERIFY: representative chain snapshot + greeks
+
+**C. Breadth backend**
+- ALLOWED: new `market/analytics/breadth.py`, `market/models.py` (add model)
+- PROTECTED: auth, `brokers/*`, WebUI, `config.json` secrets
+- ESCALATION: STOP if it needs login/session
+- VERIFY: canonical identity + representative breadth value
+
+**D. Breadth WebUI**
+- ALLOWED: new `web/ui/js/breadth.js`, `web/ui/css/features/breadth.css`
+- PROTECTED: `brokers/*`, `app.secrets_store`, login, `app/server.py`
+- ESCALATION: STOP if it needs broker tokens
+- VERIFY: breadth view renders
+
+**E. News reader change**
+- ALLOWED: `news/*`, `api/news_routes.py`, `web/ui/js/news.js`
+- PROTECTED: broker auth, option-chain internals, `config.json` secrets
+- ESCALATION: STOP if it needs broker credentials
+- VERIFY: news ingestion + UI list
+
+**F. Upstox authentication change**
+- ALLOWED: `brokers/upstox/auth.py`, `app/secrets_store.py`, auth routes
+- PROTECTED: WebUI features, `MarketService`, news, options
+- ESCALATION: n/a (this IS the protected zone; needs its own approved task)
+- VERIFY: OAuth login + token/PIN + restart restore
+
+**G. Fyers feed change**
+- ALLOWED: `brokers/fyers/feed.py`, `brokers/fyers/tbt/*`
+- PROTECTED: auth store internals (use injected store), WebUI
+- ESCALATION: STOP if it needs to change credential encryption
+- VERIFY: feed connect/stream + representative quote
+
+**H. SSE transport change**
+- ALLOWED: `core/sse_broker.py`, `_market_stream`/`_event_stream`
+- PROTECTED: `brokers/*` internals, auth, persistence schema
+- ESCALATION: STOP if it needs to change event schema
+- VERIFY: framing + reconnect/reset + representative event
+
+**I. WebUI router/shell change**
+- ALLOWED: `web/ui/js/{app,shell,router}.js`, shell/global CSS
+- PROTECTED: feature module internals, broker adapters, login
+- ESCALATION: STOP if feature modules must be rewritten
+- VERIFY: all routes reachable, inactive views hidden
+
+**J. Canonical identity change**
+- ALLOWED: `market/models.py`, `app/instrument_identity.py`,
+  `app/market_identity.py`
+- PROTECTED: auth/secrets, `brokers/*` internals
+- ESCALATION: STOP if it needs provider credentials
+- VERIFY: representative quote resolves across feed/REST/intel/option-chain
+
+---
+
+## 17. Transitive Dependency Risks (discovered)
+
+- **Options → helper → routes → auth**: currently clean — `market/analytics`
+  imports only `market.models`; no helper reaches `api.routes` or auth. Guarded.
+- **News → shared module → startup/runtime**: `news/` imports only
+  `market.models` + store (injected). No path to `app.server`/`app.config`.
+  Guarded.
+- **Fyers runtime token is mutated in TWO places** (duplicate ownership, see §18):
+  `app/server.py` (restore) and `api/product_routes.py` (Fyers login route).
+  This is a transitive path by which a Fyers *auth-route* change can alter the
+  runtime token the *feed* reads. Not auto-guardable at import level; recorded
+  as debt + explicit change-review rule.
+- **`api/routes.py` settings routes hold the shared `_oauth_cfg_ref`** also
+  mutated by `app/server.py`. Intended runtime credential enablement, but it is
+  cross-module mutable shared state.
+
+---
+
+## 18. Single-Owner Validation (Phase 2)
+
+Phase 1 claimed single ownership; Phase 2 validated and found one duplicate:
+
+| Resource | Owner (primary) | Duplicate / secondary mutation | Status |
+|---|---|---|---|
+| Broker auth/session | `app/secrets_store.py` + `brokers/*/auth.py` | — | OK |
+| Upstox runtime token | `app/server.py` (`_feed_ref`) | — | OK |
+| **Fyers runtime token** | `app/server.py` (`_fyers_runtime_token`) | **`api/product_routes.py` writes it on login (L1253/L1276)** | DUPLICATE — debt |
+| SourceManager | `sources/registry.py` | — | OK |
+| Feed tasks | `sources/registry.py` | — | OK |
+| MarketService / quote store | `market/service.py` | — | OK |
+| Market SSE broker | `app/server.py` (`_market_event_broker`) | — | OK |
+| News service | `news/service.py` | — | OK |
+| Option Chain service | `market/analytics/option_chain.py` | — | OK |
+| OAuth config | `_oauth_cfg_ref` in `app/server.py` | `api/routes.py` settings routes mutate it | Shared-by-design |
+| CredentialStore | `app/server.py` (`_credential_store`) | `api/routes.py` builds a fallback via `build_default_store()` when none injected | Test/isolation path |
+
+**No fix applied in this phase** (would touch protected startup/auth surface).
+Recorded for the controlled Fyers-token-isolation refactor.
+
+---
+
+## 19. Automated vs Explicit Rules
+
+**Enforced automatically** (`test/test_architecture_boundaries.py`):
+- Options analytics → no auth/secrets/broker/config/api import
+- News → no broker auth/secrets/config/server/api import
+- `app/config.py` → no secrets/broker import
+- `market/` → no web/api/app/brokers import
+- `core/` → no `app` import
+- WebUI → no `brokers` import
+
+**Cannot be reliably auto-enforced — explicit change-review rules instead:**
+- A feature task must not modify a shared file's out-of-scope portion
+  (e.g. Option Chain touching `api/routes.py` auth).
+- WebUI feature modules must not depend on `auth.js` internals beyond the
+  stable `getAuthStatus`/`pollAuthStatus` read (`market-sources.js` currently
+  does; keep it narrow).
+- `api/product_routes.py` must not widen its `brokers.fyers.auth` import or
+  mutate `_fyers_runtime_token` beyond login (duplicate-ownership debt).
+- `config.json` must never contain credentials/secrets.
+- No module outside `SourceManager` may start/stop a feed; no module outside
+  `MarketService` may own the quote store.
+
+---
+
+## 20. Pre-existing Debt Requiring Controlled Refactor (deferred)
+
+1. `app/server.py` import-time restore/source/config-migration logic (highest).
+2. `api/routes.py` auth/settings coupling + `config.json` writes.
+3. `api/product_routes.py` size + `brokers.fyers.auth` import + Fyers-token
+   duplicate mutation.
+4. `sources/registry.py` concrete broker-adapter imports.
+
+Each needs its own approved, login-safe task behind the §13 declaration and
+the §15 verification matrix.
