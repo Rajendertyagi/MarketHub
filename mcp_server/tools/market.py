@@ -21,20 +21,43 @@ from mcp_server.contract import (
     TOOL_MARKET_STATUS,
     TOOL_WATCHLISTS,
 )
+from market.normalize.upstox import exchange_from_segment
 from mcp_server.registry import get_tool_description
 
 
 def _split_identity(ident: str) -> tuple[str, str] | None:
     """Split a canonical feed/storage identity into (exchange, token).
 
-    The store key is ``(exchange, instrument_token)`` where the token already
-    embeds its exchange prefix (``NSE_INDEX|Nifty 50`` or ``NSE:NIFTY50-INDEX``);
-    the exchange is the leading segment and the token is the whole string.
+    The MarketService store key is ``(exchange, instrument_token)``. The token
+    is the whole identity string; the exchange is derived from its leading
+    segment:
+
+      * ``NSE:NIFTY50-INDEX``      (Fyers) -> ("NSE", "NSE:NIFTY50-INDEX")
+      * ``NSE:NSE_INDEX|Nifty 50`` (Upstox, prefixed) ->
+        ("NSE", "NSE_INDEX|Nifty 50")
+      * ``NSE_INDEX|Nifty 50``     (Upstox, bare) ->
+        ("NSE", "NSE_INDEX|Nifty 50")  (segment-derived via exchange_from_segment)
     """
+    if not ident:
+        return None
+    ident = ident.strip()
+
     if "|" in ident:
-        return ident.split("|", 1)[0].strip(), ident
+        # Upstox-style token: SEGMENT|name, optionally EXCH:SEGMENT|name.
+        if ":" in ident:
+            exchange = ident.split(":", 1)[0].strip()
+            token = ident.split(":", 1)[1].strip()
+        else:
+            segment = ident.split("|", 1)[0].strip()
+            exchange = exchange_from_segment(segment)
+            token = ident
+        return (exchange, token) if exchange else None
+
     if ":" in ident:
-        return ident.split(":", 1)[0].strip(), ident
+        # Fyers-style token: EXCH:SYMBOL — keep the whole string as the token.
+        exchange = ident.split(":", 1)[0].strip()
+        return exchange, ident
+
     return None
 
 
@@ -46,15 +69,19 @@ def _parse_instrument_ref(
     Uses the SAME identity resolver as the REST market routes so MCP and the
     WebUI agree on instrument identity. Resolution order:
 
-      1. Direct resolver lookup (feed keys, registered aliases, catalog tokens)
-         — this is what makes a Fyers catalog token (``101000000026000``)
-         resolve to the live feed key ``NSE:NIFTY50-INDEX`` that MarketService
-         actually stores under.
-      2. Catalog search, then resolver translation of the catalog token.
-      3. Pipe-delimited ``exchange|token`` passthrough.
+      1. Direct identity parse of a feed/storage key (Upstox ``SEGMENT|name``,
+         Fyers ``EXCH:SYMBOL``). This preserves the exact provider storage key
+         without cross-provider canonicalization.
+      2. Identity resolver (feed keys, registered aliases, catalog tokens).
+      3. Catalog search, then resolver translation of the catalog token.
 
     Returns ``(exchange, instrument_token)`` or ``None`` if unresolvable.
     """
+    # 1. Direct parse of a feed/storage key.
+    direct = _split_identity(instrument_ref)
+    if direct is not None:
+        return direct
+
     resolver = getattr(services, "identity_resolver", None)
 
     if resolver is not None:
@@ -86,17 +113,6 @@ def _parse_instrument_ref(
                     return exchange, token
         except Exception:
             pass
-
-    # Fallback: if pipe-delimited, try to use it directly as exchange|token
-    if "|" in instrument_ref:
-        parts = instrument_ref.split("|", 1)
-        return parts[0].strip(), parts[1].strip()
-
-    # Fallback: colon-delimited feed key (e.g. Fyers ``NSE:NIFTY50-INDEX``),
-    # where the token itself embeds the exchange prefix — keep it whole.
-    if ":" in instrument_ref:
-        parts = instrument_ref.split(":", 1)
-        return parts[0].strip(), instrument_ref
 
     return None
 

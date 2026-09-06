@@ -830,6 +830,7 @@ def build_market_data_routes(provider_md: Any) -> list[Route]:
         except ProviderMarketDataError as exc:
             return _json({"error": str(exc)}, 400)
         except Exception:
+            logger.exception("market history failed for key=%r", instrument_key)
             return _json({"error": "history fetch failed"}, 502)
         from market.serialization import _to_json_value
         return _json({"candles": [_to_json_value(c) for c in candles]})
@@ -915,6 +916,7 @@ def build_market_data_routes(provider_md: Any) -> list[Route]:
         except ProviderMarketDataError as exc:
             return _json({"error": str(exc)}, 400)
         except Exception:
+            logger.exception("option greeks failed for keys=%r", keys)
             return _json({"error": "option greeks fetch failed"}, 502)
         from market.serialization import _to_json_value
         return _json({"status": "ok", "data": _to_json_value(snap)})

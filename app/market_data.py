@@ -41,12 +41,32 @@ class ProviderMarketDataError(RuntimeError):
     """Safe provider market-data failure (no provider bodies leaked)."""
 
 
+def _infer_provider(instrument_key: str) -> str:
+    """Infer the broker provider from an instrument key's format.
+
+    Upstox keys embed a segment prefix with a pipe (``NSE_EQ|RELIANCE``,
+    ``NSE_INDEX|Nifty 50``); Fyers keys are ``EXCH:SYMBOL`` or a numeric
+    instrument token. Anything else defaults to upstox for backward
+    compatibility.
+    """
+    if not instrument_key:
+        return "upstox"
+    if "|" in instrument_key:
+        return "upstox"
+    if ":" in instrument_key:
+        return "fyers"
+    if instrument_key.isdigit():
+        return "fyers"
+    return "upstox"
+
+
 class ProviderMarketData:
     """History + option-chain access over canonical provider adapters.
 
-    Provider resolution is deterministic: explicit ``provider`` argument
-    wins; default is "upstox". Unknown providers are rejected loudly —
-    never a silent random fallback.
+    Provider resolution is deterministic: an explicit ``provider`` argument
+    wins; when omitted it is inferred from the instrument key's format (see
+    :func:`_infer_provider`). Unknown providers are rejected loudly — never a
+    silent random fallback.
     """
 
     _PROVIDERS = ("upstox", "fyers")
@@ -77,8 +97,10 @@ class ProviderMarketData:
 
     async def history(
         self, *, instrument_key: str, unit: str, interval: int,
-        from_date: str, to_date: str, provider: str = "upstox",
+        from_date: str, to_date: str, provider: str | None = None,
     ) -> list[Any]:
+        if provider is None:
+            provider = _infer_provider(instrument_key)
         provider, _auth_src = self._resolve(provider)
         if provider == "fyers":
             from market.normalize.fyers import fyers_resolution
@@ -419,13 +441,21 @@ class ProviderMarketData:
         return shareholdings_from_rest(payload, isin=isin)
 
     async def option_greeks(
-        self, *, instrument_keys: list[str] | str, provider: str = "upstox",
+        self, *, instrument_keys: list[str] | str, provider: str | None = None,
     ) -> Any:
         """GET /v3/market-quote/option-greek - Standalone option Greeks.
 
         Accepts a single instrument key or a list; comma-joined for the API.
         Note: the Upstox endpoint does NOT return ``rho`` — it is always None.
         """
+        if provider is None:
+            if isinstance(instrument_keys, str):
+                first = instrument_keys.strip()
+            else:
+                first = next(
+                    (str(k).strip() for k in instrument_keys if str(k).strip()),
+                    "")
+            provider = _infer_provider(first)
         if provider != "upstox":
             raise ProviderMarketDataError("option greeks not available from this provider")
         if isinstance(instrument_keys, str):
