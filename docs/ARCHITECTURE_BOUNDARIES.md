@@ -91,7 +91,8 @@ SSE            InstrumentCatalog, OptionsService, AlertEngine, ...)
 MCP     ─────►  canonical application services
 
 OPTIONS                ──►  canonical market data + instruments
-MARKET DATA            ──►  broker interfaces / adapters (via normalization)
+BROKER ADAPTERS        ──►  canonical market models (via normalization; adapters
+                           depend on market.models, never the reverse)
 BROKER RUNTIME         ──►  broker adapters + AUTH interface
 AUTH                   ──►  encrypted persistence (secrets_store)
 NEWS                   ──►  canonical persistence + market models (read-only)
