@@ -469,12 +469,17 @@ class UpstoxRest:
         url: str,
         access_token: str,
         json_body: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
         timeout: float = 15.0,
     ) -> dict[str, Any]:
         """Perform one Bearer-authenticated JSON API call.
 
         ``access_token`` is method-local; nothing is retained. Non-200
         responses raise the standard classified errors (safe wording).
+
+        ``params`` are appended as a URL query string (GET-style market
+        analytics endpoints such as OI, PCR, FII/DII, news, futures
+        smartlist and option-greeks all use query parameters, not a body).
         """
         if not isinstance(access_token, str) or not access_token.strip():
             raise UpstoxAuthError("access_token must be a non-empty string")
@@ -482,10 +487,14 @@ class UpstoxRest:
             "Accept": "application/json",
             "Authorization": f"Bearer {access_token.strip()}",
         }
+        if params:
+            query = urllib.parse.urlencode(
+                {k: v for k, v in params.items() if v is not None})
+            sep = "&" if "?" in url else "?"
+            url = f"{url}{sep}{query}"
         body: bytes | None = None
         if json_body is not None:
-            import json as _json
-            body = _json.dumps(json_body).encode("utf-8")
+            body = json.dumps(json_body).encode("utf-8")
             headers["Content-Type"] = "application/json"
         operation = f"upstox api call ({method})"
         try:

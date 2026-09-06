@@ -74,9 +74,13 @@ _EXCH_SEG = {
 }
 
 # Known index symbols -> HSM index token (official map.json, NSE section).
+# "NSE:BANKNIFTY-INDEX" is NOT an official symbol (catalog/Fyers truth is
+# "NSE:NIFTYBANK-INDEX") but older operator configs carry it, so it is kept
+# here as an explicit alias — never silently dropped, never fuzzy-matched.
 _INDEX_DICT = {
     "NSE:NIFTY50-INDEX": "Nifty 50",
     "NSE:NIFTYBANK-INDEX": "Nifty Bank",
+    "NSE:BANKNIFTY-INDEX": "Nifty Bank",
     "NSE:NIFTYNEXT50-INDEX": "Nifty Next 50",
     "NSE:FINNIFTY-INDEX": "Nifty Fin Service",
     "NSE:MIDCPNIFTY-INDEX": "NIFTY MID SELECT",
@@ -269,6 +273,7 @@ class FyersFeed:
         self._market_service = market_service
         self._ws_connect = config.get("ws_connect")
         self._utc_now_iso = config.get("utc_now_iso")
+        self._config = config                  # retained for optional TBT channel
 
         self._desired: tuple[str, ...] = tuple(
             k.strip() for k in keys_raw)
@@ -896,6 +901,11 @@ class FyersFeed:
         """Scale stored raw fields and deliver one canonical patch."""
         snap = self._sym_data.get(topic_id)
         if snap is None:
+            return
+        # Fyers index snapshots (topic prefix "if") carry an unreliable
+        # multiplier/precision (e.g. NIFTY reported as ~87,000). Upstox is the
+        # authoritative index source, so Fyers index ticks are dropped here.
+        if snap["topic"].startswith("if"):
             return
         scale = (10 ** snap["precision"]) * snap["multiplier"]
         msg: dict[str, Any] = {}

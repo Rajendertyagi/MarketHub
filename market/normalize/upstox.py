@@ -535,7 +535,7 @@ def candles_from_rest(payload: dict[str, Any]):
 
 
 # ---------------------------------------------------------------------------
-# Option chain (PUT /v2/option/chain)
+# Option chain (GET /v2/option/chain?instrument_key=...&expiry_date=...)
 # ---------------------------------------------------------------------------
 
 

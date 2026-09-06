@@ -275,28 +275,29 @@ class ProviderMarketData:
     # -- FII Activity --------------------------------------------------------
 
     async def fii(
-        self, *, data_types: list[str], interval: str = "1D",
+        self, *, data_types: list[str] | None = None, interval: str = "1D",
         from_date: str | None = None, provider: str = "upstox",
     ) -> Any:
-        """GET /market/fii - FII activity data."""
+        """GET /market/fii - FII activity data.
+
+        The Upstox endpoint returns only the single ``data_type`` requested,
+        so each requested type is fetched with its own call and normalized
+        independently (keyed by data_type in the result).
+        """
         if provider != "upstox":
             raise ProviderMarketDataError("fii data not available from this provider")
+        if not data_types:
+            data_types = []
         rest, creds = self._auth()
         from market.normalize.upstox_analytics_extended import fii_single_from_rest
-        params: dict[str, Any] = {"interval": interval}
+        result: dict[str, Any] = {}
         for dt in data_types[:5]:  # max 5 at once
-            params["data_type"] = dt
-        payload = await rest.authenticated_request(
-            method="GET", url=_FII_URL,
-            access_token=creds.access_token, params=params)
-        if from_date:
-            params["from"] = from_date
-        payload = await rest.authenticated_request(
-            method="GET", url=_FII_URL,
-            access_token=creds.access_token, params=params)
-        # Return dict keyed by data_type
-        result = {}
-        for dt in data_types:
+            params: dict[str, Any] = {"interval": interval, "data_type": dt}
+            if from_date:
+                params["from"] = from_date
+            payload = await rest.authenticated_request(
+                method="GET", url=_FII_URL,
+                access_token=creds.access_token, params=params)
             result[dt] = fii_single_from_rest(payload, dt)
         return result
 
@@ -314,16 +315,14 @@ class ProviderMarketData:
             data_types = ["NSE_EQ|CASH"]
         rest, creds = self._auth()
         from market.normalize.upstox_analytics_extended import dii_single_from_rest
-        params: dict[str, Any] = {"interval": interval}
+        result: dict[str, Any] = {}
         for dt in data_types:
-            params["data_type"] = dt
-        if from_date:
-            params["from"] = from_date
-        payload = await rest.authenticated_request(
-            method="GET", url=_DII_URL,
-            access_token=creds.access_token, params=params)
-        result = {}
-        for dt in data_types:
+            params: dict[str, Any] = {"interval": interval, "data_type": dt}
+            if from_date:
+                params["from"] = from_date
+            payload = await rest.authenticated_request(
+                method="GET", url=_DII_URL,
+                access_token=creds.access_token, params=params)
             result[dt] = dii_single_from_rest(payload, dt)
         return result
 

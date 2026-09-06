@@ -128,22 +128,18 @@ class FyersTbtFeed:
                 outcome = await self._run_session(stop_event)
                 if outcome is None or stop_event.is_set():
                     break
-                if self._state != "auth_required":
-                    logger.info("TBT feed: session ended, stopping")
+                if self._state == "auth_required":
+                    logger.info("TBT feed: auth required, stopping until re-login")
                     break
-                # Auth failure - exit loop
-                break
-
-                # Transient failure - reconnect
-                if not stop_event.is_set():
-                    delay = self._calculate_backoff()
-                    logger.warning(
-                        "TBT feed: reconnecting in %.1fs (attempt %d)",
-                        delay,
-                        self._stats["reconnects"] + 1,
-                    )
-                    self._stats["reconnects"] += 1
-                    await asyncio.sleep(delay)
+                # Transient failure - reconnect with backoff.
+                delay = self._calculate_backoff()
+                logger.warning(
+                    "TBT feed: reconnecting in %.1fs (attempt %d)",
+                    delay,
+                    self._stats["reconnects"] + 1,
+                )
+                self._stats["reconnects"] += 1
+                await asyncio.sleep(delay)
 
         finally:
             await self._cleanup()
