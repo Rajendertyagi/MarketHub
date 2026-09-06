@@ -302,7 +302,32 @@ class MarketIntel:
         """Best-effort spot: live quote when available, else None.
 
         Returns (spot, basis) where basis explains freshness honestly.
+        Known index underlyings resolve through the shared canonical index
+        identities (app.market_indices — the same path the header strip
+        uses), so option-chain spot and header spot can never diverge.
         """
+        # Canonical index path first: ordered provider candidates with an
+        # honest live/stale basis. A stale (last-session) quote is returned
+        # as-is so callers can label it instead of silently substituting a
+        # fallback midpoint.
+        try:
+            from app.market_indices import label_for_underlying, resolve_spot
+            label = label_for_underlying(
+                under_row.get("underlying") or under_row.get("tradingsymbol"))
+            if label is not None:
+                identity_resolve = None
+                if self._identity is not None:
+                    identity_resolve = self._identity.resolve
+                spot = resolve_spot(label, self._catalog,
+                                    self._spot_provider, identity_resolve)
+                quote = spot.get("quote")
+                ltp = getattr(quote, "ltp", None) if quote is not None \
+                    else None
+                if ltp is not None:
+                    return float(ltp), spot.get("basis") or "live"
+        except Exception:
+            logger.debug("canonical index spot lookup failed",
+                         exc_info=True)
         if self._spot_provider is not None:
             try:
                 exch, tok = self._storage_key(

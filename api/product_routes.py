@@ -283,23 +283,21 @@ def build_diagnostics_routes(version: str,
 
 
 # Liquid-index symbols -> Upstox index instrument key. The catalog is
-# Fyers-sourced, so it carries no Upstox keys; this small, well-known map
-# lets the live Upstox provider snapshot drive real option quotes for the
-# indices traders actually use. Unknown symbols fall back to the catalog
-# ladder (no live quotes) rather than fabricating data.
-_UPTOX_INDEX_KEYS = {
-    "NIFTY": ("NSE_INDEX|Nifty 50", "NSE_INDEX", "Nifty 50"),
-    "BANKNIFTY": ("NSE_INDEX|Nifty Bank", "NSE_INDEX", "Nifty Bank"),
-    "FINNIFTY": ("NSE_INDEX|Nifty Fin Service", "NSE_INDEX",
-                 "Nifty Fin Service"),
-    "MIDCPNIFTY": ("NSE_INDEX|Nifty Midcap 50", "NSE_INDEX",
-                   "Nifty Midcap 50"),
-}
-
-
+# Fyers-sourced, so it carries no Upstox keys; this mapping (the shared
+# canonical index registry in app.market_indices) lets the live Upstox
+# provider snapshot drive real option quotes for the indices traders
+# actually use. Unknown symbols fall back to the catalog ladder (no live
+# quotes) rather than fabricating data.
 def _upstox_index_key(underlying: str):
-    key = (underlying or "").strip().upper()
-    return _UPTOX_INDEX_KEYS.get(key)
+    from app.market_indices import entry_for_label, label_for_underlying
+    label = label_for_underlying(underlying)
+    if label is None:
+        return None
+    entry = entry_for_label(label)
+    if entry is None:
+        return None
+    return (entry["upstox_key"], entry["upstox_exchange"],
+            entry["upstox_symbol"])
 
 
 async def _enrich_chain_with_provider_quotes(
