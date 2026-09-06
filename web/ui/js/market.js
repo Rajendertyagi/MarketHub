@@ -77,6 +77,20 @@ export function connectSSE() {
       }
     } catch { /* malformed frame — skip */ }
   });
+
+  // Reconciliation: server sends `reset` on (re)connect so stale pre-restart
+  // values are dropped before the authoritative snapshot/live stream arrives.
+  es.addEventListener("reset", () => {
+    quotes.clear();
+    dashRows.forEach((row) => row.remove());
+    dashRows.clear();
+    mktRows.forEach((row) => row.remove());
+    mktRows.clear();
+    const strip = $("ticker-strip");
+    if (strip) strip.innerHTML = "";
+    const cards = $("market-cards");
+    if (cards) cards.innerHTML = "";
+  });
 }
 
 export function handleQuoteUpdate(data) {

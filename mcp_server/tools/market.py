@@ -24,18 +24,49 @@ from mcp_server.contract import (
 from mcp_server.registry import get_tool_description
 
 
+def _split_identity(ident: str) -> tuple[str, str] | None:
+    """Split a canonical feed/storage identity into (exchange, token).
+
+    The store key is ``(exchange, instrument_token)`` where the token already
+    embeds its exchange prefix (``NSE_INDEX|Nifty 50`` or ``NSE:NIFTY50-INDEX``);
+    the exchange is the leading segment and the token is the whole string.
+    """
+    if "|" in ident:
+        return ident.split("|", 1)[0].strip(), ident
+    if ":" in ident:
+        return ident.split(":", 1)[0].strip(), ident
+    return None
+
+
 def _parse_instrument_ref(
     instrument_ref: str, services: Any,
 ) -> tuple[str, str] | None:
     """Resolve a single instrument reference to (exchange, instrument_token).
 
-    Supported formats:
-      - Canonical symbol: ``"RELIANCE"`` or ``"NIFTY"`` → resolved via catalog
-      - Provider key: ``"NSE_EQ|INE002A01018"`` → resolved via catalog
-      - Legacy exchange|token: ``"NSE|12345"`` → resolved via catalog
+    Uses the SAME identity resolver as the REST market routes so MCP and the
+    WebUI agree on instrument identity. Resolution order:
+
+      1. Direct resolver lookup (feed keys, registered aliases, catalog tokens)
+         — this is what makes a Fyers catalog token (``101000000026000``)
+         resolve to the live feed key ``NSE:NIFTY50-INDEX`` that MarketService
+         actually stores under.
+      2. Catalog search, then resolver translation of the catalog token.
+      3. Pipe-delimited ``exchange|token`` passthrough.
 
     Returns ``(exchange, instrument_token)`` or ``None`` if unresolvable.
     """
+    resolver = getattr(services, "identity_resolver", None)
+
+    if resolver is not None:
+        try:
+            resolved = resolver.resolve(instrument_ref)
+            if resolved:
+                split = _split_identity(resolved)
+                if split is not None:
+                    return split
+        except Exception:
+            pass
+
     catalog = getattr(services, "instrument_catalog", None)
     if catalog is not None:
         try:
@@ -45,6 +76,13 @@ def _parse_instrument_ref(
                 exchange = row.get("exchange", "")
                 token = row.get("instrument_token", "")
                 if exchange and token:
+                    if resolver is not None:
+                        try:
+                            translated = resolver.resolve(token)
+                            if translated:
+                                token = translated
+                        except Exception:
+                            pass
                     return exchange, token
         except Exception:
             pass
@@ -53,6 +91,12 @@ def _parse_instrument_ref(
     if "|" in instrument_ref:
         parts = instrument_ref.split("|", 1)
         return parts[0].strip(), parts[1].strip()
+
+    # Fallback: colon-delimited feed key (e.g. Fyers ``NSE:NIFTY50-INDEX``),
+    # where the token itself embeds the exchange prefix — keep it whole.
+    if ":" in instrument_ref:
+        parts = instrument_ref.split(":", 1)
+        return parts[0].strip(), instrument_ref
 
     return None
 

@@ -61,6 +61,7 @@ def build_market_routes(
     market_service: Any = None,
     source_status_fn: Callable[[], list[dict]] | None = None,
     identity_resolver: Any = None,
+    index_catalog: Any = None,
 ) -> list[Route]:
     """Build market API routes around injected dependencies.
 
@@ -68,6 +69,9 @@ def build_market_routes(
     identifier (config key, catalog token, symbol) to the MarketService
     storage key before lookup, so config keys and catalog ids address
     the same quote state.
+    index_catalog: optional instrument catalog backing the canonical
+    header-index list (GET /api/market/indices). Only catalog-confirmed
+    major Indian indices are ever listed — never fabricated.
     """
 
     def _resolve_token(exchange: str, token: str) -> tuple[str, str]:
@@ -80,10 +84,31 @@ def build_market_routes(
     # -- SSE stream ----------------------------------------------------------
 
     async def _market_stream(request: Request) -> Response:  # noqa: ARG001
+        from sse_starlette.sse import ServerSentEvent
+
         async def _generate():
+            # Reconciliation on (re)connect: clear any stale pre-restart
+            # browser state, then push the authoritative current snapshot so a
+            # restarted/refreshed client never displays old values forever.
+            # Live updates continue to flow after the snapshot. The reset
+            # payload is a non-JSON control token so SSE parsers that only
+            # surface JSON envelopes skip it while the WebUI `reset` listener
+            # still fires.
+            yield ServerSentEvent(data="reset", event="reset").encode()
+            if market_service is not None:
+                from market.serialization import quote_to_dict
+
+                for q in await market_service.quotes():
+                    envelope = json.dumps(
+                        {"type": "quote", "data": quote_to_dict(q)},
+                        ensure_ascii=False, allow_nan=False)
+                    yield ServerSentEvent(data=envelope, event="quote").encode()
+
             async with market_broker.subscribe() as lines:
                 async for line in lines:
-                    yield line
+                    # Broker lines are raw JSON envelopes; frame them as
+                    # `quote` SSE events so the WebUI listener fires.
+                    yield ServerSentEvent(data=line, event="quote").encode()
 
         return EventSourceResponse(
             _generate(), media_type="text/event-stream", ping=15,
@@ -129,6 +154,21 @@ def build_market_routes(
         from market.serialization import depth_to_dict
         return _json(depth_to_dict(d))
 
+    # -- canonical header indices ---------------------------------------------
+
+    async def _market_indices(request: Request) -> Response:  # noqa: ARG001
+        from app.market_indices import resolve_indices
+        if market_service is None:
+            return _json({"error": "market service unavailable"}, 503)
+        if index_catalog is None:
+            return _json({"error": "instrument catalog unavailable"}, 503)
+        resolve = identity_resolver.resolve \
+            if identity_resolver is not None else None
+        indices = await asyncio.to_thread(
+            resolve_indices, index_catalog,
+            market_service.get_quote_now, resolve)
+        return _json({"indices": indices})
+
     # -- source / feed status ---------------------------------------------------
 
     async def _source_status(request: Request) -> Response:  # noqa: ARG001
@@ -140,6 +180,8 @@ def build_market_routes(
     return [
         Route("/api/market/stream", endpoint=_market_stream, methods=["GET"]),
         Route("/api/market/quotes", endpoint=_market_quotes, methods=["GET"]),
+        Route("/api/market/indices", endpoint=_market_indices,
+              methods=["GET"]),
         Route("/api/market/depths", endpoint=_market_depths, methods=["GET"]),
         Route("/api/market/quote/{exchange}/{instrument_token}",
               endpoint=_market_quote, methods=["GET"]),
@@ -248,9 +290,13 @@ def build_settings_routes(
     # Default instruments so the Upstox feed factory (which requires a
     # non-empty instruments list) can register the source on enable. The
     # operator can refine instruments later; this keeps WebUI enable simple.
+    # Keys MUST be Upstox-style instrument keys (Upstox rejects Fyers-style
+    # symbols: every frame then fails normalization and no quotes flow).
     _DEFAULT_UPSTOX_INSTRUMENTS = [
-        {"key": "NSE:NIFTY50-INDEX", "exchange": "NSE", "tradingsymbol": "NIFTY 50"},
-        {"key": "NSE:BANKNIFTY-INDEX", "exchange": "NSE", "tradingsymbol": "BANKNIFTY"},
+        {"key": "NSE_INDEX|Nifty 50", "exchange": "NSE",
+         "tradingsymbol": "Nifty 50"},
+        {"key": "NSE_INDEX|Nifty Bank", "exchange": "NSE",
+         "tradingsymbol": "Nifty Bank"},
     ]
 
     def _read_raw_config() -> dict[str, Any]:

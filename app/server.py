@@ -495,9 +495,12 @@ def _on_source_state_change(
 # FyersFeed in the SAME SourceManager at runtime (reusing the existing source
 # lifecycle) and persist a durable (secret-free) source config so a restart
 # keeps it enabled.
+# NOTE: the BANKNIFTY key must be the catalog-exact "NSE:NIFTYBANK-INDEX"
+# ("NSE:BANKNIFTY-INDEX" matches no catalog row and no HSM index name, so
+# BANKNIFTY would silently never stream).
 _DEFAULT_FYERS_INSTRUMENTS = [
     {"key": "NSE:NIFTY50-INDEX", "exchange": "NSE", "tradingsymbol": "NIFTY 50"},
-    {"key": "NSE:BANKNIFTY-INDEX", "exchange": "NSE", "tradingsymbol": "BANKNIFTY"},
+    {"key": "NSE:NIFTYBANK-INDEX", "exchange": "NSE", "tradingsymbol": "NIFTY BANK"},
 ]
 
 
@@ -1002,6 +1005,7 @@ _services = Services(
     alert_engine=_alert_engine,
     condition_alert_engine=_condition_alert_engine,
     condition_identity_resolver=_identity_resolver,
+    identity_resolver=_identity_registry,
     analytics_service=_analytics_service,
 )
 
@@ -1199,6 +1203,7 @@ app = Starlette(
         _market_event_broker,
         market_service=_market_service,
         identity_resolver=_identity_registry,
+        index_catalog=_instrument_catalog,
         # Merged view: source status + task liveness + exit forensics, so the
         # UI can distinguish "streaming" from "dead task with stale state".
         source_status_fn=lambda: [
