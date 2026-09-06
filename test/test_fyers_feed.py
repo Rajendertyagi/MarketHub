@@ -389,6 +389,36 @@ async def test_ff13_resolution_failure_retries(runner: R) -> None:
                      feed._hsm_symbols, {})
 
 
+async def test_ff14_auth_failure_raises_auth_invalid(runner: R) -> None:
+    """A 401/403 from the symbol-token API must raise _FyersAuthInvalid so the
+    session transitions to auth_required ("Daily Login Required") instead of
+    retrying forever on a stale/expired token after a MarketHub restart."""
+    import urllib.error
+    import urllib.request
+    from brokers.fyers.feed import FyersFeed, _FyersAuthInvalid
+
+    def auth_fail_urlopen(req, timeout=0):
+        raise urllib.error.HTTPError(req.full_url, 401, "unauthorized", {}, None)
+
+    real = urllib.request.urlopen
+    urllib.request.urlopen = auth_fail_urlopen
+    try:
+        cfg = {"source_name": "fyers", "instrument_keys": ["NSE:X"],
+               "app_id": "A",
+               "access_token_getter": lambda: _jwt_with_hsm_key("HK"),
+               "ws_connect": lambda token: asyncio.sleep(0, result=None),
+               "utc_now_iso": lambda: ""}
+        feed = FyersFeed(config=cfg, auth=object(), market_service=None)
+        raised = None
+        try:
+            await feed._resolve_hsm_symbols(_jwt_with_hsm_key("HK"))
+        except _FyersAuthInvalid:
+            raised = True
+        runner.assert_eq("FF14-raises-auth-invalid", raised, True)
+    finally:
+        urllib.request.urlopen = real
+
+
 async def test_ff11_terminal_outcome_no_crash(runner: R) -> None:
     """_run_session returning the _TERMINAL sentinel must exit cleanly.
 

@@ -51,6 +51,12 @@ class _Terminal:
 
 _TERMINAL = _Terminal()
 
+
+class _FyersAuthInvalid(Exception):
+    """Raised when the Fyers REST/WS auth clearly rejects the access token
+    (expired or unauthorized). The feed must stop cleanly and surface
+    ``auth_required`` ("Daily Login Required") rather than retry forever."""
+
 # ---------------------------------------------------------------------------
 # Fyers HSM data-socket protocol (binary) — ported from the official
 # fyers-apiv3 SDK (FyersWebsocket/data_ws.py). The socket speaks a packed
@@ -595,7 +601,19 @@ class FyersFeed:
                     self._set_state("reconnecting", reason="auth_rejected")
                     return self._next_backoff()
                 await ws.send(self._full_subscribe_frame())
-                await self._resolve_hsm_symbols(token)
+                try:
+                    await self._resolve_hsm_symbols(token)
+                except _FyersAuthInvalid:
+                    # Token is expired/unauthorized: stop cleanly and surface
+                    # "Daily Login Required" instead of an infinite reconnect
+                    # loop. The operator re-logs in; no retry storm.
+                    self._note_error("token_unauthorized")
+                    await self._close_quietly(ws)
+                    self._set_state(
+                        "auth_required",
+                        reason="token_expired_or_unauthorized")
+                    self._note_exit("auth_required")
+                    return None
                 if not self._hsm_symbols:
                     # Symbol resolution failed: retry next session rather
                     # than subscribing to useless identity tokens.
@@ -771,6 +789,17 @@ class FyersFeed:
         try:
             payload = await asyncio.to_thread(_convert)
         except Exception as exc:
+            # A 401/403 from the symbol-token REST API means the access token
+            # is expired or unauthorized. Raise so _run_session transitions to
+            # auth_required ("Daily Login Required") instead of looping on a
+            # dead token (which would otherwise spin connecting/reconnecting
+            # forever after a MarketHub restart reuses a stale stored token).
+            code = getattr(exc, "code", None)
+            if code in (401, 403):
+                logger.warning(
+                    "fyers feed %s: symbol-token auth failed (%s) - "
+                    "token expired/unauthorized", self._name, code)
+                raise _FyersAuthInvalid() from exc
             # Leave _hsm_symbols EMPTY so the next session retries the
             # lookup instead of caching a useless identity mapping.
             logger.warning("fyers feed %s: symbol-token lookup failed: %s",
