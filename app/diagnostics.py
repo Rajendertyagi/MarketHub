@@ -511,14 +511,18 @@ class DiagnosticsRunner:
         try:
             data = await self._get("/api/options/chain/view?underlying=NIFTY&window=10")
             ms = int((time.monotonic() - t0) * 1000)
-            strikes = data.get("strikes", [])
-            if strikes:
+            # /api/options/chain/view returns `rows` (catalog-driven ladder)
+            # with `strikes_loaded`/`strikes_total_listed` counts.
+            rows = data.get("rows", [])
+            strikes_loaded = data.get("strikes_loaded", len(rows))
+            if rows:
                 return DiagnosticResult(
                     id="option_chain", name="NIFTY Option Chain",
                     category="OPTIONS", layer="REST",
-                    status="PASS", message=f"{len(strikes)} strikes",
+                    status="PASS", message=f"{strikes_loaded} strikes",
                     duration_ms=ms,
-                    data={"strike_count": len(strikes), "atm": data.get("atm_strike")},
+                    data={"strike_count": strikes_loaded,
+                          "atm": data.get("atm_strike")},
                     classification_reason="chain_available",
                 )
             else:
