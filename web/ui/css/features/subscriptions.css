@@ -1,0 +1,37 @@
+/* Market Data Subscriptions settings panel (feature-scoped). */
+
+.mdsub-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--space-2, 8px);
+  margin: var(--space-2, 8px) 0;
+}
+
+.mdsub-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.mdsub-check input[type="checkbox"] {
+  accent-color: var(--accent, #4a7dff);
+}
+
+.auth-row .mdsub-check {
+  margin-right: var(--space-3, 12px);
+}
+
+#mdsub-stocks-table {
+  margin-top: var(--space-2, 8px);
+}
+
+#mdsub-preview {
+  white-space: normal;
+  word-break: break-word;
+}
+
+#mdsub-status.chip-on {
+  color: var(--ok, #2e7d32);
+  border-color: var(--ok, #2e7d32);
+}

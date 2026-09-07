@@ -222,6 +222,9 @@ import { initShell } from "./shell.js?v=4";
     initAIMCPSettings();
     initBackupSettings();
     initSettingsUI();
+    import("./features/settings/subscriptions.js").then((m) => {
+      m.initSubscriptionUI();
+    }).catch(() => {});
     initChat();
     initAlertPush();
     initSourceControls();

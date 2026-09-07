@@ -21,7 +21,7 @@
 import { switchView } from "../../router.js";
 import { loadNewsSources } from "../../sources.js";
 
-const SECTIONS = ["general", "brokers", "news-sources", "market-sources",
+const SECTIONS = ["general", "subscriptions", "brokers", "news-sources", "market-sources",
   "alerts", "ai-mcp", "data-retention", "logging", "backup"];
 
 let _settingsBound = false;
@@ -61,6 +61,12 @@ export function showSettingsSection(section) {
       const r = loadNewsSources();
       if (r && typeof r.catch === "function") r.catch(() => {});
     } catch { /* loader is failure-silent */ }
+  }
+  // Subscription preferences load on demand (idempotent).
+  if (sec === "subscriptions") {
+    import("./subscriptions.js").then((m) => {
+      try { m.loadSubscriptions(); } catch { /* failure-silent */ }
+    }).catch(() => {});
   }
 }
 
