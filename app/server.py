@@ -661,6 +661,7 @@ from api.ai_alert_routes import build_ai_alert_routes as _build_ai_alert_routes
 from api.log_routes import build_log_routes as _build_log_routes
 from api.news_routes import build_news_routes as _build_news_routes
 from api.diagnostics_routes import build_diagnostics_run_routes as _build_diag_routes
+from api.subscription_routes import build_subscription_routes as _build_subscription_routes
 from app.market_data import ProviderMarketData as _ProviderMarketData
 
 
@@ -944,6 +945,42 @@ _market_intel = _MarketIntel(
     identity_resolver=_identity_registry)
 _services.market_intel = _market_intel
 
+# ── DB-backed market-data subscriptions (single policy owner) ────────────────
+# DB stores user preferences; canonical definitions stay in code
+# (app.market_indices + instruments catalog). The resolver converts
+# preferences into concrete provider keys; reconcile() applies diffs to the
+# live feeds without restart. Legacy config.json instruments are imported
+# once (idempotent) and then deprecated for runtime ownership.
+from app.subscriptions import SubscriptionService as _SubscriptionService
+
+
+def _upstox_feed_for_subscriptions(provider: str | None = None):
+    """Feed lookup for the subscription reconciler: Upstox by name, else None."""
+    if provider not in (None, "upstox"):
+        return None
+    return _feed_ref.get("feed")
+
+
+def _feed_for_provider(name: str):
+    """Dual-provider feed lookup (Upstox + Fyers) for subscription apply."""
+    if name == "upstox":
+        return _upstox_feed_for_subscriptions(name)
+    if name == "fyers":
+        return _source_manager.enabled_sources.get("fyers")
+    return None
+
+
+_subscription_service = _SubscriptionService(
+    _store, _instrument_catalog, spot_provider=_intel_spot)
+try:
+    _subscription_service.ensure_defaults()
+    _sub_migration = _subscription_service.migrate_from_config(SOURCES_CFG)
+    _app_logger.info(
+        "market-data subscriptions: %d indices seeded, migration %s",
+        len(_subscription_service.preferences()["indices"]), _sub_migration)
+except Exception:
+    _app_logger.exception("subscription bootstrap failed")
+
 # ── N1: News & Sentiment service ────────────────────────────────────────────
 from news.service import NewsService as _NewsService
 from news.adapters.rss import RSSAdapter as _RSSAdapter
@@ -1103,6 +1140,14 @@ async def _lifespan(app: Starlette) -> None:
     except Exception:
         _app_logger.warning("analytics service startup failed", exc_info=True)
 
+    # Reconcile DB subscription preferences into the live feeds (startup
+    # apply — desired set restored after every restart, feed failures
+    # never roll preferences back).
+    try:
+        await _subscription_service.reconcile(_feed_for_provider)
+    except Exception:
+        _app_logger.warning("subscription reconcile failed", exc_info=True)
+
     async with mcp_asgi_app.router.lifespan_context(app):
         yield
 
@@ -1182,6 +1227,8 @@ app = Starlette(
     + _build_alert_routes(_store, _alert_engine)
     + _build_alert_history_routes(_store)
     + _build_market_data_routes(_provider_market_data)
+    + _build_subscription_routes(
+        _subscription_service, _feed_for_provider)
     + _build_admin_routes(_store, PROJECT_ROOT / DATA_DIR)
     + _build_fyers_auth_routes(
         _credential_store,

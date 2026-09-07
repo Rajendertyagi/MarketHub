@@ -728,6 +728,56 @@ class DiagnosticsRunner:
                 classification_reason="fetch_error",
             )
 
+    async def _check_subscriptions(self) -> DiagnosticResult:
+        """Read-only subscription health: preferences vs resolved vs applied."""
+        t0 = time.monotonic()
+        try:
+            data = await self._get("/api/subscriptions/status")
+            ms = int((time.monotonic() - t0) * 1000)
+            resolved = data.get("resolved_count")
+            pending = data.get("pending") or []
+            notes = data.get("notes") or []
+            applied = data.get("applied") or {}
+            idx = data.get("indices_enabled")
+            total = data.get("indices_total")
+            if resolved is None:
+                return DiagnosticResult(
+                    id="subscriptions", name="Market-Data Subscriptions",
+                    category="MARKET DATA", layer="REST",
+                    status="FAIL", message="; ".join(notes) or "resolution failed",
+                    duration_ms=ms,
+                    classification_reason="resolution_error",
+                )
+            all_applied = bool(applied) and all(
+                r.get("applied") for r in applied.values())
+            msg = (f"Indices {idx}/{total} enabled · resolved {resolved}"
+                   + (f" · pending {len(pending)}" if pending else "")
+                   + (f" · applied" if all_applied else " · apply pending"))
+            status = "PASS" if all_applied and not pending else "PARTIAL"
+            return DiagnosticResult(
+                id="subscriptions", name="Market-Data Subscriptions",
+                category="MARKET DATA", layer="REST",
+                status=status, message=msg,
+                duration_ms=ms,
+                data={"indices_enabled": idx, "indices_total": total,
+                      "stocks_enabled": data.get("stocks_enabled"),
+                      "resolved": resolved,
+                      "by_provider": data.get("by_provider"),
+                      "pending": pending},
+                classification_reason="subscriptions_ok" if status == "PASS"
+                else "subscriptions_pending",
+            )
+        except Exception as exc:
+            ms = int((time.monotonic() - t0) * 1000)
+            return DiagnosticResult(
+                id="subscriptions", name="Market-Data Subscriptions",
+                category="MARKET DATA", layer="REST",
+                status="FAIL",
+                message=f"Subscription status failed: {exc}",
+                duration_ms=ms,
+                classification_reason="fetch_error",
+            )
+
     async def _check_news(self) -> DiagnosticResult:
         t0 = time.monotonic()
         try:
@@ -1076,6 +1126,9 @@ _QUICK_CHECKS = [
     _make_check("depth", "Market Depth", "MARKET DATA", "REST",
                 ("quick",), "GET /api/market/depths",
                 DiagnosticsRunner._check_depth),
+    _make_check("subscriptions", "Market-Data Subscriptions", "MARKET DATA",
+                "REST", ("quick", "full"), "GET /api/subscriptions/status",
+                DiagnosticsRunner._check_subscriptions),
     _make_check("greeks", "Standalone Greeks", "OPTIONS", "REST",
                 ("quick", "full"), "GET /api/options/greeks",
                 DiagnosticsRunner._check_greeks),
