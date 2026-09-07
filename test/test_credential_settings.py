@@ -378,14 +378,20 @@ async def test_cs23_cs24_identity(runner: R) -> None:
 
 
 def test_cs25_route_surface(runner: R) -> None:
-    """CS25: existing auth-route paths unchanged."""
+    """CS25: existing auth-route paths unchanged.
+
+    PIN + forget-session endpoints are deliberately retained (recovery /
+    API compat; surfaced in the WebUI only under Advanced / Recovery), so
+    the surface is six paths.
+    """
     from api.routes import build_auth_routes
     routes = build_auth_routes({"feed": None},
                                oauth={"api_key": "", "api_secret": "",
                                       "redirect_uri": "http://x/cb"})
     paths = {r.path for r in routes}
     expected = {"/api/auth/upstox/status", "/api/auth/upstox/login",
-                "/auth/upstox/callback", "/api/auth/upstox/token"}
+                "/auth/upstox/callback", "/api/auth/upstox/token",
+                "/api/auth/upstox/pin", "/api/auth/upstox/session"}
     runner.assert_eq("CS25-auth-paths-intact", paths, expected)
 
 
