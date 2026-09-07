@@ -43,31 +43,48 @@ export async function pollAuthStatus() {
     // Login UI is offered once Upstox API credentials are configured. The
     // auth code may already be pending (PIN-mode), in which case surface the
     // PIN field regardless of credential state.
-    const ready = d.oauth_available;
+    // Normal UI state machine (driven by auth_state; feed state never
+    // decides auth). Exactly ONE login action is ever visible.
+    const authed = d.authenticated === true;
+    const needLogin = d.login_required !== false;
     if (loginBtn) {
-      loginBtn.classList.toggle("hidden", !ready);
-      if (ready) {
-        loginBtn.disabled = d.auth_state === "authorizing";
-        loginBtn.textContent = d.token_configured
-          ? "Login with Upstox (renew)" : "Login with Upstox";
+      const showLogin = !!d.oauth_available && needLogin && !authed;
+      loginBtn.classList.toggle("hidden", !showLogin);
+      if (showLogin && !loginBtn.dataset.busy) {
+        loginBtn.disabled = false;
+        loginBtn.textContent = "Login with Upstox";
       }
     }
+    const forgetBtn = $("upstox-forget-session");
+    if (forgetBtn) {
+      // Logout is offered only for a live authenticated session.
+      forgetBtn.classList.toggle("hidden",
+        !(authed && !!d.session_persisted));
+    }
     if (pinLoginBtn) {
-      pinLoginBtn.classList.toggle("hidden", !ready);
+      // PIN login lives inside the collapsed Advanced / Recovery section;
+      // never part of the normal flow.
+      pinLoginBtn.classList.toggle("hidden", !d.oauth_available);
     }
     if (pinRow) {
-      pinRow.classList.toggle("hidden", !d.auth_code_pending);
+      const showPin = !!d.auth_code_pending;
+      pinRow.classList.toggle("hidden", !showPin);
+      if (showPin) {
+        const adv = $("upstox-advanced");
+        if (adv) adv.open = true;
+      }
     }
     let label, cls;
     if (!d.oauth_available) {
       label = "Credentials Missing"; cls = "chip chip-off";
-    } else if (!d.token_configured || d.expired === true
-               || d.state === "auth_required") {
-      label = "Daily Login Required"; cls = "chip chip-off";
-    } else if (d.expiry_known) {
-      label = "Active"; cls = "chip chip-on";
+    } else if (authed) {
+      label = "Authenticated"; cls = "chip chip-on";
+    } else if (d.auth_state === "expired") {
+      label = "Session expired"; cls = "chip chip-off";
+    } else if (d.auth_state === "rejected") {
+      label = "Session needs login"; cls = "chip chip-off";
     } else {
-      label = "Configured"; cls = "chip chip-on";
+      label = "Login required"; cls = "chip chip-off";
     }
     chip.textContent = label;
     chip.className = cls;
@@ -85,14 +102,14 @@ export async function pollAuthStatus() {
     setChip("upx-creds",
       d.oauth_available ? "Credentials Saved" : "No Credentials",
       d.oauth_available ? "is-on" : "is-off");
-    const upxAuthed = !!d.token_configured && d.expired !== true
-      && d.state !== "auth_required";
+    const upxAuthed = d.authenticated === true;
     setChip("upx-auth",
       upxAuthed ? "Authenticated" : "Not Authenticated",
       upxAuthed ? "is-on" : "is-off");
     setChip("upx-restored",
-      d.session_restored ? "Session Restored" : "No Session Restore",
-      d.session_restored ? "is-on" : "is-off");
+      d.session_restored ? "Session Restored"
+        : (d.session_persisted ? "Session Saved" : "No Session Saved"),
+      (d.session_restored || d.session_persisted) ? "is-on" : "is-off");
     const upxRunning = !!d.configured && d.state
       && !["stopped", "auth_required"].includes(d.state);
     setChip("upx-feed",
@@ -147,7 +164,7 @@ async function pollUpstoxFeed() {
       cfgChip.className = "chip " + (f.configured ? "chip-on" : "chip-off");
     }
     if (authChip) {
-      const authed = !!s.token_configured;
+      const authed = s.authenticated === true;
       authChip.textContent = authed ? "Authenticated" : "Not authenticated";
       authChip.className = "chip " + (authed ? "chip-on" : "chip-off");
     }
@@ -194,9 +211,12 @@ function handleAuthCallbackParam() {
   } else if (auth === "pin_required") {
     msg.textContent = "Upstox authorization received — enter your Upstox PIN to complete login.";
     msg.className = "hint ok";
-    // The PIN field lives on the Brokers sub-panel, which is NOT the default
-    // Settings section. Jump straight to it so the field is actually visible.
+    // The PIN field lives inside Advanced / Recovery on the Brokers
+    // sub-panel, which is NOT the default Settings section. Jump straight
+    // to it and expand the section so the field is actually visible.
     try { switchView("settings/brokers"); } catch { /* view switch best-effort */ }
+    const adv = $("upstox-advanced");
+    if (adv) adv.open = true;
     const pinRow = $("upstox-pin-row");
     if (pinRow) pinRow.classList.remove("hidden");
     const pinMsg = $("upstox-pin-msg");
@@ -240,6 +260,11 @@ export function initAuth() {
   const loginBtn = $("oauth-login-btn");
   if (loginBtn) {
     loginBtn.addEventListener("click", () => {
+      // LOGIN IN PROGRESS: immediate feedback, then the canonical OAuth
+      // redirect. No second MarketHub credential form is ever shown.
+      loginBtn.dataset.busy = "1";
+      loginBtn.disabled = true;
+      loginBtn.textContent = "Opening Upstox login…";
       window.location.href = "/api/auth/upstox/login";
     });
   }
@@ -380,12 +405,12 @@ export function initAuth() {
   const upxMsg = $("upstox-session-msg");
   if (forgetUpstox) {
     forgetUpstox.addEventListener("click", async () => {
-      if (!confirm("Forget the saved Upstox session? You will need to log in again after the next restart.")) return;
+      if (!confirm("Log out of Upstox? The saved session is removed and the feed stops until you log in again.")) return;
       forgetUpstox.disabled = true;
       try {
         const res = await fetch("/api/auth/upstox/session", { method: "DELETE" });
         if (res.ok) {
-          upxMsg.textContent = "Saved Upstox session forgotten.";
+          upxMsg.textContent = "Logged out of Upstox.";
           upxMsg.className = "hint ok";
           pollAuthStatus();
         } else {

@@ -18,14 +18,8 @@
         <div id="upstox-feed-msg" class="hint"></div>
         <div class="auth-row">
           <label for="cred-api-key">API Key</label>          <input type="text" id="cred-api-key" class="filter-input"                 placeholder="Paste API key…" autocomplete="off">        </div>        <div class="auth-row">          <label for="cred-api-secret">API Secret</label>          <input type="password" id="cred-api-secret" class="filter-input"                 placeholder="Paste API secret…" autocomplete="new-password">        </div>        <div class="auth-row">          <label></label>          <button id="cred-save" class="btn">Save Credentials</button>          <button id="cred-delete" class="btn btn-outline-danger">Delete Credentials</button>        </div>        <div class="auth-row">          <label></label>                    <button id="oauth-login-btn" class="btn hidden">Login with Upstox</button>
-          <button id="oauth-login-pin-btn" class="btn hidden">Login with Upstox (PIN)</button>
         </div>
-        <div id="upstox-pin-row" class="auth-row hidden">
-          <label for="upstox-pin">Daily PIN Login</label>
-          <input type="password" id="upstox-pin" class="filter-input" autocomplete="off" placeholder="Upstox PIN" aria-label="Upstox PIN">
-          <button id="upstox-pin-btn" class="btn">Login with PIN</button>
-        </div>
-        <div id="cred-message" class="hint"></div>        <div id="auth-message" class="hint"></div>        <div class="auth-row auth-row-spaced">          <label for="auth-token-input">Manual Token</label>          <input type="password" id="auth-token-input" aria-label="Upstox manual access token"                 placeholder="Paste Upstox access token (emergency fallback)…" autocomplete="off">        </div>        <div class="auth-row">          <label></label>          <button id="auth-submit" class="btn">Save Token</button>        </div>        <div class="auth-row">
+        <div id="cred-message" class="hint"></div>        <div id="auth-message" class="hint"></div><details class="auth-advanced" id="upstox-advanced"><summary>Advanced / Recovery</summary><div class="auth-row"><label></label><button id="oauth-login-pin-btn" class="btn hidden">Login with Upstox (PIN)</button></div>        <div id="upstox-pin-row" class="auth-row hidden">          <label for="upstox-pin">Daily PIN Login</label>          <input type="password" id="upstox-pin" class="filter-input" autocomplete="off" placeholder="Upstox PIN" aria-label="Upstox PIN">          <button id="upstox-pin-btn" class="btn">Login with PIN</button>        </div>        <div class="auth-row auth-row-spaced">          <label for="auth-token-input">Manual Token</label>          <input type="password" id="auth-token-input" aria-label="Upstox manual access token"                 placeholder="Paste Upstox access token (emergency fallback)…" autocomplete="off">        </div>        <div class="auth-row">          <label></label>          <button id="auth-submit" class="btn">Save Token</button>        </div></details>        <div class="auth-row">
           <label>Session &amp; Restart</label>
           <div class="state-grid">
             <span class="state-chip" id="upx-configured">Configured</span>
@@ -40,7 +34,7 @@
         </div>
         <div class="auth-row">
           <label></label>
-          <button id="upstox-forget-session" class="btn btn-outline-danger">Forget Saved Session</button>
+          <button id="upstox-forget-session" class="btn btn-outline-danger">Logout</button>
           <button id="upstox-reconnect" class="btn">Reconnect Feed</button>
         </div>
         <div id="upstox-session-msg" class="hint"></div>
