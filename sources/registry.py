@@ -52,12 +52,13 @@ def _create_upstox_feed(config: dict, *, market_service: Any = None) -> Any:
             )
     else:
         token = str(token_ref)
-    if not token.strip():
-        # OAuth-configured deployments have no static token:
-        # construct with the known placeholder so the source
-        # registers and gates on readiness until WebUI login
-        # supplies real credentials.
-        token = 'PENDING-OAUTH-LOGIN'
+    credentials_missing = not token.strip()
+    if credentials_missing:
+        # OAuth-configured deployments have no static token: register
+        # with credentials=None so the source gates on readiness
+        # (token=None + login_required=true) until WebUI login supplies
+        # real credentials. No placeholder tokens in production.
+        token = ""
         logger.info(
             'upstox access_token not configured - source will gate on OAuth login')
 
@@ -75,7 +76,9 @@ def _create_upstox_feed(config: dict, *, market_service: Any = None) -> Any:
         except Exception:
             expires_at = None
 
-    credentials = UpstoxCredentials(access_token=token, expires_at=expires_at)
+    credentials = (None if credentials_missing
+                   else UpstoxCredentials(access_token=token,
+                                          expires_at=expires_at))
     rest = UpstoxRest()
 
     # -- validate instruments -------------------------------------------------

@@ -1046,8 +1046,13 @@ def build_fyers_auth_routes(cred_store: Any,
                             sources_cfg: dict[str, Any] | None = None,
                             register_source_fn: Any = None,
                             start_source_fn: Any = None,
-                            persist_source_fn: Any = None) -> list[Route]:
+                            persist_source_fn: Any = None,
+                            auth_service: Any = None) -> list[Route]:
     """Fyers credential storage + OAuth login/callback (encrypted store).
+
+    Thin composition: request/receive auth input -> call FyersAuthService
+    (app/auth/) -> return status/redirect. Routes own no persistence
+    ordering, runtime-token ownership, restoration, or expiry lifecycle.
 
     Fyers semantics (official v3): callback carries ``auth_code`` (not
     ``code``); refresh tokens ARE supported and are stored ENCRYPTED.
@@ -1061,6 +1066,8 @@ def build_fyers_auth_routes(cred_store: Any,
             immediately unblocks the feed. When None, an internal owner is used.
         restart_fn: optional coroutine called after a successful login to
             (re)start the Fyers source through SourceManager.
+        auth_service: optional app.auth FyersAuthService (same behavior
+            when omitted; constructed over cred_store + runtime_auth).
     """
     import hmac as _hmac
     import secrets as _secrets
@@ -1072,6 +1079,16 @@ def build_fyers_auth_routes(cred_store: Any,
     # feed's getter closes over it, so login here unblocks the running feed.
     _fyers_runtime_auth = (
         runtime_auth if runtime_auth is not None else FyersRuntimeAuth())
+    _fyers_auth = auth_service
+    if _fyers_auth is None and cred_store is not None:
+        try:
+            from app.auth.fyers import FyersAuthService as _FyersSvc
+            from app.auth.storage import AuthStorage as _AuthStorage
+            _fyers_auth = _FyersSvc(
+                _AuthStorage(cred_store), _fyers_runtime_auth,
+                redirect_uri=redirect_uri)
+        except Exception:
+            _fyers_auth = None
     _pending: dict[str, float] = {}
     _TTL = 600
 
@@ -1232,36 +1249,36 @@ def build_fyers_auth_routes(cred_store: Any,
         except Exception:
             return _fail("rejected")
 
-        # TOKEN POLICY (deliberate, documented):
+        # TOKEN POLICY (deliberate, documented, owned by FyersAuthService):
         #   refresh token -> encrypted persistent storage (long-lived,
         #     officially supported by Fyers; required to regain access
         #     after restart without re-login)
-        #   access token  -> RUNTIME MEMORY ONLY (short-lived; always
-        #     regenerable from the refresh token via the official
-        #     validate-authcode refresh grant). Never persisted.
-        try:
-            await asyncio.to_thread(
-                cred_store.save_fyers_refresh_token, bundle["refresh_token"])
-        except Exception:
-            return _fail("error")
-        # Persist the access token (encrypted) so a MarketHub restart can
-        # reuse it directly instead of spending the refresh token again.
-        try:
-            await asyncio.to_thread(
-                cred_store.save_fyers_access_token,
-                bundle["access_token"], bundle.get("expires_at"))
-            await asyncio.to_thread(
-                cred_store.save_last_auth_status, "fyers", "authenticated")
-        except Exception:
-            logger.warning("failed to persist fyers access token")
-        _fyers_runtime_auth.set_access_token(bundle["access_token"])
-        # Operator login path complete: (re)start the Fyers feed so it picks
-        # up the freshly-available token via its access_token_getter gate.
-        if restart_fn is not None:
+        #   access token  -> encrypted cache + runtime memory (short-lived;
+        #     reusable directly on restart, regenerable from refresh).
+        if _fyers_auth is not None:
+            result = await _fyers_auth.persist_login(bundle, restart_fn)
+            if not result.get("ok"):
+                return _fail("error")
+        else:
             try:
-                await restart_fn()
+                await asyncio.to_thread(
+                    cred_store.save_fyers_refresh_token, bundle["refresh_token"])
             except Exception:
-                logger.warning("fyers feed restart after login failed")
+                return _fail("error")
+            try:
+                await asyncio.to_thread(
+                    cred_store.save_fyers_access_token,
+                    bundle["access_token"], bundle.get("expires_at"))
+                await asyncio.to_thread(
+                    cred_store.save_last_auth_status, "fyers", "authenticated")
+            except Exception:
+                logger.warning("failed to persist fyers access token")
+            _fyers_runtime_auth.set_access_token(bundle["access_token"])
+            if restart_fn is not None:
+                try:
+                    await restart_fn()
+                except Exception:
+                    logger.warning("fyers feed restart after login failed")
         return RedirectResponse("/ui/?fyers_auth=ok#/settings", status_code=302)
 
     async def _forget_session(request: Request) -> Response:  # noqa: ARG001
@@ -1271,6 +1288,13 @@ def build_fyers_auth_routes(cred_store: Any,
         re-enter them; only the restart-recovery session is wiped. The runtime
         token is dropped so the feed gates on a fresh login.
         """
+        if _fyers_auth is not None:
+            try:
+                result = await asyncio.to_thread(
+                    _fyers_auth.logout, restore_state)
+                return _json(result)
+            except Exception:
+                return _json({"error": "failed to forget session"}, 500)
         try:
             await asyncio.to_thread(cred_store.clear_fyers_session)
             await asyncio.to_thread(

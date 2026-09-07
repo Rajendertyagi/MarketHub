@@ -138,7 +138,7 @@ class UpstoxFeed:
         self,
         *,
         config: Mapping[str, Any],
-        credentials: UpstoxCredentials,
+        credentials: UpstoxCredentials | None,
         rest: Any,
         market_service: Any = None,
         instrument_metadata: Mapping[str, tuple[str, str]] | None = None,
@@ -226,9 +226,13 @@ class UpstoxFeed:
                 )
 
         # -- dependencies -----------------------------------------------------
-        if not isinstance(credentials, UpstoxCredentials):
+        # credentials=None means "waiting for login" (production model:
+        # token=None + login_required=true). The feed registers but gates
+        # on is_ready_to_start() until AuthService installs real creds.
+        if credentials is not None and not isinstance(
+                credentials, UpstoxCredentials):
             raise UpstoxConfigError(
-                "credentials must be an UpstoxCredentials instance"
+                "credentials must be an UpstoxCredentials instance or None"
             )
         self._credentials = credentials
         if rest is None or not callable(getattr(rest, "authorize_market_feed", None)):
@@ -480,17 +484,22 @@ class UpstoxFeed:
 
     # -- daily-auth readiness (startup gate) ----------------------------------
 
+    # Legacy placeholder tokens (never produced by production code anymore;
+    # retained read-only so old tests/fixtures still gate correctly).
     _PLACEHOLDER_TOKENS = frozenset({"PENDING-OAUTH-LOGIN"})
 
     def is_ready_to_start(self) -> bool:
         """True when a USABLE daily access token exists.
 
         Reuses frozen D2 credential semantics:
-          * placeholder/missing token            -> not ready
+          * missing/None token                   -> not ready
+          * placeholder token (legacy compat)    -> not ready
           * known-expired token                  -> not ready
           * unknown-expiry token                 -> ready until broker
-                                                   proves otherwise
+                                                    proves otherwise
         """
+        if self._credentials is None:
+            return False
         token = self._credentials.access_token
         if not token or token in self._PLACEHOLDER_TOKENS:
             return False
@@ -526,6 +535,10 @@ class UpstoxFeed:
             _TERMINAL     terminal failure (state already failed)
             float         retryable failure; suggested delay in seconds
         """
+        if self._credentials is None:
+            # No session (waiting for login): auth-gated, never a network call.
+            self._set_state("auth_required", reason="missing_token")
+            return None
         self._set_state("authorizing", reason="session_start")
         self._connect_attempts += 1
         try:
@@ -728,13 +741,20 @@ class UpstoxFeed:
 
     # -- public API ------------------------------------------------------------
 
-    def update_credentials(self, credentials: UpstoxCredentials) -> None:
+    def update_credentials(
+        self, credentials: UpstoxCredentials | None) -> None:
         """Replace credentials for the next authorization attempt.
 
         Safe to call while the feed is running: the next authorize cycle
         picks up the new credentials atomically. Also clears the terminal
-        failure state so the feed can retry.
+        failure state so the feed can retry. credentials=None clears the
+        runtime session (logout / forget-session / rejected).
         """
+        if credentials is not None and not isinstance(
+                credentials, UpstoxCredentials):
+            raise UpstoxConfigError(
+                "credentials must be an UpstoxCredentials instance or None"
+            )
         self._credentials = credentials
         if self._state in ("failed", "auth_required"):
             self._set_state("stopped", reason="credentials_updated")
@@ -833,6 +853,8 @@ class UpstoxFeed:
         APP-CREDENTIALS dimension (missing/expired access token). The daily
         login dimension is surfaced by ``auth_required`` in status().
         """
+        if self._credentials is None:
+            return "missing_token"
         token = self._credentials.access_token
         if not token or not str(token).strip():
             return "missing_token"
