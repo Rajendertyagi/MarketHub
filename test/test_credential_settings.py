@@ -109,6 +109,7 @@ def _make_routes(cred_store, env_creds: dict | None = None,
     auth = build_auth_routes(
         {"feed": None}, restart_fn=None, oauth=oauth_ref,
         rest=object(),  # exchange never invoked directly here
+        cred_store=cred_store,
     )
     return oauth_ref, settings, auth
 

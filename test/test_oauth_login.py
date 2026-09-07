@@ -96,7 +96,7 @@ class _FakeRest:
         )
 
 
-def _build_routes(feed_ref, restart_counter=None):
+def _build_routes(feed_ref, restart_counter=None, _sink=None):
     from api.routes import build_auth_routes
 
     async def _restart():
@@ -106,12 +106,17 @@ def _build_routes(feed_ref, restart_counter=None):
         # fresh token and reaches streaming. The stub models only the state.
         feed_ref["feed"]._state = "streaming"
 
+    # Routes are thin adapters over UpstoxAuthService: inject an isolated
+    # recording store so every path (including persistence) is exercised.
+    if _sink is None:
+        _sink = []
     return build_auth_routes(
         feed_ref,
         restart_fn=_restart if restart_counter is not None else None,
         oauth={"api_key": API_KEY, "api_secret": API_SECRET,
                "redirect_uri": REDIRECT},
         rest=_FakeRest(),
+        cred_store=_RecordingStore(_sink),
     )
 
 
@@ -384,6 +389,7 @@ async def test_ol20_safe_failure(runner: R) -> None:
         oauth={"api_key": API_KEY, "api_secret": API_SECRET,
                "redirect_uri": REDIRECT},
         rest=_FailingRest(),
+        cred_store=_RecordingStore([]),
     )
     cb = _find_route(routes, "/auth/upstox/callback")
     login = _find_route(routes, "/api/auth/upstox/login")
@@ -446,11 +452,17 @@ async def test_ol21_manual_fallback(runner: R) -> None:
 
 
 class _RecordingStore:
-    """Minimal cred_store double that records session-token saves."""
+    """Minimal cred_store double that records session-token saves.
+
+    The staged PIN auth code is shared by every double instance built over
+    the same sink (like the DB-backed store shares across route sets);
+    doubles over different sinks stay isolated.
+    """
+
+    _codes: dict[int, object] = {}
 
     def __init__(self, sink: list) -> None:
         self._sink = sink
-        self._auth_code = None
 
     def save_upstox_session_token(self, token, expires_at_iso=None,
                                   issued_at_iso=None):
@@ -470,19 +482,20 @@ class _RecordingStore:
         self._sink.clear()
 
     def save_upstox_auth_code(self, code: str) -> None:
-        self._auth_code = code
+        _RecordingStore._codes[id(self._sink)] = code
 
     def load_upstox_auth_code(self):
-        return self._auth_code
+        return _RecordingStore._codes.get(id(self._sink))
 
     def clear_upstox_auth_code(self):
-        self._auth_code = None
+        _RecordingStore._codes.pop(id(self._sink), None)
 
 
 def _routes_with(restart_state: str | None, saved: list,
                  rest=None, pin: bool = False):
     """Build auth routes with a recording store and a restart that lands the
     feed in ``restart_state`` (None = no restart fn)."""
+    from api.routes import build_auth_routes
     ref, _feed = _make_feed_ref()
 
     async def _restart() -> None:
@@ -538,9 +551,17 @@ async def test_upstox_pin_path_persists(runner: R) -> None:
     saved: list = []
     routes, ref = _routes_with("streaming", saved)
 
-    # Step 1: PIN-mode login stores the auth code, redirects to pin_required.
+    # Step 1: PIN-mode login starts at the Upstox dialog (mode rides in state).
     login = _find_route(routes, "/api/auth/upstox/login")
     c, loc = await _call(login, "GET", "pin=1")
+    runner.assert_in("pin-dialog", "authorization/dialog", loc)
+    state = urllib.parse.parse_qs(
+        urllib.parse.urlsplit(loc).query)["state"][0]
+
+    # Step 1b: the PIN-mode callback stages the code for the WebUI PIN form.
+    cb = _find_route(routes, "/auth/upstox/callback")
+    c, loc = await _call(
+        cb, "GET", f"code=SYN&state={urllib.parse.quote(state)}")
     runner.assert_in("pin-redirect", "auth=pin_required", loc)
 
     # Step 2: supply the PIN; exchange_with_pin must yield a persisted session.
@@ -557,8 +578,10 @@ async def test_upstox_pin_path_persists(runner: R) -> None:
 
     routes2, _ = _routes_with("streaming", saved, rest=_PinRest())
     pin = _find_route(routes2, "/api/auth/upstox/pin")
-    c, data = await _call(pin, "POST", body={"pin": "123456"})
-    runner.assert_eq("pin-status", c, 200)
+    c, loc = await _call(pin, "POST", body={"pin": "123456"})
+    # Success is a redirect back to Settings (the WebUI fetch follows it).
+    runner.assert_eq("pin-status", c, 302)
+    runner.assert_in("pin-ok", "auth=ok", loc)
     runner.assert_true("pin-session-persisted",
                        any(t == "PIN-TOKEN-1" for t, _ in saved))
 
@@ -567,6 +590,7 @@ async def test_upstox_status_clears_only_on_broker_rejection(runner: R) -> None:
     """Required 9/10: a genuine 401/403 (broker_rejected_token) rolls the
     persisted session back to login-required; transient feed/network failures
     (ws drop, market closed, etc.) must NOT clear the session."""
+    from api.routes import build_auth_routes
     from brokers.upstox.auth import UpstoxCredentials
 
     for reason, should_clear in (
@@ -655,6 +679,10 @@ async def main() -> bool:
     await test_ol20_safe_failure(runner)
     await test_ol20b_restart_failure_safe(runner)
     await test_ol21_manual_fallback(runner)
+    await test_upstox_session_persist_before_feed_state(runner)
+    await test_upstox_manual_token_gets_expiry(runner)
+    await test_upstox_pin_path_persists(runner)
+    await test_upstox_status_clears_only_on_broker_rejection(runner)
     test_ol22_ol23_ui(runner)
     test_ol24_imports_intact(runner)
 
