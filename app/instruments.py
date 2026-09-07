@@ -72,8 +72,59 @@ def _opt_int(v: Any) -> int | None:
     return int(f) if f is not None else None
 
 
+def _upstox_expiry_iso(raw: Any) -> str | None:
+    """Upstox master expiry (epoch MILLISECONDS, end-of-day) -> ISO date.
+
+    Same canonical YYYY-MM-DD convention as the Fyers parser so the
+    subscription resolver's `expiry >= today` comparison works across
+    providers. Verified against the live master: 1790706599000 ->
+    2026-09-29 ("NIFTY FUT 29 SEP 26").
+    """
+    try:
+        if raw in (None, "", 0):
+            return None
+        from datetime import datetime, timezone
+        return datetime.fromtimestamp(
+            int(raw) / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+    except Exception:
+        return None
+
+
+# Upstox instrument_type -> canonical type. Verified against the live
+# complete.json.gz master (Sept 2026): NSE_FO rows carry "FUT" for futures
+# and "CE"/"PE" directly for options (there is NO separate option_type
+# field); NSE_EQ rows carry "EQ"; index segments carry "INDEX".
+_UPSTOX_INST_TYPE = {
+    "EQ": "EQUITY",
+    "INDEX": "INDEX",
+    "FUT": "FUTURE",
+    "FUTIDX": "FUTURE",
+    "FUTSTK": "FUTURE",
+    "CE": "OPTION",
+    "PE": "OPTION",
+    "OPTIDX": "OPTION",
+    "OPTSTK": "OPTION",
+}
+
+
 def upstox_master_records(payload: bytes | list) -> list[dict[str, Any]]:
-    """Parse the official Upstox complete.json(.gz) into canonical records."""
+    """Parse the official Upstox complete.json(.gz) into canonical records.
+
+    Real master schema (verified against the live download, Sept 2026):
+        instrument_key   "NSE_FO|42631" / "NSE_EQ|INE002A01018"   (feed key)
+        exchange         base exchange: "NSE" / "BSE" / "MCX"
+        segment          "NSE_FO" / "NSE_EQ" / "NSE_INDEX" / ...
+        instrument_type  "EQ" | "INDEX" | "FUT" | "CE" | "PE"
+        trading_symbol   "NIFTY 23800 CE 08 SEP 26"
+        underlying_symbol "NIFTY" / "RELIANCE" (structured — no guessing)
+        asset_key        "NSE_INDEX|Nifty 50" (canonical underlying link)
+        expiry           epoch MILLISECONDS (end-of-day)
+        strike_price     numeric (options only)
+        lot_size / minimum_lot / tick_size / isin / name / exchange_token
+
+    ``instrument_token`` stores the provider instrument_key — that is the
+    identity the Upstox feed/REST accepts for subscriptions.
+    """
     if isinstance(payload, bytes):
         if payload[:2] == b"\x1f\x8b":
             payload = gzip.decompress(payload)
@@ -86,22 +137,26 @@ def upstox_master_records(payload: bytes | list) -> list[dict[str, Any]]:
     for e in data:
         if not isinstance(e, dict):
             continue
+        raw_type = _opt_str(e.get("instrument_type"))
+        inst_type = _UPSTOX_INST_TYPE.get((raw_type or "").upper())
+        option_type = raw_type if raw_type in ("CE", "PE") else None
+        instrument_key = _opt_str(e.get("instrument_key"))
         records.append({
-            "instrument_token": _opt_str(e.get("instrument_token")),
-            "exchange": e.get("exchange"),
-            "tradingsymbol": e.get("tradingsymbol"),
-            "name": e.get("name") or None,
-            "instrument_type": _opt_str(e.get("instrument_type")),
+            "instrument_token": instrument_key,
+            "exchange": _opt_str(e.get("exchange")),
             "segment": _opt_str(e.get("segment")),
-            "expiry": _opt_str(e.get("expiry")),
-            "strike": _opt_float(e.get("strike")),
-            "option_type": _opt_str(e.get("option_type")),
-            "lot_size": _opt_int(e.get("lot_size")),
+            "tradingsymbol": _opt_str(e.get("trading_symbol")),
+            "name": e.get("name") or None,
+            "instrument_type": inst_type,
+            "expiry": _upstox_expiry_iso(e.get("expiry")),
+            "strike": _opt_float(e.get("strike_price")),
+            "option_type": option_type,
+            "lot_size": _opt_int(e.get("lot_size")
+                                 or e.get("minimum_lot")),
             "tick_size": _opt_float(e.get("tick_size")),
             "isin": _opt_str(e.get("isin")),
-            "underlying": _opt_str(e.get("underlying_symbol")
-                                   or e.get("underlying")),
-            "provider_symbol": None,
+            "underlying": _opt_str(e.get("underlying_symbol")),
+            "provider_symbol": instrument_key,
         })
     return [r for r in records if r["instrument_token"]
             and r["exchange"] and r["tradingsymbol"]]

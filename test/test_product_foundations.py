@@ -58,15 +58,31 @@ class _Env:
 
 # -- Upstox master ---------------------------------------------------------------
 
+# Real complete.json.gz row structure (verified against the live master,
+# Sept 2026): instrument_key/trading_symbol/strike_price/epoch-ms expiry,
+# instrument_type EQ|INDEX|FUT|CE|PE, no separate option_type field.
 _UPSTOX_ROWS = [
-    {"instrument_token": "NSE_EQ|INE002A01018", "exchange": "NSE",
-     "tradingsymbol": "RELIANCE", "name": "Reliance Industries",
-     "lot_size": 1, "tick_size": 0.05, "isin": "INE002A01018"},
-    {"instrument_token": "NSE_FO|55001", "exchange": "NFO",
-     "tradingsymbol": "NIFTY26AUG24500CE", "name": "Nifty",
-     "instrument_type": "CE", "option_type": "CE", "strike": 24500.0,
-     "expiry": "1768867200", "lot_size": 75, "tick_size": 0.05,
-     "underlying_symbol": "NIFTY 50"},
+    {"instrument_key": "NSE_EQ|INE002A01018", "exchange": "NSE",
+     "segment": "NSE_EQ", "instrument_type": "EQ",
+     "trading_symbol": "RELIANCE", "name": "RELIANCE INDUSTRIES LTD",
+     "underlying_symbol": "RELIANCE", "expiry": None,
+     "strike_price": None, "lot_size": 1, "tick_size": 10.0,
+     "isin": "INE002A01018", "exchange_token": "2885",
+     "asset_key": "NSE_EQ|INE002A01018"},
+    {"instrument_key": "NSE_FO|55001", "exchange": "NSE",
+     "segment": "NSE_FO", "instrument_type": "CE",
+     "trading_symbol": "NIFTY 24500 CE 24 SEP 26", "name": "NIFTY",
+     "underlying_symbol": "NIFTY",
+     "expiry": 1790260199000,          # 2026-09-24 (epoch ms, end-of-day)
+     "strike_price": 24500.0, "lot_size": 75, "tick_size": 0.05,
+     "exchange_token": "55001", "asset_key": "NSE_INDEX|Nifty 50"},
+    {"instrument_key": "NSE_FO|68407", "exchange": "NSE",
+     "segment": "NSE_FO", "instrument_type": "FUT",
+     "trading_symbol": "NIFTY FUT 29 SEP 26", "name": "NIFTY",
+     "underlying_symbol": "NIFTY",
+     "expiry": 1790706599000,          # 2026-09-29
+     "strike_price": None, "lot_size": 65, "tick_size": 10.0,
+     "exchange_token": "68407", "asset_key": "NSE_INDEX|Nifty 50"},
     {"bad_row": True},                       # malformed -> skipped
 ]
 
@@ -75,17 +91,30 @@ def test_pf1_to_pf3_upstox_parse(runner: R) -> None:
     from app.instruments import upstox_master_records
 
     recs = upstox_master_records(_UPSTOX_ROWS)
-    runner.assert_eq("PF1-parsed-count", len(recs), 2)
+    runner.assert_eq("PF1-parsed-count", len(recs), 3)
     eq = next(r for r in recs if r["tradingsymbol"] == "RELIANCE")
     runner.assert_eq("PF1-identity", eq["exchange"], "NSE")
+    runner.assert_eq("PF1-token-is-feed-key",
+                     eq["instrument_token"], "NSE_EQ|INE002A01018")
+    runner.assert_eq("PF1-type", eq["instrument_type"], "EQUITY")
     ce = next(r for r in recs if r["option_type"] == "CE")
     runner.assert_eq("PF1-strike", ce["strike"], 24500.0)
-    runner.assert_eq("PF1-underlying", ce["underlying"], "NIFTY 50")
+    runner.assert_eq("PF1-underlying", ce["underlying"], "NIFTY")
+    runner.assert_eq("PF1-type-option", ce["instrument_type"], "OPTION")
+    runner.assert_eq("PF1-expiry-iso", ce["expiry"], "2026-09-24")
+    runner.assert_eq("PF1-provider-symbol", ce["provider_symbol"],
+                     "NSE_FO|55001")
+    fut = next(r for r in recs if r["instrument_type"] == "FUTURE")
+    runner.assert_eq("PF1-future-expiry", fut["expiry"], "2026-09-29")
+    runner.assert_eq("PF1-future-key", fut["instrument_token"],
+                     "NSE_FO|68407")
+    runner.assert_true("PF1-no-option-type-on-future",
+                       fut["option_type"] is None)
 
     # PF2: gzip bytes path.
     gz = gzip.compress(json.dumps(_UPSTOX_ROWS).encode())
     recs2 = upstox_master_records(gz)
-    runner.assert_eq("PF2-gzip-parse", len(recs2), 2)
+    runner.assert_eq("PF2-gzip-parse", len(recs2), 3)
 
     # PF3: malformed row skipped without error.
     runner.assert_true("PF3-malformed-skipped", len(recs) < len(_UPSTOX_ROWS))
@@ -176,7 +205,7 @@ def test_pf8_pf9_sync_service(runner: R) -> None:
         raise InstrumentSyncError("offline segment")
 
     result = cat.sync_upstox(fetch=fake_fetch)
-    runner.assert_eq("PF8-sync-inserted", result["records"], 2)
+    runner.assert_eq("PF8-sync-inserted", result["records"], 3)
     runner.assert_eq("PF8-no-fyers-url-hit",
                      any("fyers" in u for u in calls), False)
 
