@@ -360,14 +360,6 @@ async def _restart_fyers_source() -> None:
         raise
 
 
-def _save_fyers_auth_status(status: str) -> None:
-    """Durably record the last Fyers auth/restore outcome (forensics)."""
-    try:
-        _credential_store.save_last_auth_status("fyers", status)
-    except Exception:
-        pass
-
-
 async def _try_restore_fyers_token() -> None:
     """Best-effort Fyers restore, delegated to FyersAuthService.
 
@@ -1121,6 +1113,29 @@ async def _lifespan(app: Starlette) -> None:
         _app_logger.warning("analytics service shutdown failed", exc_info=True)
 
 
+def _auth_health_snapshot_fn() -> dict[str, Any]:
+    """Broker auth snapshots for the diagnostics Test Center (observes only).
+
+    Reads through the same service methods as the Settings UI, so the
+    Test Center can never disagree with it. Genuine-rejection invalidation
+    semantics are identical to a UI status poll (transient feed problems
+    never invalidate); the endpoint itself performs no writes.
+    """
+    out: dict[str, Any] = {}
+    if _auth_service is None:
+        return out
+    try:
+        out["upstox"] = _auth_service.upstox.status(
+            SOURCES_CFG, _broker_restore)
+    except Exception:
+        out["upstox"] = {"error": "unavailable"}
+    try:
+        out["fyers"] = _auth_service.fyers.status_snapshot(_broker_restore)
+    except Exception:
+        out["fyers"] = {"error": "unavailable"}
+    return out
+
+
 # One top-level Starlette app: MCP protocol routes + /health + /events/stream
 # + dedicated market SSE stream.
 app = Starlette(
@@ -1192,6 +1207,8 @@ app = Starlette(
             for name, info in _source_manager.get_status().items()
         ],
         lambda: get_public_base_url(_config),
+        # Read-only broker auth-health (Test Center observes; never mutates).
+        auth_status_fn=_auth_health_snapshot_fn,
     )
     + _build_api_meta_routes()
     + _build_ai_alert_routes(_store, mcp)

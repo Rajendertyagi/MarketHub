@@ -141,6 +141,29 @@ class AuthStorage:
         guard_fake_token_write(self._store, token, provider="fyers")
         self._store.save_fyers_access_token(token, expires_at_iso=expires_at_iso)
 
+    # -- Upstox PIN-mode auth code (single-use, encrypted) --------------------
+    def stage_auth_code(self, code: str) -> None:
+        if not isinstance(code, str) or not code.strip():
+            raise ValueError("auth code must be a non-empty string")
+        self._store.save_upstox_auth_code(code.strip())
+
+    def consume_auth_code(self) -> str | None:
+        try:
+            code = self._store.load_upstox_auth_code()
+        except Exception:
+            code = None
+        try:
+            self._store.clear_upstox_auth_code()
+        except Exception:
+            pass
+        return code if isinstance(code, str) and code.strip() else None
+
+    def has_pending_auth_code(self) -> bool:
+        try:
+            return bool(self._store.load_upstox_auth_code())
+        except Exception:
+            return False
+
     # -- shared -----------------------------------------------------------
     def save_status(self, provider: str, status: str) -> None:
         try:

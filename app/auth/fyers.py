@@ -24,17 +24,27 @@ class FyersAuthService:
     def __init__(
         self,
         storage: AuthStorage,
-        runtime_auth: Any,
+        runtime_auth: Any = None,
         *,
         app_id_provider: Callable[[], dict | None] | None = None,
         refresh_fn: Callable[..., Any] | None = None,
         redirect_uri: str = "",
     ) -> None:
         self._storage = storage
+        if runtime_auth is None:
+            # Test/isolation seam only: production always injects the shared
+            # owner (composition root) so login unblocks the wired feed.
+            from app.fyers_runtime_auth import FyersRuntimeAuth
+            runtime_auth = FyersRuntimeAuth()
         self._runtime = runtime_auth
         self._app_id_provider = app_id_provider
         self._refresh_fn = refresh_fn
         self._redirect_uri = redirect_uri
+
+    @property
+    def runtime(self) -> Any:
+        """The single runtime-token owner (feed getter closes over it)."""
+        return self._runtime
 
     # -- restore (migrated from server._try_restore_fyers_token) --------------
     async def restore_session(self) -> RestoreOutcome:
@@ -121,6 +131,55 @@ class FyersAuthService:
         return out
 
     # -- login ------------------------------------------------------------------
+    def save_credentials(self, app_id: str, secret_id: str,
+                         pin: str | None = None) -> dict[str, Any]:
+        """Save App ID/Secret (+ optional PIN) to the encrypted store.
+
+        Request validation (length/shape) stays in the route; the service
+        owns the write order. Raises ValueError on bad input.
+        """
+        store = self._storage.raw
+        if not isinstance(app_id, str) or not app_id.strip():
+            raise ValueError("app_id is required")
+        if not isinstance(secret_id, str) or not secret_id.strip():
+            raise ValueError("secret_id is required")
+        store.save_fyers_credentials(app_id.strip(), secret_id.strip())
+        if isinstance(pin, str) and pin.strip():
+            store.save_fyers_pin(pin.strip())
+        return {"configured": True}
+
+    def build_login_url(self, state: str) -> str:
+        """Canonical Fyers login URL from stored credentials.
+
+        Raises FyersAuthError when credentials are not configured.
+        """
+        from brokers.fyers.auth import FyersAuth, FyersAuthError
+        store = self._storage.raw
+        try:
+            creds = store.load_fyers_credentials()
+        except Exception:
+            creds = None
+        if not creds:
+            raise FyersAuthError("fyers credentials not configured")
+        return FyersAuth(app_id=creds["app_id"],
+                         secret_id=creds["app_secret"],
+                         redirect_uri=self._redirect_uri).login_url(state=state)
+
+    async def exchange_auth_code(self, code: str) -> dict:
+        """Validate an auth callback code via the official exchange."""
+        from brokers.fyers.auth import FyersAuth
+        store = self._storage.raw
+        try:
+            creds = store.load_fyers_credentials()
+        except Exception:
+            creds = None
+        if not creds:
+            raise ValueError("fyers credentials not configured")
+        auth = FyersAuth(app_id=creds["app_id"],
+                         secret_id=creds["app_secret"],
+                         redirect_uri=self._redirect_uri)
+        return await auth.validate_auth_code(code.strip())
+
     async def persist_login(self, bundle: dict,
                             restart_fn: Any = None) -> dict[str, Any]:
         """Persist refresh (authoritative) + access cache, install runtime."""
@@ -164,8 +223,15 @@ class FyersAuthService:
             restore_state["fyers_restored"] = False
         return {"ok": True}
 
-    def status_snapshot(self) -> dict[str, Any]:
+    def status_snapshot(
+        self, restore_state: dict | None = None,
+    ) -> dict[str, Any]:
+        """Full auth projection (route adds source/feed fields only)."""
         store = self._storage.raw
+        try:
+            creds = store.load_fyers_credentials()
+        except Exception:
+            creds = None
         try:
             has_refresh = bool(store.load_fyers_refresh_token())
         except Exception:
@@ -178,16 +244,35 @@ class FyersAuthService:
             stored_access = store.load_fyers_access_token()
         except Exception:
             stored_access = None
+        try:
+            store_state = store.store_status()
+        except Exception:
+            store_state = {}
         runtime_active = bool(
             self._runtime.has_access_token()
             if hasattr(self._runtime, "has_access_token") else
             bool(self._runtime.get_access_token()))
         return {
+            "app_id_configured": bool(creds and creds.get("app_id")),
+            "secret_configured": bool(creds and creds.get("app_secret")),
+            "login_available": bool(creds),
+            "access_token_active": runtime_active,
             "runtime_active": runtime_active,
+            "refresh_token_stored": has_refresh,
             "refresh_stored": has_refresh,
             "pin_stored": pin_stored,
             "stored_access": stored_access,
+            # Durable session / restart-safety signals.
+            "session_persisted": stored_access is not None,
             "restart_recovery": bool(has_refresh and pin_stored),
+            "session_restored": bool(
+                (restore_state or {}).get("fyers_restored")),
+            "access_token_expires_at": (
+                stored_access or {}).get("expires_at"),
             "login_required": not (runtime_active or (has_refresh and pin_stored)),
             "last_auth_status": self._storage.load_status("fyers"),
+            # "key_missing"/"decrypt_failed": ciphertext exists but the
+            # current master.key cannot read it — a store ERROR, distinct
+            # from ordinary "not configured".
+            "store_error": store_state.get("reason"),
         }

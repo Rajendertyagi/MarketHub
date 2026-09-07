@@ -35,36 +35,6 @@ def _json(data: Any, status: int = 200) -> JSONResponse:
     return JSONResponse(data, status_code=status)
 
 
-def _persist_upstox_session(creds: Any, cred_store: Any) -> None:
-    """Best-effort: encrypt + persist the Upstox session token.
-
-    Failure to persist must NEVER break the login that just succeeded — the
-    runtime token is already live; persistence only enables restart recovery.
-    Fake/placeholder tokens are never persisted (production uses token=None
-    + explicit state instead).
-    """
-    if cred_store is None or creds is None:
-        return
-    try:
-        try:
-            from app.auth.storage import guard_fake_token_write as _guard
-            _guard(cred_store, getattr(creds, "access_token", ""),
-                   provider="upstox")
-        except ValueError:
-            logger.warning("refusing to persist fake upstox token")
-            return
-        expires_at = creds.expires_at
-        expires_iso = expires_at.isoformat() if expires_at is not None else None
-        cred_store.save_upstox_session_token(
-            token=creds.access_token,
-            expires_at_iso=expires_iso,
-            issued_at_iso=datetime.now(timezone.utc).isoformat(),
-        )
-        cred_store.save_last_auth_status("upstox", "authenticated")
-    except Exception:
-        logger.warning("failed to persist upstox session token", exc_info=True)
-
-
 def build_market_routes(
     market_broker: Any,
     market_service: Any = None,
@@ -580,146 +550,58 @@ def build_auth_routes(
             for k in ("api_key", "api_secret", "redirect_uri")
         )
 
+    def _require_auth() -> Any:
+        """The injected broker auth service (composition root owns it).
+
+        Loud on misconfiguration: silently degrading to an inline lifecycle
+        is exactly how auth ownership leaked into routes before.
+        """
+        if _upstox_auth is None:
+            raise RuntimeError("upstox auth service unavailable")
+        return _upstox_auth
+
     async def _apply_upstox_session(creds: Any) -> None:
         """Durable-session lifecycle shared by ALL Upstox login paths.
 
-        Delegates to UpstoxAuthService (persist-first, feed-failure-isolated).
+        Owned by UpstoxAuthService (persist-first, feed-failure-isolated).
         Classification afterwards is FEED diagnostics only and must never
         influence whether the login succeeded.
         """
-        if _upstox_auth is not None:
-            await _upstox_auth.apply_session(creds)
-            feed = feed_ref.get("feed")
-            if feed is not None:
-                try:
-                    await _classify_post_restart(feed)
-                except Exception:
-                    logger.exception("upstox login: feed restart failed")
-            return
-        # 3 + 4: persist first, before any feed restart that could fail.
-        _persist_upstox_session(creds, cred_store)
-        # 5: install into the live feed if one is registered.
+        await _require_auth().apply_session(creds)
         feed = feed_ref.get("feed")
         if feed is not None:
             try:
-                feed.update_credentials(creds)
-            except Exception:
-                logger.exception("upstox login: failed to install credentials")
-        # 6: attempt (re)start. Failure affects FEED status only.
-        if restart_fn is not None and feed is not None:
-            try:
-                await restart_fn()
                 await _classify_post_restart(feed)
             except Exception:
                 logger.exception("upstox login: feed restart failed")
 
     async def _auth_status(request: Request) -> Response:  # noqa: ARG001
-        # Dedicated subsystem owns status projection (token=None +
-        # explicit auth_state; feed state never implies auth).
-        if _upstox_auth is not None:
-            try:
-                base = _upstox_auth.status(sources_cfg, restore_state)
-                base["oauth_available"] = _oauth_ready()
-                return _json(base)
-            except Exception:
-                logger.exception("upstox status failed")
-        feed = feed_ref.get("feed")
-        _feed_cfg = (sources_cfg or {}).get("upstox")
-        base = {
-            "configured": feed is not None,
-            "oauth_available": _oauth_ready(),
-            "feed_configured": isinstance(_feed_cfg, dict),
-            "feed_enabled": (
-                bool(_feed_cfg.get("enabled")) if isinstance(_feed_cfg, dict) else False),
-        }
-        session = None
-        if cred_store is not None:
-            try:
-                session = cred_store.load_upstox_session_token()
-            except Exception:
-                session = None
-        base["session_persisted"] = session is not None
-        base["restart_recovery"] = session is not None
-        base["session_restored"] = bool(
-            restore_state.get("upstox_restored")) if restore_state else False
-        base["last_auth_status"] = (
-            cred_store.load_last_auth_status("upstox")
-            if cred_store is not None else None)
-        if feed is None:
-            base.update({"source": "upstox", "auth_mode": "none",
-                         "token_configured": False,
-                         "login_required": True})
-            return _json(base)
-        creds = getattr(feed, "_credentials", None)
-        status = creds.status() if creds is not None else {
-            "auth_mode": "none", "token_present": False,
-            "expiry_known": False, "expires_at": None, "expired": None}
-        base.update({
-            "source": feed.name,
-            "auth_mode": status.get("auth_mode", "unknown"),
-            "token_configured": bool(status.get("token_present", False)),
-            "expiry_known": status.get("expiry_known", False),
-            "expires_at": status.get("expires_at"),
-            "expired": status.get("expired"),
-            "state": feed.status().get("state", "unknown"),
-        })
-        ready = getattr(feed, "is_ready_to_start", None)
-        base["ready_to_start"] = bool(ready()) if callable(ready) else None
-        base["auth_code_pending"] = bool(
-            cred_store and cred_store.load_upstox_auth_code())
-        base["login_required"] = not (
-            base["token_configured"] and base.get("expired") is not True
-            and base.get("state") not in ("auth_required",))
-        # Genuine broker rejection (401/403) of a persisted token rolls the
-        # durable session back to "login required". Transient feed/network
-        # failures (ws drop, market closed, slow start) must NOT reach here.
-        if feed is not None and cred_store is not None:
-            _fstate = feed.status()
-            if (_fstate.get("state") == "auth_required"
-                    and _fstate.get("last_exit_reason") == "broker_rejected_token"):
-                try:
-                    cred_store.clear_upstox_session_token()
-                    cred_store.save_last_auth_status("upstox", "rejected")
-                except Exception:
-                    logger.exception("upstox: failed to clear rejected session")
-                base["session_persisted"] = False
-                base["restart_recovery"] = False
-
+        # Thin adapter: the auth service owns status projection (token=None
+        # + explicit auth_state; feed state never implies auth). Request
+        # parsing (oauth readiness) stays here; lifecycle lives in app/auth/.
+        try:
+            base = _require_auth().status(sources_cfg, restore_state)
+        except Exception:
+            logger.exception("upstox status failed")
+            return _json({"error": "auth service unavailable",
+                          "oauth_available": _oauth_ready()}, 503)
+        base["oauth_available"] = _oauth_ready()
         return _json(base)
 
     async def _forget_session(request: Request) -> Response:  # noqa: ARG001
         """Forget the durably stored Upstox session (does NOT delete API creds).
 
-        Clears the encrypted session token and drops the runtime session to
-        None (token=None + login_required=true) so the feed gates on a fresh
-        login. Safe to call at any time; never raises.
+        Thin adapter: the auth service clears runtime + durable state.
         """
-        if _upstox_auth is not None:
-            try:
-                return _json(_upstox_auth.logout(restore_state))
-            except Exception:
-                logger.exception("failed to clear upstox session")
-                return _json({"ok": True})
-        if cred_store is not None:
-            try:
-                cred_store.clear_upstox_session_token()
-                cred_store.save_last_auth_status("upstox", "forgotten")
-            except Exception:
-                logger.exception("failed to clear upstox session")
-        feed = feed_ref.get("feed")
-        if feed is not None:
-            try:
-                feed.update_credentials(None)
-            except Exception:
-                logger.exception("failed to reset upstox runtime creds")
-        if restore_state is not None:
-            restore_state["upstox_restored"] = False
-        return _json({"ok": True})
+        try:
+            return _json(_require_auth().logout(restore_state))
+        except Exception:
+            logger.exception("failed to clear upstox session")
+            return _json({"error": "auth service unavailable"}, 503)
 
     async def _oauth_login(request: Request) -> Response:  # noqa: ARG001
         if not _oauth_ready():
             return _json({"error": "oauth not configured"}, 503)
-        from brokers.upstox.auth import UpstoxOAuth
 
         # PIN-mode: after the redirect, store the code and prompt the operator
         # for their Upstox PIN in the WebUI instead of auto-exchanging.
@@ -736,10 +618,7 @@ def build_auth_routes(
         _pending_states[state] = now + _STATE_TTL_S
         _pending_pin[state] = pin_mode
         try:
-            url = UpstoxOAuth(
-                api_key=oauth["api_key"],
-                redirect_uri=oauth["redirect_uri"],
-            ).authorization_url(state=state)
+            url = _require_auth().build_login_url(oauth, state)
         except Exception:
             _pending_states.pop(state, None)
             _pending_pin.pop(state, None)
@@ -781,10 +660,8 @@ def build_auth_routes(
         # PIN-mode: persist the single-use code so the WebUI can complete the
         # exchange with the operator's PIN via /api/auth/upstox/pin.
         if pin_mode:
-            if cred_store is None:
-                return _fail("error")
             try:
-                cred_store.save_upstox_auth_code(code.strip())
+                _require_auth().stage_auth_code(code.strip())
             except Exception:
                 logger.exception("oauth callback: failed to store auth code")
                 return _fail("error")
@@ -795,7 +672,8 @@ def build_auth_routes(
             return _fail("error")
 
         try:
-            creds = await rest.exchange_authorization_code(
+            creds = await _require_auth().exchange_code(
+                rest,
                 code=code.strip(),
                 client_id=oauth["api_key"].strip(),
                 client_secret=oauth["api_secret"].strip(),
@@ -824,7 +702,7 @@ def build_auth_routes(
                     f"/ui/?auth=failed&reason={reason}#/settings",
                     status_code=302)
 
-        if cred_store is None or rest is None or not _oauth_ready():
+        if rest is None or not _oauth_ready():
             return _json({"error": "oauth not configured"}, 503)
         try:
             body = await request.json()
@@ -834,14 +712,16 @@ def build_auth_routes(
         if not isinstance(pin, str) or not pin.strip():
             return _json({"error": "pin is required"}, 400)
 
-        code = cred_store.load_upstox_auth_code()
+        # Single-use staged code (loaded + cleared by the service).
+        code = _require_auth().consume_auth_code()
         if not code:
             return _json(
                 {"error": "no pending Upstox login — click Login with Upstox (PIN) again"},
                 400)
 
         try:
-            creds = await rest.exchange_with_pin(
+            creds = await _require_auth().exchange_pin(
+                rest,
                 code=code.strip(),
                 pin=pin.strip(),
                 client_id=oauth["api_key"].strip(),
@@ -853,8 +733,6 @@ def build_auth_routes(
             if isinstance(status, int) and 400 <= status < 500:
                 return _json({"error": "Upstox rejected the PIN or login"}, 400)
             return _json({"error": "could not reach Upstox during login"}, 400)
-        finally:
-            cred_store.clear_upstox_auth_code()
 
         # Successful PIN exchange -> durable session. Feed (re)start failure
         # is a FEED problem and must NOT turn a valid login into auth=failed.
@@ -872,25 +750,12 @@ def build_auth_routes(
         if len(token) > 4096:
             return _json({"error": "access_token too long"}, 400)
 
-        from brokers.upstox.auth import UpstoxCredentials, upstox_token_expiry
+        # Thin adapter: the service derives canonical expiry + persists.
         try:
-            # Manual/pasted tokens carry no issuer-provided expiry; derive the
-            # canonical Upstox daily-expiry so we NEVER persist expires_at=None.
-            creds = UpstoxCredentials(
-                access_token=token.strip(),
-                expires_at=upstox_token_expiry(datetime.now(timezone.utc)),
-            )
+            result = await _require_auth().submit_manual_token(token.strip())
         except Exception as exc:
             return _json({"error": f"invalid credentials: {exc}"}, 400)
-
-        # Successful submit -> durable session (persist BEFORE any feed restart
-        # so a slow/stopped feed can never undo the login).
-        await _apply_upstox_session(creds)
-        return _json({
-            "configured": True,
-            "authenticated": True,
-            "session_persisted": True,
-        })
+        return _json(result)
 
     return [
         Route("/api/auth/upstox/status", endpoint=_auth_status, methods=["GET"]),

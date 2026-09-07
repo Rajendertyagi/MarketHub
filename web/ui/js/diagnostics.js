@@ -52,6 +52,75 @@ export function initDiagnosticsUI() {
 export function openDiagnostics() {
   // Begin the SSE diagnostic immediately when the page is opened.
   _startSSEDiagnostic();
+  // Render the small read-only broker auth-health section.
+  _renderAuthHealth();
+}
+
+// ── Broker auth health (read-only; observes /api/diagnostics) ──────────
+// Shows, per broker, AUTH facts (state/authenticated/login/session/expiry)
+// beside FEED facts (state/task). Authenticated + Feed Streaming,
+// Authenticated + Feed Reconnecting, Login Required, Expired and Rejected
+// are visually distinct. No secret is ever rendered (the endpoint only
+// serves allow-listed keys).
+async function _renderAuthHealth() {
+  const el = $("diag-auth");
+  if (!el) return;
+  let diag = null;
+  try {
+    diag = await apiGet("/api/diagnostics");
+  } catch {
+    el.innerHTML = "";
+    return;
+  }
+  const auth = (diag && diag.auth) || {};
+  const rows = [];
+  const upstox = auth.upstox;
+  if (upstox) rows.push(_authRow("Upstox", _upstoxLabel(upstox), upstox));
+  const fyers = auth.fyers;
+  if (fyers) rows.push(_authRow("Fyers", _fyersLabel(fyers), fyers));
+  if (!rows.length) {
+    el.innerHTML = "";
+    return;
+  }
+  el.innerHTML =
+    `<div class="diag-category"><h3>AUTH</h3>` +
+    `<table class="data-table"><thead><tr><th>Broker</th><th>Status</th>` +
+    `<th>Auth</th><th>Feed</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+}
+
+function _authRow(broker, label, facts) {
+  const feed = facts.feed || {};
+  const cls = label.cls;
+  const authTxt = `state=${facts.auth_state ?? "—"} authed=${!!facts.authenticated} ` +
+    `login=${!!facts.login_required} saved=${!!facts.session_persisted} ` +
+    `restored=${!!facts.session_restored} exp=${facts.expires_at ?? "—"}`;
+  const feedTxt = `state=${feed.state ?? "—"} task=${feed.task_running ?? "—"}`;
+  return `<tr><td><strong>${esc(broker)}</strong></td>` +
+    `<td><span class="ui-badge ui-badge-${cls}">${esc(label.text)}</span></td>` +
+    `<td class="mono">${esc(authTxt)}</td>` +
+    `<td class="mono">${esc(feedTxt)}</td></tr>`;
+}
+
+function _upstoxLabel(u) {
+  if (u.authenticated === true) {
+    const fs = (u.feed && u.feed.state) || "unknown";
+    return fs === "streaming"
+      ? { text: "Authenticated + Feed Streaming", cls: "success" }
+      : { text: `Authenticated + Feed ${fs}`, cls: "warning" };
+  }
+  if (u.auth_state === "expired") return { text: "Expired", cls: "danger" };
+  if (u.auth_state === "rejected") return { text: "Rejected", cls: "danger" };
+  return { text: "Login Required", cls: "neutral" };
+}
+
+function _fyersLabel(f) {
+  if (f.authenticated === true) {
+    const fs = (f.feed && f.feed.state) || "unknown";
+    return fs === "streaming"
+      ? { text: "Authenticated + Feed Streaming", cls: "success" }
+      : { text: `Authenticated + Feed ${fs}`, cls: "warning" };
+  }
+  return { text: "Login Required", cls: "neutral" };
 }
 
 function _populateSymbolSelector() {

@@ -13,8 +13,6 @@ import logging
 import os
 from typing import Any, Callable
 
-from app.fyers_runtime_auth import FyersRuntimeAuth
-
 logger = logging.getLogger(__name__)
 
 from starlette.requests import Request
@@ -230,16 +228,44 @@ _DIAGNOSTIC_SOURCE_FIELDS = (
 )
 
 
+def _find_source(sources_out: list, broker: str) -> dict | None:
+    """Find a source snapshot by broker name/provider (read-only helper)."""
+    for entry in sources_out or []:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or "")
+        provider = str(entry.get("provider") or entry.get("type") or "")
+        if broker in name.lower() or broker in provider.lower():
+            return entry
+    return None
+
+
+# Allow-listed auth-health fields per broker (read-only; secret-bearing
+# keys can never pass this projection even if a status payload grew one).
+_UPSTOX_DIAG_AUTH_FIELDS = frozenset({
+    "auth_state", "authenticated", "login_required", "token_configured",
+    "session_persisted", "session_restored", "expires_at",
+    "last_auth_status",
+})
+_FYERS_DIAG_AUTH_FIELDS = frozenset({
+    "access_token_active", "login_required", "session_persisted",
+    "session_restored", "access_token_expires_at", "last_auth_status",
+})
+
+
 def build_diagnostics_routes(version: str,
                              store: Any,
                              source_status_fn: Callable[[], list],
-                             base_url_fn: Callable[[], str]) -> list[Route]:
+                             base_url_fn: Callable[[], str],
+                             auth_status_fn: Any = None) -> list[Route]:
     """GET /api/diagnostics — read-only support snapshot with NO secrets.
 
     Aggregates what an operator needs to report a problem: application and
-    schema versions, per-source lifecycle summary, and the effective public
-    base URL. Tokens, API secrets, refresh tokens, authorized WSS URLs and
-    raw broker error bodies are never included.
+    schema versions, per-source lifecycle summary, the effective public
+    base URL, and a small broker auth-health section (auth facts + feed
+    facts, clearly separated). Tokens, API secrets, refresh tokens, PINs,
+    auth codes, authorized WSS URLs and raw broker error bodies are never
+    included.
     """
 
     async def _diagnostics(request: Request) -> Response:  # noqa: ARG001
@@ -271,12 +297,51 @@ def build_diagnostics_routes(version: str,
             base_url = base_url_fn()
         except Exception:
             base_url = None
+        # Small broker auth-health section (read-only, allow-listed keys
+        # only). Feed facts merge from the source snapshot above so auth
+        # and connectivity stay visually distinct in the Test Center.
+        auth_out: dict[str, Any] = {}
+        try:
+            _auth_all = auth_status_fn() if auth_status_fn else {}
+        except Exception:
+            _auth_all = {}
+        if isinstance(_auth_all, dict):
+            _u = _auth_all.get("upstox")
+            if isinstance(_u, dict):
+                _usrc = _find_source(sources_out, "upstox")
+                auth_out["upstox"] = {
+                    k: _u.get(k) for k in _UPSTOX_DIAG_AUTH_FIELDS}
+                auth_out["upstox"]["feed"] = {
+                    "state": (_usrc.get("state") if _usrc else None),
+                    "task_running": (_usrc.get("task_running")
+                                     if _usrc else None),
+                }
+            _f = _auth_all.get("fyers")
+            if isinstance(_f, dict):
+                _fsrc = _find_source(sources_out, "fyers")
+                _active = bool(_f.get("access_token_active"))
+                auth_out["fyers"] = {
+                    k: _f.get(k) for k in _FYERS_DIAG_AUTH_FIELDS}
+                # Normalized contract (Fyers has no expired/rejected states;
+                # never fabricate them): active -> authenticated, else the
+                # login_required flag decides missing vs unknown.
+                auth_out["fyers"]["authenticated"] = _active
+                auth_out["fyers"]["auth_state"] = (
+                    "authenticated" if _active
+                    else ("missing" if _f.get("login_required")
+                          else "unknown"))
+                auth_out["fyers"]["feed"] = {
+                    "state": (_fsrc.get("state") if _fsrc else None),
+                    "task_running": (_fsrc.get("task_running")
+                                     if _fsrc else None),
+                }
         return _json({
             "service": "MarketHub",
             "version": version,
             "schema_version": schema_version,
             "public_base_url": base_url,
             "sources": sources_out,
+            "auth": auth_out,
             "generated_at": _dt.datetime.now(
                 _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         })
@@ -1073,44 +1138,38 @@ def build_fyers_auth_routes(cred_store: Any,
     import secrets as _secrets
     import time as _time
 
-    # Runtime-only access token (never persisted). Refresh token lives
-    # encrypted in the credential store under provider "fyers_refresh".
-    # ``runtime_auth`` is the single owner of Fyers runtime auth state; the
-    # feed's getter closes over it, so login here unblocks the running feed.
-    _fyers_runtime_auth = (
-        runtime_auth if runtime_auth is not None else FyersRuntimeAuth())
+    # Thin adapter: FyersAuthService (app/auth/) owns runtime + durable
+    # session lifecycle. ``runtime_auth`` is the single runtime-token owner
+    # shared with the feed's getter, so login here unblocks the running
+    # feed. Routes parse requests and project status; they own no lifecycle.
     _fyers_auth = auth_service
     if _fyers_auth is None and cred_store is not None:
         try:
             from app.auth.fyers import FyersAuthService as _FyersSvc
             from app.auth.storage import AuthStorage as _AuthStorage
             _fyers_auth = _FyersSvc(
-                _AuthStorage(cred_store), _fyers_runtime_auth,
+                _AuthStorage(cred_store), runtime_auth,
                 redirect_uri=redirect_uri)
         except Exception:
             _fyers_auth = None
+
+    def _require_fyers() -> Any:
+        if _fyers_auth is None:
+            raise RuntimeError("fyers auth service unavailable")
+        return _fyers_auth
+
     _pending: dict[str, float] = {}
     _TTL = 600
 
     async def _status(request: Request) -> Response:  # noqa: ARG001
+        # Thin adapter: auth facts from the service; source/feed lifecycle
+        # state (separate concept) from the SourceManager/config.
         try:
-            creds = cred_store.load_fyers_credentials()
+            view = await asyncio.to_thread(
+                _require_fyers().status_snapshot, restore_state)
         except Exception:
-            creds = None
-        has_refresh = bool(await asyncio.to_thread(
-            cred_store.load_fyers_refresh_token))
-        pin_stored = bool(await asyncio.to_thread(cred_store.load_fyers_pin))
-        stored_access = await asyncio.to_thread(
-            cred_store.load_fyers_access_token)
-        store = await asyncio.to_thread(cred_store.store_status)
-        # Restart recovery works only when BOTH a refresh token AND the PIN
-        # (required by Fyers' refresh endpoint) are durably stored.
-        restart_recovery = has_refresh and pin_stored
-        login_required = not (_fyers_runtime_auth.get_access_token()
-                              or (has_refresh and pin_stored))
-        # Source (feed) registration — distinct from credentials/login. A
-        # broker can be fully authenticated yet report "source not configured"
-        # when no FyersFeed is registered in the runtime SourceManager.
+            logger.exception("fyers status failed")
+            return _json({"error": "auth service unavailable"}, 503)
         _fy_cfg = (sources_cfg or {}).get("fyers")
         configured = isinstance(_fy_cfg, dict)
         enabled = bool(_fy_cfg.get("enabled")) if configured else False
@@ -1123,27 +1182,7 @@ def build_fyers_auth_routes(cred_store: Any,
             if isinstance(_st, dict):
                 source_state = _st.get("state")
                 task_running = _st.get("task_running")
-        return _json({
-            "app_id_configured": bool(creds and creds.get("app_id")),
-            "secret_configured": bool(creds and creds.get("app_secret")),
-            "login_available": bool(creds),
-            "access_token_active": _fyers_runtime_auth.has_access_token(),
-            "refresh_token_stored": has_refresh,
-            "pin_stored": pin_stored,
-            # Durable session / restart-safety signals.
-            "session_persisted": stored_access is not None,
-            "restart_recovery": restart_recovery,
-            "session_restored": bool(
-                restore_state.get("fyers_restored")) if restore_state else False,
-            "last_auth_status": await asyncio.to_thread(
-                cred_store.load_last_auth_status, "fyers"),
-            "access_token_expires_at": (
-                stored_access or {}).get("expires_at"),
-            "login_required": login_required,
-            # "key_missing"/"decrypt_failed": ciphertext exists but the
-            # current master.key cannot read it — a store ERROR, distinct
-            # from ordinary "not configured".
-            "store_error": store.get("reason"),
+        view.update({
             # Source/feed lifecycle state (separate concept from auth).
             "source_configured": configured,
             "source_enabled": enabled,
@@ -1152,6 +1191,7 @@ def build_fyers_auth_routes(cred_store: Any,
             "task_running": task_running,
             "restart_required": configured and not registered,
         })
+        return _json(view)
 
     async def _save(request: Request) -> Response:
         try:
@@ -1166,16 +1206,15 @@ def build_fyers_auth_routes(cred_store: Any,
                 return _json({"error": f"{label} is required"}, 400)
             if len(value) > 512:
                 return _json({"error": f"{label} too long"}, 400)
+        # Thin adapter: the service owns the credential write order.
         try:
-            cred_store.save_fyers_credentials(app_id.strip(),
-                                             secret_id.strip())
-            # Optional PIN (encrypted): enables refresh-token session
-            # restore across restarts so daily re-login is not required.
-            if isinstance(pin, str) and pin.strip():
-                cred_store.save_fyers_pin(pin.strip())
+            result = await asyncio.to_thread(
+                _require_fyers().save_credentials,
+                app_id.strip(), secret_id.strip(),
+                pin.strip() if isinstance(pin, str) else None)
         except Exception:
             return _json({"error": "failed to save fyers credentials"}, 500)
-        return _json({"configured": True})
+        return _json(result)
 
     async def _delete(request: Request) -> Response:  # noqa: ARG001
         try:
@@ -1186,23 +1225,18 @@ def build_fyers_auth_routes(cred_store: Any,
         return _json({"removed": bool(removed)})
 
     async def _login(request: Request) -> Response:  # noqa: ARG001
-        try:
-            creds = await asyncio.to_thread(
-                cred_store.load_fyers_credentials)
-        except Exception:
-            creds = None
-        if not creds:
-            return _json({"error": "fyers credentials not configured"}, 503)
-        from brokers.fyers.auth import FyersAuth
-
         now = _time.monotonic()
         for s in [s for s, e in _pending.items() if e <= now]:
             del _pending[s]
         state = _secrets.token_urlsafe(32)
         _pending[state] = now + _TTL
-        url = FyersAuth(app_id=creds["app_id"],
-                        secret_id=creds["app_secret"],
-                        redirect_uri=redirect_uri).login_url(state=state)
+        # Thin adapter: the service builds the login URL from stored creds.
+        try:
+            url = await asyncio.to_thread(
+                _require_fyers().build_login_url, state)
+        except Exception:
+            _pending.pop(state, None)
+            return _json({"error": "fyers credentials not configured"}, 503)
         from starlette.responses import RedirectResponse
         return RedirectResponse(url, status_code=302)
 
@@ -1232,53 +1266,25 @@ def build_fyers_auth_routes(cred_store: Any,
             return _fail("expired")
         del _pending[matched]
 
+        # Thin adapter: exchange + persist owned by FyersAuthService.
+        # TOKEN POLICY (deliberate, documented):
+        #   refresh token -> encrypted persistent storage (long-lived)
+        #   access token  -> encrypted cache + runtime memory (short-lived)
         try:
-            creds = await asyncio.to_thread(
-                cred_store.load_fyers_credentials)
+            fyers_auth = _require_fyers()
         except Exception:
-            creds = None
-        if not creds:
             return _fail("retry")
-
-        from brokers.fyers.auth import FyersAuth
-        auth = FyersAuth(app_id=creds["app_id"],
-                         secret_id=creds["app_secret"],
-                         redirect_uri=redirect_uri)
         try:
-            bundle = await auth.validate_auth_code(code.strip())
+            bundle = await fyers_auth.exchange_auth_code(code.strip())
         except Exception:
             return _fail("rejected")
-
-        # TOKEN POLICY (deliberate, documented, owned by FyersAuthService):
-        #   refresh token -> encrypted persistent storage (long-lived,
-        #     officially supported by Fyers; required to regain access
-        #     after restart without re-login)
-        #   access token  -> encrypted cache + runtime memory (short-lived;
-        #     reusable directly on restart, regenerable from refresh).
-        if _fyers_auth is not None:
-            result = await _fyers_auth.persist_login(bundle, restart_fn)
-            if not result.get("ok"):
-                return _fail("error")
-        else:
-            try:
-                await asyncio.to_thread(
-                    cred_store.save_fyers_refresh_token, bundle["refresh_token"])
-            except Exception:
-                return _fail("error")
-            try:
-                await asyncio.to_thread(
-                    cred_store.save_fyers_access_token,
-                    bundle["access_token"], bundle.get("expires_at"))
-                await asyncio.to_thread(
-                    cred_store.save_last_auth_status, "fyers", "authenticated")
-            except Exception:
-                logger.warning("failed to persist fyers access token")
-            _fyers_runtime_auth.set_access_token(bundle["access_token"])
-            if restart_fn is not None:
-                try:
-                    await restart_fn()
-                except Exception:
-                    logger.warning("fyers feed restart after login failed")
+        try:
+            result = await fyers_auth.persist_login(bundle, restart_fn)
+        except Exception:
+            logger.warning("fyers feed login persist failed")
+            return _fail("error")
+        if not result.get("ok"):
+            return _fail("error")
         return RedirectResponse("/ui/?fyers_auth=ok#/settings", status_code=302)
 
     async def _forget_session(request: Request) -> Response:  # noqa: ARG001
@@ -1288,23 +1294,12 @@ def build_fyers_auth_routes(cred_store: Any,
         re-enter them; only the restart-recovery session is wiped. The runtime
         token is dropped so the feed gates on a fresh login.
         """
-        if _fyers_auth is not None:
-            try:
-                result = await asyncio.to_thread(
-                    _fyers_auth.logout, restore_state)
-                return _json(result)
-            except Exception:
-                return _json({"error": "failed to forget session"}, 500)
         try:
-            await asyncio.to_thread(cred_store.clear_fyers_session)
-            await asyncio.to_thread(
-                cred_store.save_last_auth_status, "fyers", "forgotten")
+            result = await asyncio.to_thread(
+                _require_fyers().logout, restore_state)
+            return _json(result)
         except Exception:
             return _json({"error": "failed to forget session"}, 500)
-        _fyers_runtime_auth.clear_access_token()
-        if restore_state is not None:
-            restore_state["fyers_restored"] = False
-        return _json({"ok": True})
 
     async def _feed_status(request: Request) -> Response:  # noqa: ARG001
         _fy_cfg = (sources_cfg or {}).get("fyers")

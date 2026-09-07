@@ -14,6 +14,11 @@ from typing import Any, Callable
 
 from app.auth.models import AuthState, RestoreOutcome, is_expired, parse_expiry_iso
 from app.auth.storage import AuthStorage
+from brokers.upstox.auth import (
+    UpstoxCredentials,
+    UpstoxOAuth,
+    upstox_token_expiry,
+)
 
 logger = logging.getLogger("event_server")
 
@@ -78,6 +83,49 @@ class UpstoxAuthService:
             except Exception:
                 logger.exception("upstox login: feed restart failed")
         return {"authenticated": True, "session_persisted": True}
+
+    # -- login input (thin-route entry points; routes parse, service owns) --
+    def build_login_url(self, oauth_cfg: dict, state: str) -> str:
+        """Canonical OAuth authorization URL (pure delegation)."""
+        return UpstoxOAuth(
+            api_key=oauth_cfg["api_key"],
+            redirect_uri=oauth_cfg["redirect_uri"],
+        ).authorization_url(state=state)
+
+    async def exchange_code(self, rest: Any, *, code: str, client_id: str,
+                            client_secret: str, redirect_uri: str) -> Any:
+        """Exchange an authorization code via the injected transport."""
+        return await rest.exchange_authorization_code(
+            code=code, client_id=client_id, client_secret=client_secret,
+            redirect_uri=redirect_uri)
+
+    async def exchange_pin(self, rest: Any, *, code: str, pin: str,
+                           client_id: str, client_secret: str,
+                           redirect_uri: str) -> Any:
+        """Exchange a staged auth code + operator PIN via the transport."""
+        return await rest.exchange_with_pin(
+            code=code, pin=pin, client_id=client_id,
+            client_secret=client_secret, redirect_uri=redirect_uri)
+
+    def stage_auth_code(self, code: str) -> None:
+        """Persist a single-use PIN-mode auth code (encrypted store)."""
+        self._storage.stage_auth_code(code)
+
+    def consume_auth_code(self) -> str | None:
+        """Load + clear the staged auth code (single use). Never raises."""
+        return self._storage.consume_auth_code()
+
+    async def submit_manual_token(self, token: str) -> dict[str, Any]:
+        """Manual/pasted token login: canonical expiry + shared lifecycle."""
+        if not isinstance(token, str) or not token.strip():
+            raise ValueError("access_token is required")
+        creds = UpstoxCredentials(
+            access_token=token.strip(),
+            expires_at=upstox_token_expiry(datetime.now(timezone.utc)),
+        )
+        await self.apply_session(creds)
+        return {"configured": True, "authenticated": True,
+                "session_persisted": True}
 
     # -- restore ----------------------------------------------------------
     def restore_session(self, sources_cfg: dict | None) -> RestoreOutcome:
@@ -206,12 +254,7 @@ class UpstoxAuthService:
             "feed_enabled": (bool(feed_cfg.get("enabled"))
                              if isinstance(feed_cfg, dict) else False),
         }
-        try:
-            raw = self._storage.raw
-            base["auth_code_pending"] = bool(
-                raw and raw.load_upstox_auth_code())
-        except Exception:
-            base["auth_code_pending"] = False
+        base["auth_code_pending"] = self._storage.has_pending_auth_code()
 
         # 1) Genuine rejection wins: invalidate first so every projected
         # field reflects the resulting storage/runtime state.
