@@ -35,3 +35,19 @@ boundaries (Options/News must not reach auth/secrets; config must stay
 secret/adapter-free; canonical market must not depend on transport/UI/adapters;
 core must not depend on app; WebUI must not import broker code). Keep it green.
 Add new edges only when already clean.
+
+## FROZEN — Auth/Startup Foundation (read-only)
+
+**AUTH/STARTUP FOUNDATION = FROZEN.** Treat as read-only in ordinary tasks.
+
+Ownership (see `docs/ARCHITECTURE_BOUNDARIES.md` §21):
+`app/auth/*` owns broker session lifecycle; `CredentialStore` owns encrypted
+storage; `app/server.py` wires composition only; routes are thin adapters;
+feeds consume credentials and report facts; WebUI displays state only.
+
+Ordinary feature tasks must NOT modify `app/auth/*`, credential persistence,
+startup restoration, rejection/expiry lifecycle, or fake-token guards without
+a concrete auth defect and an explicitly approved protected-core task.
+`test/test_architecture_boundaries.py` (auth-ownership freeze) plus
+`test_auth_freeze.py` (invariants/invalidation/isolation) enforce this
+mechanically — keep them green. **Login must not regress.**

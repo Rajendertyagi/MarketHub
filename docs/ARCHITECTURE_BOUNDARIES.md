@@ -481,3 +481,42 @@ Recorded for the controlled Fyers-token-isolation refactor.
 
 Each needs its own approved, login-safe task behind the §13 declaration and
 the §15 verification matrix.
+
+---
+
+## 21. FROZEN — Auth/Startup Foundation (read-only)
+
+**AUTH/STARTUP FOUNDATION = FROZEN.** Ordinary feature tasks treat it as
+read-only. A change here requires a concrete auth defect plus an explicitly
+approved protected-core task.
+
+### Ownership (canonical)
+
+| Resource | Single owner |
+|---|---|
+| Broker session lifecycle | `app/auth/*` (`AuthService` + `UpstoxAuthService` + `FyersAuthService` + `AuthStorage`) |
+| Encrypted durable storage | `app/secrets_store.py::CredentialStore` (sole writer path via `AuthStorage`) |
+| Upstox runtime credential | feed `._credentials`, written/cleared ONLY by `UpstoxAuthService` |
+| Fyers runtime token | `FyersRuntimeAuth`, written/cleared ONLY by `FyersAuthService` |
+| Genuine-rejection evidence | feed `auth_rejection()` latch (provider 401 at authorize only) |
+| Composition/startup wiring | `app/server.py` (builds + wires owners; no lifecycle) |
+| HTTP surface | `api/routes.py`, `api/product_routes.py` (thin: parse → service → project) |
+| Credential consumption | broker feeds (read getters/values; never persist/invalidate) |
+| State display | WebUI (initiates login/logout, displays; never decides auth) |
+| Health observation | Test Center `/api/diagnostics#auth` (read-only allow-listed keys) |
+
+Production unauthenticated state is `token=None` + explicit `auth_state`
+(`missing` / `authenticated` / `expired` / `rejected`). Placeholder tokens
+(`PENDING-OAUTH-LOGIN` etc.) must never return to production; fakes live
+only in isolated test stores (`guard_fake_token_write` enforces this).
+
+### Resolved by the freeze (was §20 debt)
+
+- Broker session restore moved out of `app/server.py` into `app/auth/`.
+- `api/routes.py` / `api/product_routes.py` no longer import `brokers.*`,
+  persist/clear sessions, or derive expiry — all in `app/auth/`.
+- The Fyers runtime-token duplicate mutation is eliminated (service-only).
+- `test/test_architecture_boundaries.py` (import + session-call +
+  constructor freeze) and `test_auth_freeze.py` (invariants, invalidation,
+  startup isolation, storage safety, cross-broker isolation) enforce this
+  mechanically. Keep them green.
