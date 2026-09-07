@@ -12,7 +12,7 @@ import sqlite3
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 
 def get_schema_version(conn: sqlite3.Connection) -> int:
@@ -120,6 +120,10 @@ def create_v7_schema(conn: sqlite3.Connection) -> None:
     # v16: durable news_items store (fetched history, deduped).
     from core.persistence.modules.news import create_news_tables
     create_news_tables(conn)
+    # v17: market-data subscription preferences (indices/stocks + derivative
+    # policy rules).
+    from core.persistence.modules.subscriptions import create_subscription_tables
+    create_subscription_tables(conn)
 
 
 def create_alerts_table(conn: sqlite3.Connection) -> None:

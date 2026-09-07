@@ -41,11 +41,13 @@ from core.persistence.modules import replay as _replay
 from core.persistence.modules import retention as _retention
 from core.persistence.modules import secrets as _secrets
 from core.persistence.modules import source_state as _source_state
+from core.persistence.modules import subscriptions as _subscriptions
 from core.persistence.modules.products import migrate_v10_to_v11, migrate_v11_to_v12
 from core.persistence.modules.condition_alerts import migrate_v12_to_v13
 from core.persistence.modules.news import migrate_v13_to_v14
 from core.persistence.modules.news import migrate_v14_to_v15
 from core.persistence.modules.news import migrate_v15_to_v16
+from core.persistence.modules.subscriptions import migrate_v16_to_v17
 from core.persistence.modules.schema import (
     SCHEMA_VERSION,
     create_v7_schema,
@@ -135,6 +137,8 @@ class EventStore:
                         migrate_v14_to_v15(conn)
                     elif current_version == 15:
                         migrate_v15_to_v16(conn)
+                    elif current_version == 16:
+                        migrate_v16_to_v17(conn)
                     else:
                         raise RuntimeError(
                             f"unsupported schema version {current_version}; "
@@ -728,6 +732,82 @@ class EventStore:
         conn = self._open(self._db_path)
         try:
             return _products.list_watchlists(conn)
+        finally:
+            conn.close()
+
+    # ─── Market-data subscription preferences (v17) ───────────────────────
+
+    def list_md_subscriptions(self) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _subscriptions.list_subscriptions(conn)
+        finally:
+            conn.close()
+
+    def get_md_subscription(self, *, category: str, key: str) -> dict | None:
+        conn = self._open(self._db_path)
+        try:
+            return _subscriptions.get_subscription(
+                conn, category=category, key=key)
+        finally:
+            conn.close()
+
+    def upsert_md_subscription(
+        self, *, category: str, key: str, label: str = "",
+        enabled: bool = True,
+    ) -> dict[str, Any]:
+        conn = self._open(self._db_path)
+        try:
+            return _subscriptions.upsert_subscription(
+                conn, category=category, key=key, label=label,
+                enabled=enabled)
+        finally:
+            conn.close()
+
+    def delete_md_subscription(self, *, category: str, key: str) -> bool:
+        conn = self._open(self._db_path)
+        try:
+            return _subscriptions.delete_subscription(
+                conn, category=category, key=key)
+        finally:
+            conn.close()
+
+    def list_md_derivative_rules(self) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _subscriptions.list_derivative_rules(conn)
+        finally:
+            conn.close()
+
+    def get_md_derivative_rule(self, *, underlying: str) -> dict | None:
+        conn = self._open(self._db_path)
+        try:
+            return _subscriptions.get_derivative_rule(
+                conn, underlying=underlying)
+        finally:
+            conn.close()
+
+    def upsert_md_derivative_rule(
+        self, *, underlying: str, futures_enabled: bool, futures_count: int,
+        options_enabled: bool, options_count: int, strikes_below: int,
+        strikes_above: int, calls_enabled: bool, puts_enabled: bool,
+    ) -> dict[str, Any]:
+        conn = self._open(self._db_path)
+        try:
+            return _subscriptions.upsert_derivative_rule(
+                conn, underlying=underlying,
+                futures_enabled=futures_enabled, futures_count=futures_count,
+                options_enabled=options_enabled, options_count=options_count,
+                strikes_below=strikes_below, strikes_above=strikes_above,
+                calls_enabled=calls_enabled, puts_enabled=puts_enabled)
+        finally:
+            conn.close()
+
+    def delete_md_derivative_rule(self, *, underlying: str) -> bool:
+        conn = self._open(self._db_path)
+        try:
+            return _subscriptions.delete_derivative_rule(
+                conn, underlying=underlying)
         finally:
             conn.close()
 
