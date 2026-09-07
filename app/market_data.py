@@ -33,8 +33,29 @@ _KEY_RATIOS_URL = "https://api.upstox.com/v2/fundamentals"
 _CORPORATE_ACTIONS_URL = "https://api.upstox.com/v2/fundamentals"
 _COMPETITORS_URL = "https://api.upstox.com/v2/fundamentals"
 
-_VALID_UNITS = {"minutes", "hours", "days", "weeks", "months"}
-_MAX_RANGE_DAYS = 400
+# Canonical (unit, interval) -> Upstox historical-candle interval token,
+# verified live against the provider (read-only probes, Sept 2026):
+#   * daily/weekly/monthly endpoint takes day|week|month (interval is
+#     always 1; multi-day/week/month aggregates are NOT supported upstream)
+#   * intraday endpoint takes 1minute|30minute ONLY (anything else is
+#     rejected with UDAPI1076); there is no hourly candle endpoint, so
+#     hours/* is unsupported.
+_UPSTOX_INTERVALS = {
+    ("minutes", 1): ("intraday", "1minute"),
+    ("minutes", 30): ("intraday", "30minute"),
+    ("days", 1): ("history", "day"),
+    ("weeks", 1): ("history", "week"),
+    ("months", 1): ("history", "month"),
+}
+
+
+def upstox_interval_token(unit: str, interval: int) -> tuple[str, str] | None:
+    """Map canonical (unit, interval) to (endpoint, token), or None."""
+    try:
+        key = (str(unit), int(interval))
+    except (TypeError, ValueError):
+        return None
+    return _UPSTOX_INTERVALS.get(key)
 
 
 class ProviderMarketDataError(RuntimeError):
@@ -104,36 +125,56 @@ class ProviderMarketData:
         provider, _auth_src = self._resolve(provider)
         if provider == "fyers":
             from market.normalize.fyers import fyers_resolution
-            resolution = fyers_resolution(unit, interval)
+            try:
+                resolution = fyers_resolution(unit, int(interval))
+            except (TypeError, ValueError):
+                resolution = None
             if resolution is None:
                 raise ProviderMarketDataError(
                     f"fyers does not support {unit}/{interval}")
             return await self._fyers.history(
                 instrument_key=instrument_key, resolution=resolution,
                 from_date=from_date, to_date=to_date)
-        if unit not in _VALID_UNITS:
-            raise ProviderMarketDataError(f"unsupported unit: {unit}")
-        interval = int(interval)
-        if interval < 1 or interval > 300:
-            raise ProviderMarketDataError("interval out of range")
+        try:
+            interval = int(interval)
+        except (TypeError, ValueError):
+            raise ProviderMarketDataError(
+                "interval must be an integer") from None
+        mapped = upstox_interval_token(unit, interval)
+        if mapped is None:
+            raise ProviderMarketDataError(
+                f"upstox does not support {unit}/{interval}")
         for d in (from_date, to_date):
-            if len(d) != 10 or d.count("-") != 2:
+            if not isinstance(d, str) or len(d) != 10 or d.count("-") != 2:
                 raise ProviderMarketDataError("dates must be YYYY-MM-DD")
 
         rest, creds = self._auth()
+        from urllib.parse import quote
         from market.normalize.upstox import candles_from_rest
 
-        if unit == "minutes" and interval <= 75:
-            url = f"{_INTRADAY_URL}/{instrument_key}/{interval}minute"
+        # Path segments are encoded: raw `|`/spaces are rejected by the
+        # HTTP client and misparsed upstream (InvalidURL / invalid key).
+        key = quote(str(instrument_key), safe="")
+        endpoint, token = mapped
+        if endpoint == "intraday":
+            url = f"{_INTRADAY_URL}/{key}/{token}"
+        else:
+            url = f"{_HISTORY_URL}/{key}/{token}/{to_date}/{from_date}"
+        try:
             payload = await rest.authenticated_request(
-                method="GET", url=url,
-                access_token=creds.access_token)
-            return candles_from_rest(payload)
-
-        url = (f"{_HISTORY_URL}/{instrument_key}/{unit}/{interval}/"
-               f"{to_date}/{from_date}")
-        payload = await rest.authenticated_request(
-            method="GET", url=url, access_token=creds.access_token)
+                method="GET", url=url, access_token=creds.access_token)
+        except Exception as exc:
+            # Classify WITHOUT importing broker internals (duck-typed):
+            # invalid key / unknown resource -> client error (400);
+            # retryable upstream trouble propagates as-is (502 upstream).
+            status = getattr(exc, "status_code", None)
+            codes = getattr(exc, "upstox_codes", None) or []
+            if status in (400, 404) or "UDAPI100011" in codes \
+                    or "UDAPI100060" in codes:
+                raise ProviderMarketDataError(
+                    "upstox history unavailable for this instrument "
+                    "(invalid key or no data for the range)") from None
+            raise
         return candles_from_rest(payload)
 
     # -- option chain ------------------------------------------------------------

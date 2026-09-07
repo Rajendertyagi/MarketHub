@@ -885,13 +885,18 @@ def build_market_data_routes(provider_md: Any) -> list[Route]:
         instrument_key = qp.get("instrument_key", "")
         if not instrument_key:
             return _json({"error": "instrument_key is required"}, 400)
+        # Explicit provider override (sent by the WebUI chart controls):
+        # forwarded to the canonical service, which validates it loudly.
+        # Empty/absent falls back to inference from the instrument key.
+        provider = (qp.get("provider") or "").strip() or None
         try:
             candles = await provider_md.history(
                 instrument_key=instrument_key,
                 unit=qp.get("unit", "days"),
                 interval=qp.get("interval", 1),
                 from_date=qp.get("from", ""),
-                to_date=qp.get("to", ""))
+                to_date=qp.get("to", ""),
+                provider=provider)
         except ProviderMarketDataError as exc:
             return _json({"error": str(exc)}, 400)
         except Exception:
