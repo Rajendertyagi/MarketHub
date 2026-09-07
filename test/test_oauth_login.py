@@ -399,15 +399,22 @@ async def test_ol20_safe_failure(runner: R) -> None:
 
 
 async def test_ol20b_restart_failure_safe(runner: R) -> None:
-    """OL20b: restart_fn raising still yields a safe redirect; creds stay."""
+    """OL20b: restart_fn raising must NOT fail the login; creds + session persist.
+
+    A feed (re)start failure is a FEED problem, never an auth failure. The
+    token must be persisted BEFORE the restart attempt, so a blown-up restart
+    can never lose a successful login.
+    """
     ref, feed = _make_feed_ref()
+    saved: list[tuple[str, object]] = []
+    store = _RecordingStore(saved)
 
     async def _boom() -> None:
         raise RuntimeError("restart exploded")
 
     from api.routes import build_auth_routes
     routes = build_auth_routes(
-        ref, restart_fn=_boom,
+        ref, restart_fn=_boom, cred_store=store,
         oauth={"api_key": API_KEY, "api_secret": API_SECRET,
                "redirect_uri": REDIRECT},
         rest=_FakeRest(),
@@ -416,11 +423,14 @@ async def test_ol20b_restart_failure_safe(runner: R) -> None:
     state = await _get_valid_state(routes)
     c, loc = await _call(cb, "GET",
                          f"code=SYN&state={urllib.parse.quote(state)}")
+    # Auth succeeds even though the feed restart blew up.
     runner.assert_eq("OL20b-safe-redirect", loc,
-                     "/ui/?auth=failed&reason=restart#/settings")
-    # Credentials were still applied even though restart failed.
+                     "/ui/?auth=ok#/settings")
+    # Credentials were applied AND the session was persisted before restart.
     runner.assert_true("OL20b-creds-applied",
                        feed._credentials.access_token.startswith("OAUTH-TOKEN"))
+    runner.assert_true("OL20b-session-persisted",
+                       any(t.startswith("OAUTH-TOKEN") for t, _ in saved))
 
 
 async def test_ol21_manual_fallback(runner: R) -> None:
@@ -435,19 +445,183 @@ async def test_ol21_manual_fallback(runner: R) -> None:
                      feed._credentials.access_token, "MANUAL-FALLBACK-TOK")
 
 
+class _RecordingStore:
+    """Minimal cred_store double that records session-token saves."""
+
+    def __init__(self, sink: list) -> None:
+        self._sink = sink
+        self._auth_code = None
+
+    def save_upstox_session_token(self, token, expires_at_iso=None,
+                                  issued_at_iso=None):
+        self._sink.append((token, expires_at_iso))
+
+    def save_last_auth_status(self, *a, **k):
+        pass
+
+    def load_upstox_session_token(self):
+        if not self._sink:
+            return None
+        tok, exp = self._sink[-1]
+        return {"access_token": tok, "expires_at": exp,
+                "issued_at": None, "saved_at": None}
+
+    def clear_upstox_session_token(self):
+        self._sink.clear()
+
+    def save_upstox_auth_code(self, code: str) -> None:
+        self._auth_code = code
+
+    def load_upstox_auth_code(self):
+        return self._auth_code
+
+    def clear_upstox_auth_code(self):
+        self._auth_code = None
+
+
+def _routes_with(restart_state: str | None, saved: list,
+                 rest=None, pin: bool = False):
+    """Build auth routes with a recording store and a restart that lands the
+    feed in ``restart_state`` (None = no restart fn)."""
+    ref, _feed = _make_feed_ref()
+
+    async def _restart() -> None:
+        if restart_state is not None:
+            ref["feed"]._state = restart_state
+
+    return build_auth_routes(
+        ref, restart_fn=_restart if restart_state is not None else None,
+        cred_store=_RecordingStore(saved),
+        oauth={"api_key": API_KEY, "api_secret": API_SECRET,
+               "redirect_uri": REDIRECT},
+        rest=rest or _FakeRest(),
+    ), ref
+
+
+async def test_upstox_session_persist_before_feed_state(runner: R) -> None:
+    """Required 1/4/5/6/12: token persists immediately; feed state
+    (stopped/connecting/streaming) never blocks persistence or auth success."""
+    for target in ("stopped", "connecting", "streaming"):
+        saved: list = []
+        routes, ref = _routes_with(target, saved)
+        cb = _find_route(routes, "/auth/upstox/callback")
+        state = await _get_valid_state(routes)
+        c, loc = await _call(cb, "GET",
+                             f"code=SYN&state={urllib.parse.quote(state)}")
+        runner.assert_eq(f"persist-auth-ok-{target}", loc,
+                         "/ui/?auth=ok#/settings")
+        # Session persisted regardless of where the feed ended up.
+        runner.assert_true(f"persist-saved-{target}",
+                          saved and saved[0][0].startswith("OAUTH-TOKEN"))
+        # Feed state is independent of auth success.
+        runner.assert_eq(f"feed-state-{target}", ref["feed"]._state, target)
+
+
+async def test_upstox_manual_token_gets_expiry(runner: R) -> None:
+    """Required 2/12: a pasted token gets a real expires_at (never None)."""
+    saved: list = []
+    routes, _ref = _routes_with(None, saved, rest=None)
+    tok = _find_route(routes, "/api/auth/upstox/token")
+    c, data = await _call(tok, "POST",
+                          body={"access_token": "MANUAL-TOK"})
+    runner.assert_eq("manual-ok", c, 200)
+    runner.assert_true("manual-authenticated", bool(data.get("authenticated")))
+    runner.assert_true("manual-session-persisted",
+                       any(t == "MANUAL-TOK" for t, _ in saved))
+    # expires_at must be derived, never None.
+    runner.assert_true("manual-expiry-present",
+                       any(exp is not None for _, exp in saved))
+
+
+async def test_upstox_pin_path_persists(runner: R) -> None:
+    """Required 12: PIN login routes through the same durable-session flow."""
+    saved: list = []
+    routes, ref = _routes_with("streaming", saved)
+
+    # Step 1: PIN-mode login stores the auth code, redirects to pin_required.
+    login = _find_route(routes, "/api/auth/upstox/login")
+    c, loc = await _call(login, "GET", "pin=1")
+    runner.assert_in("pin-redirect", "auth=pin_required", loc)
+
+    # Step 2: supply the PIN; exchange_with_pin must yield a persisted session.
+    class _PinRest:
+        async def exchange_with_pin(self, **kwargs):
+            from brokers.upstox.auth import (
+                UpstoxCredentials, upstox_token_expiry,
+            )
+            from datetime import datetime, timezone
+            return UpstoxCredentials(
+                access_token="PIN-TOKEN-1",
+                expires_at=upstox_token_expiry(datetime.now(timezone.utc)),
+            )
+
+    routes2, _ = _routes_with("streaming", saved, rest=_PinRest())
+    pin = _find_route(routes2, "/api/auth/upstox/pin")
+    c, data = await _call(pin, "POST", body={"pin": "123456"})
+    runner.assert_eq("pin-status", c, 200)
+    runner.assert_true("pin-session-persisted",
+                       any(t == "PIN-TOKEN-1" for t, _ in saved))
+
+
+async def test_upstox_status_clears_only_on_broker_rejection(runner: R) -> None:
+    """Required 9/10: a genuine 401/403 (broker_rejected_token) rolls the
+    persisted session back to login-required; transient feed/network failures
+    (ws drop, market closed, etc.) must NOT clear the session."""
+    from brokers.upstox.auth import UpstoxCredentials
+
+    for reason, should_clear in (
+        ("broker_rejected_token", True),
+        ("ws_closed", False),
+        ("market_closed", False),
+        (None, False),
+    ):
+        saved = [("PERSISTED-TOK", "2099-01-01T00:00:00+00:00")]
+        store = _RecordingStore(saved)
+
+        class _Feed:
+            _credentials = UpstoxCredentials(access_token="PERSISTED-TOK")
+
+            def status(self):
+                return {"state": "auth_required", "last_exit_reason": reason}
+
+        ref = {"feed": _Feed()}
+        routes = build_auth_routes(
+            ref, restart_fn=None, cred_store=store,
+            oauth={"api_key": API_KEY, "api_secret": API_SECRET,
+                   "redirect_uri": REDIRECT}, rest=None,
+        )
+        status = _find_route(routes, "/api/auth/upstox/status")
+        c, data = await _call(status, "GET")
+        runner.assert_eq(f"status-ok-{reason}", c, 200)
+        if should_clear:
+            runner.assert_false(f"cleared-{reason}",
+                               data["session_persisted"])
+            runner.assert_true(f"store-cleared-{reason}", len(saved) == 0)
+        else:
+            runner.assert_true(f"kept-{reason}", data["session_persisted"])
+            runner.assert_true(f"store-kept-{reason}", len(saved) == 1)
+
+
 def test_ol22_ol23_ui(runner: R) -> None:
-    """OL22/OL23: Login button present; no token browser-storage writes."""
+    """OL22/OL23: Login button present; no token browser-storage writes.
+
+    The Upstox login handler lives in auth.js (not app.js), so the handler
+    assertions read that module.
+    """
     html_path = os.path.join(_PROJECT_DIR, "web", "ui", "index.html")
-    js_path = os.path.join(_PROJECT_DIR, "web", "ui", "js", "app.js")
+    app_js_path = os.path.join(_PROJECT_DIR, "web", "ui", "js", "app.js")
+    auth_js_path = os.path.join(_PROJECT_DIR, "web", "ui", "js", "auth.js")
     with open(html_path, encoding="utf-8") as f:
         html = f.read()
-    with open(js_path, encoding="utf-8") as f:
-        js = f.read()
+    with open(app_js_path, encoding="utf-8") as f:
+        app_js = f.read()
+    with open(auth_js_path, encoding="utf-8") as f:
+        auth_js = f.read()
     runner.assert_in("OL22-login-button-id", 'id="oauth-login-btn"', html)
-    runner.assert_in("OL22-login-handler", "/api/auth/upstox/login", js)
-    runner.assert_in("OL22-auth-param-handler", "history.replaceState", js)
+    runner.assert_in("OL22-login-handler", "/api/auth/upstox/login", auth_js)
+    runner.assert_in("OL22-auth-param-handler", "history.replaceState", auth_js)
 
-    storage_writes = [ln for ln in js.splitlines()
+    storage_writes = [ln for ln in (app_js + "\n" + auth_js).splitlines()
                       if ("localStorage.setItem" in ln
                           or "sessionStorage.setItem" in ln
                           or "document.cookie" in ln)]

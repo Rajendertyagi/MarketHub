@@ -549,6 +549,41 @@ def build_auth_routes(
             for k in ("api_key", "api_secret", "redirect_uri")
         )
 
+    async def _apply_upstox_session(creds: Any) -> None:
+        """Durable-session lifecycle shared by ALL Upstox login paths.
+
+        Deliberate, fixed order (do NOT reorder):
+          1. caller already obtained + validated the token
+          2. ``expires_at`` is already present on ``creds``
+          3. persist token + expiry IMMEDIATELY (encrypted store = source of truth)
+          4. auth status is marked authenticated (inside ``_persist_upstox_session``)
+          5. install the token into the runtime feed
+          6. attempt feed (re)start -- a failure here is a FEED problem only
+
+        Authentication is considered successful the moment the token is
+        persisted. A slow, stopped, reconnecting, market-closed, or otherwise
+        not-yet-streaming feed must NEVER undo the session or report
+        ``auth=failed``.
+        """
+        # 3 + 4: persist first, before any feed restart that could fail.
+        _persist_upstox_session(creds, cred_store)
+        # 5: install into the live feed if one is registered.
+        feed = feed_ref.get("feed")
+        if feed is not None:
+            try:
+                feed.update_credentials(creds)
+            except Exception:
+                logger.exception("upstox login: failed to install credentials")
+        # 6: attempt (re)start. Failure affects FEED status only.
+        if restart_fn is not None and feed is not None:
+            try:
+                await restart_fn()
+                # Classification is FEED diagnostics only -- it must never
+                # influence whether the login succeeded.
+                await _classify_post_restart(feed)
+            except Exception:
+                logger.exception("upstox login: feed restart failed")
+
     async def _auth_status(request: Request) -> Response:  # noqa: ARG001
         feed = feed_ref.get("feed")
         _feed_cfg = (sources_cfg or {}).get("upstox")
@@ -614,6 +649,22 @@ def build_auth_routes(
         base["login_required"] = not (
             base["token_configured"] and base.get("expired") is not True
             and base.get("state") not in ("auth_required",))
+
+        # Genuine broker rejection (401/403) of a persisted token rolls the
+        # durable session back to "login required". Transient feed/network
+        # failures (ws drop, market closed, slow start) must NOT reach here.
+        if feed is not None and cred_store is not None:
+            _fstate = feed.status()
+            if (_fstate.get("state") == "auth_required"
+                    and _fstate.get("last_exit_reason") == "broker_rejected_token"):
+                try:
+                    cred_store.clear_upstox_session_token()
+                    cred_store.save_last_auth_status("upstox", "rejected")
+                except Exception:
+                    logger.exception("upstox: failed to clear rejected session")
+                base["session_persisted"] = False
+                base["restart_recovery"] = False
+
         return _json(base)
 
     async def _forget_session(request: Request) -> Response:  # noqa: ARG001
@@ -716,8 +767,7 @@ def build_auth_routes(
             return RedirectResponse(
                 "/ui/?auth=pin_required#/settings", status_code=302)
 
-        feed = feed_ref.get("feed")
-        if feed is None or rest is None:
+        if rest is None:
             return _fail("error")
 
         try:
@@ -735,24 +785,9 @@ def build_auth_routes(
                 return _fail("rejected")
             return _fail("network")
 
-        try:
-            feed.update_credentials(creds)
-            if restart_fn is not None:
-                await restart_fn()
-                outcome = await _classify_post_restart(feed)
-                if outcome == "rejected":
-                    return _fail("rejected")
-                if outcome == "protocol":
-                    return _fail("protocol")
-                if outcome == "stopped":
-                    return _fail("stopped")
-        except Exception:
-            logger.exception("oauth callback: feed restart failed")
-            return _fail("restart")
-
-        # Persist the session token (encrypted) so a MarketHub restart can
-        # auto-restore the feed without forcing the user to log in again.
-        _persist_upstox_session(creds, cred_store)
+        # Successful exchange -> durable session. Feed (re)start failure is a
+        # FEED problem and must NOT turn a valid login into auth=failed.
+        await _apply_upstox_session(creds)
         return RedirectResponse("/ui/?auth=ok#/settings", status_code=302)
 
     async def _pin_login(request: Request) -> Response:
@@ -797,25 +832,9 @@ def build_auth_routes(
         finally:
             cred_store.clear_upstox_auth_code()
 
-        feed = feed_ref.get("feed")
-        if feed is None:
-            return _fail("error")
-        try:
-            feed.update_credentials(creds)
-            if restart_fn is not None:
-                await restart_fn()
-                outcome = await _classify_post_restart(feed)
-                if outcome == "rejected":
-                    return _fail("rejected")
-                if outcome == "protocol":
-                    return _fail("protocol")
-                if outcome == "stopped":
-                    return _fail("stopped")
-        except Exception:
-            logger.exception("pin login: feed restart failed")
-            return _fail("restart")
-
-        _persist_upstox_session(creds, cred_store)
+        # Successful PIN exchange -> durable session. Feed (re)start failure
+        # is a FEED problem and must NOT turn a valid login into auth=failed.
+        await _apply_upstox_session(creds)
         return RedirectResponse("/ui/?auth=ok#/settings", status_code=302)
 
     async def _submit_token(request: Request) -> Response:
@@ -829,32 +848,25 @@ def build_auth_routes(
         if len(token) > 4096:
             return _json({"error": "access_token too long"}, 400)
 
-        from brokers.upstox.auth import UpstoxCredentials
+        from brokers.upstox.auth import UpstoxCredentials, upstox_token_expiry
         try:
-            creds = UpstoxCredentials(access_token=token.strip())
+            # Manual/pasted tokens carry no issuer-provided expiry; derive the
+            # canonical Upstox daily-expiry so we NEVER persist expires_at=None.
+            creds = UpstoxCredentials(
+                access_token=token.strip(),
+                expires_at=upstox_token_expiry(datetime.now(timezone.utc)),
+            )
         except Exception as exc:
             return _json({"error": f"invalid credentials: {exc}"}, 400)
 
-        feed = feed_ref.get("feed")
-        if feed is None:
-            return _json({"error": "no upstox feed registered"}, 503)
-
-        feed.update_credentials(creds)
-
-        outcome = "unknown"
-        if restart_fn is not None:
-            try:
-                await restart_fn()
-                outcome = await _classify_post_restart(feed)
-            except Exception:
-                logger.exception("submit_token: feed restart failed")
-                outcome = "restart_failed"
-
-        # External tokens have unknown issuance time -> no computed expiry, but
-        # persist what we have so restart recovery is still possible when the
-        # token happens to remain valid.
-        _persist_upstox_session(creds, cred_store)
-        return _json({"configured": True, "outcome": outcome})
+        # Successful submit -> durable session (persist BEFORE any feed restart
+        # so a slow/stopped feed can never undo the login).
+        await _apply_upstox_session(creds)
+        return _json({
+            "configured": True,
+            "authenticated": True,
+            "session_persisted": True,
+        })
 
     return [
         Route("/api/auth/upstox/status", endpoint=_auth_status, methods=["GET"]),

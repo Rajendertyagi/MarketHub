@@ -284,6 +284,79 @@ def test_as8_status_safe(runner: R) -> None:
     runner.assert_not_in("AS8-no-wss", "wss://", blob)
 
 
+def _restore_session_feed(token: str, expires_at_iso: str | None):
+    """Persist a session via the real CredentialStore, reload it, and build an
+    UpstoxFeed from the reloaded material (mirrors server.py startup restore)."""
+    import os
+    import tempfile
+    from core.persistence.store import EventStore
+    from app.secrets_store import CredentialStore
+    from brokers.upstox.auth import UpstoxCredentials
+    from datetime import datetime, timezone
+
+    tmp = tempfile.mkdtemp()
+    store = CredentialStore(EventStore(os.path.join(tmp, "e.db")), data_dir=tmp)
+    store.save_upstox_session_token(token=token, expires_at_iso=expires_at_iso)
+    sess = store.load_upstox_session_token()
+    exp = (datetime.fromisoformat(sess["expires_at"])
+           if sess.get("expires_at") else None)
+    if exp is not None and exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    creds = UpstoxCredentials(access_token=sess["access_token"], expires_at=exp)
+    return _mk_feed(token=creds.access_token, expires_at=creds.expires_at)
+
+
+async def test_as9_restore_valid_token_starts(runner: R) -> None:
+    """Required 7: a persisted, unexpired token restores and the feed starts
+    without requiring a new login."""
+    from datetime import datetime, timedelta, timezone
+
+    feed, _ws = _restore_session_feed(
+        "RESTORED-TOK",
+        (datetime.now(timezone.utc) + timedelta(hours=12)).isoformat())
+    runner.assert_true("AS9-ready", feed.is_ready_to_start() is True)
+    mgr, bg, init = _mk_manager(feed)
+    await init()
+    await mgr.start_all({"upstox": {"enabled": True}})
+    for _ in range(60):
+        if feed.status()["state"] == "streaming":
+            break
+        await asyncio.sleep(0.05)
+    runner.assert_eq("AS9-streaming", feed.status()["state"], "streaming")
+    await mgr.stop_source("upstox")
+
+
+async def test_as10_restore_expired_gated(runner: R) -> None:
+    """Required 8: a persisted, expired token is treated as needing login."""
+    from datetime import datetime, timedelta, timezone
+
+    feed, _ws = _restore_session_feed(
+        "OLD-TOK",
+        (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat())
+    runner.assert_false("AS10-not-ready", feed.is_ready_to_start())
+
+
+def test_as11_session_roundtrip_expiry(runner: R) -> None:
+    """Required 11: saved expires_at == restored expires_at, tz-safe (no naive
+    datetime corruption)."""
+    import os
+    import tempfile
+    from core.persistence.store import EventStore
+    from app.secrets_store import CredentialStore
+    from datetime import datetime, timezone
+
+    tmp = tempfile.mkdtemp()
+    store = CredentialStore(EventStore(os.path.join(tmp, "e.db")), data_dir=tmp)
+    exp = datetime(2099, 3, 8, 3, 30, 0, tzinfo=timezone.utc)
+    iso = exp.isoformat()
+    store.save_upstox_session_token(token="RT-TOK", expires_at_iso=iso)
+    sess = store.load_upstox_session_token()
+    runner.assert_eq("AS11-expiry-match", sess["expires_at"], iso)
+    restored = datetime.fromisoformat(sess["expires_at"])
+    runner.assert_eq("AS11-aware-utc", restored.utcoffset().total_seconds(), 0)
+    runner.assert_eq("AS11-equal", restored, exp)
+
+
 import json  # noqa: E402
 
 
@@ -301,6 +374,9 @@ async def main() -> bool:
     await test_as6_multi_source_safety(runner)
     await test_as7_config_recorded_when_gated(runner)
     test_as8_status_safe(runner)
+    await test_as9_restore_valid_token_starts(runner)
+    await test_as10_restore_expired_gated(runner)
+    test_as11_session_roundtrip_expiry(runner)
 
     return runner.summary()
 
