@@ -735,6 +735,7 @@ from api.product_routes import (
 from api.ai_alert_routes import build_ai_alert_routes as _build_ai_alert_routes
 from api.log_routes import build_log_routes as _build_log_routes
 from api.news_routes import build_news_routes as _build_news_routes
+from api.diagnostics_routes import build_diagnostics_run_routes as _build_diag_routes
 from app.market_data import ProviderMarketData as _ProviderMarketData
 
 
@@ -877,6 +878,16 @@ for _src_name, _src in _source_manager.enabled_sources.items():
     if _src_name == "fyers" or getattr(_src, "__class__", None).__name__ == "FyersFeed":
         _fyers_source_name = _src_name
         break
+
+# ── Diagnostics runner ───────────────────────────────────────────────────────
+from app.diagnostics import DiagnosticsRunner as _DiagnosticsRunner
+_diagnostics_runner = _DiagnosticsRunner(
+    base_url=f"http://{LISTEN_HOST}:{LISTEN_PORT}",
+    mcp_url=f"http://{LISTEN_HOST}:{LISTEN_PORT}/mcp",
+    provider_market_data=_provider_market_data,
+    news_service=_news_service,
+    source_manager=_source_manager,
+)
 
 # Wire lifecycle state-change broadcasting into every source (requires the
 # source manager constructed just above).
@@ -1261,6 +1272,7 @@ app = Starlette(
     + _build_ai_alert_routes(_store, mcp)
     + _build_log_routes(_log_buffer, _log_sse_broker)
     + _build_news_routes(_news_service)
+    + _build_diag_routes(_diagnostics_runner)
     + [Mount("/ui", app=StaticFiles(directory=str(PROJECT_ROOT / "web" / "ui"), html=True),
             name="ui")],
     middleware=list(mcp_asgi_app.user_middleware),

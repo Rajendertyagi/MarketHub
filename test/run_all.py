@@ -138,6 +138,8 @@ _TEST_FILES: dict[str, str] = {
     "l1_logging_news": "test_l1_logging_news.py",
     "webui_modules": "test_webui_modules.py",
     "settings_ux": "test_settings_ux.py",
+    "diagnostics_runner": "test_diagnostics_runner.py",
+    "diagnostics_routes": "test_diagnostics_routes.py",
 }
 
 # Group -> ordered list of module keys. Order matters (fast/stable first).

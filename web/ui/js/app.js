@@ -23,9 +23,10 @@ import { initCharts } from "./charts.js";
 import { initAlerts, initAlertPush } from "./alerts.js";
 import { initAIAlerts, openAIAlerts } from "./ai-alerts.js";
 import { initMCPTools, openMCPTools } from "./mcp-tools.js";
+import { initDiagnosticsUI, openDiagnostics } from "./diagnostics.js";
 import { initInstruments } from "./instruments.js";
 import { initWatchlists } from "./watchlists.js";
-import { initOptionChain } from "./option-chain.js?v=35";
+import { initOptionChain } from "./option-chain.js?v=36";
 import { initSourceControls, pollSources } from "./market-sources.js?v=37";
 import {
   initAuth, initCredentialDelete, initCredentialSettings, initFyers,
@@ -37,7 +38,7 @@ import { initAIMCPSettings } from "./features/settings/ai-mcp.js";
 import { initBackupSettings } from "./features/settings/backup.js";
 import { initTheme } from "./features/settings/theme.js";
 import { initSplitters } from "./core/splitter.js";
-import { initShell } from "./shell.js?v=3";
+import { initShell } from "./shell.js?v=4";
 
   // ── DOM shortcuts ───────────────────────────────────────────────────────
   const $ = (id) => document.getElementById(id);
@@ -229,6 +230,7 @@ import { initShell } from "./shell.js?v=3";
     initNewsUI();
     initSentimentUI();
     initMCPTools();
+    initDiagnosticsUI();
     initLogsUI();
     initSplitters();
     initShell();   // header index strip + bottom status bar (no new streams)
@@ -240,6 +242,7 @@ import { initShell } from "./shell.js?v=3";
     onViewEnter("logs", openLogs);
     onViewEnter("ai-alerts", openAIAlerts);
     onViewEnter("mcp", openMCPTools);
+    onViewEnter("diagnostics", openDiagnostics);
     initRouter();
     loadInitialQuotes();
     connectSSE();
