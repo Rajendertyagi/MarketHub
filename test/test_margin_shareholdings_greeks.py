@@ -229,6 +229,7 @@ async def test_bg4_option_greeks_service(runner: R) -> None:
     runner.assert_eq("BG4-method", call["method"], "GET")
     runner.assert_eq("BG4-url", call["url"],
                      "https://api.upstox.com/v3/market-quote/option-greek")
+    # Raw pipe in params — authenticated_request urlencodes the value itself.
     runner.assert_eq("BG4-params", call["params"],
                      {"instrument_key": "NSE_FO|43885"})
 

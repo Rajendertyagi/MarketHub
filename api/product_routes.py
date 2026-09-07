@@ -986,8 +986,11 @@ def build_market_data_routes(provider_md: Any) -> list[Route]:
         except ProviderMarketDataError as exc:
             return _json({"error": str(exc)}, 400)
         except Exception:
+            # Retryable upstream trouble (429/5xx/network) only — client
+            # errors are classified upstream. Never flatten a provider
+            # outage into a fake success or hide it as a generic body.
             logger.exception("option greeks failed for keys=%r", keys)
-            return _json({"error": "option greeks fetch failed"}, 502)
+            return _json({"error": "option greeks upstream unavailable"}, 502)
         from market.serialization import _to_json_value
         return _json({"status": "ok", "data": _to_json_value(snap)})
 

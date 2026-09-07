@@ -607,41 +607,115 @@ class DiagnosticsRunner:
                 classification_reason="fetch_error",
             )
 
+    async def _resolve_greeks_option(self) -> dict | None:
+        """Resolve a real OPTION identity for standalone Greeks.
+
+        Upstox-backed options are preferred (standalone Greeks is an
+        Upstox capability); the catalog option (possibly Fyers-backed)
+        is the fallback so unsupported providers classify honestly.
+        The legacy index probe (NSE_INDEX|Nifty 50) is NOT an option —
+        the provider answers with zeroed greeks, which is not a pass.
+        """
+        try:
+            data = await self._get(
+                "/api/instruments/search?provider=upstox&type=CE&limit=5")
+            for row in data.get("results", []):
+                key = row.get("instrument_key")
+                if key:
+                    return {"instrument_key": key, "provider": "upstox",
+                            "label": row.get("tradingsymbol") or key}
+        except Exception:
+            pass
+        opt = await self._resolve_option()
+        if opt and opt.get("instrument_key"):
+            return {"instrument_key": opt["instrument_key"],
+                    "provider": opt.get("provider") or "fyers",
+                    "label": opt.get("symbol") or opt["instrument_key"]}
+        return None
+
     async def _check_greeks(self) -> DiagnosticResult:
         t0 = time.monotonic()
+        inst = await self._resolve_greeks_option()
+        if inst is None:
+            return DiagnosticResult(
+                id="greeks", name="Standalone Greeks",
+                category="OPTIONS", layer="REST",
+                status="UNAVAILABLE",
+                message="No option instrument resolvable for standalone Greeks",
+                duration_ms=int((time.monotonic() - t0) * 1000),
+                classification_reason="no_instrument",
+            )
+        from urllib.parse import quote
+        key = inst["instrument_key"]
         try:
-            data = await self._get("/api/options/greeks?instrument_key=NSE_INDEX%7CNifty%2050")
+            data = await self._get(
+                f"/api/options/greeks?instrument_key={quote(key, safe='')}")
             ms = int((time.monotonic() - t0) * 1000)
-            greeks = data.get("data", {})
-            if greeks:
-                return DiagnosticResult(
-                    id="greeks", name="Standalone Greeks",
-                    category="OPTIONS", layer="REST",
-                    status="PASS", message="Greeks available",
-                    duration_ms=ms, data={"keys": list(greeks.keys())[:3]},
-                    classification_reason="greeks_available",
-                )
-            else:
+            err = data.get("error")
+            if err and ("not available" in err
+                        or "not supported" in err.lower()
+                        or "unsupported" in err.lower()):
                 return DiagnosticResult(
                     id="greeks", name="Standalone Greeks",
                     category="OPTIONS", layer="REST",
                     status="UNAVAILABLE",
-                    message="Provider does not support standalone Greeks for this instrument",
-                    duration_ms=ms, data=data,
-                    classification_reason="no_greeks",
-                )
-        except Exception as exc:
-            ms = int((time.monotonic() - t0) * 1000)
-            err_msg = str(exc)
-            if "not supported" in err_msg.lower() or "unsupported" in err_msg.lower():
-                return DiagnosticResult(
-                    id="greeks", name="Standalone Greeks",
-                    category="OPTIONS", layer="REST",
-                    status="UNAVAILABLE",
-                    message="Provider does not implement standalone Greeks",
-                    duration_ms=ms,
+                    message=f"Standalone Greeks unsupported for the "
+                            f"{inst['provider']}-backed option",
+                    duration_ms=ms, data={"instrument_key": key,
+                                          "provider": inst["provider"]},
                     classification_reason="provider_not_supported",
                 )
+            entries = (data.get("data") or {}).get("entries") or []
+            if not entries:
+                return DiagnosticResult(
+                    id="greeks", name="Standalone Greeks",
+                    category="OPTIONS", layer="REST",
+                    status="UNAVAILABLE",
+                    message="Provider returned no Greeks data for "
+                            f"{inst.get('label', key)}",
+                    duration_ms=ms, data={"instrument_key": key,
+                                          "provider": inst["provider"]},
+                    classification_reason="no_greeks",
+                )
+            fields = ("delta", "gamma", "theta", "vega", "iv")
+            meaningful = [f for e in entries if isinstance(e, dict)
+                          for f in fields if e.get(f)]
+            if not meaningful:
+                return DiagnosticResult(
+                    id="greeks", name="Standalone Greeks",
+                    category="OPTIONS", layer="REST",
+                    status="PARTIAL",
+                    message="Entry returned but no meaningful greek values "
+                            "(index/non-option identity?)",
+                    duration_ms=ms, data={"instrument_key": key,
+                                          "provider": inst["provider"]},
+                    classification_reason="no_meaningful_greeks",
+                )
+            if len(meaningful) < len(fields):
+                return DiagnosticResult(
+                    id="greeks", name="Standalone Greeks",
+                    category="OPTIONS", layer="REST",
+                    status="PARTIAL",
+                    message=f"Partial greeks: {sorted(set(meaningful))} "
+                            f"(rho is never exposed by Upstox)",
+                    duration_ms=ms, data={"instrument_key": key,
+                                          "provider": inst["provider"],
+                                          "fields": sorted(set(meaningful))},
+                    classification_reason="partial_fields",
+                )
+            return DiagnosticResult(
+                id="greeks", name="Standalone Greeks",
+                category="OPTIONS", layer="REST",
+                status="PASS",
+                message=f"{len(entries)} entr(ies) with greeks for "
+                        f"{inst.get('label', key)}",
+                duration_ms=ms, data={"instrument_key": key,
+                                      "provider": inst["provider"],
+                                      "fields": sorted(set(meaningful))},
+                classification_reason="greeks_available",
+            )
+        except Exception as exc:
+            ms = int((time.monotonic() - t0) * 1000)
             return DiagnosticResult(
                 id="greeks", name="Standalone Greeks",
                 category="OPTIONS", layer="REST",

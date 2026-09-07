@@ -62,6 +62,31 @@ class ProviderMarketDataError(RuntimeError):
     """Safe provider market-data failure (no provider bodies leaked)."""
 
 
+def _classify_upstream_error(exc: Exception, unavailable: str) -> Exception:
+    """Duck-typed classification of a provider transport exception.
+
+    Returns a ProviderMarketDataError for client-class failures (invalid
+    key / unknown resource / rejected credentials) — these are the caller's
+    fault and surface as 400. Retryable upstream trouble (5xx/429/network)
+    is returned as-is so the transport layer reports an honest 502, never
+    a flattened fake error. ``unavailable`` is the safe client-error message.
+    """
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        # UpstoxAuthError (401 rejected token) carries no attributes —
+        # classify by exception type name, never by leaking the message.
+        if type(exc).__name__ == "UpstoxAuthError":
+            return ProviderMarketDataError(unavailable)
+        return exc
+    codes = getattr(exc, "upstox_codes", None) or []
+    if status in (400, 404) or "UDAPI100011" in codes \
+            or "UDAPI100060" in codes:
+        return ProviderMarketDataError(unavailable)
+    if status in (401, 403):
+        return ProviderMarketDataError(unavailable)
+    return exc
+
+
 def _infer_provider(instrument_key: str) -> str:
     """Infer the broker provider from an instrument key's format.
 
@@ -167,14 +192,10 @@ class ProviderMarketData:
             # Classify WITHOUT importing broker internals (duck-typed):
             # invalid key / unknown resource -> client error (400);
             # retryable upstream trouble propagates as-is (502 upstream).
-            status = getattr(exc, "status_code", None)
-            codes = getattr(exc, "upstox_codes", None) or []
-            if status in (400, 404) or "UDAPI100011" in codes \
-                    or "UDAPI100060" in codes:
-                raise ProviderMarketDataError(
-                    "upstox history unavailable for this instrument "
-                    "(invalid key or no data for the range)") from None
-            raise
+            raise _classify_upstream_error(
+                exc,
+                "upstox history unavailable for this instrument "
+                "(invalid key or no data for the range)") from None
         return candles_from_rest(payload)
 
     # -- option chain ------------------------------------------------------------
@@ -508,8 +529,24 @@ class ProviderMarketData:
             raise ProviderMarketDataError("at least one instrument_key is required")
         rest, creds = self._auth()
         from market.normalize.upstox_option_greeks import option_greeks_from_rest
-        payload = await rest.authenticated_request(
-            method="GET", url=_OPTION_GREEKS_URL,
-            access_token=creds.access_token,
-            params={"instrument_key": ",".join(keys)})
-        return option_greeks_from_rest(payload)
+        # Keys carry `|`/spaces — authenticated_request urlencodes the
+        # params VALUE (NSE_FO|42631 -> NSE_FO%7C42631); do NOT pre-quote
+        # here or the percent signs get double-encoded upstream.
+        try:
+            payload = await rest.authenticated_request(
+                method="GET", url=_OPTION_GREEKS_URL,
+                access_token=creds.access_token,
+                params={"instrument_key": ",".join(keys)})
+        except Exception as exc:
+            # Honest classification (shared with History): rejected session
+            # / invalid key -> client error (400); retryable upstream
+            # trouble (429/5xx/network) propagates for an honest 502.
+            raise _classify_upstream_error(
+                exc,
+                "upstox option greeks unavailable for this instrument "
+                "(invalid key or no data)") from None
+        try:
+            return option_greeks_from_rest(payload)
+        except (ValueError, TypeError):
+            raise ProviderMarketDataError(
+                "upstox option greeks: unexpected response shape") from None
