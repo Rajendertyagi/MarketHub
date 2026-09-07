@@ -115,24 +115,59 @@ class UpstoxAuthService:
         return out
 
     # -- genuine rejection --------------------------------------------------
-    def invalidate_on_rejection(self) -> bool:
-        """Clear durable session ONLY on genuine broker rejection.
+    def rejection_evidence(self) -> dict[str, Any]:
+        """Explicit genuine-rejection evidence from the feed, or {}.
 
-        Returns True when the session was invalidated.
+        The feed latches ``auth_rejection()`` ONLY when the provider itself
+        refuses the runtime token (confirmed 401 / equivalent auth refusal
+        at authorize). Generic ``auth_required`` state or exit-reason
+        strings are NEVER treated as rejection evidence here.
         """
         feed = self._feed()
         if feed is None:
-            return False
+            return {}
+        probe = getattr(feed, "auth_rejection", None)
+        if callable(probe):
+            try:
+                result = probe()
+                return dict(result) if isinstance(result, dict) else {}
+            except Exception:
+                return {}
+        # Legacy doubles without the latch: fall back to the historic
+        # broker-rejected exit signal (same semantics, narrower source).
         fstate = self._feed_status_dict(feed)
         if (fstate.get("state") == "auth_required"
                 and fstate.get("last_exit_reason") == "broker_rejected_token"):
+            return {"rejected": True, "at": None, "legacy": True}
+        return {"rejected": False, "at": None, "legacy": True}
+
+    def invalidate_on_rejection(
+        self, restore_state: dict | None = None,
+    ) -> bool:
+        """Clear runtime + durable session ONLY on genuine broker rejection.
+
+        Evidence comes from ``rejection_evidence()`` (explicit provider
+        refusal), never from generic feed state. No placeholder is created:
+        the runtime credential is cleared to None. Returns True when the
+        session was invalidated.
+        """
+        evidence = self.rejection_evidence()
+        if not evidence.get("rejected"):
+            return False
+        feed = self._feed()
+        if feed is not None:
             try:
-                self._storage.clear_upstox_session()
-                self._storage.save_status("upstox", AuthState.REJECTED)
+                feed.update_credentials(None)
             except Exception:
-                logger.exception("upstox: failed to clear rejected session")
-            return True
-        return False
+                logger.exception("upstox: failed to clear rejected runtime")
+        try:
+            self._storage.clear_upstox_session()
+            self._storage.save_status("upstox", AuthState.REJECTED)
+        except Exception:
+            logger.exception("upstox: failed to clear rejected session")
+        if restore_state is not None:
+            restore_state["upstox_restored"] = False
+        return True
 
     # -- logout -------------------------------------------------------------
     def logout(self, restore_state: dict | None = None) -> dict[str, Any]:
@@ -151,55 +186,127 @@ class UpstoxAuthService:
     # -- status ---------------------------------------------------------------
     def status(self, sources_cfg: dict | None,
                restore_state: dict | None) -> dict[str, Any]:
+        """Internally consistent auth projection + separate feed facts.
+
+        State machine (auth_state is the single source of truth;
+        ``authenticated``/``login_required`` derive from it):
+          rejected      genuine provider refusal (latch) -> session
+                        invalidated first, then projected from post-state
+          authenticated usable runtime token (feed state NEVER decides this)
+          expired       known-past expiry (runtime or durable)
+          missing       no usable runtime token and no unexpired durable
+                        session ("missing" is never used for rejections)
+        """
         feed = self._feed()
         feed_cfg = (sources_cfg or {}).get("upstox")
+        fstate = self._feed_status_dict(feed) if feed is not None else {}
         base: dict[str, Any] = {
             "configured": feed is not None,
             "feed_configured": isinstance(feed_cfg, dict),
             "feed_enabled": (bool(feed_cfg.get("enabled"))
                              if isinstance(feed_cfg, dict) else False),
         }
-        session = self._storage.load_upstox_session()
-        base["session_persisted"] = session is not None
-        base["restart_recovery"] = session is not None
-        base["session_restored"] = bool(
-            (restore_state or {}).get("upstox_restored"))
-        base["last_auth_status"] = self._storage.load_status("upstox")
-        if feed is None:
-            base.update({"source": "upstox", "auth_mode": "none",
-                         "token_configured": False, "login_required": True,
-                         "auth_state": (AuthState.MISSING if session is None
-                                        else AuthState.AUTHENTICATED)})
-            return base
-        creds = getattr(feed, "_credentials", None)
-        cstatus = creds.status() if creds is not None else {
-            "auth_mode": "none", "token_present": False,
-            "expiry_known": False, "expires_at": None, "expired": None}
-        base.update({
-            "source": getattr(feed, "name", "upstox"),
-            "auth_mode": cstatus.get("auth_mode", "unknown"),
-            "token_configured": bool(cstatus.get("token_present", False)),
-            "expiry_known": cstatus.get("expiry_known", False),
-            "expires_at": cstatus.get("expires_at"),
-            "expired": cstatus.get("expired"),
-            "state": self._feed_status_dict(feed).get("state", "unknown"),
-        })
-        ready = getattr(feed, "is_ready_to_start", None)
-        base["ready_to_start"] = bool(ready()) if callable(ready) else None
         try:
             raw = self._storage.raw
             base["auth_code_pending"] = bool(
                 raw and raw.load_upstox_auth_code())
         except Exception:
             base["auth_code_pending"] = False
-        base["login_required"] = not (
-            base["token_configured"] and base.get("expired") is not True
-            and base.get("state") not in ("auth_required",))
-        base["auth_state"] = (
-            AuthState.MISSING if base["login_required"]
-            else AuthState.AUTHENTICATED)
-        if self.invalidate_on_rejection():
-            base["session_persisted"] = False
-            base["restart_recovery"] = False
-            base["auth_state"] = AuthState.REJECTED
+
+        # 1) Genuine rejection wins: invalidate first so every projected
+        # field reflects the resulting storage/runtime state.
+        if self.rejection_evidence().get("rejected"):
+            self.invalidate_on_rejection(restore_state)
+            base.update({
+                "source": getattr(feed, "name", "upstox") if feed is not None
+                else "upstox",
+                "auth_mode": "none",
+                "auth_state": AuthState.REJECTED,
+                "authenticated": False,
+                "login_required": True,
+                "token_configured": False,
+                "expiry_known": False,
+                "expires_at": None,
+                "expired": None,
+                "session_persisted": False,
+                "restart_recovery": False,
+                "session_restored": False,
+                "last_auth_status": self._storage.load_status("upstox"),
+            })
+            self._project_feed(base, feed, fstate)
+            return base
+
+        # 2) Gather durable + runtime facts (no mutation below this point).
+        session = self._storage.load_upstox_session()
+        creds = getattr(feed, "_credentials", None) if feed is not None else None
+        cstatus = creds.status() if creds is not None else {
+            "auth_mode": "none", "token_present": False,
+            "expiry_known": False, "expires_at": None, "expired": None}
+        runtime_usable = bool(
+            cstatus.get("token_present", False)
+            and cstatus.get("expired") is not True)
+        runtime_expired = bool(
+            cstatus.get("token_present", False)
+            and cstatus.get("expired") is True)
+        durable_exp = parse_expiry_iso((session or {}).get("expires_at"))
+        durable_usable = bool(
+            session and (session.get("access_token") or "").strip()
+            and not (durable_exp is not None
+                     and is_expired(durable_exp)))
+        durable_expired = bool(
+            session and durable_exp is not None and is_expired(durable_exp))
+
+        base.update({
+            "source": getattr(feed, "name", "upstox") if feed is not None
+            else "upstox",
+            "auth_mode": cstatus.get("auth_mode", "unknown")
+            if feed is not None else "none",
+            "token_configured": runtime_usable,
+            "expiry_known": cstatus.get("expiry_known", False),
+            "expires_at": cstatus.get("expires_at")
+            if cstatus.get("expires_at") is not None
+            else (session or {}).get("expires_at"),
+            "expired": cstatus.get("expired")
+            if cstatus.get("expired") is not None
+            else (durable_expired or None),
+            "session_persisted": session is not None,
+            "restart_recovery": session is not None,
+            "session_restored": bool(
+                (restore_state or {}).get("upstox_restored")),
+            "last_auth_status": self._storage.load_status("upstox"),
+        })
+
+        # 3) Single state decision (feed state plays no role here).
+        if runtime_usable:
+            auth_state = AuthState.AUTHENTICATED
+        elif runtime_expired or (not runtime_usable and durable_expired):
+            auth_state = AuthState.EXPIRED
+        elif durable_usable:
+            # Durable session exists but no runtime token (e.g. feed not yet
+            # re-registered): restart recovery is available, but the operator
+            # must log in (or restart) — still "missing" at runtime.
+            auth_state = AuthState.MISSING
+        else:
+            auth_state = AuthState.MISSING
+        base["auth_state"] = auth_state
+        base["authenticated"] = (auth_state == AuthState.AUTHENTICATED)
+        base["login_required"] = (auth_state != AuthState.AUTHENTICATED)
+        self._project_feed(base, feed, fstate)
         return base
+
+    @staticmethod
+    def _project_feed(base: dict[str, Any], feed: Any,
+                      fstate: dict[str, Any]) -> None:
+        """Feed/connectivity facts live beside auth, never inside it."""
+        ready = getattr(feed, "is_ready_to_start", None) \
+            if feed is not None else None
+        base["ready_to_start"] = bool(ready()) if callable(ready) else None
+        reason = getattr(feed, "readiness_reason", None) \
+            if feed is not None else None
+        try:
+            base["not_ready_reason"] = reason() if callable(reason) else None
+        except Exception:
+            base["not_ready_reason"] = None
+        base["state"] = fstate.get("state", "unknown")
+        base["feed_state"] = fstate.get("state", "unknown")
+        base["last_error"] = fstate.get("last_error")

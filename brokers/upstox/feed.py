@@ -263,6 +263,16 @@ class UpstoxFeed:
         # -- state --------------------------------------------------------------
         self._state = "stopped"
         self._state_updated_at: str | None = None
+        # Genuine broker authentication rejection latch. Set ONLY when the
+        # provider itself rejects the current access token (UpstoxAuthError
+        # from authorize: confirmed HTTP 401 or equivalent auth refusal).
+        # Transient failures (ws drop, timeout, rate-limit, 5xx, market
+        # closed) NEVER set this. Cleared by update_credentials() (any new
+        # session is assessed afresh). This is the single evidence source
+        # AuthService uses to distinguish "rejected" from "missing"/feed
+        # problems — never inferred from generic auth_required state.
+        self._auth_rejected = False
+        self._auth_rejected_at: str | None = None
         # Last terminal-ish exit reason for forensics (set by run()); one of:
         # "stop_requested" | "cancelled" | "auth_required" | "terminal: <safe>"
         self._last_exit_reason: str | None = None
@@ -547,6 +557,10 @@ class UpstoxFeed:
             # Broker rejected the current access token (e.g. expired or
             # revoked). This is an AUTHENTICATION-REQUIRED state, not a
             # broken feed: stop cleanly, no retry loop, wait for OAuth.
+            # Latch the genuine rejection as explicit evidence for
+            # AuthService (transient paths below never touch the latch).
+            self._auth_rejected = True
+            self._auth_rejected_at = self._utc_now_iso()
             self._set_state("auth_required", reason="broker_rejected_token")
             logger.warning(
                 "upstox feed %s: authentication required - broker rejected "
@@ -756,6 +770,11 @@ class UpstoxFeed:
                 "credentials must be an UpstoxCredentials instance or None"
             )
         self._credentials = credentials
+        # Any credential change starts a fresh assessment: a previously
+        # rejected token must not taint the new session (and clearing to
+        # None drops the rejection evidence with the session itself).
+        self._auth_rejected = False
+        self._auth_rejected_at = None
         if self._state in ("failed", "auth_required"):
             self._set_state("stopped", reason="credentials_updated")
 
@@ -842,6 +861,8 @@ class UpstoxFeed:
             "last_exit_at": self._last_exit_at,
             "started_at": self._started_at,
             "not_ready_reason": self.readiness_reason(),
+            "auth_rejected": self._auth_rejected,
+            "auth_rejected_at": self._auth_rejected_at,
             "recent_transitions": list(self._transitions),
         })
         return status
@@ -861,6 +882,17 @@ class UpstoxFeed:
         if str(token).strip().startswith("PENDING"):
             return "token_pending"
         return None
+
+    def auth_rejection(self) -> dict[str, Any]:
+        """Explicit genuine-rejection evidence (redacted, no secrets).
+
+        Returns {"rejected": bool, "at": iso|None}. True ONLY when the
+        provider itself refused the current access token (confirmed 401 /
+        equivalent auth refusal at authorize). Transient feed problems
+        never set this. Reset by update_credentials().
+        """
+        return {"rejected": bool(self._auth_rejected),
+                "at": self._auth_rejected_at}
 
     @property
     def rest(self) -> UpstoxRest:
