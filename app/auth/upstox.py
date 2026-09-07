@@ -249,10 +249,6 @@ class UpstoxAuthService:
             cstatus.get("token_present", False)
             and cstatus.get("expired") is True)
         durable_exp = parse_expiry_iso((session or {}).get("expires_at"))
-        durable_usable = bool(
-            session and (session.get("access_token") or "").strip()
-            and not (durable_exp is not None
-                     and is_expired(durable_exp)))
         durable_expired = bool(
             session and durable_exp is not None and is_expired(durable_exp))
 
@@ -277,16 +273,21 @@ class UpstoxAuthService:
         })
 
         # 3) Single state decision (feed state plays no role here).
+        # A rejected/expired credential stays visibly rejected/expired (via
+        # the sticky last_auth_status) until a fresh login or logout
+        # overwrites it — it is never relabeled "missing".
         if runtime_usable:
             auth_state = AuthState.AUTHENTICATED
         elif runtime_expired or (not runtime_usable and durable_expired):
             auth_state = AuthState.EXPIRED
-        elif durable_usable:
-            # Durable session exists but no runtime token (e.g. feed not yet
-            # re-registered): restart recovery is available, but the operator
-            # must log in (or restart) — still "missing" at runtime.
-            auth_state = AuthState.MISSING
+        elif base["last_auth_status"] == AuthState.REJECTED:
+            auth_state = AuthState.REJECTED
+        elif base["last_auth_status"] == AuthState.EXPIRED:
+            auth_state = AuthState.EXPIRED
         else:
+            # No usable runtime token and no unexpired durable session
+            # (a valid durable record without runtime only means restart
+            # recovery is available — still "missing" at runtime).
             auth_state = AuthState.MISSING
         base["auth_state"] = auth_state
         base["authenticated"] = (auth_state == AuthState.AUTHENTICATED)

@@ -138,6 +138,33 @@ async def test_genuine_401_latches_and_invalidates(runner: R) -> None:
         runner.assert_true("rej-runtime-cleared", feed._credentials is None)
         runner.assert_true("rej-durable-cleared",
                            store.load_upstox_session_token() is None)
+        # Sticky: later polls (latch consumed by the invalidation) must
+        # still report rejected — never relabeled "missing".
+        st2 = svc.status({"upstox": {"enabled": True}},
+                         {"upstox_restored": False})
+        runner.assert_eq("rej-sticky", st2["auth_state"], "rejected")
+        runner.assert_true("rej-sticky-login", st2["login_required"])
+        runner.assert_false("rej-sticky-persisted",
+                            st2["session_persisted"])
+
+
+# -- sticky rejected survives polls but clears on fresh login ---------------------
+
+async def test_rejected_stays_rejected_until_login(runner: R) -> None:
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _tmp_store(tmp)
+        feed, _ = _logged_in_feed(store)
+        feed._rest = _Rest401()
+        await _one_cycle(feed)
+        svc = _svc(store, feed)
+        st = svc.status({"upstox": {"enabled": True}}, {})
+        runner.assert_eq("sticky-rejected", st["auth_state"], "rejected")
+        # A fresh successful login overwrites the marker -> authenticated.
+        await svc.apply_session(_creds("REAL-T-NEW"))
+        st = svc.status({"upstox": {"enabled": True}}, {})
+        runner.assert_eq("login-clears", st["auth_state"], "authenticated")
+        runner.assert_false("login-clears-login", st["login_required"])
 
 
 # -- 3: rejected != missing -----------------------------------------------------
@@ -287,6 +314,7 @@ async def main() -> bool:
     runner = R()
     await test_genuine_401_latches_and_invalidates(runner)
     await test_rejected_distinct_from_missing(runner)
+    await test_rejected_stays_rejected_until_login(runner)
     await test_transient_failures_preserve_session(runner)
     await test_ws_connect_failure_preserves_session(runner)
     await test_status_contract_consistency(runner)
