@@ -420,5 +420,10 @@ class InstrumentCatalog:
     def get(self, provider: str, token: str) -> dict[str, Any] | None:
         return self._store.get_instrument(provider, token)
 
+    def equity_universe(self, *, provider: str | None = None,
+                       limit: int = 5000) -> list[dict[str, Any]]:
+        """All NSE equity instruments (read model for breadth/heatmap)."""
+        return self._store.equity_universe(provider=provider, limit=limit)
+
     def sync_state(self) -> list[dict[str, Any]]:
         return self._store.instruments_sync_state()

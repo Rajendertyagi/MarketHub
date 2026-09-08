@@ -670,6 +670,15 @@ class EventStore:
 
     # ─── Product tables: instruments / watchlists / alerts (v11) ──────────────
 
+    def equity_universe(self, *, provider: str | None = None,
+                       limit: int = 5000) -> list[dict[str, Any]]:
+        """All NSE equity instruments (read model for breadth/heatmap)."""
+        conn = self._open(self._db_path)
+        try:
+            return _products.equity_universe(conn, provider=provider, limit=limit)
+        finally:
+            conn.close()
+
     def replace_provider_instruments(self, provider: str,
                                      records: list[dict[str, Any]]) -> int:
         conn = self._open(self._db_path)

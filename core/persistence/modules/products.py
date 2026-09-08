@@ -228,6 +228,38 @@ def option_strikes(
         conn.row_factory = None
 
 
+# ---------------------------------------------------------------------------
+# Broad NSE equity universe (read model for breadth/heatmap "ALL NSE" view)
+# ---------------------------------------------------------------------------
+
+
+def equity_universe(
+    conn: sqlite3.Connection, *, provider: str | None = None, limit: int = 5000,
+) -> list[dict[str, Any]]:
+    """All NSE equity instruments (segment NSE_EQ) in the catalog.
+
+    One grouped query — no N+1. Returns lightweight identity rows
+    (tradingsymbol, name, exchange, instrument_token) for the breadth /
+    sector-heatmap "all supported NSE equities" universe. The default cap is
+    high; callers that only need counts can pass a smaller limit.
+    """
+    sql = (
+        f"SELECT {', '.join(_INSTRUMENT_COLUMNS)} FROM instruments "
+        "WHERE segment = 'NSE_EQ' AND instrument_type = 'EQUITY'"
+    )
+    args: list[Any] = []
+    if provider:
+        sql += " AND provider = ?"
+        args.append(provider)
+    sql += " ORDER BY tradingsymbol LIMIT ?"
+    args.append(max(1, min(int(limit), 20000)))
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(sql, args)]
+    finally:
+        conn.row_factory = None
+
+
 def get_instrument(
     conn: sqlite3.Connection,
     provider: str,
