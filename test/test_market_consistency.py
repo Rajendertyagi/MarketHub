@@ -95,8 +95,8 @@ def test_no_duplicate_sector_membership():
             seen.add(m["symbol"])
     # No stock is counted in two sectors (constituent counts sum to the universe).
     assert total_constituents == len(members)
-    # Within the quoted drill-down lists there are no duplicates.
-    assert len(seen) == len(members) - 1  # one member is unavailable (not in lists)
+    # Every constituent (including unavailable) appears exactly once across sectors.
+    assert len(seen) == len(members)
 
 
 def test_unclassified_count_explicit():

@@ -255,13 +255,13 @@ def test_map_unavailable_reconcile():
     assert mm.reconciliation["unavailable_cross_match"] is True
 
 
-# 22. sector membership reconcile with Heatmap (over quoted symbols)
+# 22. sector membership reconcile with Heatmap (full membership per sector)
 def test_map_sector_membership_eq_heatmap():
     members, reader, fno = _shared()
     mm = compute_market_map("U", members, reader, fno_symbols=fno)
     sh = compute_sector_heatmap("U", members, reader)
-    map_by_sec = _quoted_symbols_by_sector(mm)
-    heat_by_sec = _heatmap_quoted_symbols_by_sector(sh)
+    map_by_sec = _symbols_by_sector(mm)
+    heat_by_sec = _heatmap_symbols_by_sector(sh)
     assert map_by_sec == heat_by_sec
 
 
@@ -467,14 +467,14 @@ def _all_stocks(snapshot):
     return [s for sg in snapshot.sectors for s in sg.stocks]
 
 
-def _quoted_symbols_by_sector(snapshot):
+def _symbols_by_sector(snapshot):
     out = {}
     for sg in snapshot.sectors:
-        out[sg.sector] = {s.symbol for s in sg.stocks if s.status != "unavailable"}
+        out[sg.sector] = {s.symbol for s in sg.stocks}
     return out
 
 
-def _heatmap_quoted_symbols_by_sector(shapshot):
+def _heatmap_symbols_by_sector(shapshot):
     out = {}
     for row in shapshot.sectors:
         out[row.sector] = {md["symbol"] for md in row.members}

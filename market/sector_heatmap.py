@@ -163,19 +163,22 @@ def compute_sector_heatmap(
                 status = "unchanged"
                 unchanged += 1
 
+            md = {
+                "symbol": m.symbol,
+                "name": m.name,
+                "ltp": _f(quote, "ltp"),
+                "change": ch,
+                "change_percent": pct,
+                "volume": _f(quote, "volume"),
+                "status": status,
+                "fno": m.symbol.upper() in fno_set,
+            }
+            # Every constituent is represented (including unavailable) so the
+            # treemap / drill-down can show the full universe; performance
+            # metrics below use only quoted members.
+            member_dicts.append(md)
             if has and pct is not None:
                 pcts.append(pct)
-                md = {
-                    "symbol": m.symbol,
-                    "name": m.name,
-                    "ltp": _f(quote, "ltp"),
-                    "change": ch,
-                    "change_percent": pct,
-                    "volume": _f(quote, "volume"),
-                    "status": status,
-                    "fno": m.symbol.upper() in fno_set,
-                }
-                member_dicts.append(md)
                 if gainer is None or pct > gainer["change_percent"]:
                     gainer = md
                 if loser is None or pct < loser["change_percent"]:
