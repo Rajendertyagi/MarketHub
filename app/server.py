@@ -1232,7 +1232,8 @@ app = Starlette(
         _subscription_service, _feed_for_provider)
     + _build_fno_routes(
         _instrument_catalog, subscriptions=_subscription_service,
-        market_service=_market_service, feed_provider=_feed_for_provider)
+        market_service=_market_service, feed_provider=_feed_for_provider,
+        provider_md=_provider_market_data)
     + _build_admin_routes(_store, PROJECT_ROOT / DATA_DIR)
     + _build_fyers_auth_routes(
         _credential_store,

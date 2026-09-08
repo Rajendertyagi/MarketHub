@@ -44,7 +44,8 @@ def _quote_fields(quote: Any) -> dict[str, Any]:
 
 def build_fno_routes(catalog: Any, subscriptions: Any = None,
                      market_service: Any = None,
-                     feed_provider: Any = None) -> list[Route]:
+                     feed_provider: Any = None,
+                     provider_md: Any = None) -> list[Route]:
     """Read-only universe + snapshot workspace + bounded active-view apply."""
 
     async def _universe(request: Request) -> Response:
@@ -112,8 +113,60 @@ def build_fno_routes(catalog: Any, subscriptions: Any = None,
         ws["spot_quote"] = _q(ws["equity_key"]) if ws["equity_key"] else None
         for f in ws["futures"]:
             f["quote"] = _q(f["key"])
+        # Provider chain snapshot (same canonical path the Option Chain
+        # page uses — returns last-session OI/LTP/IV/greeks even when
+        # the market is closed). Best-effort: never blocks the workspace.
+        chain_note = None
+        if provider_md is not None and ws["equity_key"]:
+            try:
+                snap = await provider_md.option_chain(
+                    instrument_key=ws["equity_key"], exchange="NSE",
+                    tradingsymbol=symbol,
+                    expiry=ws.get("selected_expiry") or "")
+                if snap is not None and getattr(snap, "strikes", None):
+                    by_strike: dict[float, tuple[Any, Any]] = {}
+                    for s in snap.strikes:
+                        by_strike[s.strike] = (s.call, s.put)
+                    matched = 0
+                    for o in ws["options"]:
+                        call, put = by_strike.get(
+                            float(o["strike"]) if o["strike"] is not None
+                            else None, (None, None))
+                        leg = call if o.get("option_type") == "CE" else put
+                        if leg is None:
+                            continue
+                        q = {
+                            "ltp": getattr(leg, "ltp", None),
+                            "bid": getattr(leg, "bid", None),
+                            "ask": getattr(leg, "ask", None),
+                            "oi": getattr(leg, "oi", None),
+                            "previous_oi": getattr(leg, "previous_oi", None),
+                            "oi_change": getattr(leg, "oi_change", None),
+                            "volume": getattr(leg, "volume", None),
+                            "iv": getattr(leg, "iv", None),
+                            "greeks": getattr(leg, "delta", None) and {
+                                "delta": getattr(leg, "delta", None),
+                                "gamma": getattr(leg, "gamma", None),
+                                "theta": getattr(leg, "theta", None),
+                                "vega": getattr(leg, "vega", None),
+                            } or None,
+                        }
+                        if any(v is not None for v in q.values()):
+                            o["quote"] = {**(o.get("quote") or {}), **{
+                                k: v for k, v in q.items() if v is not None}}
+                            matched += 1
+                    if matched:
+                        chain_note = (
+                            f"option quotes from provider chain snapshot "
+                            f"({matched} legs, last session)")
+            except Exception as exc:
+                chain_note = None
+                logger.info("fno chain snapshot unavailable for %s: %s",
+                            symbol, type(exc).__name__)
         for o in ws["options"]:
-            o["quote"] = _q(o["key"])
+            o.setdefault("quote", None)
+        if chain_note:
+            ws.setdefault("notes", []).append(chain_note)
         ws.pop("_keys_by_provider", None)
         return _json({"status": "ok", **ws})
 

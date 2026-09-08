@@ -427,7 +427,8 @@ class SubscriptionService:
     def workspace_contracts(self, symbol: str, *, future_count: int = 2,
                             option_expiry_count: int = 1,
                             strikes_below: int = 10,
-                            strikes_above: int = 10) -> dict[str, Any]:
+                            strikes_above: int = 10,
+                            atm_override: float | None = None) -> dict[str, Any]:
         """Resolve concrete contracts for one F&O stock workspace.
 
         Snapshot-first read model: equity key, non-expired futures,
@@ -479,7 +480,12 @@ class SubscriptionService:
         out["selected_expiry"] = opt_expiries[0] if opt_expiries else None
         atm = None
         atm_basis = None
-        if out["equity_key"] and self._spot_provider is not None:
+        if atm_override is not None:
+            # Explicit ATM (e.g. snapped from the provider chain snapshot's
+            # own spot) — still snapped to an actual listed strike.
+            atm = self._snap_listed_strike(symbol, float(atm_override))
+            atm_basis = "provider_snapshot"
+        if atm is None and out["equity_key"] and self._spot_provider is not None:
             eq_key = out["equity_key"]
             exchange = eq_key.split("|", 1)[0].rsplit("_", 1)[0] \
                 if "|" in eq_key else "NSE"
