@@ -65,19 +65,23 @@ async function _renderMarketBreadthDiag() {
   const el = $("diag-breadth");
   if (!el) return;
   try {
-    const [b, h] = await Promise.all([
+    const [b, h, m] = await Promise.all([
       apiGet("/api/market/breadth/diagnostics"),
       apiGet("/api/market/sector-heatmap/diagnostics"),
+      apiGet("/api/market/map/diagnostics"),
     ]);
     const rowFor = (title, d) => {
       if (!d || d.error) return `<tr><td>${title}</td><td colspan="4" class="err">${d ? d.error : "n/a"}</td></tr>`;
       const recon = d.reconciliation || {};
       const reconOk = recon.advances_match && recon.declines_match && recon.quoted_match;
+      const extra = d.sector_count !== undefined
+        ? ` · ${d.sector_count} sec · ${d.unclassified ?? "—"} unc`
+        : "";
       return `<tr><td>${title}</td>` +
         `<td>${d.eligible ?? "—"}</td>` +
         `<td>${d.quoted ?? "—"}</td>` +
         `<td>${d.unavailable ?? "—"}</td>` +
-        `<td>${d.reconciliation ? (reconOk ? "OK" : "MISMATCH") : (d.classified_count !== undefined ? `${d.classified_count} cls / ${d.unclassified_count} unc` : "—")}</td></tr>`;
+        `<td>${d.reconciliation ? (reconOk ? "OK" : "MISMATCH") : (d.classified_count !== undefined ? `${d.classified_count} cls / ${d.unclassified_count} unc` : "—")}${extra}</td></tr>`;
     };
     let rows = "";
     for (const u of ["FNO", "NIFTY50"]) {
@@ -86,8 +90,11 @@ async function _renderMarketBreadthDiag() {
     for (const u of ["FNO", "NIFTY50"]) {
       rows += rowFor(`Heatmap ${u}`, h[u]);
     }
+    for (const u of ["FNO", "NIFTY50"]) {
+      rows += rowFor(`Map ${u}`, m[u]);
+    }
     el.innerHTML =
-      `<div class="diag-category"><h3>MARKET BREADTH / SECTOR</h3>` +
+      `<div class="diag-category"><h3>MARKET BREADTH / SECTOR / MAP</h3>` +
       `<table class="data-table"><thead><tr><th>Check</th><th>Eligible</th>` +
       `<th>Quoted</th><th>Unavail</th><th>Recon / Class</th></tr></thead>` +
       `<tbody>${rows}</tbody></table></div>`;

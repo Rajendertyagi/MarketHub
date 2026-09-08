@@ -42,6 +42,7 @@ import { initShell } from "./shell.js?v=4";
 import { initFnoUI, openFno } from "./fno.js?v=2";
 import { initBreadthUI, openBreadth } from "./breadth.js";
 import { initSectorHeatmapUI, openSectorHeatmap } from "./sector-heatmap.js";
+import { initMarketMapUI, openMarketMap } from "./market-map.js";
 
   // ── DOM shortcuts ───────────────────────────────────────────────────────
   const $ = (id) => document.getElementById(id);
@@ -240,6 +241,7 @@ import { initSectorHeatmapUI, openSectorHeatmap } from "./sector-heatmap.js";
     initFnoUI();
     initBreadthUI();
     initSectorHeatmapUI();
+    initMarketMapUI();
     initLogsUI();
     initSplitters();
     initShell();   // header index strip + bottom status bar (no new streams)
@@ -254,6 +256,7 @@ import { initSectorHeatmapUI, openSectorHeatmap } from "./sector-heatmap.js";
     onViewEnter("fno", openFno);
     onViewEnter("breadth", openBreadth);
     onViewEnter("sector-heatmap", openSectorHeatmap);
+    onViewEnter("market-map", openMarketMap);
     onViewEnter("diagnostics", openDiagnostics);
     initRouter();
     loadInitialQuotes();

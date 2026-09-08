@@ -1,0 +1,79 @@
+/* MarketHub — Market Map (stock-level, sector-grouped).
+   Colors are fixed semantic mid-tones that read on both dark and light themes;
+   text always carries the signed change so color is never the sole signal. */
+
+.market-map { display: flex; flex-direction: column; gap: 14px; }
+
+.mm-sector {
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 10px;
+  padding: 10px 12px 14px;
+  background: var(--panel, #161a22);
+}
+
+.mm-sector-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-dim, #9aa4b2);
+  margin-bottom: 8px;
+}
+
+.mm-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mm-tile {
+  flex: 0 0 auto;
+  min-width: 92px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  cursor: pointer;
+  text-align: left;
+  color: #fff;
+  font: inherit;
+  transition: transform .08s ease, box-shadow .08s ease;
+}
+.mm-tile:hover, .mm-tile:focus-visible {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0,0,0,.35);
+  outline: 2px solid var(--accent, #4da3ff);
+  outline-offset: 1px;
+}
+
+.mm-sym { font-size: 12px; font-weight: 700; line-height: 1.1; }
+.mm-chg { font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* Symmetric change% scale (explicit, never "neutral" for missing data). */
+.mm-strong-up  { background: hsl(145, 62%, 34%); }
+.mm-up         { background: hsl(145, 58%, 44%); }
+.mm-flat       { background: hsl(220, 8%, 46%); }
+.mm-down       { background: hsl(6, 66%, 52%); }
+.mm-strong-down{ background: hsl(6, 70%, 42%); }
+
+/* Unavailable: clearly distinct, not a performance color. */
+.mm-unavailable {
+  background: transparent;
+  border: 1px dashed var(--border-strong, #3a4150);
+  color: var(--text-dim, #9aa4b2);
+}
+
+/* Light theme: keep saturated tiles readable, soften panel borders. */
+[data-theme="light"] .mm-strong-up  { background: hsl(145, 55%, 32%); }
+[data-theme="light"] .mm-up         { background: hsl(145, 52%, 40%); }
+[data-theme="light"] .mm-flat       { background: hsl(220, 8%, 55%); }
+[data-theme="light"] .mm-down       { background: hsl(6, 60%, 48%); }
+[data-theme="light"] .mm-strong-down{ background: hsl(6, 64%, 40%); }
+[data-theme="light"] .mm-unavailable {
+  background: #f3f4f6; color: #6b7280; border-color: #cbd2dc;
+}
+
+.mm-note, #mm-note { color: var(--text-dim, #9aa4b2); font-size: 12px; min-height: 14px; }
