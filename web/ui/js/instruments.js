@@ -116,8 +116,9 @@ export function initInstruments() {
   loadSyncState();
 
   // ── Data Segments panel (catalog segment enable/disable) ──────────────
-  // Checkboxes change LOCAL state only; Save & Re-sync persists the
-  // preference and explicitly re-syncs providers whose set changed.
+  // Collapsed by default behind the toolbar toggle; lazily loads when
+  // first opened. Checkboxes change LOCAL state only; Save & Re-sync
+  // persists the preference and re-syncs providers whose set changed.
   const SEGMENT_INFO = {
     NSE_EQ: "NSE stocks & ETFs (cash market)",
     NSE_FO: "NSE stock & index futures/options",
@@ -172,10 +173,10 @@ export function initInstruments() {
           const name = document.createElement("b");
           name.textContent = seg;
           text.appendChild(name);
-          text.appendChild(document.createElement("br"));
           const desc = document.createElement("small");
           desc.className = "seg-desc";
           desc.textContent = SEGMENT_INFO[seg] || seg;
+          desc.title = SEGMENT_INFO[seg] || seg;   // tooltip on truncation
           text.appendChild(desc);
           label.appendChild(text);
           const count = document.createElement("span");
@@ -186,8 +187,29 @@ export function initInstruments() {
         }
         wrap.appendChild(group);
       }
+      _updateSegToggleSummary();
     } catch { /* silent — panel stays empty */ }
   }
+
+  function _updateSegToggleSummary() {
+    const btn = $("seg-toggle");
+    if (!btn) return;
+    const enabled = [...(_segState.enabled || [])];
+    btn.textContent = enabled.length
+      ? `Data Segments (${enabled.length} on) ▸` : "Data Segments ▸";
+  }
+
+  $("seg-toggle")?.addEventListener("click", () => {
+    const panel = $("fno-segments-panel");
+    const btn = $("seg-toggle");
+    const willShow = panel.classList.contains("hidden");
+    panel.classList.toggle("hidden", !willShow);
+    btn.setAttribute("aria-expanded", String(willShow));
+    btn.textContent = willShow
+      ? (btn.textContent.replace("▸", "▾"))
+      : (btn.textContent.replace("▾", "▸"));
+    if (willShow && !_segState.segments.length) loadSegments();
+  });
 
   $("seg-save-resync")?.addEventListener("click", async (e) => {
     const btn = e.target;
@@ -248,7 +270,6 @@ export function initInstruments() {
       $("seg-result").className = "hint err";
     } finally { btn.disabled = false; }
   });
-  loadSegments();
 
   doSearch();
 }

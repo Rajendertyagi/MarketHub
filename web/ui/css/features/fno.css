@@ -17,13 +17,33 @@
   opacity: 0.75;
 }
 
+/* Compact status strip: merges sync-msg + catalog state into one line. */
+.instr-status-strip {
+  display: flex;
+  gap: var(--space-3, 12px);
+  align-items: baseline;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  opacity: 0.85;
+  padding: 2px 0;
+}
+
+#fno-segments-panel .panel-header h2 {
+  font-size: 1rem;
+}
+
+#seg-result {
+  margin-top: var(--space-2, 8px);
+}
+
 .seg-check {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 6px;
-  padding: 4px 6px;
+  padding: 3px 6px;
   border-radius: 6px;
   cursor: pointer;
+  min-height: 30px;
 }
 
 .seg-check:hover {
@@ -31,24 +51,32 @@
 }
 
 .seg-check input[type="checkbox"] {
-  margin-top: 3px;
+  flex: none;
+}
+
+.seg-text {
+  min-width: 0;
+  line-height: 1.2;
 }
 
 .seg-text b {
-  font-size: 0.9rem;
+  font-size: 0.82rem;
 }
 
 .seg-desc {
   display: block;
   opacity: 0.65;
-  font-size: 0.72rem;
-  line-height: 1.25;
+  font-size: 0.7rem;
+  line-height: 1.2;
   max-width: 170px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .seg-count {
   margin-left: auto;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   opacity: 0.6;
   white-space: nowrap;
 }
