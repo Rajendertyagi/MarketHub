@@ -662,6 +662,7 @@ from api.log_routes import build_log_routes as _build_log_routes
 from api.news_routes import build_news_routes as _build_news_routes
 from api.diagnostics_routes import build_diagnostics_run_routes as _build_diag_routes
 from api.subscription_routes import build_subscription_routes as _build_subscription_routes
+from api.fno_routes import build_fno_routes as _build_fno_routes
 from app.market_data import ProviderMarketData as _ProviderMarketData
 
 
@@ -1229,6 +1230,9 @@ app = Starlette(
     + _build_market_data_routes(_provider_market_data)
     + _build_subscription_routes(
         _subscription_service, _feed_for_provider)
+    + _build_fno_routes(
+        _instrument_catalog, subscriptions=_subscription_service,
+        market_service=_market_service, feed_provider=_feed_for_provider)
     + _build_admin_routes(_store, PROJECT_ROOT / DATA_DIR)
     + _build_fyers_auth_routes(
         _credential_store,

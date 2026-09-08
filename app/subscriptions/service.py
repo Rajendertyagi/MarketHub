@@ -66,6 +66,24 @@ class SubscriptionService:
         self._spot_provider = spot_provider
         # Last reconciliation result (per provider), for status projection.
         self._last_apply: dict[str, Any] = {}
+        # ACTIVE-VIEW owner: ephemeral per-runtime keys required by the
+        # currently open F&O workspace (spot + futures + bounded option
+        # window). NEVER persisted — the desired set is the UNION of
+        # persistent/base resolution and this owner, so switching or
+        # closing a view can never unsubscribe a persistent key.
+        self._active_view: dict[str, list[str]] = {}
+
+    # -- active view (ephemeral, additive owner) ---------------------------------
+
+    def set_active_view(self, keys_by_provider: dict[str, list[str]]) -> None:
+        """Replace the active-view key set (bounded; caller enforces limits)."""
+        self._active_view = {
+            p: list(dict.fromkeys(k for k in v if k))
+            for p, v in (keys_by_provider or {}).items() if v
+        }
+
+    def clear_active_view(self) -> None:
+        self._active_view = {}
 
     # -- preferences -----------------------------------------------------------
 
@@ -388,6 +406,11 @@ class SubscriptionService:
         atm = self._atm_strike(underlying)
         if atm is None:
             return None
+        return self._snap_listed_strike(underlying, atm)
+
+    def _snap_listed_strike(self, underlying: str,
+                            raw_spot: float) -> float | None:
+        """Snap a raw spot LTP to the nearest ACTUAL listed strike."""
         expiries = self._unexpired_expiries(underlying, "OPTION", 1)
         if not expiries:
             return None
@@ -399,7 +422,116 @@ class SubscriptionService:
             return None
         if not listed:
             return None
-        return min(listed, key=lambda s: abs(s - atm))
+        return min(listed, key=lambda s: abs(s - raw_spot))
+
+    def workspace_contracts(self, symbol: str, *, future_count: int = 2,
+                            option_expiry_count: int = 1,
+                            strikes_below: int = 10,
+                            strikes_above: int = 10) -> dict[str, Any]:
+        """Resolve concrete contracts for one F&O stock workspace.
+
+        Snapshot-first read model: equity key, non-expired futures,
+        option expiries, and the bounded ATM ± window option contracts
+        (CE/PE) for live subscription. Uses ONLY catalog-listed strikes.
+        Raises SubscriptionLimitError via resolve() bounds; window is
+        additionally bounded by the caller.
+        """
+        symbol = (symbol or "").strip().upper()
+        future_count = max(0, min(int(future_count), 3))
+        option_expiry_count = max(0, min(int(option_expiry_count), 2))
+        strikes_below = max(0, min(int(strikes_below), 25))
+        strikes_above = max(0, min(int(strikes_above), 25))
+        out: dict[str, Any] = {
+            "symbol": symbol, "equity_key": None, "futures": [],
+            "option_expiries": [], "selected_expiry": None,
+            "atm": None, "atm_basis": None, "options": [],
+            "by_provider": {}, "notes": [],
+        }
+        # Equity identity (canonical catalog row).
+        eq_rows = self._catalog.search(q=symbol, provider="upstox",
+                                       instrument_type="EQUITY", limit=5)
+        eq = next((r for r in eq_rows
+                   if (r.get("tradingsymbol") or "").upper() == symbol), None)
+        if eq is not None:
+            out["equity_key"] = eq.get("instrument_token")
+        # Futures (non-expired, catalog-ordered).
+        expiries = self._unexpired_expiries(symbol, "FUTURE", future_count)
+        for expiry in expiries:
+            for row in self._catalog.search(underlying=symbol,
+                                            instrument_type="FUTURE",
+                                            expiry=expiry, limit=5):
+                key = row.get("provider_symbol") \
+                    or row.get("instrument_token")
+                if key:
+                    out["futures"].append({
+                        "key": key,
+                        "label": row.get("tradingsymbol") or key,
+                        "expiry": expiry,
+                        "provider": row.get("provider") or _provider_of(key),
+                    })
+        # Options: expiries + bounded ATM window contracts. Spot comes
+        # from the equity's own feed key (works for never-subscribed
+        # stocks); ATM snaps to an actual listed strike.
+        opt_expiries = self._unexpired_expiries(symbol, "OPTION",
+                                                option_expiry_count)
+        out["option_expiries"] = self._catalog.derivative_expiries(
+            symbol, "OPTION")
+        out["selected_expiry"] = opt_expiries[0] if opt_expiries else None
+        atm = None
+        atm_basis = None
+        if out["equity_key"] and self._spot_provider is not None:
+            eq_key = out["equity_key"]
+            exchange = eq_key.split("|", 1)[0].rsplit("_", 1)[0] \
+                if "|" in eq_key else "NSE"
+            try:
+                quote = self._spot_provider(exchange, eq_key)
+            except Exception:
+                quote = None
+            ltp = getattr(quote, "ltp", None) if quote is not None else None
+            if ltp is not None and ltp > 0:
+                atm = self._snap_listed_strike(symbol, float(ltp))
+                atm_basis = "spot"
+        if atm is None and out["selected_expiry"]:
+            # Deterministic fallback (existing project convention): middle
+            # listed strike, clearly labeled — the workspace stays usable
+            # when the market is closed; nothing is fabricated.
+            rows = self._catalog.option_strikes(symbol,
+                                                out["selected_expiry"]) or []
+            try:
+                listed = sorted({float(r["strike"]) for r in rows
+                                 if r.get("strike") is not None})
+            except (TypeError, ValueError):
+                listed = []
+            if listed:
+                atm = listed[len(listed) // 2]
+                atm_basis = "fallback_mid_strike"
+                out["notes"].append(
+                    f"{symbol}: spot unavailable — option window centered "
+                    f"on middle listed strike")
+        out["atm"] = atm
+        out["atm_basis"] = atm_basis
+        if atm is not None and out["selected_expiry"]:
+            contracts: list[dict[str, Any]] = []
+            self._resolve_options(symbol, option_expiry_count,
+                                  strikes_below, strikes_above,
+                                  True, True, atm, contracts, out["notes"])
+            out["options"] = contracts
+        # Bounded per-provider key set for the active-view subscription.
+        keys: dict[str, list[str]] = {}
+        if out["equity_key"]:
+            keys.setdefault(_provider_of(out["equity_key"]), [])
+            keys[_provider_of(out["equity_key"])].append(out["equity_key"])
+        for f in out["futures"]:
+            keys.setdefault(f["provider"], [])
+            if f["key"] not in keys[f["provider"]]:
+                keys[f["provider"]].append(f["key"])
+        for o in out["options"]:
+            keys.setdefault(o["provider"], [])
+            if o["key"] not in keys[o["provider"]]:
+                keys[o["provider"]].append(o["key"])
+        out["by_provider"] = {p: len(v) for p, v in keys.items()}
+        out["_keys_by_provider"] = keys
+        return out
 
     def resolve(self) -> dict[str, Any]:
         """DB preferences → concrete per-provider desired key set.
@@ -438,6 +570,23 @@ class SubscriptionService:
                     rule["strikes_below"], rule["strikes_above"],
                     rule["calls_enabled"], rule["puts_enabled"],
                     listed_atm, contracts, notes)
+
+        # ACTIVE-VIEW union: ephemeral workspace keys join the desired set
+        # additively. Persistent/base keys are untouched; closing the view
+        # simply shrinks this owner back to zero.
+        view_count = sum(len(v) for v in self._active_view.values())
+        if view_count:
+            for provider, keys in self._active_view.items():
+                for key in keys:
+                    contracts.append({
+                        "key": key, "label": key,
+                        "provider": provider if provider in ("upstox",
+                                                             "fyers")
+                        else _provider_of(key),
+                        "kind": "active_view",
+                        "underlying": None, "expiry": None,
+                        "strike": None, "option_type": None,
+                    })
 
         by_provider: dict[str, list[str]] = {}
         for c in contracts:

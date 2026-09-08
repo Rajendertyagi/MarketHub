@@ -67,9 +67,11 @@ def build_subscription_routes(subscriptions: Any,
         label = (body or {}).get("label", "") or key
         if not isinstance(key, str) or not key.strip():
             return _json({"error": "key is required"}, 400)
+        enabled = bool((body or {}).get("enabled", True))
         try:
             row = await asyncio.to_thread(
-                subscriptions.add_stock, key.strip(), str(label).strip())
+                subscriptions.add_stock, key.strip(), str(label).strip(),
+                enabled)
         except ValueError as exc:
             return _json({"error": str(exc)}, 400)
         return _json({"status": "ok", "subscription": row})
