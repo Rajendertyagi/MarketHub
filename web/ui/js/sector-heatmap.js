@@ -123,11 +123,13 @@ function _buildOption(s) {
   const data = s.sectors.map((sec) => {
     const isUnc = sec.sector === "Unclassified";
     const children = (sec.members || []).map((m) => {
-      const vol = (m.volume && m.volume > 0) ? m.volume : 1;
       const color = m.status === "unavailable" ? t.unavailable : _tileColor(m.change_percent);
       return {
         name: m.symbol,
-        value: [vol, m.change_percent == null ? 0 : m.change_percent],
+        // Equal area per stock; Change % is encoded by COLOR (the primary signal).
+        // Avoids a single high-volume stock swallowing the whole map when volume
+        // data is sparse/inconsistent.
+        value: [1, m.change_percent == null ? 0 : m.change_percent],
         itemStyle: { color },
         _symbol: m.symbol,
         _fno: m.fno,
