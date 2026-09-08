@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Callable
 
 from sse_starlette import EventSourceResponse
@@ -26,6 +26,7 @@ logger = logging.getLogger("event_server")
 from market.market_universe import resolve_universe as _resolve_universe
 from market.breadth import compute_breadth as _compute_breadth
 from market.sector_heatmap import compute_sector_heatmap as _compute_sector_heatmap
+from market.market_map import compute_market_map as _compute_market_map
 
 __all__ = [
     "build_market_routes",
@@ -245,6 +246,69 @@ def build_market_routes(
         out["reconciliation_status"] = "ok"
         return _json(out)
 
+    # -- market map (stock-level, sector-grouped; reuses universe + classifier) -
+
+    def _fno_symbols() -> set[str]:
+        """Uppercased F&O underlying symbols for honest workspace navigation.
+
+        One batch catalog query (never per-symbol); empty set on any failure so
+        the map still renders (tiles simply mark fno=False).
+        """
+        try:
+            rows = index_catalog.fno_universe(
+                provider="upstox", today=date.today().isoformat(), limit=2000)
+            return {str(r.get("symbol", "")).upper() for r in (rows or [])}
+        except Exception:  # noqa: BLE001
+            return set()
+
+    async def _market_map(request: Request) -> Response:
+        if market_service is None:
+            return _json({"error": "market service unavailable"}, 503)
+        if index_catalog is None:
+            return _json({"error": "instrument catalog unavailable"}, 503)
+        universe = (request.query_params.get("universe") or "FNO").upper()
+        try:
+            members = _resolve_universe(universe, index_catalog)
+        except ValueError as exc:
+            return _json({"error": str(exc)}, 400)
+        snap = _compute_market_map(
+            universe, members, _reader(), fno_symbols=_fno_symbols(), as_of=None)
+        return _json(snap.to_dict())
+
+    async def _market_map_diag(request: Request) -> Response:  # noqa: ARG001
+        if market_service is None or index_catalog is None:
+            return _json({"error": "service unavailable"}, 503)
+        out = {}
+        cross_keys = (
+            "eligible_match", "quoted_cross_match", "unavailable_cross_match",
+            "advances_cross_match", "declines_cross_match", "unchanged_cross_match",
+        )
+        ok = True
+        for u in ("FNO", "NIFTY50"):
+            try:
+                members = _resolve_universe(u, index_catalog)
+                snap = _compute_market_map(u, members, _reader())
+                recon = snap.reconciliation
+                if not all(recon.get(k) for k in cross_keys):
+                    ok = False
+                out[u] = {
+                    "universe": u,
+                    "eligible": snap.eligible,
+                    "quoted": snap.quoted,
+                    "unavailable": snap.unavailable,
+                    "sector_count": len(snap.sectors),
+                    "unclassified": snap.unclassified,
+                    "advances": snap.advances,
+                    "declines": snap.declines,
+                    "unchanged": snap.unchanged,
+                    "reconciliation": recon,
+                }
+            except Exception as exc:  # noqa: BLE001
+                ok = False
+                out[u] = {"error": str(exc)}
+        out["reconciliation_status"] = "ok" if ok else "mismatch"
+        return _json(out)
+
     return [
         Route("/api/market/stream", endpoint=_market_stream, methods=["GET"]),
         Route("/api/market/quotes", endpoint=_market_quotes, methods=["GET"]),
@@ -262,6 +326,9 @@ def build_market_routes(
               methods=["GET"]),
         Route("/api/market/sector-heatmap/diagnostics",
               endpoint=_sector_diag, methods=["GET"]),
+        Route("/api/market/map", endpoint=_market_map, methods=["GET"]),
+        Route("/api/market/map/diagnostics", endpoint=_market_map_diag,
+              methods=["GET"]),
         Route("/api/sources/status", endpoint=_source_status, methods=["GET"]),
     ]
 
