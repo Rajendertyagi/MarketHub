@@ -1,5 +1,13 @@
 /* Sector Heatmap view (feature-scoped). */
 
+/* ECharts treemap container (primary renderer). Falls back to .heatmap-grid. */
+.heatmap-chart {
+  width: 100%;
+  height: 64vh;
+  min-height: 440px;
+  margin: var(--space-3, 12px) 0;
+}
+
 .heatmap-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
