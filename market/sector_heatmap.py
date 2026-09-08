@@ -115,9 +115,12 @@ def compute_sector_heatmap(
     as_of: str | None = None,
     stale_minutes: int = 5,
     include_members: bool = True,
+    fno_symbols: set[str] | None = None,
 ) -> SectorHeatmapSnapshot:
     """Aggregate members into per-sector metrics using the canonical classifier."""
     from datetime import datetime, timezone
+
+    fno_set = {str(s).upper() for s in (fno_symbols or set())}
 
     groups: dict[str, list[Any]] = {}
     for m in members:
@@ -168,7 +171,9 @@ def compute_sector_heatmap(
                     "ltp": _f(quote, "ltp"),
                     "change": ch,
                     "change_percent": pct,
+                    "volume": _f(quote, "volume"),
                     "status": status,
+                    "fno": m.symbol.upper() in fno_set,
                 }
                 member_dicts.append(md)
                 if gainer is None or pct > gainer["change_percent"]:

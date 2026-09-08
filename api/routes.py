@@ -193,7 +193,8 @@ def build_market_routes(
             return _json({"error": str(exc)}, 400)
         include = (request.query_params.get("members") or "1") not in ("0", "false")
         snap = _compute_sector_heatmap(
-            universe, members, _reader(), as_of=None, include_members=include)
+            universe, members, _reader(), as_of=None, include_members=include,
+            fno_symbols=_fno_symbols())
         return _json(snap.to_dict())
 
     # -- read-only diagnostics (Test Center) -----------------------------------
