@@ -19,9 +19,38 @@
 
 .seg-check {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
-  padding: 2px 0;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.seg-check:hover {
+  background: var(--surface-alt, rgba(74, 125, 255, 0.08));
+}
+
+.seg-check input[type="checkbox"] {
+  margin-top: 3px;
+}
+
+.seg-text b {
+  font-size: 0.9rem;
+}
+
+.seg-desc {
+  display: block;
+  opacity: 0.65;
+  font-size: 0.72rem;
+  line-height: 1.25;
+  max-width: 170px;
+}
+
+.seg-count {
+  margin-left: auto;
+  font-size: 0.75rem;
+  opacity: 0.6;
+  white-space: nowrap;
 }
 
 #fno-count {

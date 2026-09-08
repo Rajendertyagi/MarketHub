@@ -118,6 +118,19 @@ export function initInstruments() {
   // ── Data Segments panel (catalog segment enable/disable) ──────────────
   // Checkboxes change LOCAL state only; Save & Re-sync persists the
   // preference and explicitly re-syncs providers whose set changed.
+  const SEGMENT_INFO = {
+    NSE_EQ: "NSE stocks & ETFs (cash market)",
+    NSE_FO: "NSE stock & index futures/options",
+    NSE_INDEX: "NSE indices (Nifty, Bank Nifty, FinNifty…)",
+    NSE_COM: "NSE commodity derivatives (Gold, Silver, Crude…)",
+    BSE_EQ: "BSE stocks & ETFs",
+    BSE_FO: "BSE stock & index futures/options",
+    BSE_INDEX: "BSE indices (Sensex, Bankex)",
+    MCX_FO: "MCX commodity futures/options (Gold, Silver, Crude…)",
+    BCD_FO: "BSE currency derivatives (USDINR, EURINR…)",
+    NCD_FO: "NSE currency derivatives (USDINR, EURINR…)",
+    GLOBAL: "Global/other instruments",
+  };
   const GROUPS = [
     { label: "NSE", segs: ["NSE_EQ", "NSE_FO", "NSE_INDEX", "NSE_COM"] },
     { label: "BSE", segs: ["BSE_EQ", "BSE_FO", "BSE_INDEX"] },
@@ -148,13 +161,27 @@ export function initInstruments() {
           if (!info) continue;   // provider never discovered it
           const label = document.createElement("label");
           label.className = "seg-check";
+          label.title = SEGMENT_INFO[seg] || seg;
           const cb = document.createElement("input");
           cb.type = "checkbox";
           cb.checked = !!info.enabled;
           cb.dataset.seg = seg;
           label.appendChild(cb);
-          label.appendChild(document.createTextNode(
-            ` ${seg} (${(info.catalog_rows || 0).toLocaleString()})`));
+          const text = document.createElement("span");
+          text.className = "seg-text";
+          const name = document.createElement("b");
+          name.textContent = seg;
+          text.appendChild(name);
+          text.appendChild(document.createElement("br"));
+          const desc = document.createElement("small");
+          desc.className = "seg-desc";
+          desc.textContent = SEGMENT_INFO[seg] || seg;
+          text.appendChild(desc);
+          label.appendChild(text);
+          const count = document.createElement("span");
+          count.className = "seg-count";
+          count.textContent = (info.catalog_rows || 0).toLocaleString();
+          label.appendChild(count);
           group.appendChild(label);
         }
         wrap.appendChild(group);
