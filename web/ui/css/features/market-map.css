@@ -77,3 +77,14 @@
 }
 
 .mm-note, #mm-note { color: var(--text-dim, #9aa4b2); font-size: 12px; min-height: 14px; }
+
+/* ECharts treemap host (primary Market Map renderer). */
+.market-map-chart {
+  width: 100%;
+  height: 62vh;
+  min-height: 440px;
+  background: var(--panel, #161a22);
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 10px;
+}
+[data-theme="light"] .market-map-chart { background: #fff; border-color: #cbd2dc; }
