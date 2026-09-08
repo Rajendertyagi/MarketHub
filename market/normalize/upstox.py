@@ -64,6 +64,20 @@ def exchange_from_segment(segment: str) -> str:
     return segment.split("_", 1)[0]
 
 
+def _iv_percent_to_fraction(value: float | None) -> float | None:
+    """Upstox option-chain iv (PERCENT, e.g. 17.58) -> canonical FRACTION.
+
+    Canonical OptionGreeks.iv contract: decimal fraction (0.1758 = 17.58%).
+    The standalone option-greeks endpoint and the live feed already emit
+    fractions natively, so only percent-emitting paths convert here, at
+    the provider normalization boundary. Explicit provider mapping —
+    never a magnitude heuristic (real IV may exceed 100%).
+    """
+    if value is None:
+        return None
+    return value / 100.0
+
+
 def _base_fields(
     instrument_key: str,
     received_ts: datetime,
@@ -565,7 +579,12 @@ def _contract_data(md: Any, og: Any) -> "OptionContractData | None":
         oi_change=(num("oi") - num("prev_oi"))
         if num("oi") is not None and num("prev_oi") is not None else None,
         close=num("close_price"),
-        iv=num("iv", greeks), delta=num("delta", greeks),
+        # Upstox option-chain reports iv as PERCENT (e.g. 17.58); the
+        # canonical OptionGreeks.iv contract is a decimal FRACTION
+        # (0.1758) — the same convention the standalone option-greeks
+        # endpoint and the live feed already emit natively.
+        iv=_iv_percent_to_fraction(num("iv", greeks)),
+        delta=num("delta", greeks),
         theta=num("theta", greeks), gamma=num("gamma", greeks),
         vega=num("vega", greeks), pop=num("pop", greeks),
     )

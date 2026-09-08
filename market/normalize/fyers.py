@@ -357,8 +357,12 @@ def greeks_from_options_chain(leg: dict[str, Any]) -> OptionGreeks | None:
             if raw is not None else None
         )
     iv_raw = g.get("iv")
+    # Fyers options-chain reports iv as PERCENT (e.g. 17.09); canonical
+    # OptionGreeks.iv is a decimal FRACTION — provider-boundary conversion
+    # (explicit mapping, never magnitude-based).
     fields["iv"] = (
-        to_float(iv_raw, field="greeks.iv") if iv_raw is not None else None
+        (to_float(iv_raw, field="greeks.iv") / 100.0)
+        if iv_raw is not None else None
     )
     fields["rho"] = None  # not exposed by Fyers
     if all(v is None for v in fields.values()):

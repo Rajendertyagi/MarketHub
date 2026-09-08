@@ -28,6 +28,12 @@ function _num(v, dash = "—") {
   return (v === null || v === undefined) ? dash : String(v);
 }
 
+// Canonical OptionGreeks.iv is a decimal FRACTION (0.1758); the workspace
+// presents it as a percentage (17.58%). One formatter for the workspace.
+function _fmtIv(v) {
+  return (v === null || v === undefined) ? "—" : (v * 100).toFixed(2) + "%";
+}
+
 async function loadUniverse(q = "") {
   try {
     const data = await apiGet(
@@ -147,12 +153,12 @@ function _renderChain(options, atm) {
     const qc = ce.quote || {}, qp = pe.quote || {};
     tr.append(
       cell(qc.open_interest), cell(qc.oi_change), cell(qc.volume),
-      cell(qc.iv), cell(qc.ltp), cell(qc.best_bid !== undefined
+      cell(_fmtIv(qc.iv)), cell(qc.ltp), cell(qc.best_bid !== undefined
         ? `${_num(qc.best_bid)}/${_num(qc.best_ask)}` : null),
       cell(strike),
       cell(qp.ltp), cell(qp.best_bid !== undefined
         ? `${_num(qp.best_bid)}/${_num(qp.best_ask)}` : null),
-      cell(qp.iv), cell(qp.volume), cell(qp.oi_change),
+      cell(_fmtIv(qp.iv)), cell(qp.volume), cell(qp.oi_change),
       cell(qp.open_interest));
     body.appendChild(tr);
   }

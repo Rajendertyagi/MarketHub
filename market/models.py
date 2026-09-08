@@ -193,9 +193,13 @@ class OptionGreeks:
     All fields optional (None = not reported by the provider). Values are
     stored exactly as normalized — no unit conversion happens here:
         delta/gamma/theta/vega/rho   provider-reported sensitivities
-        iv                           implied volatility in provider units
-                                     (Upstox: percent, e.g. 18.5; Fyers
-                                     options-chain: percent)
+        iv                           CANONICAL implied volatility as a
+                                     decimal FRACTION: 0.1758 = 17.58%.
+                                     Providers reporting percent are
+                                     converted at the provider
+                                     normalization boundary; fraction-
+                                     emitting providers pass through.
+                                     Never inferred from magnitude.
     """
 
     delta: float | None = None

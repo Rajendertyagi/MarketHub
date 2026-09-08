@@ -376,7 +376,8 @@ async def test_chain_greeks_path_untouched(runner: R) -> None:
         tradingsymbol="NIFTY", expiry="2026-09-08")
     runner.assert_eq("chain-n", len(snap.strikes), 1)
     runner.assert_eq("chain-delta", snap.strikes[0].call.delta, 0.463)
-    runner.assert_eq("chain-iv", snap.strikes[0].call.iv, 13.06)
+    runner.assert_true("chain-iv-fraction",
+                       abs(snap.strikes[0].call.iv - 0.1306) < 1e-9)
 
 
 async def test_history_untouched(runner: R) -> None:

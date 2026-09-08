@@ -109,7 +109,7 @@ def test_oc3_to_oc5_chain_normalizer(runner: R) -> None:
 
     call = atm.call
     runner.assert_eq("OC4-delta", call.delta, 0.52)
-    runner.assert_eq("OC4-iv", call.iv, 14.2)
+    runner.assert_eq("OC4-iv", call.iv, 0.142)
     runner.assert_eq("OC4-oi-change-derived", call.oi_change, 100000.0)
 
     # OC5: strike with a full put side keeps all fields; missing put -> None.
