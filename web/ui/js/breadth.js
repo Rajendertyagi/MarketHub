@@ -12,6 +12,8 @@
  */
 
 import { apiGet } from "./api.js";
+import { ensureAnalyticsCoverage, clearAnalyticsCoverage } from "./analytics.js";
+import { onViewLeave } from "./router.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -19,6 +21,16 @@ let _bound = false;
 let _timer = null;
 let _current = null; // last snapshot
 let _inflight = false; // guards against overlapping refresh requests
+let _coveredUniverse = null; // last universe we requested analytics coverage for
+
+// Request cash-equity coverage only when the universe actually changes (covers
+// first view-open and later switches); the 5s live refresh must not re-POST.
+function _ensureCoverage(universe) {
+  if (universe && universe !== _coveredUniverse) {
+    _coveredUniverse = universe;
+    ensureAnalyticsCoverage(universe);
+  }
+}
 
 function _num(v, dash = "—") {
   if (v === null || v === undefined || (typeof v === "number" && Number.isNaN(v))) return dash;
@@ -117,6 +129,7 @@ async function loadBreadth() {
   if (_inflight) return;
   _inflight = true;
   const universe = ($("breadth-universe")?.value) || "NIFTY50";
+  _ensureCoverage(universe);
   try {
     const s = await apiGet(`/api/market/breadth?universe=${encodeURIComponent(universe)}`);
     if (s.error) {
@@ -156,6 +169,7 @@ export function initBreadthUI() {
   $("breadth-universe")?.addEventListener("change", loadBreadth);
   $("breadth-filter")?.addEventListener("change", () => _current && _renderTable(_current));
   $("breadth-sort")?.addEventListener("change", () => _current && _renderTable(_current));
+  onViewLeave("breadth", () => { clearAnalyticsCoverage(); _coveredUniverse = null; });
 }
 
 export async function openBreadth() {

@@ -46,6 +46,8 @@ def build_market_routes(
     source_status_fn: Callable[[], list[dict]] | None = None,
     identity_resolver: Any = None,
     index_catalog: Any = None,
+    subscriptions: Any = None,
+    feed_provider: Any = None,
 ) -> list[Route]:
     """Build market API routes around injected dependencies.
 
@@ -310,6 +312,145 @@ def build_market_routes(
         out["reconciliation_status"] = "ok" if ok else "mismatch"
         return _json(out)
 
+    # -- analytics cash-equity coverage (Breadth / Heatmap / Market Map) ----------
+    # Shared owner: the selected analytics universe's cash-equity instruments are
+    # subscribed through the EXISTING SubscriptionService reconciliation (no new
+    # broker-socket path). Switching universe replaces the owner; leaving the
+    # analytics views clears it. Honors the per-provider safety cap.
+
+    ANALYTICS_CAP = 400  # bounded partial coverage for large universes (NSE_EQ)
+
+    def _prov_of(key: str) -> str:
+        if ":" in key:
+            return "fyers"
+        return "upstox"
+
+    def _analytics_keys_for_universe(universe: str):
+        """Resolve a universe to its cash-equity instrument keys by provider.
+
+        Returns (members, keys_by_provider, unresolved). Raises ValueError for
+        an unknown universe (surfaced as 400 by callers).
+        """
+        members = _resolve_universe(universe, index_catalog)
+        keys_by_provider: dict[str, list[str]] = {}
+        unresolved = 0
+        for m in members:
+            if not m.instrument_token:
+                unresolved += 1
+                continue
+            prov = _prov_of(m.instrument_token)
+            keys_by_provider.setdefault(prov, [])
+            if m.instrument_token not in keys_by_provider[prov]:
+                keys_by_provider[prov].append(m.instrument_token)
+        return members, keys_by_provider, unresolved
+
+    def _coverage_report(universe: str, members, keys_by_provider,
+                         unresolved: int) -> dict[str, Any]:
+        """Diagnostic coverage projection for a universe (no subscription change)."""
+        resolved = sum(len(v) for v in keys_by_provider.values())
+        quoted = unavailable = 0
+        for m in members:
+            if m.instrument_token is None:
+                unavailable += 1
+                continue
+            q = _reader()(m.exchange, m.instrument_token)
+            if q is not None and getattr(q, "ltp", None) is not None:
+                quoted += 1
+            else:
+                unavailable += 1
+        subscribed = 0
+        feed = feed_provider("upstox") if feed_provider else None
+        current = set(getattr(feed, "_instrument_keys", ())
+                      or getattr(feed, "_desired", ())) if feed else set()
+        for v in keys_by_provider.values():
+            subscribed += sum(1 for k in v if k in current)
+        provider_status = "unknown"
+        if feed_provider is not None:
+            provider_status = "connected" if feed_provider("upstox") is not None \
+                else "unavailable"
+        return {
+            "universe": universe,
+            "eligible": len(members),
+            "resolved": resolved,
+            "unresolved": unresolved,
+            "desired": resolved,
+            "subscribed": subscribed,
+            "quoted": quoted,
+            "unavailable": unavailable,
+            "provider_status": provider_status,
+            "as_of": None,
+        }
+
+    async def _analytics_coverage_get(request: Request) -> Response:
+        if market_service is None or index_catalog is None:
+            return _json({"error": "service unavailable"}, 503)
+        universe = (request.query_params.get("universe") or "NIFTY50").upper()
+        try:
+            members, keys_by_provider, unresolved = \
+                _analytics_keys_for_universe(universe)
+        except ValueError as exc:
+            return _json({"error": str(exc)}, 400)
+        return _json({"status": "ok",
+                      **_coverage_report(universe, members, keys_by_provider,
+                                         unresolved)})
+
+    async def _analytics_coverage_post(request: Request) -> Response:
+        if subscriptions is None or feed_provider is None:
+            return _json({"error": "subscription service unavailable"}, 503)
+        try:
+            body = await request.json()
+        except Exception:
+            return _json({"error": "invalid JSON body"}, 400)
+        universe = (body or {}).get("universe", "")
+        if not isinstance(universe, str) or not universe.strip():
+            return _json({"error": "universe is required"}, 400)
+        universe = universe.strip().upper()
+        if universe not in ("NIFTY50", "NIFTYNXT50", "BANKNIFTY", "FNO", "NSE_EQ"):
+            return _json({"error": f"unsupported analytics universe: {universe}"},
+                         400)
+        try:
+            members, keys_by_provider, unresolved = \
+                _analytics_keys_for_universe(universe)
+        except ValueError as exc:
+            return _json({"error": str(exc)}, 400)
+        # Bounded safety cap: honest partial coverage for very large universes.
+        capped = False
+        total = sum(len(v) for v in keys_by_provider.values())
+        if total > ANALYTICS_CAP:
+            capped = True
+            for prov in list(keys_by_provider):
+                if len(keys_by_provider[prov]) > ANALYTICS_CAP:
+                    keys_by_provider[prov] = keys_by_provider[prov][:ANALYTICS_CAP]
+        subscriptions.set_analytics_universe(keys_by_provider)
+        try:
+            outcome = await subscriptions.reconcile(feed_provider)
+        except Exception as exc:
+            from app.subscriptions.service import SubscriptionLimitError
+            if isinstance(exc, SubscriptionLimitError):
+                return _json({"status": "error",
+                              "error": "subscription limit exceeded",
+                              "detail": str(exc)}, 400)
+            logger.exception("analytics coverage apply failed")
+            return _json({"error": "apply failed"}, 500)
+        return _json({
+            "status": "ok", "universe": universe,
+            "eligible": len(members), "resolved": total,
+            "unresolved": unresolved, "capped": capped,
+            "by_provider": {p: len(k) for p, k in keys_by_provider.items()},
+            "apply": outcome["apply"],
+        })
+
+    async def _analytics_coverage_delete(request: Request) -> Response:
+        if subscriptions is None or feed_provider is None:
+            return _json({"error": "subscription service unavailable"}, 503)
+        subscriptions.clear_analytics_universe()
+        try:
+            outcome = await subscriptions.reconcile(feed_provider)
+        except Exception as exc:
+            logger.exception("analytics coverage clear failed")
+            return _json({"error": "apply failed"}, 500)
+        return _json({"status": "ok", "cleared": True, "apply": outcome["apply"]})
+
     return [
         Route("/api/market/stream", endpoint=_market_stream, methods=["GET"]),
         Route("/api/market/quotes", endpoint=_market_quotes, methods=["GET"]),
@@ -330,6 +471,12 @@ def build_market_routes(
         Route("/api/market/map", endpoint=_market_map, methods=["GET"]),
         Route("/api/market/map/diagnostics", endpoint=_market_map_diag,
               methods=["GET"]),
+        Route("/api/market/analytics/coverage", endpoint=_analytics_coverage_get,
+              methods=["GET"]),
+        Route("/api/market/analytics/coverage",
+              endpoint=_analytics_coverage_post, methods=["POST"]),
+        Route("/api/market/analytics/coverage",
+              endpoint=_analytics_coverage_delete, methods=["DELETE"]),
         Route("/api/sources/status", endpoint=_source_status, methods=["GET"]),
     ]
 

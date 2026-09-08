@@ -1204,6 +1204,8 @@ app = Starlette(
         market_service=_market_service,
         identity_resolver=_identity_registry,
         index_catalog=_instrument_catalog,
+        subscriptions=_subscription_service,
+        feed_provider=_feed_for_provider,
         # Merged view: source status + task liveness + exit forensics, so the
         # UI can distinguish "streaming" from "dead task with stale state".
         source_status_fn=lambda: [

@@ -20,8 +20,9 @@
  */
 
 import { apiGet } from "./api.js";
-import { switchView } from "./router.js";
+import { switchView, onViewLeave } from "./router.js";
 import { openStock } from "./fno.js";
+import { ensureAnalyticsCoverage, clearAnalyticsCoverage } from "./analytics.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -31,6 +32,16 @@ let _current = null;
 let _activeSector = null;
 let _inflight = false;       // guards against overlapping refresh requests
 let _chart = null;           // ECharts instance (lazy)
+let _coveredUniverse = null; // last universe we requested analytics coverage for
+
+// Request cash-equity coverage only when the universe actually changes; the 5s
+// live refresh must not re-POST on every tick.
+function _ensureCoverage(universe) {
+  if (universe && universe !== _coveredUniverse) {
+    _coveredUniverse = universe;
+    ensureAnalyticsCoverage(universe);
+  }
+}
 
 function _num(v, dash = "—") {
   if (v === null || v === undefined) return dash;
@@ -73,6 +84,7 @@ async function loadHeatmap() {
   if (_inflight) return;
   _inflight = true;
   const universe = ($("heatmap-universe")?.value) || "NIFTY50";
+  _ensureCoverage(universe);
   try {
     const s = await apiGet(`/api/market/sector-heatmap?universe=${encodeURIComponent(universe)}&members=1`);
     if (s.error) {
@@ -295,6 +307,7 @@ export function initSectorHeatmapUI() {
   _bound = true;
   $("heatmap-universe")?.addEventListener("change", () => { _activeSector = null; loadHeatmap(); });
   window.addEventListener("resize", () => { if (_chart) _chart.resize(); });
+  onViewLeave("sector-heatmap", () => { clearAnalyticsCoverage(); _coveredUniverse = null; });
 }
 
 export async function openSectorHeatmap() {

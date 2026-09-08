@@ -72,6 +72,14 @@ class SubscriptionService:
         # persistent/base resolution and this owner, so switching or
         # closing a view can never unsubscribe a persistent key.
         self._active_view: dict[str, list[str]] = {}
+        # ANALYTICS-UNIVERSE owner: ephemeral, additive. Holds the cash-equity
+        # instrument keys required by the currently selected analytics universe
+        # (Breadth / Sector Heatmap / Market Map). Never persisted; replaced on
+        # each universe switch. Union semantics keep baseline/persistent/F&O
+        # owners untouched, so leaving analytics views (or switching universe)
+        # shrinks this owner back to zero without ever unsubscribing a key
+        # another owner still needs.
+        self._analytics_universe: dict[str, list[str]] = {}
 
     # -- active view (ephemeral, additive owner) ---------------------------------
 
@@ -84,6 +92,21 @@ class SubscriptionService:
 
     def clear_active_view(self) -> None:
         self._active_view = {}
+
+    # -- analytics universe (ephemeral, additive owner) --------------------------
+
+    def set_analytics_universe(self, keys_by_provider: dict[str, list[str]]) -> None:
+        """Replace the analytics-universe cash-equity key set (bounded)."""
+        self._analytics_universe = {
+            p: list(dict.fromkeys(k for k in v if k))
+            for p, v in (keys_by_provider or {}).items() if v
+        }
+
+    def clear_analytics_universe(self) -> None:
+        self._analytics_universe = {}
+
+    def analytics_universe_keys(self) -> dict[str, list[str]]:
+        return {p: list(v) for p, v in self._analytics_universe.items()}
 
     # -- preferences -----------------------------------------------------------
 
@@ -594,6 +617,23 @@ class SubscriptionService:
                         "strike": None, "option_type": None,
                     })
 
+        # ANALYTICS-UNIVERSE union: cash-equity keys for the selected analytics
+        # universe join the desired set additively. Switching universe replaces
+        # this owner; leaving analytics views shrinks it to zero. Baseline
+        # indices / persistent / F&O active-view owners are never affected.
+        ana_count = sum(len(v) for v in self._analytics_universe.values())
+        if ana_count:
+            for provider, keys in self._analytics_universe.items():
+                for key in keys:
+                    contracts.append({
+                        "key": key, "label": key,
+                        "provider": provider if provider in ("upstox", "fyers")
+                        else _provider_of(key),
+                        "kind": "analytics",
+                        "underlying": None, "expiry": None,
+                        "strike": None, "option_type": None,
+                    })
+
         by_provider: dict[str, list[str]] = {}
         for c in contracts:
             by_provider.setdefault(c["provider"], [])
@@ -722,6 +762,7 @@ class SubscriptionService:
             "by_provider": by_provider,
             "pending": pending,
             "notes": notes,
+            "analytics": {p: len(k) for p, k in self._analytics_universe.items()},
             "last_apply": self._last_apply,
             "applied": applied,
         }

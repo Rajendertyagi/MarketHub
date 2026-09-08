@@ -16,6 +16,7 @@
 import { $ } from "./utils.js";
 
 const _enterHooks = new Map();   // view -> Set<fn>
+const _leaveHooks = new Map();   // view -> Set<fn>
 let _routerBound = false;
 
 // ── Active view state ─────────────────────────────────────────────────────
@@ -41,7 +42,17 @@ export function initNav() {
 }
 
 export function switchView(view) {
+  const prev = currentView;
   currentView = view;
+  // Fire leave hooks for the view we are leaving (exact + base segment).
+  if (prev && prev !== view) {
+    const pslash = prev.indexOf("/");
+    const pnames = pslash > 0 ? [prev, prev.slice(0, pslash)] : [prev];
+    pnames.forEach((name) => {
+      const hooks = _leaveHooks.get(name);
+      if (hooks) hooks.forEach((fn) => { try { fn(prev); } catch { /* never break routing */ } });
+    });
+  }
   // Sub-routes ("settings/brokers") activate their base view section.
   const base = view.indexOf("/") > 0 ? view.slice(0, view.indexOf("/")) : view;
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
@@ -92,6 +103,13 @@ export function onViewEnter(view, fn) {
   if (!view || typeof fn !== "function") return;
   let set = _enterHooks.get(view);
   if (!set) { set = new Set(); _enterHooks.set(view, set); }
+  set.add(fn);
+}
+
+export function onViewLeave(view, fn) {
+  if (!view || typeof fn !== "function") return;
+  let set = _leaveHooks.get(view);
+  if (!set) { set = new Set(); _leaveHooks.set(view, set); }
   set.add(fn);
 }
 
