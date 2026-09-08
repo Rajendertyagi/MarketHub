@@ -166,16 +166,36 @@ def test_api_contract():
 def test_webui_rendering_contract():
     m = members_from_symbols(["RELIANCE", "HDFCBANK"])
     r = _reader(
-        make_quote("NSE_EQ|RELIANCE", ltp=110, close=100),
-        make_quote("NSE_EQ|HDFCBANK", ltp=90, close=100),
+        make_quote("NSE_EQ|RELIANCE", ltp=110, close=100, volume=1_200_000),
+        make_quote("NSE_EQ|HDFCBANK", ltp=90, close=100, volume=900_000),
     )
-    s = compute_sector_heatmap("U", m, r.get_quote_now)
+    s = compute_sector_heatmap("U", m, r.get_quote_now, fno_symbols={"RELIANCE"})
     d = s.to_dict()
-    # The WebUI reads these keys to render tiles + drill-down.
+    # The WebUI reads these keys to render tiles + drill-down + treemap.
     assert "sectors" in d and len(d["sectors"]) >= 2
     for sec in d["sectors"]:
         assert "sector" in sec and "average_change_percent" in sec
         assert "top_gainer" in sec and "top_loser" in sec and "members" in sec
+    # Treemap consumes per-stock volume (size) + fno (click-to-workspace).
+    all_members = [mm for sec in d["sectors"] for mm in sec["members"]]
+    for mm in all_members:
+        assert "volume" in mm
+        assert "fno" in mm
+    rel = next(mm for mm in all_members if mm["symbol"] == "RELIANCE")
+    assert rel["volume"] == 1_200_000
+    assert rel["fno"] is True
+    hdfc = next(mm for mm in all_members if mm["symbol"] == "HDFCBANK")
+    assert hdfc["fno"] is False
+
+
+# 30b. fno flag defaults to False when no fno_symbols supplied
+def test_fno_flag_default_false():
+    m = members_from_symbols(["RELIANCE"])
+    r = _reader(make_quote("NSE_EQ|RELIANCE", ltp=110, close=100))
+    s = compute_sector_heatmap("U", m, r.get_quote_now)
+    sec = {x.sector: x for x in s.sectors}
+    rel = next(mm for mm in sec["ENERGY"].members if mm["symbol"] == "RELIANCE")
+    assert rel["fno"] is False
 
 
 # 30. missing quote behavior
