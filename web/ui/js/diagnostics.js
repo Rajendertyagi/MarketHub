@@ -54,6 +54,46 @@ export function openDiagnostics() {
   _startSSEDiagnostic();
   // Render the small read-only broker auth-health section.
   _renderAuthHealth();
+  // Render the small read-only Market Breadth / Sector Heatmap checks.
+  _renderMarketBreadthDiag();
+}
+
+// ── Market Breadth / Sector Heatmap (read-only diagnostics) ────────────────
+// Small, read-only checks only: universe eligibility, quoted/unavailable
+// counts, and breadth<->sector reconciliation status. No live mutation.
+async function _renderMarketBreadthDiag() {
+  const el = $("diag-breadth");
+  if (!el) return;
+  try {
+    const [b, h] = await Promise.all([
+      apiGet("/api/market/breadth/diagnostics"),
+      apiGet("/api/market/sector-heatmap/diagnostics"),
+    ]);
+    const rowFor = (title, d) => {
+      if (!d || d.error) return `<tr><td>${title}</td><td colspan="4" class="err">${d ? d.error : "n/a"}</td></tr>`;
+      const recon = d.reconciliation || {};
+      const reconOk = recon.advances_match && recon.declines_match && recon.quoted_match;
+      return `<tr><td>${title}</td>` +
+        `<td>${d.eligible ?? "—"}</td>` +
+        `<td>${d.quoted ?? "—"}</td>` +
+        `<td>${d.unavailable ?? "—"}</td>` +
+        `<td>${d.reconciliation ? (reconOk ? "OK" : "MISMATCH") : (d.classified_count !== undefined ? `${d.classified_count} cls / ${d.unclassified_count} unc` : "—")}</td></tr>`;
+    };
+    let rows = "";
+    for (const u of ["FNO", "NIFTY50"]) {
+      rows += rowFor(`Breadth ${u}`, b[u]);
+    }
+    for (const u of ["FNO", "NIFTY50"]) {
+      rows += rowFor(`Heatmap ${u}`, h[u]);
+    }
+    el.innerHTML =
+      `<div class="diag-category"><h3>MARKET BREADTH / SECTOR</h3>` +
+      `<table class="data-table"><thead><tr><th>Check</th><th>Eligible</th>` +
+      `<th>Quoted</th><th>Unavail</th><th>Recon / Class</th></tr></thead>` +
+      `<tbody>${rows}</tbody></table></div>`;
+  } catch {
+    el.innerHTML = "";
+  }
 }
 
 // ── Broker auth health (read-only; observes /api/diagnostics) ──────────

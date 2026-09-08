@@ -40,6 +40,8 @@ import { initTheme } from "./features/settings/theme.js";
 import { initSplitters } from "./core/splitter.js";
 import { initShell } from "./shell.js?v=4";
 import { initFnoUI, openFno } from "./fno.js?v=2";
+import { initBreadthUI, openBreadth } from "./breadth.js";
+import { initSectorHeatmapUI, openSectorHeatmap } from "./sector-heatmap.js";
 
   // ── DOM shortcuts ───────────────────────────────────────────────────────
   const $ = (id) => document.getElementById(id);
@@ -236,6 +238,8 @@ import { initFnoUI, openFno } from "./fno.js?v=2";
     initMCPTools();
     initDiagnosticsUI();
     initFnoUI();
+    initBreadthUI();
+    initSectorHeatmapUI();
     initLogsUI();
     initSplitters();
     initShell();   // header index strip + bottom status bar (no new streams)
@@ -248,6 +252,8 @@ import { initFnoUI, openFno } from "./fno.js?v=2";
     onViewEnter("ai-alerts", openAIAlerts);
     onViewEnter("mcp", openMCPTools);
     onViewEnter("fno", openFno);
+    onViewEnter("breadth", openBreadth);
+    onViewEnter("sector-heatmap", openSectorHeatmap);
     onViewEnter("diagnostics", openDiagnostics);
     initRouter();
     loadInitialQuotes();
