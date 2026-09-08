@@ -39,7 +39,7 @@ import { initBackupSettings } from "./features/settings/backup.js";
 import { initTheme } from "./features/settings/theme.js";
 import { initSplitters } from "./core/splitter.js";
 import { initShell } from "./shell.js?v=4";
-import { initFnoUI, openFno } from "./fno.js";
+import { initFnoUI, openFno } from "./fno.js?v=2";
 
   // ── DOM shortcuts ───────────────────────────────────────────────────────
   const $ = (id) => document.getElementById(id);
