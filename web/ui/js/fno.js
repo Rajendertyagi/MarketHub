@@ -9,7 +9,7 @@
  * persistent subscriptions are never touched from here.
  */
 
-import { apiGet, apiPost } from "../api.js";
+import { apiGet, apiPost } from "./api.js";
 
 const $ = (id) => document.getElementById(id);
 
