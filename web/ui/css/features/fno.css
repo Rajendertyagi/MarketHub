@@ -1,0 +1,30 @@
+/* F&O Stocks view (feature-scoped). */
+
+#fno-count {
+  margin-left: auto;
+}
+
+.fno-row {
+  cursor: pointer;
+}
+
+.fno-spot {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3, 12px);
+  flex-wrap: wrap;
+  padding: var(--space-2, 8px) 0;
+}
+
+.fno-ltp {
+  font-size: 1.4rem;
+  font-weight: 600;
+}
+
+.fno-chg.up { color: var(--ok, #2e7d32); }
+.fno-chg.down { color: var(--danger, #c62828); }
+
+.fno-atm-row {
+  background: var(--surface-alt, rgba(74, 125, 255, 0.08));
+  font-weight: 600;
+}
