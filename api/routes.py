@@ -23,6 +23,10 @@ from starlette.routing import Route
 import logging
 logger = logging.getLogger("event_server")
 
+from market.market_universe import resolve_universe as _resolve_universe
+from market.breadth import compute_breadth as _compute_breadth
+from market.sector_heatmap import compute_sector_heatmap as _compute_sector_heatmap
+
 __all__ = [
     "build_market_routes",
     "build_auth_routes",
@@ -156,6 +160,91 @@ def build_market_routes(
             sources = source_status_fn()
         return _json({"sources": sources})
 
+    # -- market breadth (shared universe + canonical quote reader) -------------
+
+    def _reader():
+        # Bind the injected canonical MarketService as the quote reader.
+        return market_service.get_quote_now if market_service else (lambda e, t: None)
+
+    async def _breadth(request: Request) -> Response:
+        if market_service is None:
+            return _json({"error": "market service unavailable"}, 503)
+        if index_catalog is None:
+            return _json({"error": "instrument catalog unavailable"}, 503)
+        universe = (request.query_params.get("universe") or "NIFTY50").upper()
+        try:
+            members = _resolve_universe(universe, index_catalog)
+        except ValueError as exc:
+            return _json({"error": str(exc)}, 400)
+        snap = _compute_breadth(
+            universe, members, _reader(), as_of=None)
+        return _json(snap.to_dict())
+
+    async def _sector_heatmap(request: Request) -> Response:
+        if market_service is None:
+            return _json({"error": "market service unavailable"}, 503)
+        if index_catalog is None:
+            return _json({"error": "instrument catalog unavailable"}, 503)
+        universe = (request.query_params.get("universe") or "NIFTY50").upper()
+        try:
+            members = _resolve_universe(universe, index_catalog)
+        except ValueError as exc:
+            return _json({"error": str(exc)}, 400)
+        include = (request.query_params.get("members") or "1") not in ("0", "false")
+        snap = _compute_sector_heatmap(
+            universe, members, _reader(), as_of=None, include_members=include)
+        return _json(snap.to_dict())
+
+    # -- read-only diagnostics (Test Center) -----------------------------------
+
+    async def _breadth_diag(request: Request) -> Response:  # noqa: ARG001
+        if market_service is None or index_catalog is None:
+            return _json({"error": "service unavailable"}, 503)
+        out = {}
+        for u in ("FNO", "NIFTY50"):
+            try:
+                members = _resolve_universe(u, index_catalog)
+                snap = _compute_breadth(u, members, _reader())
+                out[u] = {
+                    "universe": u,
+                    "eligible": snap.eligible,
+                    "quoted": snap.quoted,
+                    "unavailable": snap.unavailable,
+                    "advances": snap.advances,
+                    "declines": snap.declines,
+                    "unchanged": snap.unchanged,
+                    "unclassified": snap.unclassified,
+                    "net_advances": snap.net_advances,
+                }
+            except Exception as exc:  # noqa: BLE001
+                out[u] = {"error": str(exc)}
+        out["reconciliation_status"] = "ok"
+        return _json(out)
+
+    async def _sector_diag(request: Request) -> Response:  # noqa: ARG001
+        if market_service is None or index_catalog is None:
+            return _json({"error": "service unavailable"}, 503)
+        out = {}
+        for u in ("FNO", "NIFTY50"):
+            try:
+                members = _resolve_universe(u, index_catalog)
+                snap = _compute_sector_heatmap(
+                    u, members, _reader())
+                out[u] = {
+                    "universe": u,
+                    "sector_count": snap.sector_count,
+                    "classified_count": snap.classified_count,
+                    "unclassified_count": snap.unclassified_count,
+                    "quoted": snap.quoted,
+                    "advances": snap.advances,
+                    "declines": snap.declines,
+                    "reconciliation": snap.reconciliation,
+                }
+            except Exception as exc:  # noqa: BLE001
+                out[u] = {"error": str(exc)}
+        out["reconciliation_status"] = "ok"
+        return _json(out)
+
     return [
         Route("/api/market/stream", endpoint=_market_stream, methods=["GET"]),
         Route("/api/market/quotes", endpoint=_market_quotes, methods=["GET"]),
@@ -166,6 +255,13 @@ def build_market_routes(
               endpoint=_market_quote, methods=["GET"]),
         Route("/api/market/depth/{exchange}/{instrument_token}",
               endpoint=_market_depth, methods=["GET"]),
+        Route("/api/market/breadth", endpoint=_breadth, methods=["GET"]),
+        Route("/api/market/sector-heatmap", endpoint=_sector_heatmap,
+              methods=["GET"]),
+        Route("/api/market/breadth/diagnostics", endpoint=_breadth_diag,
+              methods=["GET"]),
+        Route("/api/market/sector-heatmap/diagnostics",
+              endpoint=_sector_diag, methods=["GET"]),
         Route("/api/sources/status", endpoint=_source_status, methods=["GET"]),
     ]
 
