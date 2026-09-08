@@ -1316,6 +1316,15 @@ class EventStore:
         finally:
             conn.close()
 
+    def fno_universe(self, *, provider: str, today: str,
+                     q: str | None = None, limit: int = 500) -> list[dict]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.fno_universe(conn, provider=provider,
+                                          today=today, q=q, limit=limit)
+        finally:
+            conn.close()
+
     def backup_to(self, dest_path: str) -> None:
         """Consistent online backup via the SQLite backup API.
 

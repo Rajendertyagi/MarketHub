@@ -595,3 +595,68 @@ def option_expiries(
     finally:
         conn.row_factory = None
 
+
+# ---------------------------------------------------------------------------
+# F&O stock universe (derived read model — no second table)
+# ---------------------------------------------------------------------------
+
+def fno_universe(
+    conn: sqlite3.Connection, *, provider: str, today: str,
+    q: str | None = None, limit: int = 500,
+) -> list[dict[str, Any]]:
+    """Equity underlyings with live (non-expired) F&O contracts.
+
+    Derived from structured catalog relationships — never a hard-coded
+    list, never substring matching:
+
+      * derivatives: segment NSE_FO, instrument_type FUTURE/OPTION,
+        underlying = the derivative's `underlying` column;
+      * the underlying is a STOCK (not an index) because an NSE_EQ equity
+        row with tradingsymbol == underlying must exist (indices live in
+        the NSE_INDEX segment and have no equity row);
+      * membership requires at least one contract with expiry >= today,
+        so expired-only underlyings drop out automatically after sync.
+
+    One grouped query — the universe is cheap to browse (no N+1, no
+    contract dumps). Returns underlyings, not contracts.
+    """
+    sql = """
+        SELECT f.underlying AS symbol,
+               eq.name AS name,
+               eq.instrument_token AS equity_key,
+               COUNT(DISTINCT CASE WHEN f.instrument_type = 'FUTURE'
+                    THEN f.expiry END) AS future_expiries,
+               COUNT(DISTINCT CASE WHEN f.instrument_type = 'OPTION'
+                    THEN f.expiry END) AS option_expiries,
+               COUNT(DISTINCT CASE WHEN f.instrument_type = 'FUTURE'
+                    THEN f.instrument_token END) AS futures_count,
+               COUNT(DISTINCT CASE WHEN f.instrument_type = 'OPTION'
+                    THEN f.instrument_token END) AS options_count,
+               MIN(CASE WHEN f.instrument_type = 'FUTURE'
+                    THEN f.expiry END) AS nearest_future,
+               MIN(CASE WHEN f.instrument_type = 'OPTION'
+                    THEN f.expiry END) AS nearest_option
+        FROM instruments f
+        JOIN instruments eq
+             ON eq.provider = f.provider
+             AND eq.segment = 'NSE_EQ'
+             AND eq.tradingsymbol = f.underlying
+        WHERE f.provider = ?
+          AND f.segment = 'NSE_FO'
+          AND f.instrument_type IN ('FUTURE', 'OPTION')
+          AND f.expiry >= ?
+        GROUP BY f.underlying
+    """
+    args: list[Any] = [provider, today]
+    if q:
+        sql += " HAVING f.underlying LIKE ? OR eq.name LIKE ?"
+        like = f"%{q}%"
+        args += [like, like]
+    sql += " ORDER BY f.underlying LIMIT ?"
+    args.append(max(1, min(int(limit), 1000)))
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(sql, args)]
+    finally:
+        conn.row_factory = None
+

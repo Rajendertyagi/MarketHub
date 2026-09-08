@@ -283,6 +283,12 @@ class InstrumentCatalog:
                             instrument_type: str) -> list[str]:
         return self._store.derivative_expiries(underlying, instrument_type)
 
+    def fno_universe(self, *, provider: str, today: str,
+                     q: str | None = None, limit: int = 500) -> list[dict]:
+        """Equity underlyings with non-expired F&O contracts (read model)."""
+        return self._store.fno_universe(provider=provider, today=today,
+                                        q=q, limit=limit)
+
     def option_strikes(self, underlying: str, expiry: str) -> list[dict]:
         return self._store.option_strikes(underlying, expiry)
 
