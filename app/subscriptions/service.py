@@ -612,6 +612,32 @@ class SubscriptionService:
 
     # -- runtime reconciliation -------------------------------------------------
 
+    def _metadata_for_keys(self, keys: list[str]) -> dict[str,
+                                                           tuple[str, str]]:
+        """Feed tick-normalization metadata for concrete instrument keys.
+
+        Upstox runtime keys (``NSE_FO|42631``) carry the exchange in the
+        segment prefix; the trading symbol comes from the catalog when
+        available. Without this metadata the feed drops every tick for a
+        runtime-subscribed key as an unknown instrument.
+        """
+        meta: dict[str, tuple[str, str]] = {}
+        for key in keys:
+            if "|" not in key:
+                continue
+            seg = key.split("|", 1)[0]
+            exchange = seg.split("_", 1)[0]
+            sym = None
+            try:
+                row = self._catalog.get("upstox", key)
+                if row and row.get("tradingsymbol"):
+                    sym = row["tradingsymbol"]
+            except Exception:
+                sym = None
+            if sym:
+                meta[key] = (exchange, sym)
+        return meta
+
     async def reconcile(
         self, feed_provider: Callable[[str], Any],
     ) -> dict[str, Any]:
@@ -644,7 +670,9 @@ class SubscriptionService:
             added = removed = 0
             try:
                 if to_add:
-                    added = await feed.add_instruments(to_add) or 0
+                    meta = self._metadata_for_keys(to_add)
+                    added = await feed.add_instruments(to_add,
+                                                       metadata=meta) or 0
                 if to_remove:
                     keep = current - set(to_remove)
                     if keep:

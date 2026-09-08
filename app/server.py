@@ -690,19 +690,27 @@ class _FeedSubscription:
         # Register identity aliases for runtime-added instruments so
         # incoming provider-symbol quotes resolve to the same canonical
         # state (best-effort; never blocks the subscription).
+        metadata: dict[str, tuple[str, str]] = {}
         try:
             for row in _instrument_catalog.search(q=token, limit=10):
                 if row.get("instrument_token") == token or \
                         row.get("tradingsymbol") == token:
                     _identity_registry.register_from_catalog_row(
                         row, primary=token)
+                    # Feed tick normalization needs (exchange,
+                    # tradingsymbol) for runtime keys — without it every
+                    # tick is dropped as unknown instrument.
+                    ex = row.get("exchange")
+                    sym = row.get("tradingsymbol")
+                    if ex and sym:
+                        metadata[token] = (str(ex), str(sym))
                     break
         except Exception:
             logger.warning("runtime identity registration failed for %s",
                            token)
         feed = _feed_ref.get("feed")
         if feed is not None and hasattr(feed, "add_instruments"):
-            await feed.add_instruments([token])
+            await feed.add_instruments([token], metadata=metadata or None)
 
     async def remove(self, exchange: str, token: str) -> None:
         feed = _feed_ref.get("feed")

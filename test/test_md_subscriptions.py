@@ -493,7 +493,7 @@ async def test_reconcile_runtime(runner: R) -> None:
             self.added = []
             self.removed = []
 
-        async def add_instruments(self, keys):
+        async def add_instruments(self, keys, metadata=None):
             self.added.extend(keys)
             cur = set(self._instrument_keys)
             fresh = [k for k in keys if k not in cur]
@@ -545,7 +545,7 @@ async def test_reconcile_runtime(runner: R) -> None:
     class _Broken:
         _instrument_keys = ()
 
-        async def add_instruments(self, keys):
+        async def add_instruments(self, keys, metadata=None):
             raise RuntimeError("socket gone")
 
         async def remove_instruments(self, keys):

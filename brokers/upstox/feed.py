@@ -248,10 +248,16 @@ class UpstoxFeed:
         self._market_service = market_service
 
         # Canonical identity metadata: {instrument_key: (exchange, tradingsymbol)}.
-        # Frozen at construction so caller mutation cannot affect runtime.
+        # Seeds from the caller and GROWS via add_instruments(): runtime
+        # subscriptions (watchlist, F&O workspace, subscriptions service)
+        # must have their ticks normalized, not dropped as unknown. The
+        # mapping is mutated only under _sub_lock by the feed itself; the
+        # exposed view stays read-only.
         from types import MappingProxyType
+        self._instrument_metadata_mutable: dict[str, tuple[str, str]] = dict(
+            metadata or {})
         self._instrument_metadata: Mapping[str, tuple[str, str]] = (
-            MappingProxyType(metadata)
+            MappingProxyType(self._instrument_metadata_mutable)
         )
 
         # -- test seams ---------------------------------------------------------
@@ -452,12 +458,21 @@ class UpstoxFeed:
                              self._name, type(exc).__name__)
                 return False
 
-    async def add_instruments(self, keys: list[str]) -> int:
+    async def add_instruments(self, keys: list[str],
+                              metadata: Mapping[str, tuple[str, str]]
+                              | None = None) -> int:
         """Add instrument keys to the desired subscription set.
 
         When the feed is streaming, a subscribe frame for ONLY the new
         keys is sent on the live socket. Otherwise the desired set simply
         grows and the next authorize/resubscribe cycle picks it up.
+
+        ``metadata`` (optional) binds {instrument_key: (exchange,
+        tradingsymbol)} for the new keys BEFORE the subscribe mutation is
+        sent — without it every tick for a runtime-subscribed key is
+        dropped as an unknown instrument. Metadata is merged under the
+        subscription lock so ticks and identity become visible together.
+
         Returns the number of genuinely new keys.
         """
         async with self._sub_lock:
@@ -466,6 +481,12 @@ class UpstoxFeed:
             if fresh:
                 self._instrument_keys = tuple(
                     sorted(existing | set(fresh)))
+                if metadata:
+                    for k in fresh:
+                        md = metadata.get(k)
+                        if md is not None and k not in \
+                                self._instrument_metadata_mutable:
+                            self._instrument_metadata_mutable[k] = md
         if fresh and self._state == "streaming":
             await self._send_mutation(self._mutation_frame("sub", fresh))
         return len(fresh)

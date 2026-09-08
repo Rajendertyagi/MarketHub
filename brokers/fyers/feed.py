@@ -485,7 +485,10 @@ class FyersFeed:
                              self._name, type(exc).__name__)
                 return False
 
-    async def add_instruments(self, symbols: list[str]) -> int:
+    async def add_instruments(self, symbols: list[str],
+                              metadata: dict | None = None) -> int:
+        # ``metadata`` accepted for Upstox-feed parity (Fyers frames are
+        # symbol-keyed, so no tick-normalization metadata is needed).
         async with self._sub_lock:
             existing = set(self._desired)
             fresh = [s for s in symbols if s and s not in existing]

@@ -222,7 +222,7 @@ class _Feed:
         self.added = []
         self.removed = []
 
-    async def add_instruments(self, keys):
+    async def add_instruments(self, keys, metadata=None):
         cur = set(self._instrument_keys)
         fresh = [k for k in keys if k not in cur]
         self.added.extend(fresh)
