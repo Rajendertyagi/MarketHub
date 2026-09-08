@@ -184,7 +184,12 @@ class MarketInstrumentIdentityResolver:
                 if existing == canonical_id:
                     continue                      # idempotent
                 if existing is not None:
-                    logger.warning(
+                    # Ambiguity is EXPECTED with full multi-exchange
+                    # catalogs (commodities dual-listed MCX/NSE, NCDs
+                    # NSE/BSE). The rejection itself is the safety
+                    # mechanism; the noise belongs in a bounded summary
+                    # logged by register_catalog_rows(), not per row.
+                    logger.debug(
                         "condition identity alias collision: '%s' already "
                         "maps to '%s'; request for '%s' rejected",
                         alias, existing, canonical_id)
@@ -265,12 +270,24 @@ class MarketInstrumentIdentityResolver:
     def register_catalog_rows(
         self, rows: Iterable[dict[str, Any]]
     ) -> dict[str, Any]:
-        """Register many catalog rows; aggregates registered/rejected counts."""
+        """Register many catalog rows; aggregates registered/rejected counts.
+
+        Emits ONE bounded summary for the whole rebuild instead of a
+        warning per collision. Rejection semantics are unchanged: an
+        ambiguous alias is never re-pointed.
+        """
         total: dict[str, Any] = {"registered": 0, "rejected": []}
         for row in rows:
             result = self.register_catalog_row(row)
             total["registered"] += result["registered"]
             total["rejected"].extend(result["rejected"])
+        if total["rejected"]:
+            samples = ", ".join(repr(a) for a in total["rejected"][:3])
+            logger.info(
+                "identity collisions: %d ambiguous alias(es) rejected "
+                "(first-wins kept; examples: %s%s)",
+                len(total["rejected"]), samples,
+                " …" if len(total["rejected"]) > 3 else "")
         return total
 
     # -- resolution --------------------------------------------------------

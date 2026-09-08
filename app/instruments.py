@@ -238,6 +238,72 @@ def fyers_master_records(payload: bytes) -> list[dict[str, Any]]:
 # Catalog service
 # ---------------------------------------------------------------------------
 
+# MarketHub catalog segments. The minimal set the current product needs
+# (equities, stock/index futures+options, the 8 canonical indices).
+# Preferences persist in source_state; the master filter runs BEFORE the
+# transactional catalog replace, so disabled segments leave the catalog
+# entirely on the next successful sync.
+DEFAULT_SEGMENTS: frozenset[str] = frozenset({
+    "NSE_EQ", "NSE_FO", "NSE_INDEX", "BSE_INDEX",
+})
+
+# Known provider segments (Upstox native names). GET /segments reports
+# these plus anything newly discovered in a master; never hard-coded in UI.
+_KNOWN_SEGMENTS: tuple[str, ...] = (
+    "NSE_EQ", "NSE_FO", "NSE_INDEX", "NSE_COM",
+    "BSE_EQ", "BSE_FO", "BSE_INDEX",
+    "MCX_FO", "BCD_FO", "NCD_FO", "GLOBAL",
+)
+
+
+def _derive_segment(row: dict[str, Any]) -> str | None:
+    """MarketHub segment for a canonical record (provider-agnostic).
+
+    Upstox rows carry a native ``segment``. Fyers rows only carry raw
+    master codes (10/11/20) + exchange + instrument_type, so the segment
+    is DERIVED per row: this keeps index rows (which live inside Fyers'
+    cash masters) separable from equities without ever conflating the
+    two — filtering by derived segment is the only way to drop NSE_EQ
+    while keeping NSE_INDEX.
+    """
+    seg = row.get("segment")
+    if seg in _KNOWN_SEGMENTS:
+        return seg
+    exchange = (row.get("exchange") or "").upper()
+    itype = row.get("instrument_type")
+    if exchange in ("NSE", "BSE"):
+        if itype == "INDEX":
+            return f"{exchange}_INDEX"
+        if itype in ("FUTURE", "OPTION"):
+            return f"{exchange}_FO"
+        if itype in ("EQUITY", "ETF"):
+            return f"{exchange}_EQ"
+    if exchange == "MCX":
+        return "MCX_FO"
+    return None
+
+
+def _filter_by_segments(
+    records: list[dict[str, Any]], segments: frozenset[str] | set[str],
+) -> tuple[list[dict[str, Any]], dict[str, int], int]:
+    """Split parsed records into kept/filtered by MarketHub segment.
+
+    Returns (kept, per-segment kept counts, filtered count). Records with
+    no derivable segment are treated as filtered (unknown families stay
+    out unless a known segment claims them).
+    """
+    kept: list[dict[str, Any]] = []
+    counts: dict[str, int] = {}
+    filtered = 0
+    for r in records:
+        seg = _derive_segment(r)
+        if seg is not None and seg in segments:
+            kept.append(r)
+            counts[seg] = counts.get(seg, 0) + 1
+        else:
+            filtered += 1
+    return kept, counts, filtered
+
 
 class InstrumentCatalog:
     """Sync + search over the canonical instruments table."""
@@ -245,21 +311,75 @@ class InstrumentCatalog:
     def __init__(self, event_store: Any) -> None:
         self._store = event_store
 
-    def sync_upstox(self, *, fetch=None) -> dict[str, Any]:
-        fetch = fetch or _fetch
-        raw = fetch(UPSTOX_MASTER_URL)
-        records = upstox_master_records(raw)
-        inserted = self._store.replace_provider_instruments("upstox",
-                                                            records)
-        logger.info("upstox instrument sync: %d records", inserted)
-        return {"provider": "upstox", "records": inserted,
-                "parsed": len(records)}
+    # -- segment preferences (source_state: generic durable KV) ------------
 
-    def sync_fyers(self, *, fetch=None) -> dict[str, Any]:
+    def get_enabled_segments(self) -> set[str]:
+        """Persisted enabled segments, or the minimal default set.
+
+        Never overwrites an existing user choice; the default applies
+        only when no preference has ever been saved.
+        """
+        raw = self._store.get_source_state("instruments", "segments")
+        if raw:
+            try:
+                import json as _json
+                parsed = _json.loads(raw)
+                if isinstance(parsed, list) and parsed:
+                    return {str(s).upper() for s in parsed}
+            except Exception:
+                logger.warning("invalid saved segment preference; "
+                               "using defaults")
+        return set(DEFAULT_SEGMENTS)
+
+    def set_enabled_segments(self, segments: list[str]) -> set[str]:
+        """Persist the enabled segment list (idempotent)."""
+        import json as _json
+        cleaned = sorted({str(s).strip().upper() for s in segments if s})
+        if not cleaned:
+            raise ValueError("at least one segment must remain enabled")
+        self._store.set_source_state("instruments", "segments",
+                                     _json.dumps(cleaned))
+        return set(cleaned)
+
+    def segment_counts(self) -> dict[str, int]:
+        """Current catalog row count per MarketHub segment."""
+        counts = self._store.segment_row_counts()
+        return {k: v for k, v in sorted(counts.items())}
+
+    def known_segments(self) -> list[str]:
+        """Union of known segments and anything present in the catalog."""
+        present = set(self.segment_counts())
+        return sorted(set(_KNOWN_SEGMENTS) | present)
+
+    def sync_upstox(self, *, fetch=None, segments: set[str] | None = None,
+                    ) -> dict[str, Any]:
         fetch = fetch or _fetch
+        enabled = segments if segments is not None \
+            else self.get_enabled_segments()
+        raw = fetch(UPSTOX_MASTER_URL)
+        parsed_records = upstox_master_records(raw)
+        kept, seg_counts, filtered = _filter_by_segments(parsed_records,
+                                                         enabled)
+        inserted = self._store.replace_provider_instruments("upstox", kept)
+        logger.info("upstox instrument sync: %d kept / %d parsed "
+                    "(%d filtered; segments=%s)",
+                    inserted, len(parsed_records), filtered,
+                    ",".join(sorted(enabled)))
+        return {"provider": "upstox", "records": inserted,
+                "parsed": len(parsed_records), "kept": len(kept),
+                "filtered": filtered, "segments": seg_counts,
+                "enabled": sorted(enabled)}
+
+    def sync_fyers(self, *, fetch=None, segments: set[str] | None = None,
+                   ) -> dict[str, Any]:
+        fetch = fetch or _fetch
+        enabled = segments if segments is not None \
+            else self.get_enabled_segments()
         # Fyers publishes one master PER SEGMENT but the catalog replaces
         # per PROVIDER — accumulate every segment first, then replace once,
-        # otherwise each segment would wipe the previous one.
+        # otherwise each segment would wipe the previous one. Filtering is
+        # by DERIVED MarketHub segment per row (see _derive_segment) so a
+        # disabled NSE_EQ never removes NSE_INDEX rows from the cash master.
         all_records: list[dict[str, Any]] = []
         parsed = 0
         for url in FYERS_SEGMENT_URLS.values():
@@ -271,10 +391,15 @@ class InstrumentCatalog:
                 continue
             parsed += len(records)
             all_records.extend(records)
-        total = self._store.replace_provider_instruments("fyers",
-                                                         all_records)
-        logger.info("fyers instrument sync: %d records", total)
-        return {"provider": "fyers", "records": total, "parsed": parsed}
+        kept, seg_counts, filtered = _filter_by_segments(all_records, enabled)
+        total = self._store.replace_provider_instruments("fyers", kept)
+        logger.info("fyers instrument sync: %d kept / %d parsed "
+                    "(%d filtered; segments=%s)",
+                    total, parsed, filtered, ",".join(sorted(enabled)))
+        return {"provider": "fyers", "records": total,
+                "parsed": parsed, "kept": len(kept),
+                "filtered": filtered, "segments": seg_counts,
+                "enabled": sorted(enabled)}
 
     def search(self, **kw: Any) -> list[dict[str, Any]]:
         return self._store.search_instruments(**kw)

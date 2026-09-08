@@ -24,7 +24,7 @@ import { initAlerts, initAlertPush } from "./alerts.js";
 import { initAIAlerts, openAIAlerts } from "./ai-alerts.js";
 import { initMCPTools, openMCPTools } from "./mcp-tools.js";
 import { initDiagnosticsUI, openDiagnostics } from "./diagnostics.js";
-import { initInstruments } from "./instruments.js";
+import { initInstruments } from "./instruments.js?v=2";
 import { initWatchlists } from "./watchlists.js";
 import { initOptionChain } from "./option-chain.js?v=36";
 import { initSourceControls, pollSources } from "./market-sources.js?v=37";

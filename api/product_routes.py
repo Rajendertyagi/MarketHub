@@ -573,11 +573,61 @@ def build_instrument_routes(catalog: Any, store: Any = None) -> list[Route]:
         return _json({"providers": await asyncio.to_thread(
             catalog.sync_state)})
 
+    async def _segments_get(request: Request) -> Response:  # noqa: ARG001
+        """Available segments + enabled preference + catalog counts."""
+        counts = await asyncio.to_thread(catalog.segment_counts)
+        enabled = await asyncio.to_thread(catalog.get_enabled_segments)
+        known = await asyncio.to_thread(catalog.known_segments)
+        from app.instruments import DEFAULT_SEGMENTS
+        segments = [{
+            "segment": seg,
+            "enabled": seg in enabled,
+            "default": seg in DEFAULT_SEGMENTS,
+            "catalog_rows": counts.get(seg, 0),
+        } for seg in known]
+        return _json({
+            "status": "ok",
+            "default": sorted(DEFAULT_SEGMENTS),
+            "enabled": sorted(enabled),
+            "segments": segments,
+        })
+
+    async def _segments_put(request: Request) -> Response:
+        try:
+            body = await request.json()
+        except Exception:
+            return _json({"error": "invalid JSON body"}, 400)
+        segments = (body or {}).get("segments")
+        if not isinstance(segments, list) or not segments:
+            return _json({"error": "segments (non-empty list) is required"},
+                         400)
+        invalid = [s for s in segments
+                   if not isinstance(s, str) or not s.strip()]
+        if invalid:
+            return _json({"error": "invalid segment names", "items": invalid},
+                         400)
+        cleaned = [s.strip().upper() for s in segments]
+        known = set(await asyncio.to_thread(catalog.known_segments))
+        unknown = [s for s in cleaned if s not in known]
+        if unknown:
+            return _json({"error": "unknown segments", "items": unknown},
+                         400)
+        try:
+            saved = await asyncio.to_thread(catalog.set_enabled_segments,
+                                            cleaned)
+        except ValueError as exc:
+            return _json({"error": str(exc)}, 400)
+        return _json({"status": "ok", "enabled": sorted(saved)})
+
     return [
         Route("/api/instruments/search", endpoint=_search, methods=["GET"]),
         Route("/api/instruments/sync", endpoint=_sync, methods=["POST"]),
         Route("/api/instruments/sync-state", endpoint=_sync_state,
               methods=["GET"]),
+        Route("/api/instruments/segments", endpoint=_segments_get,
+              methods=["GET"]),
+        Route("/api/instruments/segments", endpoint=_segments_put,
+              methods=["PUT"]),
         Route("/api/options/underlyings", endpoint=_underlyings,
               methods=["GET"]),
         Route("/api/options/expiries", endpoint=_expiries, methods=["GET"]),

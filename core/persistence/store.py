@@ -1325,6 +1325,18 @@ class EventStore:
         finally:
             conn.close()
 
+    def segment_row_counts(self) -> dict[str, int]:
+        """Catalog row count per provider segment (read-only projection)."""
+        conn = self._open(self._db_path)
+        try:
+            conn.row_factory = None
+            rows = conn.execute(
+                "SELECT segment, COUNT(*) AS n FROM instruments "
+                "WHERE segment IS NOT NULL GROUP BY segment").fetchall()
+            return {r[0]: r[1] for r in rows}
+        finally:
+            conn.close()
+
     def backup_to(self, dest_path: str) -> None:
         """Consistent online backup via the SQLite backup API.
 

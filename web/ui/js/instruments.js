@@ -115,5 +115,113 @@ export function initInstruments() {
   }
   loadSyncState();
 
+  // ── Data Segments panel (catalog segment enable/disable) ──────────────
+  // Checkboxes change LOCAL state only; Save & Re-sync persists the
+  // preference and explicitly re-syncs providers whose set changed.
+  const GROUPS = [
+    { label: "NSE", segs: ["NSE_EQ", "NSE_FO", "NSE_INDEX", "NSE_COM"] },
+    { label: "BSE", segs: ["BSE_EQ", "BSE_FO", "BSE_INDEX"] },
+    { label: "OTHER", segs: ["MCX_FO", "BCD_FO", "NCD_FO", "GLOBAL"] },
+  ];
+  let _segState = { enabled: [], segments: [] };
+
+  async function loadSegments() {
+    const wrap = $("seg-groups");
+    if (!wrap) return;
+    try {
+      const res = await fetch("/api/instruments/segments");
+      const data = await res.json();
+      _segState = { enabled: new Set(data.enabled || []),
+        segments: data.segments || [] };
+      const bySeg = new Map((_segState.segments || []).map(
+        (s) => [s.segment, s]));
+      wrap.innerHTML = "";
+      for (const g of GROUPS) {
+        const group = document.createElement("div");
+        group.className = "seg-group";
+        const head = document.createElement("div");
+        head.className = "seg-group-label";
+        head.textContent = g.label;
+        group.appendChild(head);
+        for (const seg of g.segs) {
+          const info = bySeg.get(seg);
+          if (!info) continue;   // provider never discovered it
+          const label = document.createElement("label");
+          label.className = "seg-check";
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.checked = !!info.enabled;
+          cb.dataset.seg = seg;
+          label.appendChild(cb);
+          label.appendChild(document.createTextNode(
+            ` ${seg} (${(info.catalog_rows || 0).toLocaleString()})`));
+          group.appendChild(label);
+        }
+        wrap.appendChild(group);
+      }
+    } catch { /* silent — panel stays empty */ }
+  }
+
+  $("seg-save-resync")?.addEventListener("click", async (e) => {
+    const btn = e.target;
+    const wrap = $("seg-groups");
+    const chosen = [...(wrap || document).querySelectorAll(
+      "input[type=checkbox][data-seg]:checked")].map(
+      (cb) => cb.dataset.seg);
+    if (!chosen.length) {
+      $("seg-result").textContent
+        = "At least one segment must stay enabled.";
+      $("seg-result").className = "hint err";
+      return;
+    }
+    const before = new Set(_segState.enabled || []);
+    const after = new Set(chosen);
+    const changed = before.size !== after.size
+      || [...after].some((s) => !before.has(s));
+    btn.disabled = true;
+    $("seg-result").textContent = "Saving preference…";
+    $("seg-result").className = "hint";
+    try {
+      const put = await fetch("/api/instruments/segments", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ segments: chosen }) });
+      const putData = await put.json();
+      if (!put.ok) {
+        $("seg-result").textContent = putData.error || "Save failed.";
+        $("seg-result").className = "hint err";
+        return;
+      }
+      if (!changed) {
+        $("seg-result").textContent
+          = `Preference saved (unchanged) — catalog already matches.`;
+        return;
+      }
+      // Re-sync providers whose catalog must change (Upstox always
+      // defines the base universe; Fyers rows are derived the same way).
+      const parts = [];
+      for (const provider of ["upstox", "fyers"]) {
+        $("seg-result").textContent = `Re-syncing ${provider}…`;
+        const res = await fetch("/api/instruments/sync", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider }) });
+        const data = await res.json();
+        parts.push(res.ok
+          ? `${provider}: kept ${data.kept}/${data.parsed}`
+            + ` (filtered ${data.filtered})`
+          : `${provider}: sync failed`);
+      }
+      $("seg-result").textContent = `Saved ${chosen.length} segments — `
+        + parts.join(" | ");
+      $("seg-result").className = "hint ok";
+      loadSyncState();
+      loadSegments();
+      doSearch();
+    } catch {
+      $("seg-result").textContent = "Network error during save/re-sync.";
+      $("seg-result").className = "hint err";
+    } finally { btn.disabled = false; }
+  });
+  loadSegments();
+
   doSearch();
 }

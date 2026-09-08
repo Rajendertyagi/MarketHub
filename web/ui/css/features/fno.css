@@ -1,4 +1,28 @@
-/* F&O Stocks view (feature-scoped). */
+/* F&O Stocks view (feature-scoped) + instrument Data Segments panel. */
+
+.seg-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4, 16px);
+  margin: var(--space-2, 8px) 0;
+}
+
+.seg-group {
+  min-width: 180px;
+}
+
+.seg-group-label {
+  font-weight: 600;
+  margin-bottom: var(--space-1, 4px);
+  opacity: 0.75;
+}
+
+.seg-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
 
 #fno-count {
   margin-left: auto;
