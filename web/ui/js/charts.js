@@ -6,17 +6,30 @@
  */
 
 import { $, escDash, fmt, fmtNum, fmtVol } from "./utils.js";
+import { apiGet } from "./api.js";
+import { switchView } from "./router.js";
 
 let chartSelection = null;   // {instrument_key, exchange, tradingsymbol}
 let chartInstance = null;    // singleton ECharts instance
 let lastCandles = null;      // last rendered series, for live theme recolor
+let _inited = false;         // guards initCharts against duplicate listeners
 
 // Resolve a CSS custom property to a concrete color (handles color-mix too),
-// so ECharts (canvas) can consume the active theme's tokens.
-const _colorProbe = document.createElement("div");
-_colorProbe.style.display = "none";
-document.body.appendChild(_colorProbe);
+// so ECharts (canvas) can consume the active theme's tokens. The probe element
+// is created lazily on first use so importing this module has NO DOM side
+// effects (module load must stay side-effect safe).
+let _colorProbe = null;
+
+function _ensureProbe() {
+  if (_colorProbe) return _colorProbe;
+  _colorProbe = document.createElement("div");
+  _colorProbe.style.display = "none";
+  document.body.appendChild(_colorProbe);
+  return _colorProbe;
+}
+
 function cssVar(name) {
+  const probe = _ensureProbe();
   _colorProbe.style.color = `var(${name})`;
   const v = getComputedStyle(_colorProbe).color;
   if (v && v !== "rgba(0, 0, 0, 0)") return v;
@@ -27,6 +40,8 @@ function cssVar(name) {
 }
 
 export function initCharts() {
+  if (_inited) return;
+  _inited = true;
   const search = $("chart-search");
   const sel = $("chart-instrument-select");
   let debounce = null;
@@ -58,52 +73,118 @@ export function initCharts() {
     } : null;
   });
 
-  $("chart-load").addEventListener("click", async () => {
-    const unit = $("chart-unit").value;
-    const interval = $("chart-interval").value || 1;
-    const days = Number($("chart-range").value) || 30;
-    const provider = $("chart-provider").value;
-    const msg = $("chart-message");
-    if (!chartSelection) {
-      msg.textContent = "Search and select an instrument first.";
-      msg.className = "hint err";
-      return;
-    }
-    const to = new Date().toISOString().slice(0, 10);
-    const from = new Date(Date.now() - days * 86400000)
-      .toISOString().slice(0, 10);
-    msg.textContent = "Loading history…";
-    msg.className = "hint";
-    try {
-      const res = await fetch("/api/market/history?instrument_key=" +
-        encodeURIComponent(chartSelection.instrument_key) +
-        "&provider=" + provider +
-        "&unit=" + unit + "&interval=" + interval +
-        "&from=" + from + "&to=" + to);
-      const d = await res.json();
-      if (!res.ok) {
-        msg.textContent = d.error || "History load failed.";
-        msg.className = "hint err";
-        return;
-      }
-      if (!d.candles || !d.candles.length) {
-        msg.textContent = "No history data returned for this range.";
-        msg.className = "hint err";
-        return;
-      }
-      msg.textContent = `${d.candles.length} candles loaded.`;
-      msg.className = "hint ok";
-      renderChart(d.candles);
-    } catch {
-      msg.textContent = "Network error loading history.";
-      msg.className = "hint err";
-    }
-  });
-
+  $("chart-load").addEventListener("click", () => _loadChart());
+  // Responsive resize — added exactly once (initCharts is idempotent) so rapid
+  // navigation never accumulates duplicate listeners or ECharts instances.
+  window.addEventListener("resize", _onResize);
   // Recolor the open chart live when the theme changes (no refetch needed).
   window.addEventListener("mh-themechange", () => {
     if (chartInstance && lastCandles) renderChart(lastCandles);
   });
+}
+
+function _onResize() {
+  if (chartInstance) chartInstance.resize();
+}
+
+async function _loadChart() {
+  const unit = $("chart-unit").value;
+  const interval = $("chart-interval").value || 1;
+  const days = Number($("chart-range").value) || 30;
+  const provider = $("chart-provider").value;
+  const msg = $("chart-message");
+  if (!chartSelection) {
+    msg.textContent = "Search and select an instrument first.";
+    msg.className = "hint err";
+    return;
+  }
+  const to = new Date().toISOString().slice(0, 10);
+  const from = new Date(Date.now() - days * 86400000)
+    .toISOString().slice(0, 10);
+  msg.textContent = "Loading history…";
+  msg.className = "hint";
+  try {
+    const res = await fetch("/api/market/history?instrument_key=" +
+      encodeURIComponent(chartSelection.instrument_key) +
+      "&provider=" + provider +
+      "&unit=" + unit + "&interval=" + interval +
+      "&from=" + from + "&to=" + to);
+    const d = await res.json();
+    if (!res.ok) {
+      const err = (d && d.error) || "History load failed.";
+      msg.textContent = /unsupport|not (available|supported)/i.test(err)
+        ? `Provider "${provider}" does not support history for this instrument.`
+        : err;
+      msg.className = "hint err";
+      return;
+    }
+    if (!d.candles || !d.candles.length) {
+      msg.textContent = "No history data returned for this range.";
+      msg.className = "hint err";
+      return;
+    }
+    const first = d.candles[0].timestamp.slice(0, 10);
+    const last = d.candles[d.candles.length - 1].timestamp.slice(0, 10);
+    msg.textContent = `${d.candles.length} candles · ${first} → ${last}`;
+    msg.className = "hint ok";
+    renderChart(d.candles);
+  } catch {
+    msg.textContent = "Network error loading history.";
+    msg.className = "hint err";
+  }
+}
+
+/**
+ * Canonical navigation entry point. Accepts either a fully-resolved identity
+ * (instrument_key present) or a symbol that is resolved via the catalog search
+ * API. Resolves the EXACT instrument — never substitutes a future for an
+ * equity or vice versa.
+ */
+export async function openChart(identity) {
+  initCharts();
+  let sel = null;
+  if (identity && identity.instrument_key) {
+    sel = {
+      instrument_key: identity.instrument_key,
+      exchange: identity.exchange,
+      tradingsymbol: identity.tradingsymbol,
+    };
+  } else if (identity && identity.symbol) {
+    const type = identity.type || "EQUITY";
+    try {
+      const d = await apiGet(
+        `/api/instruments/search?limit=10&type=${encodeURIComponent(type)}` +
+        `&q=${encodeURIComponent(identity.symbol)}`);
+      const rs = (d && d.results || []).filter((r) => r.instrument_type === type);
+      if (rs.length) {
+        sel = {
+          instrument_key: rs[0].instrument_token,
+          exchange: rs[0].exchange,
+          tradingsymbol: rs[0].tradingsymbol,
+        };
+      }
+    } catch { /* fall through */ }
+  }
+  if (!sel) {
+    const msg = $("chart-message");
+    if (msg) msg.textContent = "Could not resolve instrument for chart.";
+    return;
+  }
+  chartSelection = sel;
+  const search = $("chart-search");
+  if (search) search.value = sel.tradingsymbol;
+  switchView("charts");
+  _loadChart();
+}
+
+// Lifecycle: (re)initialize on enter, release the ECharts instance on leave so
+// rapid navigation never leaks canvases or accumulates duplicate instances.
+export function openCharts() {
+  initCharts();
+}
+
+export function closeCharts() {
+  disposeCharts();
 }
 
 function sma(values, period) {
