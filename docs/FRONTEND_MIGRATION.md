@@ -87,8 +87,8 @@ and the React app is available only via `bun run dev` (development).
 | Breadth | REACT | `GET /api/market/breadth` | — | stat grid + bar + table |
 | F&O Workspace | VERIFIED | `GET /api/market/fno/universe`, `GET /api/market/fno/stock/{symbol}`, `POST /api/market/fno/view` | — | unified equity+index picker; index underlyings consumed from backend (`GET /api/options/index-underlyings`, no front-end hard-code); bounded active-view subscription (reuses owner); futures/option ladder; IV fraction→% |
 | Option Chain | VERIFIED | `GET /api/options/chain/view`, `GET /api/futures` | — | CE/PE ladder shared model; ATM; greeks; OI analytics (PCR/straddle) EChart; exact identity → Charts |
-| Instruments | LEGACY | `GET /api/instruments/search` | — | reused by Charts/Scanners resolve |
-| Subscriptions | LEGACY | `GET /api/market/stream` (SSE) | yes | uses `streams/` owner |
+| Instruments | VERIFIED | `GET /api/instruments/segments`, `PUT /api/instruments/segments`, `POST /api/instruments/sync`, `GET /api/instruments/sync-state` | — | catalog/source status; segment preferences (saved, not defaults); Save & Re-sync; backend owns master sync + Fyers segment semantics |
+| Subscriptions | VERIFIED | `GET /api/subscriptions`, `PATCH /api/subscriptions/indices`, `POST/PATCH/DELETE /api/subscriptions/stocks`, `PUT/DELETE /api/subscriptions/rules`, `POST /api/subscriptions/apply` | — | DB-backed 8 canonical indices (backend-owned, never redefined in UI); stocks; derivative rules (current/next expiry, ATM range, CE/PE); Save & Apply reconciles live feed without restart |
 | Settings | LEGACY | settings routes | — | |
 | Test Center | LEGACY | diagnostics | — | |
 | News | LEGACY | `GET /api/news/*` | — | |
@@ -103,7 +103,7 @@ and the React app is available only via `bun run dev` (development).
 ## Recommended next migration batch
 
 1. ~~**F&O Workspace** → Option Chain~~ — migrated (React `/fno`)
-2. **Subscriptions / Instruments** (first real SSE consumer via `streams/`)
+2. ~~**Subscriptions / Instruments**~~ — migrated (React `/subscriptions`, `/instruments`); DB-backed prefs + segment preferences, no legacy parsing in UI
 3. **News / Sentiment**
 4. **Settings / Test Center**
 5. **Alerts / AI Alerts**

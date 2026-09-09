@@ -575,3 +575,49 @@ table.option-chain .pe-col {
 tr.option-chain-atm > td {
   background: color-mix(in oklch, var(--accent) 12%, transparent);
 }
+
+/* ---------- Subscriptions / Instruments ---------- */
+.switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.switch input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.rule-editor {
+  margin-bottom: var(--space-3);
+}
+.rule-editor-head {
+  margin-bottom: var(--space-2);
+}
+.rule-editor .control-row {
+  flex-wrap: wrap;
+}
+
+.segment-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.segment-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.segment-item input {
+  accent-color: var(--accent);
+}
+.segment-item > span:first-of-type {
+  flex: 1;
+  font-weight: 600;
+}

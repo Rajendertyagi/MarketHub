@@ -475,3 +475,78 @@ export type AsyncState<T> =
   | { status: "loading" }
   | { status: "error"; error: ApiError }
   | { status: "success"; data: T };
+
+// ── Subscriptions (GET /api/subscriptions) ───────────────────────────────────
+// DB-backed preference projection. The DB remains the source of truth; React is
+// only the control surface. Canonical index identities come from the backend
+// (app.market_indices.MAJOR_INDICES) — never re-defined in the frontend.
+export interface SubscriptionIndex {
+  label: string;
+  key: string;
+  fyers_symbol: string;
+  enabled: boolean;
+  canonical: boolean;
+}
+
+export interface SubscriptionStock {
+  key: string;
+  label: string;
+  enabled: boolean;
+}
+
+// Derivative rule: the frontend is only the editor. The backend resolves the
+// actual current contracts (current/next expiry, ATM ± N, CE/PE) — the
+// frontend never rolls expiries or discovers strikes client-side.
+export interface DerivativeRule {
+  underlying: string;
+  futures_enabled: boolean;
+  futures_count: number;
+  options_enabled: boolean;
+  options_count: number;
+  strikes_below: number;
+  strikes_above: number;
+  calls_enabled: boolean;
+  puts_enabled: boolean;
+  updated_at?: string | null;
+}
+
+export interface SubscriptionPreferences {
+  indices: SubscriptionIndex[];
+  stocks: SubscriptionStock[];
+  derivatives: DerivativeRule[];
+}
+
+export interface ApplyResult {
+  status: string;
+  resolved_count?: number;
+  by_provider?: Record<string, number>;
+  apply?: unknown;
+}
+
+// ── Instruments / catalog (GET /api/instruments/segments, /sync) ─────────────
+export interface SegmentInfo {
+  segment: string;
+  enabled: boolean;
+  default: boolean;
+  catalog_rows: number;
+}
+
+export interface SegmentsResponse {
+  status: string;
+  default: string[];
+  enabled: string[];
+  segments: SegmentInfo[];
+}
+
+export interface SyncProviderState {
+  provider: string;
+  status?: string;
+  last_sync?: string | null;
+  rows?: number;
+  error?: string | null;
+}
+
+export interface SyncResult {
+  status: string;
+  [key: string]: unknown;
+}

@@ -18,10 +18,16 @@ import {
   scannersListSchema,
   scanResultSchema,
   sectorHeatmapSchema,
+  subscriptionPreferencesSchema,
+  applyResultSchema,
+  segmentsResponseSchema,
+  syncStateSchema,
 } from "./schemas";
 import type {
+  ApplyResult,
   BreadthSnapshot,
   Candle,
+  DerivativeRule,
   FnoUniverseResponse,
   FnoViewResponse,
   FnoWorkspace,
@@ -35,7 +41,11 @@ import type {
   ScannerDef,
   ScanResult,
   ScannerRunParams,
+  SegmentsResponse,
   SectorHeatmapSnapshot,
+  SubscriptionPreferences,
+  SyncProviderState,
+  SyncResult,
 } from "@/types";
 
 export interface HistoryParams {
@@ -304,6 +314,142 @@ export async function getFutures(
   return request<FuturesResponse>("/futures", {
     params: { underlying, expiry: expiry ?? "" },
     schema: futuresResponseSchema,
+    signal,
+  });
+}
+
+// ── Subscriptions (DB-backed preference projection) ───────────────────────────
+// React is only the control surface. The DB remains the source of truth; the
+// backend resolves actual contracts and reconciles the live feed. No client-side
+// expiry rollover or strike discovery.
+export async function getSubscriptions(
+  signal?: AbortSignal,
+): Promise<SubscriptionPreferences> {
+  return request<SubscriptionPreferences>("/subscriptions", {
+    schema: subscriptionPreferencesSchema,
+    signal,
+  });
+}
+
+export async function setIndexEnabled(
+  label: string,
+  enabled: boolean,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  return request("/subscriptions/indices", {
+    method: "PATCH",
+    body: { label, enabled },
+    signal,
+  });
+}
+
+export async function addStock(
+  key: string,
+  label: string,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  return request("/subscriptions/stocks", {
+    method: "POST",
+    body: { key, label },
+    signal,
+  });
+}
+
+export async function setStockEnabled(
+  key: string,
+  enabled: boolean,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  return request("/subscriptions/stocks", {
+    method: "PATCH",
+    body: { key, enabled },
+    signal,
+  });
+}
+
+export async function removeStock(
+  key: string,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  return request("/subscriptions/stocks", {
+    method: "DELETE",
+    params: { key },
+    signal,
+  });
+}
+
+export async function putDerivativeRule(
+  rule: DerivativeRule,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  return request("/subscriptions/rules", {
+    method: "PUT",
+    body: rule,
+    signal,
+  });
+}
+
+export async function deleteDerivativeRule(
+  underlying: string,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  return request("/subscriptions/rules", {
+    method: "DELETE",
+    params: { underlying },
+    signal,
+  });
+}
+
+// Reconcile the live feed to the current DB-backed preferences (no restart).
+export async function applySubscriptions(
+  signal?: AbortSignal,
+): Promise<ApplyResult> {
+  return request<ApplyResult>("/subscriptions/apply", {
+    method: "POST",
+    schema: applyResultSchema,
+    signal,
+  });
+}
+
+// ── Instruments / catalog (segment preferences + master sync) ────────────────
+// React reads catalog/source status and edits segment preferences; it never
+// parses provider master files or infers instrument type client-side.
+export async function getSegments(
+  signal?: AbortSignal,
+): Promise<SegmentsResponse> {
+  return request<SegmentsResponse>("/instruments/segments", {
+    schema: segmentsResponseSchema,
+    signal,
+  });
+}
+
+export async function setSegments(
+  segments: string[],
+  signal?: AbortSignal,
+): Promise<unknown> {
+  return request("/instruments/segments", {
+    method: "PUT",
+    body: { segments },
+    signal,
+  });
+}
+
+export async function syncInstruments(
+  provider: string,
+  signal?: AbortSignal,
+): Promise<SyncResult> {
+  return request<SyncResult>("/instruments/sync", {
+    method: "POST",
+    body: { provider },
+    signal,
+  });
+}
+
+export async function getSyncState(
+  signal?: AbortSignal,
+): Promise<{ providers: SyncProviderState[] }> {
+  return request<{ providers: SyncProviderState[] }>("/instruments/sync-state", {
+    schema: syncStateSchema,
     signal,
   });
 }

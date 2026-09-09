@@ -390,3 +390,68 @@ export type FnoUniverseParsed = z.infer<typeof fnoUniverseSchema>;
 export type FnoWorkspaceParsed = z.infer<typeof fnoWorkspaceSchema>;
 export type OptionChainViewParsed = z.infer<typeof optionChainViewSchema>;
 export type FuturesResponseParsed = z.infer<typeof futuresResponseSchema>;
+
+// ── Subscriptions (GET /api/subscriptions) ────────────────────────────────────
+export const subscriptionIndexSchema = z.object({
+  label: z.string(),
+  key: z.string(),
+  fyers_symbol: z.string(),
+  enabled: z.boolean(),
+  canonical: z.boolean(),
+});
+
+export const subscriptionStockSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  enabled: z.boolean(),
+});
+
+export const derivativeRuleSchema = z.object({
+  underlying: z.string(),
+  futures_enabled: z.boolean(),
+  futures_count: z.number(),
+  options_enabled: z.boolean(),
+  options_count: z.number(),
+  strikes_below: z.number(),
+  strikes_above: z.number(),
+  calls_enabled: z.boolean(),
+  puts_enabled: z.boolean(),
+  updated_at: z.string().nullable().optional(),
+});
+
+export const subscriptionPreferencesSchema = z.object({
+  status: z.string().optional(),
+  indices: z.array(subscriptionIndexSchema),
+  stocks: z.array(subscriptionStockSchema),
+  derivatives: z.array(derivativeRuleSchema),
+});
+
+export const applyResultSchema = z
+  .object({
+    status: z.string(),
+    resolved_count: z.number().optional(),
+    by_provider: z.record(z.number()).optional(),
+    apply: z.unknown().optional(),
+  })
+  .passthrough();
+
+// ── Instruments / catalog (GET /api/instruments/segments, /sync) ─────────────
+export const segmentInfoSchema = z.object({
+  segment: z.string(),
+  enabled: z.boolean(),
+  default: z.boolean(),
+  catalog_rows: z.number(),
+});
+
+export const segmentsResponseSchema = z.object({
+  status: z.string(),
+  default: z.array(z.string()),
+  enabled: z.array(z.string()),
+  segments: z.array(segmentInfoSchema),
+});
+
+export const syncStateSchema = z
+  .object({
+    providers: z.array(z.record(z.unknown())),
+  })
+  .passthrough();

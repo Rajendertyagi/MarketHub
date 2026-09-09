@@ -24,7 +24,7 @@ export interface RequestOptions {
   /** Optional Zod schema; when provided, the parsed response is validated. */
   schema?: z.ZodType<unknown>;
   /** HTTP method (default GET). */
-  method?: "GET" | "POST" | "PUT" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
   /** JSON request body (for POST/PUT). Sent as application/json. */
   body?: unknown;
 }
