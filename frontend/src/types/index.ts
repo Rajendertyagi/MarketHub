@@ -236,6 +236,197 @@ export interface MarketMapSnapshot {
   reconciliation: Record<string, unknown>;
 }
 
+// ── F&O Universe (GET /api/market/fno/universe) ──────────────────────────────
+export interface FnoUniverseRow {
+  symbol: string;
+  name: string | null;
+  equity_key: string | null;
+  futures_available: boolean;
+  options_available: boolean;
+  futures_count: number;
+  options_count: number;
+  future_expiries: number;
+  option_expiries: number;
+  nearest_future: string | null;
+  nearest_option: string | null;
+}
+
+export interface FnoUniverseResponse {
+  status: string;
+  count: number;
+  universe: FnoUniverseRow[];
+}
+
+// ── Shared quote projection (canonical; fields optional, never fabricated) ─────
+// Backend quote shapes vary by endpoint (spot/future quotes expose best_bid/
+// best_ask; option quotes expose bid/ask + greeks/iv). We model the union and
+// read defensively (bid ?? best_bid) so no field is coerced to a fake value.
+export interface Quote {
+  ltp?: number | null;
+  change?: number | null;
+  change_percent?: number | null;
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
+  volume?: number | null;
+  open_interest?: number | null;
+  oi_change?: number | null;
+  previous_oi?: number | null;
+  best_bid?: number | null;
+  best_ask?: number | null;
+  bid?: number | null;
+  ask?: number | null;
+  iv?: number | null;
+  delta?: number | null;
+  gamma?: number | null;
+  theta?: number | null;
+  vega?: number | null;
+  rho?: number | null;
+  received_ts?: string | null;
+  received_at?: string | null;
+}
+
+// ── F&O Workspace stock (GET /api/market/fno/stock/{symbol}) ──────────────────
+export interface FnoFuture {
+  key: string;
+  label: string;
+  expiry: string;
+  provider: string | null;
+  quote?: Quote | null;
+}
+
+export interface FnoOption {
+  key: string;
+  label: string;
+  expiry: string;
+  strike: number;
+  option_type: "CE" | "PE";
+  provider: string | null;
+  quote?: Quote | null;
+}
+
+export interface FnoWorkspace {
+  status: string;
+  symbol: string;
+  equity_key: string | null;
+  spot_quote?: Quote | null;
+  futures: FnoFuture[];
+  options: FnoOption[];
+  option_expiries: string[];
+  selected_expiry: string | null;
+  atm: number | null;
+  atm_basis?: string | null;
+  notes?: string[];
+}
+
+// ── F&O Active View (POST /api/market/fno/view) ──────────────────────────────
+export interface FnoViewResponse {
+  status: string;
+  symbol: string;
+  active_view: Record<string, number>;
+  resolved_count: number;
+  apply: Record<string, unknown>;
+}
+
+// ── Option Chain view (GET /api/options/chain/view) ───────────────────────────
+export interface OptionLeg {
+  instrument_key: string;
+  symbol: string;
+  exchange: string;
+  option_type: "CE" | "PE";
+  strike: number;
+  expiry?: string | null;
+  quote?: Quote | null;
+}
+
+export interface ChainRow {
+  strike: number;
+  atm: boolean;
+  call?: OptionLeg | null;
+  put?: OptionLeg | null;
+}
+
+export interface ChainAnalytics {
+  scope?: string;
+  total_call_oi?: number | null;
+  total_put_oi?: number | null;
+  pcr_by_oi?: number | null;
+  highest_call_oi_strike?: number | null;
+  highest_put_oi_strike?: number | null;
+  [key: string]: unknown;
+}
+
+export interface OptionChainView {
+  underlying: string;
+  underlying_instrument?: Record<string, unknown> | null;
+  expiry: string;
+  expiries_available: string[];
+  spot: number | null;
+  spot_basis: string | null;
+  atm_strike: number | null;
+  window: number;
+  strikes_loaded: number;
+  strikes_total_listed: number;
+  rows: ChainRow[];
+  analytics: ChainAnalytics;
+}
+
+export interface OptionExpiriesResponse {
+  underlying: string;
+  expiries: string[];
+}
+
+// ── Futures by underlying (GET /api/futures) ─────────────────────────────────
+export interface FutureContract {
+  instrument_key: string;
+  symbol: string;
+  exchange: string;
+  expiry?: string | null;
+  type?: string | null;
+  ltp?: number | null;
+  [key: string]: unknown;
+}
+
+export interface FuturesResponse {
+  underlying: string;
+  underlying_instrument?: Record<string, unknown> | null;
+  expiries?: string[];
+  contracts: FutureContract[];
+}
+
+// ── Normalized view models (presentation-only) ────────────────────────────────
+export type FnoUnderlyingKind = "equity" | "index";
+
+export interface FnoUnderlying {
+  symbol: string;
+  name: string | null;
+  kind: FnoUnderlyingKind;
+}
+
+export interface ChainLegView {
+  key: string;
+  label: string;
+  exchange: string;
+  option_type: "CE" | "PE";
+  strike: number;
+  quote?: Quote | null;
+}
+
+export interface ChainRowView {
+  strike: number;
+  atm: boolean;
+  call?: ChainLegView;
+  put?: ChainLegView;
+}
+
+export interface FutureView {
+  key: string;
+  label: string;
+  exchange: string;
+  expiry: string;
+  quote?: Quote | null;
+}
+
 // Typed error taxonomy produced by the API client (see api/client.ts).
 export type ApiErrorKind =
   | "network"

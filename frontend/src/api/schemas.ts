@@ -214,3 +214,168 @@ export type ScanResultParsed = z.infer<typeof scanResultSchema>;
 export type BreadthSnapshotParsed = z.infer<typeof breadthSchema>;
 export type SectorHeatmapSnapshotParsed = z.infer<typeof sectorHeatmapSchema>;
 export type MarketMapSnapshotParsed = z.infer<typeof marketMapSchema>;
+
+// ── F&O Universe (GET /api/market/fno/universe) ────────────────────────────────
+export const fnoUniverseRowSchema = z.object({
+  symbol: z.string(),
+  name: z.string().nullable(),
+  equity_key: z.string().nullable(),
+  futures_available: z.boolean(),
+  options_available: z.boolean(),
+  futures_count: z.number(),
+  options_count: z.number(),
+  future_expiries: z.number(),
+  option_expiries: z.number(),
+  nearest_future: z.string().nullable(),
+  nearest_option: z.string().nullable(),
+});
+
+export const fnoUniverseSchema = z.object({
+  status: z.string(),
+  count: z.number(),
+  universe: z.array(fnoUniverseRowSchema),
+});
+
+// ── Shared quote projection ────────────────────────────────────────────────────
+export const quoteSchema = z
+  .object({
+    ltp: z.number().nullable().optional(),
+    change: z.number().nullable().optional(),
+    change_percent: z.number().nullable().optional(),
+    open: z.number().nullable().optional(),
+    high: z.number().nullable().optional(),
+    low: z.number().nullable().optional(),
+    volume: z.number().nullable().optional(),
+    open_interest: z.number().nullable().optional(),
+    oi_change: z.number().nullable().optional(),
+    previous_oi: z.number().nullable().optional(),
+    best_bid: z.number().nullable().optional(),
+    best_ask: z.number().nullable().optional(),
+    bid: z.number().nullable().optional(),
+    ask: z.number().nullable().optional(),
+    iv: z.number().nullable().optional(),
+    delta: z.number().nullable().optional(),
+    gamma: z.number().nullable().optional(),
+    theta: z.number().nullable().optional(),
+    vega: z.number().nullable().optional(),
+    rho: z.number().nullable().optional(),
+    received_ts: z.string().nullable().optional(),
+    received_at: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+export const fnoFutureSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  expiry: z.string(),
+  provider: z.string().nullable(),
+  quote: quoteSchema.nullable().optional(),
+});
+
+export const fnoOptionSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  expiry: z.string(),
+  strike: z.number(),
+  option_type: z.enum(["CE", "PE"]),
+  provider: z.string().nullable(),
+  quote: quoteSchema.nullable().optional(),
+});
+
+export const fnoWorkspaceSchema = z.object({
+  status: z.string(),
+  symbol: z.string(),
+  equity_key: z.string().nullable(),
+  spot_quote: quoteSchema.nullable().optional(),
+  futures: z.array(fnoFutureSchema),
+  options: z.array(fnoOptionSchema),
+  option_expiries: z.array(z.string()),
+  selected_expiry: z.string().nullable(),
+  atm: z.number().nullable(),
+  atm_basis: z.string().nullable().optional(),
+  notes: z.array(z.string()).optional(),
+});
+
+export const fnoViewSchema = z.object({
+  status: z.string(),
+  symbol: z.string(),
+  active_view: z.record(z.number()),
+  resolved_count: z.number(),
+  apply: z.record(z.unknown()),
+});
+
+// ── Option Chain view (GET /api/options/chain/view) ───────────────────────────
+export const optionLegSchema = z.object({
+  instrument_key: z.string(),
+  symbol: z.string(),
+  exchange: z.string(),
+  option_type: z.enum(["CE", "PE"]),
+  strike: z.number(),
+  expiry: z.string().nullable().optional(),
+  quote: quoteSchema.nullable().optional(),
+});
+
+export const chainRowSchema = z.object({
+  strike: z.number(),
+  atm: z.boolean(),
+  call: optionLegSchema.nullable().optional(),
+  put: optionLegSchema.nullable().optional(),
+});
+
+export const chainAnalyticsSchema = z
+  .object({
+    scope: z.string().optional(),
+    total_call_oi: z.number().nullable().optional(),
+    total_put_oi: z.number().nullable().optional(),
+    pcr_by_oi: z.number().nullable().optional(),
+    highest_call_oi_strike: z.number().nullable().optional(),
+    highest_put_oi_strike: z.number().nullable().optional(),
+  })
+  .passthrough();
+
+export const optionChainViewSchema = z.object({
+  underlying: z.string(),
+  underlying_instrument: z.record(z.unknown()).nullable().optional(),
+  expiry: z.string(),
+  expiries_available: z.array(z.string()),
+  spot: z.number().nullable(),
+  spot_basis: z.string().nullable(),
+  atm_strike: z.number().nullable(),
+  window: z.number(),
+  strikes_loaded: z.number(),
+  strikes_total_listed: z.number(),
+  rows: z.array(chainRowSchema),
+  analytics: chainAnalyticsSchema,
+});
+
+export const optionUnderlyingsSchema = z.object({
+  underlyings: z.array(z.string()),
+});
+
+export const optionExpiriesSchema = z.object({
+  underlying: z.string(),
+  expiries: z.array(z.string()),
+});
+
+export const futureContractSchema = z
+  .object({
+    instrument_key: z.string(),
+    symbol: z.string(),
+    exchange: z.string(),
+    expiry: z.string().nullable().optional(),
+    type: z.string().nullable().optional(),
+    ltp: z.number().nullable().optional(),
+  })
+  .passthrough();
+
+export const futuresResponseSchema = z.object({
+  underlying: z.string(),
+  underlying_instrument: z.record(z.unknown()).nullable().optional(),
+  expiries: z.array(z.string()).optional(),
+  contracts: z.array(futureContractSchema),
+});
+
+export type FnoUniverseParsed = z.infer<typeof fnoUniverseSchema>;
+export type FnoWorkspaceParsed = z.infer<typeof fnoWorkspaceSchema>;
+export type OptionChainViewParsed = z.infer<typeof optionChainViewSchema>;
+export type FuturesResponseParsed = z.infer<typeof futuresResponseSchema>;

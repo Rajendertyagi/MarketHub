@@ -491,3 +491,87 @@ a {
     height: 380px;
   }
 }
+
+/* ── F&O Workspace ─────────────────────────────────────────────────────────── */
+.fno-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.fno-header-main {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.fno-symbol {
+  font-size: 18px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fno-ltp {
+  font-weight: 600;
+}
+.fno-atm {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin-left: auto;
+}
+.fno-analytics {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.fno-tab-body {
+  margin-top: 12px;
+}
+.link {
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+.link:hover {
+  text-decoration: underline;
+}
+.stale-val {
+  color: var(--text-faint);
+  font-style: italic;
+}
+.chip-info {
+  background: color-mix(in oklch, var(--info) 22%, transparent);
+  color: var(--info);
+  border: 1px solid color-mix(in oklch, var(--info) 40%, transparent);
+}
+.chip-atm {
+  margin-left: 6px;
+  background: color-mix(in oklch, var(--accent) 22%, transparent);
+  color: var(--accent);
+  border: 1px solid color-mix(in oklch, var(--accent) 40%, transparent);
+}
+
+/* Option chain: CE | strike | PE ladder */
+table.option-chain {
+  width: max-content;
+  min-width: 100%;
+}
+table.option-chain .strike-col {
+  position: sticky;
+  left: 0;
+  background: var(--surface-2);
+  text-align: center;
+  font-weight: 600;
+  z-index: 1;
+  white-space: nowrap;
+}
+table.option-chain .ce-col {
+  text-align: right;
+}
+table.option-chain .pe-col {
+  text-align: right;
+}
+tr.option-chain-atm > td {
+  background: color-mix(in oklch, var(--accent) 12%, transparent);
+}

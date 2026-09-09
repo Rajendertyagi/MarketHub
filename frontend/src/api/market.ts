@@ -6,8 +6,14 @@
 import { request } from "./client";
 import {
   breadthSchema,
+  fnoUniverseSchema,
+  fnoWorkspaceSchema,
+  fnoViewSchema,
+  futuresResponseSchema,
   historyResponseSchema,
   marketMapSchema,
+  optionChainViewSchema,
+  optionExpiriesSchema,
   scannersListSchema,
   scanResultSchema,
   sectorHeatmapSchema,
@@ -15,9 +21,15 @@ import {
 import type {
   BreadthSnapshot,
   Candle,
+  FnoUniverseResponse,
+  FnoViewResponse,
+  FnoWorkspace,
+  FuturesResponse,
   HistoryResponse,
   Instrument,
   MarketMapSnapshot,
+  OptionChainView,
+  OptionExpiriesResponse,
   ScannerDef,
   ScanResult,
   ScannerRunParams,
@@ -162,6 +174,121 @@ export async function getMarketMap(
   return request<MarketMapSnapshot>("/market/map", {
     params: { universe },
     schema: marketMapSchema,
+    signal,
+  });
+}
+
+// ── F&O Workspace + Option Chain (existing canonical endpoints) ────────────────
+// Thin typed wrappers. They preserve backend naming/semantics and never recompute
+// canonical values (IV is a fraction, ATM is backend-resolved, greeks/quotes are
+// passed through unchanged). The active-view subscription reuses the existing
+// bounded owner (POST /api/market/fno/view) — no second subscription owner.
+
+export async function getFnoUniverse(
+  q = "",
+  limit = 500,
+  signal?: AbortSignal,
+): Promise<FnoUniverseResponse> {
+  return request<FnoUniverseResponse>("/market/fno/universe", {
+    params: { q, limit },
+    schema: fnoUniverseSchema,
+    signal,
+  });
+}
+
+export interface FnoWorkspaceParams {
+  symbol: string;
+  window?: number;
+  futures?: number;
+  expiries?: number;
+}
+
+export async function getFnoWorkspace(
+  params: FnoWorkspaceParams,
+  signal?: AbortSignal,
+): Promise<FnoWorkspace> {
+  return request<FnoWorkspace>(
+    `/market/fno/stock/${encodeURIComponent(params.symbol)}`,
+    {
+      params: {
+        window: params.window ?? 10,
+        futures: params.futures ?? 2,
+        expiries: params.expiries ?? 1,
+      },
+      schema: fnoWorkspaceSchema,
+      signal,
+    },
+  );
+}
+
+export interface FnoViewParams {
+  symbol: string;
+  window?: number;
+  future_count?: number;
+  expiry_count?: number;
+}
+
+// Establishes the bounded active-view subscription (equity + futures + ATM±window
+// options) and reconciles the live feed. Best-effort from the frontend: the view
+// still renders canonical quotes even if coverage cannot be applied.
+export async function postFnoView(
+  params: FnoViewParams,
+  signal?: AbortSignal,
+): Promise<FnoViewResponse> {
+  return request<FnoViewResponse>("/market/fno/view", {
+    method: "POST",
+    body: {
+      symbol: params.symbol,
+      window: params.window ?? 10,
+      future_count: params.future_count ?? 2,
+      expiry_count: params.expiry_count ?? 1,
+    },
+    schema: fnoViewSchema,
+    signal,
+  });
+}
+
+
+export async function getOptionExpiries(
+  underlying: string,
+  signal?: AbortSignal,
+): Promise<OptionExpiriesResponse> {
+  return request<OptionExpiriesResponse>("/options/expiries", {
+    params: { underlying },
+    schema: optionExpiriesSchema,
+    signal,
+  });
+}
+
+export interface OptionChainParams {
+  underlying: string;
+  expiry?: string;
+  window?: number;
+}
+
+export async function getOptionChainView(
+  params: OptionChainParams,
+  signal?: AbortSignal,
+): Promise<OptionChainView> {
+  return request<OptionChainView>("/options/chain/view", {
+    params: {
+      underlying: params.underlying,
+      expiry: params.expiry ?? "",
+      window: params.window ?? 10,
+    },
+    schema: optionChainViewSchema,
+    signal,
+  });
+}
+
+export async function getFutures(
+  underlying: string,
+  expiry?: string,
+  signal?: AbortSignal,
+): Promise<FuturesResponse> {
+  return request<FuturesResponse>("/futures", {
+    params: { underlying, expiry: expiry ?? "" },
+    schema: futuresResponseSchema,
     signal,
   });
 }

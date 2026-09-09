@@ -35,3 +35,19 @@ export function fmtSigned(value: number | null | undefined): string {
   const cls = value > 0 ? "+" : "";
   return `${cls}${fmtNum(value)}`;
 }
+
+// Canonical IV is a DECIMAL FRACTION (0.1758 == 17.58%). React only FORMATS it as
+// a percentage — it must never divide/multiply the canonical value, treat >1 as
+// invalid, or coerce null to zero. 0 stays 0%; null stays unavailable.
+export function fmtIv(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  return `${(value * 100).toFixed(2)}%`;
+}
+
+// Sign tone for change-style values: positive → "pos", negative → "neg", else "".
+export function tone(value: number | null | undefined): "" | "pos" | "neg" {
+  if (value == null || Number.isNaN(value)) return "";
+  if (value > 0) return "pos";
+  if (value < 0) return "neg";
+  return "";
+}

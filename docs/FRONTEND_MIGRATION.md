@@ -85,8 +85,8 @@ and the React app is available only via `bun run dev` (development).
 | Market Map | REACT | `GET /api/market/map` | — | treemap; tile → Charts preserves exact identity |
 | Sector Heatmap | REACT | `GET /api/market/sector-heatmap` | — | treemap; Unclassified preserved |
 | Breadth | REACT | `GET /api/market/breadth` | — | stat grid + bar + table |
-| F&O Workspace | LEGACY | `GET /api/options/*`, `/api/futures` | — | |
-| Option Chain | LEGACY | `GET /api/options/chain` | — | |
+| F&O Workspace | REACT | `GET /api/market/fno/universe`, `GET /api/market/fno/stock/{symbol}`, `POST /api/market/fno/view` | — | unified equity+index picker; bounded active-view subscription (reuses owner); futures/option ladder; IV fraction→% |
+| Option Chain | REACT | `GET /api/options/chain/view`, `GET /api/futures` | — | CE/PE ladder shared model; ATM; greeks; OI analytics (PCR/straddle) EChart; exact identity → Charts |
 | Instruments | LEGACY | `GET /api/instruments/search` | — | reused by Charts/Scanners resolve |
 | Subscriptions | LEGACY | `GET /api/market/stream` (SSE) | yes | uses `streams/` owner |
 | Settings | LEGACY | settings routes | — | |
@@ -102,7 +102,7 @@ and the React app is available only via `bun run dev` (development).
 
 ## Recommended next migration batch
 
-1. **F&O Workspace** → Option Chain
+1. ~~**F&O Workspace** → Option Chain~~ — migrated (React `/fno`)
 2. **Subscriptions / Instruments** (first real SSE consumer via `streams/`)
 3. **News / Sentiment**
 4. **Settings / Test Center**

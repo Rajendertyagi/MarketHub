@@ -5,6 +5,7 @@ import { ScannersView } from "@/features/scanners/ScannersView";
 import { BreadthView } from "@/features/breadth/BreadthView";
 import { SectorHeatmapView } from "@/features/sector-heatmap/SectorHeatmapView";
 import { MarketMapView } from "@/features/market-map/MarketMapView";
+import { FnoWorkspaceView } from "@/features/fno/FnoWorkspaceView";
 
 export function AppRouter() {
   return (
@@ -17,6 +18,7 @@ export function AppRouter() {
           <Route path="/market-map" element={<MarketMapView />} />
           <Route path="/breadth" element={<BreadthView />} />
           <Route path="/sector-heatmap" element={<SectorHeatmapView />} />
+          <Route path="/fno" element={<FnoWorkspaceView />} />
           <Route path="*" element={<Navigate to="/charts" replace />} />
         </Route>
       </Routes>
