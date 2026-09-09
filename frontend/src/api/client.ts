@@ -29,7 +29,7 @@ export interface RequestOptions {
   body?: unknown;
 }
 
-function buildIdlessUrl(
+export function buildIdlessUrl(
   path: string,
   params?: RequestOptions["params"],
 ): string {

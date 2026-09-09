@@ -20,6 +20,7 @@ import {
   getFnoUniverse,
   getFnoWorkspace,
   getFutures,
+  getIndexOptionUnderlyings,
   getOptionChainView,
   postFnoView,
   type FnoViewParams,
@@ -33,22 +34,24 @@ export interface CombinedUnderlying {
   options_available?: boolean;
 }
 
-// Curated index underlyings for the Option Chain (legacy OC_ALLOW). The
-// /api/options/underlyings endpoint returns raw derivative tokens, not these
-// canonical index names; the Option Chain UI is scoped to these four indices,
-// each of which is supported by /api/options/chain/view.
-export const INDEX_UNDERLYINGS = [
-  "NIFTY",
-  "BANKNIFTY",
-  "FINNIFTY",
-  "MIDCPNIFTY",
-] as const;
+// Index underlyings for the Option Chain are owned by the backend
+// (app.market_indices.OPTION_CHAIN_INDICES) and exposed via
+// /api/options/index-underlyings. The frontend consumes that contract instead
+// of hard-coding the supported index list (legacy OC_ALLOW).
+
+export function useIndexOptionUnderlyings() {
+  return useQuery({
+    queryKey: ["index-option-underlyings"],
+    queryFn: ({ signal }) => getIndexOptionUnderlyings(signal),
+  });
+}
 
 export function useFnoUnderlyings() {
   const equity = useQuery({
     queryKey: ["fno-universe"],
     queryFn: ({ signal }) => getFnoUniverse("", 500, signal),
   });
+  const indices = useIndexOptionUnderlyings();
 
   const all = useMemo<CombinedUnderlying[]>(() => {
     const eq = (equity.data?.universe ?? []).map((r) => ({
@@ -58,19 +61,20 @@ export function useFnoUnderlyings() {
       futures_available: r.futures_available,
       options_available: r.options_available,
     }));
-    const idx = INDEX_UNDERLYINGS.map((s) => ({
-      symbol: s,
+    const idx = (indices.data ?? []).map((u) => ({
+      symbol: u.label,
       name: null,
       kind: "index" as const,
     }));
     return [...eq, ...idx].sort((a, b) => a.symbol.localeCompare(b.symbol));
-  }, [equity.data]);
+  }, [equity.data, indices.data]);
 
   return {
     equity,
+    indices,
     all,
-    isLoading: equity.isLoading,
-    error: equity.error,
+    isLoading: equity.isLoading || indices.isLoading,
+    error: equity.error ?? indices.error,
   };
 }
 

@@ -11,6 +11,7 @@ import {
   fnoViewSchema,
   futuresResponseSchema,
   historyResponseSchema,
+  indexOptionUnderlyingsSchema,
   marketMapSchema,
   optionChainViewSchema,
   optionExpiriesSchema,
@@ -26,6 +27,7 @@ import type {
   FnoWorkspace,
   FuturesResponse,
   HistoryResponse,
+  IndexOptionUnderlying,
   Instrument,
   MarketMapSnapshot,
   OptionChainView,
@@ -258,6 +260,19 @@ export async function getOptionExpiries(
     schema: optionExpiriesSchema,
     signal,
   });
+}
+
+// Canonical index option-chain underlyings, owned by the backend
+// (app.market_indices). The frontend consumes this instead of hard-coding the
+// supported index list.
+export async function getIndexOptionUnderlyings(
+  signal?: AbortSignal,
+): Promise<IndexOptionUnderlying[]> {
+  const data = await request<{ underlyings: IndexOptionUnderlying[] }>(
+    "/options/index-underlyings",
+    { schema: indexOptionUnderlyingsSchema, signal },
+  );
+  return data.underlyings;
 }
 
 export interface OptionChainParams {

@@ -69,6 +69,34 @@ MAJOR_INDICES: tuple[dict[str, str], ...] = (
 
 _BY_LABEL = {e["label"]: e for e in MAJOR_INDICES}
 
+# Canonical index option-chain underlyings (liquid F&O option chains).
+# ONE source of truth for React + legacy consumers — do NOT duplicate this
+# list in the frontend. These are the indices supported by
+# /api/options/chain/view.
+OPTION_CHAIN_INDICES: tuple[str, ...] = (
+    "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY",
+)
+
+
+def index_option_underlyings() -> list[dict[str, str]]:
+    """Canonical index option-chain underlyings (human labels + exchange).
+
+    Returns the subset of MAJOR_INDICES that support option chains, projected
+    to the minimal fields a picker needs. The backend owns this list; the
+    frontend consumes it via the API rather than hard-coding it.
+    """
+    out: list[dict[str, str]] = []
+    for label in OPTION_CHAIN_INDICES:
+        entry = _BY_LABEL.get(label)
+        if entry is None:
+            continue
+        out.append({
+            "label": entry["label"],
+            "exchange": entry["upstox_exchange"],
+        })
+    return out
+
+
 # Catalog `underlying` column values (and labels) -> canonical label.
 # Exact normalized match only.
 _UNDERLYING_TO_LABEL = {

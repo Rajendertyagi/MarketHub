@@ -376,6 +376,14 @@ export interface OptionExpiriesResponse {
   expiries: string[];
 }
 
+// Canonical index option-chain underlying (backend-owned; see /api/options/
+// index-underlyings). The frontend consumes this instead of hard-coding the
+// supported index list.
+export interface IndexOptionUnderlying {
+  label: string;
+  exchange: string;
+}
+
 // ── Futures by underlying (GET /api/futures) ─────────────────────────────────
 export interface FutureContract {
   instrument_key: string;

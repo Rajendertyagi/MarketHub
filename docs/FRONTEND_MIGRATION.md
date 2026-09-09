@@ -85,8 +85,8 @@ and the React app is available only via `bun run dev` (development).
 | Market Map | REACT | `GET /api/market/map` | — | treemap; tile → Charts preserves exact identity |
 | Sector Heatmap | REACT | `GET /api/market/sector-heatmap` | — | treemap; Unclassified preserved |
 | Breadth | REACT | `GET /api/market/breadth` | — | stat grid + bar + table |
-| F&O Workspace | REACT | `GET /api/market/fno/universe`, `GET /api/market/fno/stock/{symbol}`, `POST /api/market/fno/view` | — | unified equity+index picker; bounded active-view subscription (reuses owner); futures/option ladder; IV fraction→% |
-| Option Chain | REACT | `GET /api/options/chain/view`, `GET /api/futures` | — | CE/PE ladder shared model; ATM; greeks; OI analytics (PCR/straddle) EChart; exact identity → Charts |
+| F&O Workspace | VERIFIED | `GET /api/market/fno/universe`, `GET /api/market/fno/stock/{symbol}`, `POST /api/market/fno/view` | — | unified equity+index picker; index underlyings consumed from backend (`GET /api/options/index-underlyings`, no front-end hard-code); bounded active-view subscription (reuses owner); futures/option ladder; IV fraction→% |
+| Option Chain | VERIFIED | `GET /api/options/chain/view`, `GET /api/futures` | — | CE/PE ladder shared model; ATM; greeks; OI analytics (PCR/straddle) EChart; exact identity → Charts |
 | Instruments | LEGACY | `GET /api/instruments/search` | — | reused by Charts/Scanners resolve |
 | Subscriptions | LEGACY | `GET /api/market/stream` (SSE) | yes | uses `streams/` owner |
 | Settings | LEGACY | settings routes | — | |

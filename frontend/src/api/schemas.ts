@@ -357,6 +357,17 @@ export const optionExpiriesSchema = z.object({
   expiries: z.array(z.string()),
 });
 
+// Canonical index option-chain underlyings (backend-owned; the frontend no
+// longer hard-codes this list). Human/canonical labels + exchange only.
+export const indexOptionUnderlyingsSchema = z.object({
+  underlyings: z.array(
+    z.object({
+      label: z.string(),
+      exchange: z.string(),
+    }),
+  ),
+});
+
 export const futureContractSchema = z
   .object({
     instrument_key: z.string(),

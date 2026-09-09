@@ -135,8 +135,15 @@ function makeFetch() {
           },
         ],
       });
-    if (url.includes("/api/options/underlyings"))
-      return jsonResponse({ underlyings: ["NIFTY", "BANKNIFTY"] });
+    if (url.includes("/api/options/index-underlyings"))
+      return jsonResponse({
+        underlyings: [
+          { label: "NIFTY", exchange: "NSE" },
+          { label: "BANKNIFTY", exchange: "NSE" },
+          { label: "FINNIFTY", exchange: "NSE" },
+          { label: "MIDCPNIFTY", exchange: "NSE" },
+        ],
+      });
     if (url.includes("/api/market/fno/view"))
       return jsonResponse({ status: "ok", symbol: "HDFCBANK", active_view: {}, resolved_count: 0, apply: {} });
     if (url.includes("/api/futures"))
@@ -223,5 +230,27 @@ describe("FnoWorkspaceView", () => {
       return l!;
     });
     expect(optLink.getAttribute("href")).toContain("key=NSE%3A1");
+  });
+
+  it("consumes backend-owned index option underlyings (no hard-coded list)", async () => {
+    const fetchMock = makeFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    renderWithProviders(<FnoWorkspaceView />, ["/fno"]);
+
+    // The canonical index list is fetched from the backend endpoint, not
+    // hard-coded in the frontend.
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some((c: any[]) =>
+          String(c[0]).includes("/api/options/index-underlyings"),
+        ),
+      ).toBe(true),
+    );
+
+    // Index labels from the backend appear in the picker.
+    expect(await screen.findByText("NIFTY")).toBeTruthy();
+    expect(await screen.findByText("BANKNIFTY")).toBeTruthy();
+    expect(await screen.findByText("FINNIFTY")).toBeTruthy();
+    expect(await screen.findByText("MIDCPNIFTY")).toBeTruthy();
   });
 });

@@ -503,11 +503,23 @@ def build_intel_routes(market_intel: Any,
                                exc)
         return _json(result)
 
+    async def _index_option_underlyings(request: Request) -> Response:  # noqa: ARG001
+        """Canonical index option-chain underlyings (backend-owned).
+
+        The frontend consumes this instead of hard-coding the supported
+        index list. Human/canonical labels only — never raw derivative
+        tokens (see /api/options/underlyings).
+        """
+        from app.market_indices import index_option_underlyings
+        return _json({"underlyings": index_option_underlyings()})
+
     return [
         Route("/api/market/search", endpoint=_search, methods=["GET"]),
         Route("/api/futures", endpoint=_futures, methods=["GET"]),
         Route("/api/options/chain/view", endpoint=_intel_chain,
               methods=["GET"]),
+        Route("/api/options/index-underlyings",
+              endpoint=_index_option_underlyings, methods=["GET"]),
     ]
 
 
