@@ -1277,7 +1277,7 @@ app = Starlette(
     + _build_log_routes(_log_buffer, _log_sse_broker)
     + _build_news_routes(_news_service)
     + _build_diag_routes(_diagnostics_runner)
-    + [Mount("/ui", app=StaticFiles(directory=str(PROJECT_ROOT / "web" / "ui"), html=True),
+    + [Mount("/ui", app=StaticFiles(directory=str(PROJECT_ROOT / "frontend" / "dist"), html=True),
             name="ui")],
     middleware=list(mcp_asgi_app.user_middleware),
     lifespan=_lifespan,
