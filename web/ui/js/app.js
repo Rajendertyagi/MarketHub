@@ -43,6 +43,7 @@ import { initFnoUI, openFno } from "./fno.js?v=2";
 import { initBreadthUI, openBreadth } from "./breadth.js";
 import { initSectorHeatmapUI, openSectorHeatmap } from "./sector-heatmap.js";
 import { initMarketMapUI, openMarketMap } from "./market-map.js";
+import { initScannerUI, openScanner } from "./scanner.js";
 
   // ── DOM shortcuts ───────────────────────────────────────────────────────
   const $ = (id) => document.getElementById(id);
@@ -242,6 +243,7 @@ import { initMarketMapUI, openMarketMap } from "./market-map.js";
     initBreadthUI();
     initSectorHeatmapUI();
     initMarketMapUI();
+    initScannerUI();
     initLogsUI();
     initSplitters();
     initShell();   // header index strip + bottom status bar (no new streams)
@@ -257,6 +259,7 @@ import { initMarketMapUI, openMarketMap } from "./market-map.js";
     onViewEnter("breadth", openBreadth);
     onViewEnter("sector-heatmap", openSectorHeatmap);
     onViewEnter("market-map", openMarketMap);
+    onViewEnter("scanner", openScanner);
     onViewEnter("diagnostics", openDiagnostics);
     initRouter();
     loadInitialQuotes();

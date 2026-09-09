@@ -1,0 +1,23 @@
+/* Market Scanners workspace (Phase C / D) — reuses app table/chip styles. */
+
+#view-scanner .toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+#view-scanner #scanner-freshness {
+  margin-left: auto;
+}
+
+#scanner-table td:nth-child(4),
+#scanner-table td:nth-child(5),
+#scanner-table td:nth-child(6) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+#scanner-table .pos { color: var(--pos, #1f9d55); }
+#scanner-table .neg { color: var(--neg, #d64545); }

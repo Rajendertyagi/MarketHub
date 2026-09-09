@@ -24,6 +24,7 @@ import logging
 logger = logging.getLogger("event_server")
 
 from market.market_universe import resolve_universe as _resolve_universe
+from market.scanner import ScannerEngine
 from market.breadth import compute_breadth as _compute_breadth
 from market.sector_heatmap import compute_sector_heatmap as _compute_sector_heatmap
 from market.market_map import compute_market_map as _compute_market_map
@@ -168,6 +169,35 @@ def build_market_routes(
     def _reader():
         # Bind the injected canonical MarketService as the quote reader.
         return market_service.get_quote_now if market_service else (lambda e, t: None)
+
+    def _scanner_engine():
+        if index_catalog is None:
+            return None
+        return ScannerEngine(index_catalog)
+
+    async def _scanners_list(request: Request) -> Response:  # noqa: ARG001
+        engine = _scanner_engine()
+        if engine is None:
+            return _json({"error": "instrument catalog unavailable"}, 503)
+        return _json({"status": "ok", "scanners": engine.list_scanners()})
+
+    async def _scanner_run(request: Request) -> Response:
+        engine = _scanner_engine()
+        if engine is None:
+            return _json({"error": "instrument catalog unavailable"}, 503)
+        if market_service is None:
+            return _json({"error": "market service unavailable"}, 503)
+        name = (request.path_params.get("name") or "").strip()
+        universe = (request.query_params.get("universe") or "FNO").upper()
+        try:
+            limit = int(request.query_params.get("limit", 25))
+        except ValueError:
+            limit = 25
+        try:
+            result = engine.scan(name, universe, _reader(), limit=limit)
+        except ValueError as exc:
+            return _json({"error": str(exc)}, 400)
+        return _json({"status": "ok", **result.to_dict()})
 
     async def _breadth(request: Request) -> Response:
         if market_service is None:
@@ -470,6 +500,9 @@ def build_market_routes(
               endpoint=_sector_diag, methods=["GET"]),
         Route("/api/market/map", endpoint=_market_map, methods=["GET"]),
         Route("/api/market/map/diagnostics", endpoint=_market_map_diag,
+              methods=["GET"]),
+        Route("/api/market/scanners", endpoint=_scanners_list, methods=["GET"]),
+        Route("/api/market/scanner/{name}", endpoint=_scanner_run,
               methods=["GET"]),
         Route("/api/market/analytics/coverage", endpoint=_analytics_coverage_get,
               methods=["GET"]),
