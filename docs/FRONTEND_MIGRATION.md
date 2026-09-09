@@ -82,9 +82,9 @@ and the React app is available only via `bun run dev` (development).
 | Shell / Theme | REACT | — | — | AppShell, dark/light, HashRouter |
 | Charts | REACT | `GET /api/market/history` | — | candlestick+volume+SMA20/50, chronological normalization |
 | Scanners | REACT | `GET /api/market/scanners`, `GET /api/market/scanner/{name}` | — | metadata-driven controls, IV fraction→% |
-| Market Map | LEGACY | `GET /api/market/map` | — | next migration batch |
-| Sector Heatmap | LEGACY | `GET /api/market/sector-heatmap` | — | |
-| Breadth | LEGACY | `GET /api/market/breadth` | — | |
+| Market Map | REACT | `GET /api/market/map` | — | treemap; tile → Charts preserves exact identity |
+| Sector Heatmap | REACT | `GET /api/market/sector-heatmap` | — | treemap; Unclassified preserved |
+| Breadth | REACT | `GET /api/market/breadth` | — | stat grid + bar + table |
 | F&O Workspace | LEGACY | `GET /api/options/*`, `/api/futures` | — | |
 | Option Chain | LEGACY | `GET /api/options/chain` | — | |
 | Instruments | LEGACY | `GET /api/instruments/search` | — | reused by Charts/Scanners resolve |
@@ -102,17 +102,38 @@ and the React app is available only via `bun run dev` (development).
 
 ## Recommended next migration batch
 
-1. **Market Map** (treemap, reuses instrument identity → Charts)
-2. **Breadth**
-3. **Sector Heatmap**
-4. **F&O Workspace**
-5. **Option Chain**
-6. **Subscriptions / Instruments** (first real SSE consumer via `streams/`)
-7. **News / Sentiment**
-8. **Settings / Test Center**
-9. **Alerts / AI Alerts**
-10. **remaining views**
-11. **final legacy frontend removal** (`web/ui/js`, `web/ui/css`) once parity verified
+1. **F&O Workspace** → Option Chain
+2. **Subscriptions / Instruments** (first real SSE consumer via `streams/`)
+3. **News / Sentiment**
+4. **Settings / Test Center**
+5. **Alerts / AI Alerts**
+6. **remaining views**
+7. **final legacy frontend removal** (`web/ui/js`, `web/ui/css`) once parity verified
+
+### Market analytics migration notes (Breadth / Sector Heatmap / Market Map)
+
+Migrated in one batch. All three consume the **existing** canonical REST
+endpoints and render only; no aggregation/breadth math, sector classification, or
+market-map weighting is computed in React.
+
+- **Breadth** (`GET /api/market/breadth`): summary stat grid (advances/declines/
+  unchanged/unavailable/eligible/quoted/unclassified, A/D ratio, net advances,
+  advance/decline %), a pure ECharts stacked bar, and a filterable/sortable
+  constituent table.
+- **Sector Heatmap** (`GET /api/market/sector-heatmap`): finviz-style ECharts
+  treemap; one group per canonical sector, leaves colored by the backend Change %
+  only; `Unclassified` preserved explicitly; unavailable stocks get a gray tile.
+- **Market Map** (`GET /api/market/map`): finviz-style ECharts treemap; sectors as
+  groups, stocks as leaves sized by equal area (or bounded volume weight) and
+  colored by Change %; clicking a tile navigates to Charts preserving the exact
+  instrument identity (never substituting futures for cash).
+- **Analytics coverage**: all three reuse the existing `/market/analytics/coverage`
+  owner (request on universe change, clear on unmount) — best-effort, non-fatal.
+  No subscription architecture change, no direct broker calls from React.
+- **Refresh**: TanStack Query with a 5s `refetchInterval` (no manual timers, no
+  overlapping requests); cancellation via the query `signal`.
+- **Universe set**: the single canonical `market_universe.UNIVERSE_NAMES`
+  (FNO, NSE_EQ, NIFTY50, NIFTYNXT50, BANKNIFTY) — never a divergent frontend model.
 
 ## Known blockers / debt (do NOT mix into migration)
 
