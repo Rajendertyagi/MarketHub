@@ -2,9 +2,12 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath, URL } from "node:url";
 
-// Production target is the existing Python server's `/ui` mount, which serves
-// the `web/ui` directory. The build emits into `web/ui` (index.html + assets/)
-// so the app is served at `/ui` with no backend runtime changes.
+// React source lives in `frontend/src`; the generated artifact is emitted to
+// `frontend/dist` (isolated, gitignored). The existing Python server's `/ui`
+// mount is then pointed at `frontend/dist` for production serving (see
+// docs/FRONTEND_MIGRATION.md). The build NEVER writes into tracked legacy
+// `web/ui` source, so no tracked file is overwritten and no manual git restore
+// is required.
 export default defineConfig({
   plugins: [react()],
   base: "/ui/",
@@ -14,8 +17,8 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: "../web/ui",
-    emptyOutDir: false,
+    outDir: "dist",
+    emptyOutDir: true,
     sourcemap: true,
     rollupOptions: {
       output: {

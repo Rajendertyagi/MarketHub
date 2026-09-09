@@ -50,9 +50,10 @@ tmp/
 # MCP node_modules (if any)
 node_modules/
 
-# React frontend build output (produced by `bun run build` in frontend/,
-# served by the existing Python /ui mount). Not committed; rebuild at deploy.
-web/ui/assets/
+# React frontend generated build artifact (produced by `bun run build` from
+# frontend/). Isolated from tracked legacy `web/ui` source; not committed,
+# rebuilt at deploy. Served at /ui by the Python server.
+frontend/dist/
 
 # AI assistant memory
 .workbuddy-ai/
