@@ -285,6 +285,14 @@
         <option value="25" selected>Top 25</option>
         <option value="50">Top 50</option>
       </select>
+      <span id="scanner-ctx" class="scanner-ctx hidden">
+        <label class="mdsub-check">Expiry <input type="text" id="scanner-expiry" class="filter-input" placeholder="auto" size="11" aria-label="Option expiry"></label>
+        <label class="mdsub-check">ATM ±<select id="scanner-atm" class="ui-select" aria-label="ATM range">
+          <option value="2">2</option><option value="3">3</option><option value="5" selected>5</option>
+          <option value="8">8</option><option value="10">10</option></select></label>
+        <label class="mdsub-check">Type <select id="scanner-otype" class="ui-select" aria-label="Option type">
+          <option value="both" selected>Both</option><option value="CE">CE</option><option value="PE">PE</option></select></label>
+      </span>
       <button id="scanner-run" class="btn">Run Scan</button>
       <span id="scanner-freshness" class="chip chip-off"></span>
     </div>
@@ -293,8 +301,8 @@
       <div class="panel-header"><h2 id="scanner-title">Scanner</h2></div>
       <div class="table-scroll">
         <table class="data-table" id="scanner-table">
-          <thead><tr><th>#</th><th>Symbol</th><th>Sector</th><th>LTP</th><th>Chg%</th><th>Volume</th><th>Status</th><th>Updated</th></tr></thead>
-          <tbody id="scanner-body"><tr><td colspan="8" class="empty-row">Choose a scanner and run.</td></tr></tbody>
+          <thead id="scanner-head"></thead>
+          <tbody id="scanner-body"><tr><td class="empty-row">Choose a scanner and run.</td></tr></tbody>
         </table>
       </div>
     </div>
