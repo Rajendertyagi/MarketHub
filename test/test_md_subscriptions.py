@@ -311,42 +311,51 @@ async def test_resolution_core(runner: R) -> None:
 
 
 async def test_resolution_futures(runner: R) -> None:
-    svc, store, db = _make_svc()
-    svc.ensure_defaults()
-    # current future only
-    svc.set_derivative_rule("NIFTY", futures_enabled=True, futures_count=1,
-                            options_enabled=False, options_count=1,
-                            strikes_below=0, strikes_above=0,
-                            calls_enabled=True, puts_enabled=True)
-    r = svc.resolve()
-    futs = [c for c in r["contracts"] if c["kind"] == "future"]
-    runner.assert_eq("current-future", len(futs), 1)
-    runner.assert_eq("current-expiry", futs[0]["expiry"], "2026-09-08")
-    # current + next
-    svc.set_derivative_rule("NIFTY", futures_enabled=True, futures_count=2,
-                            options_enabled=False, options_count=1,
-                            strikes_below=0, strikes_above=0,
-                            calls_enabled=True, puts_enabled=True)
-    futs2 = [c for c in svc.resolve()["contracts"] if c["kind"] == "future"]
-    runner.assert_eq("two-futures", len(futs2), 1)  # catalog has 1 row; dupes collapse
-    # rollover: first expiry passes → next becomes current
-    svc_rolled, _, db2 = _make_svc(
-        catalog=_make_catalog(expiries=["2026-09-04", "2026-09-08"]),
-        spot=None)
-    svc_rolled.ensure_defaults()
-    svc_rolled.set_derivative_rule("NIFTY", futures_enabled=True,
-                                   futures_count=1, options_enabled=False,
-                                   options_count=1, strikes_below=0,
-                                   strikes_above=0, calls_enabled=True,
-                                   puts_enabled=True)
-    # freeze "today" past the first expiry via catalog side effect: emulate
-    # by removing the early expiry from the catalog list.
-    futs3 = [c for c in svc_rolled.resolve()["contracts"]
-             if c["kind"] == "future"]
-    runner.assert_true("rollover-only-unexpired",
-                       all(f["expiry"] >= "2026-09-04" for f in futs3))
-    os.unlink(db)
-    os.unlink(db2)
+    import app.subscriptions.service as _svc_mod
+    _orig_today = _svc_mod._today_iso
+    # Freeze the reference "today" so the test is deterministic and independent
+    # of the real system date. Production still filters expired contracts via
+    # date.today() — only the test's clock is pinned.
+    _svc_mod._today_iso = lambda: "2026-09-01"
+    try:
+        svc, store, db = _make_svc()
+        svc.ensure_defaults()
+        # current future only
+        svc.set_derivative_rule("NIFTY", futures_enabled=True, futures_count=1,
+                                options_enabled=False, options_count=1,
+                                strikes_below=0, strikes_above=0,
+                                calls_enabled=True, puts_enabled=True)
+        r = svc.resolve()
+        futs = [c for c in r["contracts"] if c["kind"] == "future"]
+        runner.assert_eq("current-future", len(futs), 1)
+        runner.assert_eq("current-expiry", futs[0]["expiry"], "2026-09-08")
+        # current + next
+        svc.set_derivative_rule("NIFTY", futures_enabled=True, futures_count=2,
+                                options_enabled=False, options_count=1,
+                                strikes_below=0, strikes_above=0,
+                                calls_enabled=True, puts_enabled=True)
+        futs2 = [c for c in svc.resolve()["contracts"] if c["kind"] == "future"]
+        runner.assert_eq("two-futures", len(futs2), 1)  # catalog has 1 row; dupes collapse
+        # rollover: first expiry passes → next becomes current
+        svc_rolled, _, db2 = _make_svc(
+            catalog=_make_catalog(expiries=["2026-09-04", "2026-09-08"]),
+            spot=None)
+        svc_rolled.ensure_defaults()
+        svc_rolled.set_derivative_rule("NIFTY", futures_enabled=True,
+                                       futures_count=1, options_enabled=False,
+                                       options_count=1, strikes_below=0,
+                                       strikes_above=0, calls_enabled=True,
+                                       puts_enabled=True)
+        # With "today" frozen before both expiries, the resolution keeps every
+        # non-expired contract and the nearest becomes current.
+        futs3 = [c for c in svc_rolled.resolve()["contracts"]
+                 if c["kind"] == "future"]
+        runner.assert_true("rollover-only-unexpired",
+                           all(f["expiry"] >= "2026-09-04" for f in futs3))
+        os.unlink(db)
+        os.unlink(db2)
+    finally:
+        _svc_mod._today_iso = _orig_today
 
 
 async def test_resolution_options(runner: R) -> None:
