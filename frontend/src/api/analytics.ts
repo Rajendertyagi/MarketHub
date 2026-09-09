@@ -14,7 +14,7 @@ export async function ensureAnalyticsCoverage(universe: string): Promise<void> {
   try {
     await request("/market/analytics/coverage", {
       method: "POST",
-      params: { universe },
+      body: { universe },
     });
   } catch {
     // Non-fatal: live coverage unavailable; views still render canonical quotes.

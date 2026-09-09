@@ -25,16 +25,21 @@ export interface RequestOptions {
   schema?: z.ZodType<unknown>;
   /** HTTP method (default GET). */
   method?: "GET" | "POST" | "PUT" | "DELETE";
+  /** JSON request body (for POST/PUT). Sent as application/json. */
+  body?: unknown;
 }
 
-function buildUrl(
+function buildIdlessUrl(
   path: string,
   params?: RequestOptions["params"],
 ): string {
-  const url = new URL(
-    path.startsWith("/") ? path : `${API_BASE}/${path}`,
-    window.location.origin,
-  );
+  // Every endpoint lives under the API base. Call sites pass paths like
+  // "/market/breadth"; ensure the "/api" prefix is always present (paths that
+  // already include it are left untouched).
+  const fullPath = path.startsWith("/api/")
+    ? path
+    : `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
+  const url = new URL(fullPath, window.location.origin);
   if (params) {
     for (const [key, value] of Object.entries(params)) {
       if (value === undefined || value === null || value === "") continue;
@@ -63,14 +68,24 @@ export async function request<T>(
   path: string,
   options: RequestOptions = {},
 ): Promise<T> {
-  const url = buildUrl(path, options.params);
+  const url = buildIdlessUrl(path, options.params);
+  const headers: Record<string, string> = { Accept: "application/json" };
+  const init: RequestInit = {
+    method: options.method ?? "GET",
+    headers,
+    signal: options.signal,
+  };
+  if (
+    options.body !== undefined &&
+    options.method !== undefined &&
+    options.method !== "GET"
+  ) {
+    init.body = JSON.stringify(options.body);
+    headers["Content-Type"] = "application/json";
+  }
   let resp: Response;
   try {
-    resp = await fetch(url, {
-      method: options.method ?? "GET",
-      headers: { Accept: "application/json" },
-      signal: options.signal,
-    });
+    resp = await fetch(url, init);
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
       throw new ApiError("abort", "Request aborted", { status: 0 });
