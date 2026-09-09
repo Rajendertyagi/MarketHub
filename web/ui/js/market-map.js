@@ -24,6 +24,7 @@
 import { apiGet } from "./api.js";
 import { switchView, onViewLeave } from "./router.js";
 import { openStock } from "./fno.js";
+import { openChart } from "./charts.js";
 import { ensureAnalyticsCoverage, clearAnalyticsCoverage } from "./analytics.js";
 
 const $ = (id) => document.getElementById(id);
@@ -94,14 +95,10 @@ function _colorClass(status, pct) {
 }
 
 function _onStockClick(symbol, fno) {
-  if (fno) {
-    switchView("fno");
-    openStock(symbol);
-  } else {
-    const msg = $("mm-message");
-    if (msg) msg.textContent =
-      `${symbol} has no listed derivatives — open the Instruments page to inspect it.`;
-  }
+  // Phase 6: a Market Map tile charts the appropriate CASH instrument. The F&O
+  // workspace remains reachable from the F&O tab; the symbol is never silently
+  // substituted for a derivative.
+  openChart({ symbol, type: "EQUITY" });
 }
 
 // Apply the Sector / Movement / Search filters and group by sector.

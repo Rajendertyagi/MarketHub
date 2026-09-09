@@ -10,6 +10,7 @@
  */
 
 import { apiGet, apiPost } from "./api.js";
+import { openChart } from "./charts.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -106,6 +107,10 @@ function _renderFutures(futures) {
   }
   for (const f of futures) {
     const tr = document.createElement("tr");
+    tr.style.cursor = "pointer";
+    tr.title = "Chart " + (f.label || "future");
+    // Phase 6: clicking a future charts that EXACT derivative contract.
+    tr.addEventListener("click", () => openChart({ symbol: f.label, type: "FUTURE" }));
     const q = f.quote || {};
     const cell = (v) => {
       const td = document.createElement("td");
@@ -151,12 +156,31 @@ function _renderChain(options, atm) {
     };
     const ce = slot.CE || {}, pe = slot.PE || {};
     const qc = ce.quote || {}, qp = pe.quote || {};
+    // Phase 6: the LTP cells chart the EXACT option contract (CE / PE).
+    const ceLtp = cell(qc.ltp);
+    if (ce.label) {
+      ceLtp.classList.add("link");
+      ceLtp.title = "Chart " + ce.label;
+      ceLtp.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openChart({ symbol: ce.label, type: "OPTION" });
+      });
+    }
+    const peLtp = cell(qp.ltp);
+    if (pe.label) {
+      peLtp.classList.add("link");
+      peLtp.title = "Chart " + pe.label;
+      peLtp.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openChart({ symbol: pe.label, type: "OPTION" });
+      });
+    }
     tr.append(
       cell(qc.open_interest), cell(qc.oi_change), cell(qc.volume),
-      cell(_fmtIv(qc.iv)), cell(qc.ltp), cell(qc.best_bid !== undefined
+      cell(_fmtIv(qc.iv)), ceLtp, cell(qc.best_bid !== undefined
         ? `${_num(qc.best_bid)}/${_num(qc.best_ask)}` : null),
       cell(strike),
-      cell(qp.ltp), cell(qp.best_bid !== undefined
+      peLtp, cell(qp.best_bid !== undefined
         ? `${_num(qp.best_bid)}/${_num(qp.best_ask)}` : null),
       cell(_fmtIv(qp.iv)), cell(qp.volume), cell(qp.oi_change),
       cell(qp.open_interest));

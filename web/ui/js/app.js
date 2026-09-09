@@ -19,7 +19,7 @@ import { initSentimentUI, openSentiment } from "./sentiment.js";
 import { initLogsUI, openLogs } from "./logs.js";
 import { connectSSE, initFilter, loadInitialQuotes } from "./market.js?v=37";
 import { initDrawer } from "./quotes.js";
-import { initCharts } from "./charts.js";
+import { initCharts, openCharts, closeCharts } from "./charts.js";
 import { initAlerts, initAlertPush } from "./alerts.js";
 import { initAIAlerts, openAIAlerts } from "./ai-alerts.js";
 import { initMCPTools, openMCPTools } from "./mcp-tools.js";
@@ -261,6 +261,8 @@ import { initScannerUI, openScanner } from "./scanner.js";
     onViewEnter("market-map", openMarketMap);
     onViewEnter("scanner", openScanner);
     onViewEnter("diagnostics", openDiagnostics);
+    onViewEnter("charts", openCharts);
+    onViewLeave("charts", closeCharts);
     initRouter();
     loadInitialQuotes();
     connectSSE();
@@ -270,4 +272,8 @@ import { initScannerUI, openScanner } from "./scanner.js";
     setInterval(pollAuthStatus, 10000);
   }
 
-  document.addEventListener("DOMContentLoaded", init);
+  // Bootstrap only in a real DOM (browser). The guard keeps module import
+  // side-effect free so tooling (bun --check) can evaluate without a DOM.
+  if (typeof document !== "undefined") {
+    document.addEventListener("DOMContentLoaded", init);
+  }
