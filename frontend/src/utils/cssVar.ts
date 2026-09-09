@@ -32,8 +32,10 @@ export function themeColors() {
     accent: cssVar("--accent"),
     info: cssVar("--info"),
     textMuted: cssVar("--text-muted"),
+    textFaint: cssVar("--text-faint"),
     border: cssVar("--border"),
     surface: cssVar("--surface-1"),
+    surface2: cssVar("--surface-2"),
     text: cssVar("--text"),
   };
 }

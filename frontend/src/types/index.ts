@@ -96,6 +96,146 @@ export interface ScannerRunParams {
   option_type?: "CE" | "PE" | "BOTH";
 }
 
+// ── Market analytics universes ───────────────────────────────────────────────
+// The single canonical universe set (market/market_universe.UNIVERSE_NAMES),
+// which is also the only set accepted by the analytics-coverage owner. The
+// frontend never invents a divergent universe model.
+export const ANALYTICS_UNIVERSES = [
+  "FNO",
+  "NSE_EQ",
+  "NIFTY50",
+  "NIFTYNXT50",
+  "BANKNIFTY",
+] as const;
+
+export type AnalyticsUniverse = (typeof ANALYTICS_UNIVERSES)[number];
+
+// ── Market Breadth (GET /api/market/breadth) ────────────────────────────────
+export type BreadthStatus = "advance" | "decline" | "unchanged" | "unavailable";
+
+export interface BreadthRow {
+  symbol: string;
+  name: string | null;
+  exchange: string;
+  instrument_token: string | null;
+  ltp: number | null;
+  change: number | null;
+  change_percent: number | null;
+  status: BreadthStatus;
+  sector: string;
+  received_ts: string | null;
+}
+
+export interface BreadthSnapshot {
+  universe: string;
+  eligible: number;
+  quoted: number;
+  unavailable: number;
+  advances: number;
+  declines: number;
+  unchanged: number;
+  advance_percent: number;
+  decline_percent: number;
+  ad_ratio: number | null;
+  net_advances: number;
+  as_of: string | null;
+  unclassified: number;
+  stale: boolean;
+  volume_advancing: number | null;
+  volume_declining: number | null;
+  intraday_highs: number | null;
+  intraday_lows: number | null;
+  weighting: string;
+  rows: BreadthRow[];
+}
+
+// ── Sector Heatmap (GET /api/market/sector-heatmap) ─────────────────────────
+export interface SectorMember {
+  symbol: string;
+  name: string | null;
+  ltp: number | null;
+  change: number | null;
+  change_percent: number | null;
+  volume: number | null;
+  status: string;
+  fno: boolean;
+}
+
+export interface SectorRow {
+  sector: string;
+  constituent_count: number;
+  quoted: number;
+  unavailable: number;
+  advances: number;
+  declines: number;
+  unchanged: number;
+  average_change_percent: number | null;
+  median_change_percent: number | null;
+  net_advances: number;
+  top_gainer: Record<string, unknown> | null;
+  top_loser: Record<string, unknown> | null;
+  weighting: string;
+  members: SectorMember[];
+}
+
+export interface SectorHeatmapSnapshot {
+  universe: string;
+  sector_count: number;
+  classified_count: number;
+  unclassified_count: number;
+  eligible: number;
+  quoted: number;
+  unavailable: number;
+  advances: number;
+  declines: number;
+  unchanged: number;
+  as_of: string | null;
+  weighting: string;
+  stale: boolean;
+  sectors: SectorRow[];
+  reconciliation: Record<string, unknown>;
+}
+
+// ── Market Map (GET /api/market/map) ────────────────────────────────────────
+export interface MapStock {
+  symbol: string;
+  exchange: string;
+  instrument_token: string | null;
+  sector: string;
+  ltp: number | null;
+  change: number | null;
+  change_percent: number | null;
+  volume: number | null;
+  status: string;
+  fno: boolean;
+  received_ts: string | null;
+}
+
+export interface MarketMapSector {
+  sector: string;
+  stocks: MapStock[];
+  advances: number;
+  declines: number;
+  unchanged: number;
+  unavailable: number;
+  quoted: number;
+}
+
+export interface MarketMapSnapshot {
+  universe: string;
+  eligible: number;
+  quoted: number;
+  unavailable: number;
+  advances: number;
+  declines: number;
+  unchanged: number;
+  unclassified: number;
+  as_of: string | null;
+  stale: boolean;
+  sectors: MarketMapSector[];
+  reconciliation: Record<string, unknown>;
+}
+
 // Typed error taxonomy produced by the API client (see api/client.ts).
 export type ApiErrorKind =
   | "network"

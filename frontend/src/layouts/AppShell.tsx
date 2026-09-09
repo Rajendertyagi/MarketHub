@@ -4,6 +4,9 @@ import { useTheme } from "@/app/ThemeProvider";
 const NAV = [
   { to: "/charts", label: "Charts" },
   { to: "/scanners", label: "Scanners" },
+  { to: "/market-map", label: "Market Map" },
+  { to: "/breadth", label: "Breadth" },
+  { to: "/sector-heatmap", label: "Sector Heatmap" },
 ];
 
 export function AppShell() {

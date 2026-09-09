@@ -422,6 +422,48 @@ a {
   border-radius: var(--radius-lg);
 }
 
+/* ---------- Stat cards (analytics summary) ---------- */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: var(--space-3);
+}
+
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.stat-label {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.stat-value {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-value.pos {
+  color: var(--pos);
+}
+
+.stat-value.neg {
+  color: var(--neg);
+}
+
+.stat-value.muted {
+  color: var(--text-muted);
+}
+
 .chart-toolbar {
   display: flex;
   flex-wrap: wrap;

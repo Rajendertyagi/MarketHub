@@ -5,17 +5,23 @@
 
 import { request } from "./client";
 import {
+  breadthSchema,
   historyResponseSchema,
+  marketMapSchema,
   scannersListSchema,
   scanResultSchema,
+  sectorHeatmapSchema,
 } from "./schemas";
 import type {
+  BreadthSnapshot,
   Candle,
   HistoryResponse,
   Instrument,
+  MarketMapSnapshot,
   ScannerDef,
   ScanResult,
   ScannerRunParams,
+  SectorHeatmapSnapshot,
 } from "@/types";
 
 export interface HistoryParams {
@@ -121,6 +127,43 @@ export async function resolveInstrument(
   );
   const match = results.find((r) => r.tradingsymbol === tradingsymbol);
   return match ?? results[0] ?? null;
+}
+
+// ── Market analytics (Breadth / Sector Heatmap / Market Map) ─────────────────
+// Thin typed wrappers over the canonical aggregated endpoints. They preserve
+// backend naming/semantics and never recompute canonical values client-side.
+
+export async function getBreadth(
+  universe: string,
+  signal?: AbortSignal,
+): Promise<BreadthSnapshot> {
+  return request<BreadthSnapshot>("/market/breadth", {
+    params: { universe },
+    schema: breadthSchema,
+    signal,
+  });
+}
+
+export async function getSectorHeatmap(
+  universe: string,
+  signal?: AbortSignal,
+): Promise<SectorHeatmapSnapshot> {
+  return request<SectorHeatmapSnapshot>("/market/sector-heatmap", {
+    params: { universe, members: 1 },
+    schema: sectorHeatmapSchema,
+    signal,
+  });
+}
+
+export async function getMarketMap(
+  universe: string,
+  signal?: AbortSignal,
+): Promise<MarketMapSnapshot> {
+  return request<MarketMapSnapshot>("/market/map", {
+    params: { universe },
+    schema: marketMapSchema,
+    signal,
+  });
 }
 
 export type { Candle };
