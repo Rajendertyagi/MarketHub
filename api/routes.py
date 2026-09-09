@@ -193,8 +193,16 @@ def build_market_routes(
             limit = int(request.query_params.get("limit", 25))
         except ValueError:
             limit = 25
+        expiry = (request.query_params.get("expiry") or None)
         try:
-            result = engine.scan(name, universe, _reader(), limit=limit)
+            atm_range = int(request.query_params.get("atm_range", 5))
+        except ValueError:
+            atm_range = 5
+        option_type = (request.query_params.get("option_type") or "both").upper()
+        try:
+            result = engine.scan(
+                name, universe, _reader(), limit=limit,
+                expiry=expiry, atm_range=atm_range, option_type=option_type)
         except ValueError as exc:
             return _json({"error": str(exc)}, 400)
         return _json({"status": "ok", **result.to_dict()})
