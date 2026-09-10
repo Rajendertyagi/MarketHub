@@ -89,26 +89,26 @@ and the React app is available only via `bun run dev` (development).
 | Option Chain | VERIFIED | `GET /api/options/chain/view`, `GET /api/futures` | — | CE/PE ladder shared model; ATM; greeks; OI analytics (PCR/straddle) EChart; exact identity → Charts |
 | Instruments | VERIFIED | `GET /api/instruments/segments`, `PUT /api/instruments/segments`, `POST /api/instruments/sync`, `GET /api/instruments/sync-state` | — | catalog/source status; segment preferences (saved, not defaults); Save & Re-sync; backend owns master sync + Fyers segment semantics |
 | Subscriptions | VERIFIED | `GET /api/subscriptions`, `PATCH /api/subscriptions/indices`, `POST/PATCH/DELETE /api/subscriptions/stocks`, `PUT/DELETE /api/subscriptions/rules`, `POST /api/subscriptions/apply` | — | DB-backed 8 canonical indices (backend-owned, never redefined in UI); stocks; derivative rules (current/next expiry, ATM range, CE/PE); Save & Apply reconciles live feed without restart |
-| Settings | LEGACY | settings routes | — | |
-| Test Center | LEGACY | diagnostics | — | |
-| News | LEGACY | `GET /api/news/*` | — | |
-| Sentiment | LEGACY | news sentiment | — | |
-| Alerts | LEGACY | `GET /api/alerts` | — | |
-| AI Alerts | LEGACY | `GET /api/ai-alerts` | — | |
-| Sources / Market Sources | LEGACY | source status | — | |
-| Logs | LEGACY | `GET /api/logs` | — | |
-| MCP Tools | LEGACY | MCP surface | — | |
+| Settings | LEGACY | settings routes | — | FROZEN — out of React migration scope |
+| Test Center | REACT | `GET /api/diagnostics`, `GET /api/diagnostics/checks`, `POST /api/diagnostics/run?mode=quick\|full&symbol=` | — | diagnostics + checks list + run results; backend owns all evaluation; React renders only |
+| News | REACT | `GET /api/news/*` | — | filters/sources/sentiment panels; 2 `news.test.tsx` cases outstanding (filter query + source toggle) |
+| Sentiment | REACT | news sentiment | — | SentimentPanel inside News; backend-computed |
+| Alerts | REACT | `GET /api/alerts`, `POST /api/alerts`, `DELETE /api/alerts/{id}`, `POST /api/alerts/{id}/rearm`, `POST /api/alerts/{id}/enabled`, `GET /api/alerts/history` | — | alert form + table + notifications + history; `enabled` normalized from SQLite 1/0; no client-side evaluation |
+| AI Alerts | REACT | `GET /api/ai-alerts`, `GET /api/ai-alerts/events`, `GET /api/ai-alerts/consumers` | — | consumer cards + active alerts + triggered events; observability only |
+| Sources / Market Sources | LEGACY | source status | — | FROZEN — out of React migration scope |
+| Logs | REACT | `GET /api/logs`, `GET /api/logs/stream` (SSE) | — | snapshot table + SSE live stream via shared `SSEManager`; records produced server-side |
+| MCP Tools | REACT | `GET /api/mcp/tools` | — | tools table grouped by category; list-only |
 | Auth | LEGACY | auth routes | — | FROZEN — not part of React migration |
 
 ## Recommended next migration batch
 
 1. ~~**F&O Workspace** → Option Chain~~ — migrated (React `/fno`)
 2. ~~**Subscriptions / Instruments**~~ — migrated (React `/subscriptions`, `/instruments`); DB-backed prefs + segment preferences, no legacy parsing in UI
-3. **News / Sentiment**
-4. **Settings / Test Center**
-5. **Alerts / AI Alerts**
-6. **remaining views**
-7. **final legacy frontend removal** (`web/ui/js`, `web/ui/css`) once parity verified
+3. ~~**News / Sentiment**~~ — migrated (React `/news`); 2 `news.test.tsx` cases outstanding
+4. **Settings / Test Center** — Test Center migrated (React `/diagnostics`); Settings remains LEGACY (FROZEN)
+5. ~~**Alerts / AI Alerts**~~ — migrated (React `/alerts`, `/ai-alerts`)
+6. ~~**Logs / MCP Tools**~~ — migrated (React `/logs`, `/mcp`)
+7. **final legacy frontend removal** (`web/ui/js`, `web/ui/css`) once parity verified + `/ui` cutover approved
 
 ### Market analytics migration notes (Breadth / Sector Heatmap / Market Map)
 
