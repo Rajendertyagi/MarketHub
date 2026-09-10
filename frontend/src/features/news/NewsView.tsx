@@ -1,89 +1,152 @@
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "@/types";
-import { AsyncStateView, Button, Tabs } from "@/components/ui";
-import { NEWS_TABS, type NewsTab } from "./constants";
-import { useNews, useNewsMutations, useNewsSentiment } from "./useNews";
-import type { NewsFilters } from "./types";
-import { NewsFiltersBar } from "./components/NewsFilters";
-import { NewsList } from "./components/NewsList";
-import { SentimentPanel } from "./components/SentimentPanel";
+import { Button } from "@/components/ui";
+import { useNewsMutations, useNewsSentiment, useNewsSources } from "./useNews";
+import type { NewsFilters, NewsSentiment } from "./types";
+import { NewsSourcesPane } from "./components/NewsSourcesPane";
+import { NewsArticleList } from "./components/NewsArticleList";
+import { NewsReader } from "./components/NewsReader";
 import { SourcesManager } from "./components/SourcesManager";
 
+// Three-column RSS-reader layout: Sources+filters | Article list | Reader.
+// Reuses the News backend (articles + sentiment from /news/sentiment); React
+// only renders. Selection survives filter changes by falling back to the first
+// article when the current selection is no longer present.
 export function NewsView() {
-  const [tab, setTab] = useState<NewsTab>("news");
   const [filters, setFilters] = useState<NewsFilters>({});
-  const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
+  const [showSources, setShowSources] = useState(false);
+  const [newCount, setNewCount] = useState(0);
 
-  const newsQuery = useNews(filters);
-  const sentimentQuery = useNewsSentiment(filters);
+  const news = useNewsSentiment(filters);
+  const sources = useNewsSources();
   const m = useNewsMutations();
 
-  const active = tab === "sentiment" ? sentimentQuery : newsQuery;
+  const articles = useMemo(() => news.data?.articles ?? [], [news.data]);
+  const sentimentById = useMemo(() => {
+    const map = new Map<string, NewsSentiment>();
+    (news.data?.sentiments ?? []).forEach((s) => map.set(s.item_id, s));
+    return map;
+  }, [news.data]);
 
-  let body: React.ReactNode;
-  if (tab === "sources") {
-    body = <SourcesManager />;
-  } else if (active.isLoading) {
-    body = <AsyncStateView status="loading" loadingLabel="Loading news…" />;
-  } else if (active.isError) {
-    body = (
-      <AsyncStateView
-        status="error"
-        error={active.error as ApiError}
-        onRetry={() => active.refetch()}
-      />
-    );
-  } else if (tab === "sentiment") {
-    const data = sentimentQuery.data;
-    body = (
-      <SentimentPanel
-        articles={data?.articles ?? []}
-        sentiments={data?.sentiments ?? []}
-      />
-    );
-  } else {
-    body = <NewsList articles={newsQuery.data?.articles ?? []} />;
-  }
+  const prevIds = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const ids = new Set(articles.map((a) => a.item_id));
+    if (prevIds.current.size > 0) {
+      let fresh = 0;
+      ids.forEach((id) => {
+        if (!prevIds.current.has(id)) fresh += 1;
+      });
+      if (fresh > 0) setNewCount(fresh);
+    }
+    prevIds.current = ids;
+  }, [articles]);
+
+  const selected =
+    articles.find((a) => a.item_id === selectedId) ?? articles[0];
+
+  const onRefresh = async () => {
+    try {
+      await m.refresh();
+      await news.refetch();
+    } catch {
+      /* refresh failure must not destroy rendered content */
+    }
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const tag = (document.activeElement?.tagName ?? "").toUpperCase();
+    if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    if (articles.length === 0) return;
+    e.preventDefault();
+    const idx = articles.findIndex((a) => a.item_id === selected?.item_id);
+    const next =
+      e.key === "ArrowDown"
+        ? Math.min(articles.length - 1, idx + 1)
+        : Math.max(0, idx - 1);
+    const target = articles[next];
+    if (target) setSelectedId(target.item_id);
+  };
 
   return (
-    <div className="panel">
-      <div className="page-header">
-        <h1 className="page-title">News &amp; Sentiment</h1>
-        <span className="muted">
-          Backend-ingested articles &amp; sentiment — React renders only
-        </span>
-      </div>
-
-      <Tabs<NewsTab>
-        tabs={NEWS_TABS.map((t) => ({ value: t.value, label: t.label }))}
-        active={tab}
-        onChange={setTab}
-      />
-
-      {tab !== "sources" && (
-        <>
-          <NewsFiltersBar filters={filters} onChange={setFilters} />
-          <div className="control-row">
-            <Button
-              variant="primary"
-              onClick={async () => {
-                setRefreshMsg(null);
-                try {
-                  const res = (await m.refresh()) as { status: string };
-                  setRefreshMsg(`Refresh ${res.status}`);
-                } catch (e) {
-                  setRefreshMsg(e instanceof Error ? e.message : "refresh failed");
-                }
+    <div className="news-reader" onKeyDown={onKeyDown}>
+      <div className="news-reader-header">
+        <div>
+          <h1 className="page-title">News</h1>
+          <span className="muted">
+            Backend-ingested articles &amp; sentiment — React renders only
+          </span>
+        </div>
+        <div className="control-row">
+          <Button variant="primary" onClick={onRefresh}>
+            Refresh
+          </Button>
+          {newCount > 0 ? (
+            <button
+              className="news-new-pill"
+              onClick={() => {
+                setNewCount(0);
+                setSelectedId(articles[0]?.item_id);
               }}
             >
-              Refresh sources
-            </Button>
-            {refreshMsg ? <span className="hint ok">{refreshMsg}</span> : null}
-          </div>
-        </>
-      )}
+              {newCount} new article{newCount === 1 ? "" : "s"} — Show
+            </button>
+          ) : null}
+        </div>
+      </div>
 
-      {body}
+      <div className="news-reader-layout">
+        <NewsSourcesPane
+          sources={sources.data?.sources ?? []}
+          filters={filters}
+          onFilterChange={setFilters}
+          onManageClick={() => setShowSources(true)}
+        />
+        <NewsArticleList
+          articles={articles}
+          sentimentById={sentimentById}
+          selectedId={selected?.item_id}
+          onSelect={setSelectedId}
+          isLoading={news.isLoading}
+          isError={news.isError}
+          error={news.error as ApiError}
+          onRetry={() => news.refetch()}
+        />
+        <NewsReader
+          article={selected}
+          sentiment={selected ? sentimentById.get(selected.item_id) : undefined}
+        />
+      </div>
+
+      {showSources ? (
+        <div
+          className="modal-overlay"
+          onClick={() => setShowSources(false)}
+          role="presentation"
+        >
+          <div
+            className="modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-label="Manage news sources"
+          >
+            <div className="modal-header">
+              <h3>Manage News Sources</h3>
+              <button
+                className="icon-btn"
+                aria-label="Close"
+                onClick={() => setShowSources(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="modal-body">
+              <SourcesManager />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
