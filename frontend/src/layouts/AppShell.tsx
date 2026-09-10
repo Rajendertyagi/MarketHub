@@ -5,6 +5,7 @@ const NAV = [
   { to: "/charts", label: "Charts" },
   { to: "/scanners", label: "Scanners" },
   { to: "/fno", label: "F&O Workspace" },
+  { to: "/option-chain", label: "Option Chain" },
   { to: "/subscriptions", label: "Subscriptions" },
   { to: "/instruments", label: "Instruments" },
   { to: "/news", label: "News" },

@@ -6,6 +6,7 @@ import { BreadthView } from "@/features/breadth/BreadthView";
 import { SectorHeatmapView } from "@/features/sector-heatmap/SectorHeatmapView";
 import { MarketMapView } from "@/features/market-map/MarketMapView";
 import { FnoWorkspaceView } from "@/features/fno/FnoWorkspaceView";
+import { OptionChainView } from "@/features/fno/OptionChainView";
 import { SubscriptionsView } from "@/features/subscriptions/SubscriptionsView";
 import { InstrumentsView } from "@/features/instruments/InstrumentsView";
 import { NewsView } from "@/features/news";
@@ -30,6 +31,7 @@ export function AppRouter() {
           <Route path="/breadth" element={<BreadthView />} />
           <Route path="/sector-heatmap" element={<SectorHeatmapView />} />
           <Route path="/fno" element={<FnoWorkspaceView />} />
+          <Route path="/option-chain" element={<OptionChainView />} />
           <Route path="/subscriptions" element={<SubscriptionsView />} />
           <Route path="/instruments" element={<InstrumentsView />} />
           <Route path="/news" element={<NewsView />} />
