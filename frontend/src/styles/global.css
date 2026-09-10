@@ -621,3 +621,119 @@ tr.option-chain-atm > td {
   flex: 1;
   font-weight: 600;
 }
+
+/* ---------- News / Sentiment ---------- */
+.news-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+}
+.news-filters .field {
+  min-width: 180px;
+}
+.news-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.news-item {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.news-item-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.news-item-title {
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+}
+.news-item-title:hover {
+  text-decoration: underline;
+}
+.news-item-meta {
+  margin-top: var(--space-1);
+  font-size: var(--font-size-sm);
+}
+.news-item-snippet {
+  margin: var(--space-2) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+.sources-manager {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.source-config {
+  width: 100%;
+  min-height: 96px;
+  font-family: var(--font-mono, monospace);
+}
+.chip-muted {
+  background: var(--surface-3, #2a2f3a);
+  color: var(--text-muted);
+}
+
+/* ---------- Cards / headers ---------- */
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.card-header h2 {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  margin: 0;
+}
+
+/* Compact button variant used in table rows / inline actions. */
+.btn-compact {
+  height: var(--control-height-sm);
+  padding: 0 var(--space-3);
+  font-size: var(--font-size-sm);
+}
+.btn-outline-danger {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: transparent;
+}
+.btn-outline-danger:hover {
+  background: color-mix(in oklch, var(--danger) 14%, transparent);
+}
+
+/* ---------- Alerts ---------- */
+.alert-form .control-row {
+  align-items: flex-end;
+}
+.alerts-table .num {
+  font-variant-numeric: tabular-nums;
+}
+.notifications-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.notification-item {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.alert-history-head {
+  margin-bottom: var(--space-2);
+}

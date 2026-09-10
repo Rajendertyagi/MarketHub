@@ -7,6 +7,8 @@ const NAV = [
   { to: "/fno", label: "F&O Workspace" },
   { to: "/subscriptions", label: "Subscriptions" },
   { to: "/instruments", label: "Instruments" },
+  { to: "/news", label: "News" },
+  { to: "/alerts", label: "Alerts" },
   { to: "/market-map", label: "Market Map" },
   { to: "/breadth", label: "Breadth" },
   { to: "/sector-heatmap", label: "Sector Heatmap" },
