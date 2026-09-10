@@ -158,7 +158,7 @@ export function normalizeEquityOptions(
   if (atm != null) {
     for (const r of rows) r.atm = r.strike === atm;
   }
-  rows.sort((a, b) => a.strike - b.strike);
+  rows.sort((a, b) => b.strike - a.strike);
   return rows;
 }
 
@@ -188,7 +188,7 @@ export function normalizeChainRows(rows: ChainRow[]): ChainRowView[] {
           }
         : undefined,
     }))
-    .sort((a, b) => a.strike - b.strike);
+    .sort((a, b) => b.strike - a.strike);
 }
 
 export type { FnoFuture };
