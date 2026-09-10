@@ -18,6 +18,7 @@ import { McpToolsView } from "@/features/mcp-tools";
 import { LogsView } from "@/features/logs";
 import { DiagnosticsView } from "@/features/diagnostics";
 import { ChatView } from "@/features/chat";
+import { SentimentView } from "@/features/sentiment";
 import { SettingsView } from "@/features/settings";
 
 export function AppRouter() {
@@ -44,6 +45,7 @@ export function AppRouter() {
           <Route path="/logs" element={<LogsView />} />
           <Route path="/diagnostics" element={<DiagnosticsView />} />
           <Route path="/chat" element={<ChatView />} />
+          <Route path="/sentiment" element={<SentimentView />} />
           <Route path="/settings" element={<SettingsView />} />
           <Route path="*" element={<Navigate to="/charts" replace />} />
         </Route>

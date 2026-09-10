@@ -94,7 +94,7 @@ and the React app is available only via `bun run dev` (development).
 | Watchlists | REACT | `GET/POST /api/watchlists`, `PATCH/DELETE /api/watchlists/{id}`, `DELETE /api/watchlists/items/{id}`, `export/import` | — | picker + item table with live values resolved from the market quote stream; CRUD + export/import |
 | Test Center | REACT | `GET /api/diagnostics`, `GET /api/diagnostics/checks`, `POST /api/diagnostics/run?mode=quick\|full&symbol=` | — | diagnostics + checks list + run results; backend owns all evaluation; React renders only |
 | News | REACT | `GET /api/news/*` | — | filters/sources/sentiment panels; 2 `news.test.tsx` cases outstanding (filter query + source toggle) |
-| Sentiment | REACT | news sentiment | — | SentimentPanel inside News; backend-computed |
+| Sentiment | REACT | `GET /api/news/sentiment`, `POST /api/news/refresh` | — | standalone `/sentiment` dashboard (overall sentiment, bull/bear/neutral distribution, source/category breakdowns, recent items) + per-article `SentimentPanel` inside News; backend-computed |
 | Alerts | REACT | `GET /api/alerts`, `POST /api/alerts`, `DELETE /api/alerts/{id}`, `POST /api/alerts/{id}/rearm`, `POST /api/alerts/{id}/enabled`, `GET /api/alerts/history` | — | alert form + table + notifications + history; `enabled` normalized from SQLite 1/0; no client-side evaluation |
 | AI Alerts | REACT | `GET /api/ai-alerts`, `GET /api/ai-alerts/events`, `GET /api/ai-alerts/consumers` | — | consumer cards + active alerts + triggered events; observability only |
 | Sources / Market Sources | REACT | `GET /api/sources/status`, `GET/POST /api/sources/{name}/{action}`, `GET/POST/DELETE /api/news/sources[/*]` | — | status + start/stop/restart + news-source management; migrated under Settings panels |
@@ -113,7 +113,7 @@ and the React app is available only via `bun run dev` (development).
 6. ~~**Logs / MCP Tools**~~ — migrated (React `/logs`, `/mcp`)
 7. ~~**Dashboard / Markets / Watchlists**~~ — migrated (React `/dashboard`, `/watchlists`); live via shared `SSEManager`
 7. **final legacy frontend removal** (`web/ui/js`, `web/ui/css`) once parity verified + `/ui` cutover approved
-8. **Chat** — deferred (messaging UI not yet migrated; provider config lives in Settings AI/MCP panel)
+8. ~~**Chat**~~ — migrated (React `/chat`)
 
 ### Market analytics migration notes (Breadth / Sector Heatmap / Market Map)
 
