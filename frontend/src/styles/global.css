@@ -1184,3 +1184,38 @@ tr.option-chain-atm > td {
 .market-source-meta { font-size: var(--font-size-xs); color: var(--text-muted); }
 .market-source-transitions-label { vertical-align: top; color: var(--text-muted); }
 
+/* ---------- Chat ---------- */
+.chat-empty { padding: var(--space-4); font-style: italic; }
+.chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  min-height: 240px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.chat-msg { display: flex; }
+.chat-msg-user { justify-content: flex-end; }
+.chat-msg-assistant { justify-content: flex-start; }
+.chat-bubble {
+  max-width: 75%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-msg-user .chat-bubble {
+  background: var(--accent, #2b6cb0);
+  color: #fff;
+}
+.chat-msg-assistant .chat-bubble {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.chat-composer { align-items: flex-end; gap: var(--space-2); }
+.chat-input { flex: 1; resize: vertical; }
+.chat-activity { font-style: italic; }
+.chat-new { margin-left: auto; }
+.err { color: var(--neg, #e53e3e); }
+

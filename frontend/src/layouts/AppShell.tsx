@@ -16,6 +16,7 @@ const NAV = [
   { to: "/mcp", label: "MCP Tools" },
   { to: "/logs", label: "Logs" },
   { to: "/diagnostics", label: "Test Center" },
+  { to: "/chat", label: "Chat" },
   { to: "/market-map", label: "Market Map" },
   { to: "/breadth", label: "Breadth" },
   { to: "/sector-heatmap", label: "Sector Heatmap" },

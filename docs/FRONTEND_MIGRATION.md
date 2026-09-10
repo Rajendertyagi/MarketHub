@@ -101,7 +101,7 @@ and the React app is available only via `bun run dev` (development).
 | Logs | REACT | `GET /api/logs`, `GET /api/logs/stream` (SSE) | — | snapshot table + SSE live stream via shared `SSEManager`; records produced server-side |
 | MCP Tools | REACT | `GET /api/mcp/tools` | — | tools table grouped by category; list-only |
 | Auth | REACT | `GET /api/auth/upstox/status`, `POST /api/auth/upstox/pin`, `POST /api/auth/upstox/token`, `GET /api/auth/upstox/login` (OAuth redirect), `DELETE /api/auth/upstox/session`, Fyers equivalents | — | login UI only (Brokers panel); no credential/token/startup logic changed |
-| Chat | LEGACY | `POST /api/chat` (SSE), `GET /api/chat/status` | — | deferred — messaging UI not yet migrated |
+| Chat | REACT | `GET /api/chat/status`, `POST /api/chat` (SSE stream of `tool_start`/`delta`/`error`/`done` events) | — | message composer + streamed assistant responses; conversation history kept client-side; AI provider config remains in Settings → AI Provider |
 
 ## Recommended next migration batch
 
