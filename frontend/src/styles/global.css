@@ -818,3 +818,65 @@ tr.option-chain-atm > td {
   max-height: 240px;
   overflow: auto;
 }
+
+/* ---------- Logs ---------- */
+.logs-filterbar .control-row {
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.logs-autofollow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+.logs-conn {
+  font-size: var(--font-size-sm);
+}
+.logs-conn-on {
+  color: var(--success);
+}
+.logs-conn-off {
+  color: var(--warning);
+}
+.logs-container {
+  max-height: 60vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+.logs-table .logs-ts {
+  white-space: nowrap;
+}
+.logs-table .logs-component {
+  white-space: nowrap;
+}
+.logs-message {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.logs-exception {
+  color: var(--neg);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+.logs-lvl-debug {
+  color: var(--text-faint);
+}
+.logs-lvl-info {
+  color: var(--text-muted);
+}
+.logs-lvl-warning {
+  color: var(--warning);
+  font-weight: 600;
+}
+.logs-lvl-error {
+  color: var(--danger);
+  font-weight: 600;
+}
+.logs-lvl-critical {
+  color: var(--danger);
+  font-weight: 700;
+}

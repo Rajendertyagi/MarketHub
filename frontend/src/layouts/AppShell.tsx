@@ -11,6 +11,7 @@ const NAV = [
   { to: "/alerts", label: "Alerts" },
   { to: "/ai-alerts", label: "AI Alerts" },
   { to: "/mcp", label: "MCP Tools" },
+  { to: "/logs", label: "Logs" },
   { to: "/market-map", label: "Market Map" },
   { to: "/breadth", label: "Breadth" },
   { to: "/sector-heatmap", label: "Sector Heatmap" },
