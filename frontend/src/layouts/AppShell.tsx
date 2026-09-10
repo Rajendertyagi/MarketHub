@@ -8,6 +8,8 @@ const NAV = [
   { to: "/subscriptions", label: "Subscriptions" },
   { to: "/instruments", label: "Instruments" },
   { to: "/news", label: "News" },
+  { to: "/dashboard", label: "Dashboard" },
+  { to: "/watchlists", label: "Watchlists" },
   { to: "/alerts", label: "Alerts" },
   { to: "/ai-alerts", label: "AI Alerts" },
   { to: "/mcp", label: "MCP Tools" },
@@ -16,6 +18,7 @@ const NAV = [
   { to: "/market-map", label: "Market Map" },
   { to: "/breadth", label: "Breadth" },
   { to: "/sector-heatmap", label: "Sector Heatmap" },
+  { to: "/settings", label: "Settings" },
 ];
 
 export function AppShell() {

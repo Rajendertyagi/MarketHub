@@ -89,26 +89,31 @@ and the React app is available only via `bun run dev` (development).
 | Option Chain | VERIFIED | `GET /api/options/chain/view`, `GET /api/futures` | — | CE/PE ladder shared model; ATM; greeks; OI analytics (PCR/straddle) EChart; exact identity → Charts |
 | Instruments | VERIFIED | `GET /api/instruments/segments`, `PUT /api/instruments/segments`, `POST /api/instruments/sync`, `GET /api/instruments/sync-state` | — | catalog/source status; segment preferences (saved, not defaults); Save & Re-sync; backend owns master sync + Fyers segment semantics |
 | Subscriptions | VERIFIED | `GET /api/subscriptions`, `PATCH /api/subscriptions/indices`, `POST/PATCH/DELETE /api/subscriptions/stocks`, `PUT/DELETE /api/subscriptions/rules`, `POST /api/subscriptions/apply` | — | DB-backed 8 canonical indices (backend-owned, never redefined in UI); stocks; derivative rules (current/next expiry, ATM range, CE/PE); Save & Apply reconciles live feed without restart |
-| Settings | LEGACY | settings routes | — | FROZEN — out of React migration scope |
+| Settings | REACT | `GET/POST /api/settings/app`, `POST /api/admin/backup`, `GET/POST /api/settings/upstox[/*]`, `GET/POST /api/settings/fyers[/*]`, `GET/POST/DELETE /api/news/sources[/*]`, `GET/POST /api/sources/{name}/{action}`, `GET/POST /api/chat/config`+`/status` | — | panels: General, Brokers (Upstox+Fyers login UI), News Sources, Market Sources, AI/MCP, Backup. Data Retention / Logging / Alerts panels are informational (no backend endpoints). Frozen-zone UI migrated via authorized override; no auth/credential/startup logic changed. |
+| Dashboard | REACT | `GET /api/market/stream` (SSE), `GET /api/market/quotes` | — | ticker strip + market cards + movers + markets table + inferred status + filter; live via shared `SSEManager` (named `quote` event + `reset`); no client-side price/state computation |
+| Watchlists | REACT | `GET/POST /api/watchlists`, `PATCH/DELETE /api/watchlists/{id}`, `DELETE /api/watchlists/items/{id}`, `export/import` | — | picker + item table with live values resolved from the market quote stream; CRUD + export/import |
 | Test Center | REACT | `GET /api/diagnostics`, `GET /api/diagnostics/checks`, `POST /api/diagnostics/run?mode=quick\|full&symbol=` | — | diagnostics + checks list + run results; backend owns all evaluation; React renders only |
 | News | REACT | `GET /api/news/*` | — | filters/sources/sentiment panels; 2 `news.test.tsx` cases outstanding (filter query + source toggle) |
 | Sentiment | REACT | news sentiment | — | SentimentPanel inside News; backend-computed |
 | Alerts | REACT | `GET /api/alerts`, `POST /api/alerts`, `DELETE /api/alerts/{id}`, `POST /api/alerts/{id}/rearm`, `POST /api/alerts/{id}/enabled`, `GET /api/alerts/history` | — | alert form + table + notifications + history; `enabled` normalized from SQLite 1/0; no client-side evaluation |
 | AI Alerts | REACT | `GET /api/ai-alerts`, `GET /api/ai-alerts/events`, `GET /api/ai-alerts/consumers` | — | consumer cards + active alerts + triggered events; observability only |
-| Sources / Market Sources | LEGACY | source status | — | FROZEN — out of React migration scope |
+| Sources / Market Sources | REACT | `GET /api/sources/status`, `GET/POST /api/sources/{name}/{action}`, `GET/POST/DELETE /api/news/sources[/*]` | — | status + start/stop/restart + news-source management; migrated under Settings panels |
 | Logs | REACT | `GET /api/logs`, `GET /api/logs/stream` (SSE) | — | snapshot table + SSE live stream via shared `SSEManager`; records produced server-side |
 | MCP Tools | REACT | `GET /api/mcp/tools` | — | tools table grouped by category; list-only |
-| Auth | LEGACY | auth routes | — | FROZEN — not part of React migration |
+| Auth | REACT | `GET /api/auth/upstox/status`, `POST /api/auth/upstox/pin`, `POST /api/auth/upstox/token`, `GET /api/auth/upstox/login` (OAuth redirect), `DELETE /api/auth/upstox/session`, Fyers equivalents | — | login UI only (Brokers panel); no credential/token/startup logic changed |
+| Chat | LEGACY | `POST /api/chat` (SSE), `GET /api/chat/status` | — | deferred — messaging UI not yet migrated |
 
 ## Recommended next migration batch
 
 1. ~~**F&O Workspace** → Option Chain~~ — migrated (React `/fno`)
 2. ~~**Subscriptions / Instruments**~~ — migrated (React `/subscriptions`, `/instruments`); DB-backed prefs + segment preferences, no legacy parsing in UI
 3. ~~**News / Sentiment**~~ — migrated (React `/news`); 2 `news.test.tsx` cases outstanding
-4. **Settings / Test Center** — Test Center migrated (React `/diagnostics`); Settings remains LEGACY (FROZEN)
+4. ~~**Settings / Test Center / Auth / Sources**~~ — migrated (React `/settings`); frozen-zone UI lifted via authorized override; no auth/credential/startup logic changed
 5. ~~**Alerts / AI Alerts**~~ — migrated (React `/alerts`, `/ai-alerts`)
 6. ~~**Logs / MCP Tools**~~ — migrated (React `/logs`, `/mcp`)
+7. ~~**Dashboard / Markets / Watchlists**~~ — migrated (React `/dashboard`, `/watchlists`); live via shared `SSEManager`
 7. **final legacy frontend removal** (`web/ui/js`, `web/ui/css`) once parity verified + `/ui` cutover approved
+8. **Chat** — deferred (messaging UI not yet migrated; provider config lives in Settings AI/MCP panel)
 
 ### Market analytics migration notes (Breadth / Sector Heatmap / Market Map)
 
