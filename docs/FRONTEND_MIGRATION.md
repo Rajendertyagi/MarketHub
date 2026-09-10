@@ -65,10 +65,14 @@ Mount("/ui", app=StaticFiles(directory=str(PROJECT_ROOT / "frontend" / "dist"), 
   it overwrites the tracked legacy `index.html`; (b) serve React at a subpath
   like `/ui/react` — rejected as a permanent hybrid; (c) a separate Vite/Node
   production server — rejected (task requires no separate server).
-- **Status:** reported for explicit approval. NOT implemented in this task.
+- **Status:** the running server already mounts `/ui` from `frontend/dist` (cutover
+  effectively live). A **read-only** `/legacy` mount (`web/ui`) was added
+  alongside it purely as a side-by-side comparison aid — it does not delete or
+  alter the legacy files and is not used in production. Remove the `/legacy`
+  Mount from `app/server.py` once comparison is done.
 
-Until this change is applied, `/ui` continues to serve the legacy plain-JS app,
-and the React app is available only via `bun run dev` (development).
+`/ui` serves the React build; `/legacy` serves the legacy plain-JS app. Open
+both in separate tabs to diff screens.
 
 ## Status legend
 
