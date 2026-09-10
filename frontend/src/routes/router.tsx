@@ -10,6 +10,8 @@ import { SubscriptionsView } from "@/features/subscriptions/SubscriptionsView";
 import { InstrumentsView } from "@/features/instruments/InstrumentsView";
 import { NewsView } from "@/features/news";
 import { AlertsView } from "@/features/alerts";
+import { AiAlertsView } from "@/features/ai-alerts";
+import { McpToolsView } from "@/features/mcp-tools";
 
 export function AppRouter() {
   return (
@@ -27,6 +29,8 @@ export function AppRouter() {
           <Route path="/instruments" element={<InstrumentsView />} />
           <Route path="/news" element={<NewsView />} />
           <Route path="/alerts" element={<AlertsView />} />
+          <Route path="/ai-alerts" element={<AiAlertsView />} />
+          <Route path="/mcp" element={<McpToolsView />} />
           <Route path="*" element={<Navigate to="/charts" replace />} />
         </Route>
       </Routes>

@@ -737,3 +737,84 @@ tr.option-chain-atm > td {
 .alert-history-head {
   margin-bottom: var(--space-2);
 }
+
+/* ---------- Monospace utility ---------- */
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+/* ---------- Badges (AI Alerts / MCP Tools) ---------- */
+.ui-badge {
+  display: inline-block;
+  padding: 1px var(--space-2);
+  border-radius: 999px;
+  font-size: var(--font-size-xs);
+  border: 1px solid var(--border-strong);
+  white-space: nowrap;
+}
+.ui-badge-success {
+  color: var(--success);
+  border-color: var(--success);
+}
+.ui-badge-warning {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+.ui-badge-info {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.ui-badge-neutral {
+  color: var(--text-muted);
+}
+
+/* ---------- AI Alerts: consumers ---------- */
+.ai-consumers-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-3);
+}
+.ai-consumer-id {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  word-break: break-all;
+}
+.ai-consumer-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--space-2);
+  font-size: var(--font-size-sm);
+}
+.ai-consumer-pending {
+  color: var(--warning);
+}
+.ai-consumer-foot {
+  margin-top: var(--space-2);
+  font-size: var(--font-size-xs);
+}
+.ai-alert-condition,
+.ai-event-condition {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- MCP Tools ---------- */
+.mcp-tool-desc {
+  max-width: 360px;
+}
+.mcp-tool-schema pre {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  max-height: 240px;
+  overflow: auto;
+}
