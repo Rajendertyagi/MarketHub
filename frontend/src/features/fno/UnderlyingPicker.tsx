@@ -29,20 +29,17 @@ export function UnderlyingPicker({ underlyings, isLoading, onSelect }: Props) {
   const indexCount = underlyings.filter((u) => u.kind === "index").length;
 
   return (
-    <div className="panel">
-      <div className="page-header">
-        <h1 className="page-title">F&O Workspace</h1>
-        <span className="muted">
-          {fmtInt(equityCount)} equity · {fmtInt(indexCount)} index underlyings
+    <div className="fno-picker">
+      <div className="fno-picker-top">
+        <h2 className="fno-picker-title">F&amp;O Underlyings</h2>
+        <span className="muted fno-picker-count">
+          {fmtInt(equityCount)} equity · {fmtInt(indexCount)} index
         </span>
-      </div>
-
-      <div className="control-row">
         <Input
           placeholder="Search underlying…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          style={{ width: 280 }}
+          className="fno-picker-search"
         />
       </div>
 
@@ -52,55 +49,58 @@ export function UnderlyingPicker({ underlyings, isLoading, onSelect }: Props) {
           <span className="muted">Loading underlyings…</span>
         </div>
       ) : (
-        <div className="card" style={{ padding: 0, overflow: "auto", maxHeight: 520 }}>
-          <table className="table">
+        <div className="fno-picker-list">
+          <table className="table fno-picker-table">
             <thead>
               <tr>
                 <th>Symbol</th>
                 <th>Name</th>
                 <th>Type</th>
-                <th>Futures</th>
-                <th>Options</th>
-                <th />
+                <th className="num">Futures</th>
+                <th className="num">Options</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((u) => (
-                <tr key={`${u.kind}:${u.symbol}`}>
-                  <td>{u.symbol}</td>
+                <tr
+                  key={`${u.kind}:${u.symbol}`}
+                  className="fno-row"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onSelect(u.symbol, u.kind)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onSelect(u.symbol, u.kind);
+                    }
+                  }}
+                >
+                  <td className="fno-row-sym">{u.symbol}</td>
                   <td className="muted">{u.name ?? "—"}</td>
                   <td>
                     <span className={u.kind === "index" ? "chip chip-info" : "chip"}>
                       {u.kind === "index" ? "Index" : "Equity"}
                     </span>
                   </td>
-                  <td className="muted">
+                  <td className="num muted">
                     {u.futures_available == null
                       ? "—"
                       : u.futures_available
                         ? "✓"
                         : "—"}
                   </td>
-                  <td className="muted">
+                  <td className="num muted">
                     {u.options_available == null
                       ? "—"
                       : u.options_available
                         ? "✓"
                         : "—"}
                   </td>
-                  <td>
-                    <button
-                      className="btn btn-compact"
-                      onClick={() => onSelect(u.symbol, u.kind)}
-                    >
-                      Open
-                    </button>
-                  </td>
                 </tr>
               ))}
               {!filtered.length && (
                 <tr>
-                  <td colSpan={6} className="empty-row">
+                  <td colSpan={5} className="empty-row">
                     No underlyings match.
                   </td>
                 </tr>

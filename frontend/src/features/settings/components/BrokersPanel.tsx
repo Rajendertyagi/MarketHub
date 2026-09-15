@@ -12,24 +12,20 @@ import {
   useUpstoxCredStatus,
   useUpstoxFeedConfig,
   useFyersSettings,
-  useSourceControl,
+  useSourcesStatus,
+  useUpstoxTokenLogin,
 } from "../useSettings";
-import {
-  loginWithFyers,
-  loginWithUpstox,
-} from "../api";
-import {
-  formatOnOffChip,
-  formatUpstoxAuthChip,
-} from "../format";
+import { loginWithFyers, loginWithUpstox } from "../api";
+import { formatOnOffChip, formatTimestamp, formatUpstoxAuthChip } from "../format";
 import { BROKER_FYERS, BROKER_UPSTOX } from "../constants";
-import { useUpstoxPinLogin, useUpstoxTokenLogin } from "../useSettings";
+import type { MarketSource } from "../types";
+import { SourceDetail } from "./SourceDetail";
 
 function Chip({ label, cls }: { label: string; cls: string }) {
   return <span className={cls}>{label}</span>;
 }
 
-function UpstoxBroker() {
+function UpstoxBroker({ source }: { source?: MarketSource }) {
   const auth = useUpstoxAuthStatus();
   const cred = useUpstoxCredStatus();
   const feed = useUpstoxFeedConfig();
@@ -38,23 +34,30 @@ function UpstoxBroker() {
   const saveFeed = useSaveUpstoxFeedConfig();
   const forget = useForgetUpstoxSession();
   const tokenLogin = useUpstoxTokenLogin();
-  const pinLogin = useUpstoxPinLogin();
-  const { restart } = useSourceControl();
 
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
   const [token, setToken] = useState("");
-  const [pin, setPin] = useState("");
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
   const status = auth.data ?? {};
+  const authed = !!status.authenticated;
   const authChip = formatUpstoxAuthChip(status);
-  const showLogin =
-    !!status.oauth_available &&
-    status.login_required !== false &&
-    !status.authenticated;
-  const showPin = !!status.auth_code_pending;
+  const loginLabel = authed
+    ? "Login with Upstox"
+    : status.session_restored || status.session_persisted
+      ? "Re-login with Upstox"
+      : "Login with Upstox";
+  const sessionNote = authed
+    ? `Valid until ${status.expires_at ? formatTimestamp(status.expires_at) : "session active"}${
+        status.session_restored || status.session_persisted
+          ? " · auto-restored on restart"
+          : ""
+      }`
+    : status.oauth_available
+      ? "Login required — Upstox tokens expire 3:30 AM IST (one click per day)"
+      : "Save your API Key & Secret above to enable login.";
 
   async function setMsgAsync(fn: () => Promise<unknown>, okText: string) {
     setMsg(null);
@@ -63,96 +66,45 @@ function UpstoxBroker() {
       await fn();
       setMsg({ kind: "ok", text: okText });
     } catch (e) {
-      setMsg({
-        kind: "err",
-        text: e instanceof Error ? e.message : "Request failed.",
-      });
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : "Request failed." });
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="panel panel-spaced">
+    <section className="card broker-card">
       <div className="panel-header">
         <h2>Upstox</h2>
       </div>
       <div className="auth-form">
         <div className="auth-row">
-          <label>Auth Status</label>
-          <Chip label={authChip.label} cls={authChip.cls} />
-        </div>
-        <div className="auth-row">
-          <label>Feed State</label>
-          <span className="setting-val">{status.state ?? "—"}</span>
-        </div>
-
-        {showLogin ? (
-          <div className="auth-row">
-            <label></label>
-            <Button onClick={() => loginWithUpstox(false)} disabled={busy}>
-              Login with Upstox
-            </Button>
-          </div>
-        ) : null}
-
-        <div className="auth-row auth-row-spaced">
-          <label>Upstox Feed</label>
-          <Button
-            onClick={() => feed.data && saveFeed.mutateAsync(!feed.data.enabled)}
-            disabled={busy}
-          >
-            {feed.data?.enabled ? "Disable Feed" : "Enable Feed"}
-          </Button>
-          <Chip
-            label={feed.data?.enabled ? "Enabled" : "Disabled"}
-            cls={feed.data?.enabled ? "chip chip-on" : "chip chip-off"}
-          />
-        </div>
-
-        <div className="auth-row">
-          <label></label>
+          <label>Status</label>
           <div className="state-grid">
+            <Chip label={authChip.label} cls={authChip.cls} />
             <Chip
-              label={status.feed_configured ? "Configured" : "Not Configured"}
+              label={status.feed_configured ? "Feed Configured" : "No Feed Configured"}
               cls={formatOnOffChip(!!status.feed_configured).cls}
             />
             <Chip
-              label={
-                cred.data?.api_key_configured
-                  ? "Credentials Saved"
-                  : "No Credentials"
-              }
+              label={cred.data?.api_key_configured ? "Credentials" : "No Credentials"}
               cls={formatOnOffChip(!!cred.data?.api_key_configured).cls}
             />
             <Chip
-              label={status.authenticated ? "Authenticated" : "Not Authenticated"}
-              cls={formatOnOffChip(!!status.authenticated).cls}
-            />
-            <Chip
               label={
-                status.session_restored
-                  ? "Session Restored"
-                  : status.session_persisted
-                    ? "Session Saved"
-                    : "No Session Saved"
+                status.session_restored || status.session_persisted
+                  ? "Session Saved"
+                  : "No Session"
               }
-              cls={
-                formatOnOffChip(
-                  !!status.session_restored || !!status.session_persisted,
-                ).cls
-              }
+              cls={formatOnOffChip(!!status.session_restored || !!status.session_persisted).cls}
             />
             <Chip
-              label={status.restart_recovery ? "Restart Recovery On" : "Restart Recovery Off"}
-              cls={formatOnOffChip(!!status.restart_recovery).cls}
-            />
-            <Chip
-              label={status.login_required ? "Login Required" : "No Login Needed"}
+              label={status.login_required ? "Login Required" : "Logged In"}
               cls={formatOnOffChip(!status.login_required).cls}
             />
           </div>
         </div>
+        <p className="hint session-note">{sessionNote}</p>
 
         <div className="auth-row">
           <label>API Key</label>
@@ -162,6 +114,7 @@ function UpstoxBroker() {
             onChange={(e) => setApiKey(e.target.value)}
             placeholder="Paste API key"
             autoComplete="off"
+            spellCheck={false}
           />
         </div>
         <div className="auth-row">
@@ -172,11 +125,13 @@ function UpstoxBroker() {
             onChange={(e) => setApiSecret(e.target.value)}
             placeholder="Paste API secret"
             autoComplete="new-password"
+            spellCheck={false}
           />
         </div>
         <div className="auth-row">
-          <label></label>
+          <label>Credentials</label>
           <Button
+            className="btn btn-compact"
             onClick={() =>
               setMsgAsync(
                 () => saveCred.mutateAsync({ apiKey, apiSecret }),
@@ -188,108 +143,86 @@ function UpstoxBroker() {
             }
             disabled={busy}
           >
-            Save Credentials
+            Save
           </Button>
           <Button
-            className="btn btn-outline-danger"
-            onClick={() =>
-              setMsgAsync(() => delCred.mutateAsync(), "Credentials deleted.")
-            }
+            className="btn btn-compact btn-outline-danger"
+            onClick={() => setMsgAsync(() => delCred.mutateAsync(), "Credentials deleted.")}
             disabled={busy}
           >
-            Delete Credentials
+            Delete
           </Button>
         </div>
 
-        <details className="auth-advanced">
-          <summary>Advanced / Recovery</summary>
-          {showPin ? (
+        {!authed ? (
+          <>
             <div className="auth-row">
-              <label>Daily PIN Login</label>
+              <label>Login</label>
+              {status.oauth_available || cred.data?.api_key_configured ? (
+                <Button className="btn btn-compact" onClick={() => loginWithUpstox()} disabled={busy}>
+                  {loginLabel}
+                </Button>
+              ) : (
+                <span className="hint">
+                  Save your API Key &amp; Secret above to enable OAuth login.
+                </span>
+              )}
+            </div>
+            <div className="auth-row">
+              <label>Manual Token</label>
               <Input
                 type="password"
-                value={pin}
-                onChange={(e) => setPin(e.target.value)}
-                placeholder="Upstox PIN"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                placeholder="Paste Upstox access token"
                 autoComplete="off"
+                spellCheck={false}
               />
               <Button
+                className="btn btn-compact"
                 onClick={() =>
                   setMsgAsync(
-                    () => pinLogin.mutateAsync(pin),
-                    "Upstox login successful.",
-                  ).then(() => setPin(""))
+                    () => tokenLogin.mutateAsync(token),
+                    "Token saved for this session.",
+                  ).then(() => setToken(""))
                 }
                 disabled={busy}
               >
-                Login with PIN
+                Save Token
               </Button>
             </div>
-          ) : null}
+          </>
+        ) : (
           <div className="auth-row">
-            <label>Manual Token</label>
-            <Input
-              type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder="Paste Upstox access token"
-              autoComplete="off"
-            />
-          </div>
-          <div className="auth-row">
-            <label></label>
+            <label>Session</label>
             <Button
-              onClick={() =>
-                setMsgAsync(
-                  () => tokenLogin.mutateAsync(token),
-                  "Token saved for this session.",
-                ).then(() => setToken(""))
-              }
+              className="btn btn-compact btn-outline-danger"
+              onClick={() => setMsgAsync(() => forget.mutateAsync(), "Logged out of Upstox.")}
               disabled={busy}
             >
-              Save Token
+              Logout
             </Button>
           </div>
-        </details>
+        )}
 
-        <div className="auth-row">
-          <label>Session &amp; Restart</label>
-          <Button
-            className="btn btn-outline-danger"
-            onClick={() =>
-              setMsgAsync(
-                () => forget.mutateAsync(),
-                "Logged out of Upstox.",
-              )
-            }
-            disabled={busy || !status.authenticated}
-          >
-            Logout
-          </Button>
-          <Button
-            onClick={() =>
-              setMsgAsync(
-                () => restart(BROKER_UPSTOX),
-                "Feed reconnect triggered.",
-              )
-            }
-            disabled={busy}
-          >
-            Reconnect Feed
-          </Button>
-        </div>
+        <SourceDetail
+          source={source}
+          feedEnabled={feed.data?.enabled}
+          onFeedToggle={() => feed.data && setMsgAsync(() => saveFeed.mutateAsync(!feed.data.enabled), "Feed updated.")}
+          feedBusy={busy}
+        />
+
         {msg ? <p className={`hint ${msg.kind}`}>{msg.text}</p> : null}
       </div>
-    </div>
+    </section>
   );
 }
 
-function FyersBroker() {
+function FyersBroker({ source }: { source?: MarketSource }) {
   const settings = useFyersSettings();
   const saveCred = useSaveFyersCredentials();
   const forget = useForgetFyersSession();
   const saveFeed = useSaveFyersFeedConfig();
-  const { restart } = useSourceControl();
 
   const [appId, setAppId] = useState("");
   const [secret, setSecret] = useState("");
@@ -299,6 +232,7 @@ function FyersBroker() {
 
   const s = settings.data ?? {};
   const credsOk = !!s.app_id_configured && !!s.secret_configured;
+  const loggedIn = !!s.access_token_active;
 
   async function setMsgAsync(fn: () => Promise<unknown>, okText: string) {
     setMsg(null);
@@ -307,64 +241,42 @@ function FyersBroker() {
       await fn();
       setMsg({ kind: "ok", text: okText });
     } catch (e) {
-      setMsg({
-        kind: "err",
-        text: e instanceof Error ? e.message : "Request failed.",
-      });
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : "Request failed." });
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="panel panel-spaced">
+    <section className="card broker-card">
       <div className="panel-header">
         <h2>Fyers</h2>
       </div>
       <div className="auth-form">
-        <p className="form-hint">One-time setup. Saved encrypted on this computer only.</p>
         <div className="auth-row">
-          <label>App Credentials</label>
-          <Chip
-            label={credsOk ? "Configured" : "Not configured"}
-            cls={formatOnOffChip(credsOk).cls}
-          />
-        </div>
-        <div className="auth-row">
-          <label>Daily Login</label>
-          <Chip
-            label={
-              !s.login_available
-                ? "Credentials Required"
-                : s.access_token_active
-                  ? "Daily Login Active"
-                  : "Login Required"
-            }
-            cls={formatOnOffChip(!!s.access_token_active).cls}
-          />
-        </div>
-
-        {s.login_available ? (
-          <div className="auth-row">
-            <label></label>
-            <Button onClick={() => loginWithFyers()} disabled={busy}>
-              Login with Fyers
-            </Button>
+          <label>Status</label>
+          <div className="state-grid">
+            <Chip
+              label={credsOk ? "Credentials" : "No Credentials"}
+              cls={formatOnOffChip(credsOk).cls}
+            />
+            <Chip
+              label={s.login_available ? "Login Ready" : "Credentials Required"}
+              cls={formatOnOffChip(!!s.login_available).cls}
+            />
+            <Chip
+              label={loggedIn ? "Logged In" : "Login Required"}
+              cls={formatOnOffChip(loggedIn).cls}
+            />
+            <Chip
+              label={s.session_persisted ? "Session Saved" : "No Session"}
+              cls={formatOnOffChip(!!s.session_persisted).cls}
+            />
+            <Chip
+              label={s.login_required ? "Login Required" : "Logged In"}
+              cls={formatOnOffChip(!s.login_required).cls}
+            />
           </div>
-        ) : null}
-
-        <div className="auth-row auth-row-spaced">
-          <label>Fyers Feed</label>
-          <Button
-            onClick={() => saveFeed.mutateAsync(!s.source_enabled)}
-            disabled={busy}
-          >
-            {s.source_enabled ? "Disable Feed" : "Enable Feed"}
-          </Button>
-          <Chip
-            label={s.source_enabled ? "Enabled" : "Disabled"}
-            cls={s.source_enabled ? "chip chip-on" : "chip chip-off"}
-          />
         </div>
 
         <div className="auth-row">
@@ -375,6 +287,7 @@ function FyersBroker() {
             onChange={(e) => setAppId(e.target.value)}
             placeholder="Paste Fyers app id"
             autoComplete="off"
+            spellCheck={false}
           />
         </div>
         <div className="auth-row">
@@ -385,6 +298,7 @@ function FyersBroker() {
             onChange={(e) => setSecret(e.target.value)}
             placeholder="Paste secret key"
             autoComplete="new-password"
+            spellCheck={false}
           />
         </div>
         <div className="auth-row">
@@ -395,11 +309,13 @@ function FyersBroker() {
             onChange={(e) => setPin(e.target.value)}
             placeholder="PIN (enables auto session restore)"
             autoComplete="new-password"
+            spellCheck={false}
           />
         </div>
         <div className="auth-row">
-          <label></label>
+          <label>Credentials</label>
           <Button
+            className="btn btn-compact"
             onClick={() =>
               setMsgAsync(
                 () => saveCred.mutateAsync({ appId, secretId: secret, pin }),
@@ -412,51 +328,59 @@ function FyersBroker() {
             }
             disabled={busy}
           >
-            Save Fyers Credentials
+            Save
           </Button>
         </div>
 
-        <div className="auth-row">
-          <label>Session &amp; Restart</label>
-          <Button
-            className="btn btn-outline-danger"
-            onClick={() =>
-              setMsgAsync(() => forget.mutateAsync(), "Saved Fyers session forgotten.")
-            }
-            disabled={busy}
-          >
-            Forget Saved Session
-          </Button>
-          <Button
-            onClick={() =>
-              setMsgAsync(
-                () => restart(BROKER_FYERS),
-                "Feed reconnect triggered.",
-              )
-            }
-            disabled={busy}
-          >
-            Reconnect Feed
-          </Button>
-        </div>
+        {!loggedIn ? (
+          <div className="auth-row">
+            <label>Login</label>
+            <Button className="btn btn-compact" onClick={() => loginWithFyers()} disabled={busy}>
+              Login with Fyers
+            </Button>
+            {!s.login_available ? (
+              <span className="hint">
+                Save your App ID, Secret &amp; PIN above to enable login.
+              </span>
+            ) : null}
+          </div>
+        ) : (
+          <div className="auth-row">
+            <label>Session</label>
+            <Button
+              className="btn btn-compact btn-outline-danger"
+              onClick={() =>
+                setMsgAsync(() => forget.mutateAsync(), "Saved Fyers session forgotten.")
+              }
+              disabled={busy}
+            >
+              Forget Session
+            </Button>
+          </div>
+        )}
+
+        <SourceDetail
+          source={source}
+          feedEnabled={s.source_enabled}
+          onFeedToggle={() => setMsgAsync(() => saveFeed.mutateAsync(!s.source_enabled), "Feed updated.")}
+          feedBusy={busy}
+        />
+
         {msg ? <p className={`hint ${msg.kind}`}>{msg.text}</p> : null}
       </div>
-    </div>
+    </section>
   );
 }
 
 export function BrokersPanel() {
+  const { data: sourcesData } = useSourcesStatus();
+  const sources = sourcesData?.sources ?? [];
+  const upstoxSource = sources.find((s) => s.name === BROKER_UPSTOX);
+  const fyersSource = sources.find((s) => s.name === BROKER_FYERS);
   return (
-    <div className="panel">
-      <div className="panel-header">
-        <h2>Brokers</h2>
-      </div>
-      <p className="form-hint">
-        Upstox and Fyers connection management. Credentials travel only in POST
-        bodies and are cleared after a successful save.
-      </p>
-      <UpstoxBroker />
-      <FyersBroker />
+    <div className="brokers-list">
+      <UpstoxBroker source={upstoxSource} />
+      <FyersBroker source={fyersSource} />
     </div>
   );
 }

@@ -373,29 +373,6 @@ def test_ce10_no_provider_imports(runner: R) -> None:
     runner.assert_eq("CE10-routes-market-section-clean", bad, [])
 
 
-def test_ce11_ce12_ui_static(runner: R) -> None:
-    html_path = os.path.join(_PROJECT_DIR, "web", "ui", "index.html")
-    js_path = os.path.join(_PROJECT_DIR, "web", "ui", "js", "app.js")
-    with open(html_path, encoding="utf-8") as f:
-        html = f.read()
-    with open(js_path, encoding="utf-8") as f:
-        js = f.read()
-
-    # CE11: drawer infrastructure markers.
-    for marker in ("quote-drawer", "drawer-greeks", "drawer-depth",
-                   "drawer-oi", "drawer-markets-section"):
-        runner.assert_in(f"CE11-html:{marker}", marker, html)
-
-    # CE12: one EventSource; no provider wire names in JS.
-    # Two EventSources BY DESIGN: market stream + generic alert push.
-    # Exactly one MARKET stream; never more.
-    runner.assert_eq("CE12-eventsource-count",
-                     js.count("new EventSource"), 2)
-    runner.assert_eq("CE12-one-market-stream",
-                     js.count('new EventSource("/api/market/stream")'), 1)
-    bad = [n for n in PROVIDER_NAMES if n in js]
-    runner.assert_eq("CE12-no-provider-names-js", bad, [])
-
 
 # -- main -------------------------------------------------------------------------
 
@@ -409,7 +386,6 @@ async def main() -> bool:
     test_ce8_nulls_preserved(runner)
     await test_ce9_snapshot_sse_consistency(runner)
     test_ce10_no_provider_imports(runner)
-    test_ce11_ce12_ui_static(runner)
 
     return runner.summary()
 

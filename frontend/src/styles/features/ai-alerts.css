@@ -1,0 +1,49 @@
+/* AI alerts: consumers grid, condition cells. */
+
+@layer features{
+  /* ---------- AI Alerts: consumers ---------- */
+  .ai-consumers-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: var(--space-3);
+  }
+  .ai-consumer-card {
+    padding: var(--space-3);
+    box-shadow: var(--shadow-card);
+    border-radius: var(--radius-md);
+    background: var(--surface-2);
+  }
+  .ai-consumer-id {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    word-break: break-all;
+  }
+  .ai-consumer-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: var(--space-2);
+    font-size: var(--font-size-sm);
+  }
+  .ai-consumer-pending {
+    color: var(--warning);
+  }
+  .ai-consumer-foot {
+    margin-top: var(--space-2);
+    font-size: var(--font-size-xs);
+  }
+  .ai-alert-condition,
+  .ai-event-condition {
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  @media (max-width: 760px) {
+    .ai-consumers-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+}

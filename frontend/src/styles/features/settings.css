@@ -1,0 +1,170 @@
+/* Settings page: layout, forms, broker cards, source detail. */
+
+@layer features{
+  .form-hint {
+    font-size: var(--font-size-sm);
+    color: var(--text-muted);
+    margin: 0 0 var(--space-3);
+  }
+  .empty-row { color: var(--text-muted); text-align: center; }
+
+  .source-id { font-family: var(--font-mono, monospace); color: var(--text-muted); }
+  .source-summary { max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+
+  .news-status-on { color: var(--success); font-weight: 600; }
+  .news-status-off { color: var(--text-faint); }
+  .news-action-btn {
+    background: transparent;
+    box-shadow: var(--shadow-card);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    padding: 2px var(--space-2);
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+  }
+  .news-action-btn.danger { color: var(--danger); border-color: var(--danger); }
+  .news-test-result { margin-left: var(--space-2); }
+  .news-test-result.ok { color: var(--success); }
+  .news-test-result.err { color: var(--danger); }
+
+  .setting-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .setting-val { color: var(--text-muted); font-family: var(--font-mono, monospace); }
+
+  .auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    max-width: 640px;
+  }
+  .auth-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+  }
+  .auth-row > label { min-width: 140px; color: var(--text-muted); }
+  .auth-row-spaced { justify-content: flex-start; }
+  .auth-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .auth-advanced {
+    box-shadow: var(--shadow-card);
+    border-radius: var(--radius-md);
+    padding: var(--space-3);
+  }
+  .auth-advanced > summary { cursor: pointer; color: var(--text-muted); }
+
+  .state-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+  .state-grid .chip {
+    padding: 2px 8px;
+    font-size: var(--font-size-xs);
+    white-space: nowrap;
+  }
+
+  .brokers-head {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+  }
+  .brokers-head h2 { margin: 0; }
+
+  .market-source-prop {
+    color: var(--text-muted);
+    vertical-align: top;
+    white-space: nowrap;
+  }
+  .market-source-prop-first { color: var(--text-muted); font-weight: 500; }
+  .market-source-meta { font-size: var(--font-size-xs); color: var(--text-muted); }
+  .market-source-transitions-label { vertical-align: top; color: var(--text-muted); }
+
+  /* Layout-only wrapper: tabs + active panel. Panels carry the surface. */
+  .settings-page {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+  .settings-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  /* Broker cards: wide forms, compact padding */
+  .broker-card {
+    padding: var(--space-3);
+  }
+  .broker-card .auth-form {
+    max-width: none;
+  }
+  .broker-card .auth-row > label {
+    min-width: 120px;
+  }
+  .brokers-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  /* Compact, consistent form density across settings panels. */
+  .auth-form {
+    gap: var(--space-2);
+  }
+  .auth-row {
+    align-items: center;
+  }
+  .auth-row > label {
+    font-size: var(--font-size-sm);
+  }
+  .auth-row .input,
+  .auth-row .select {
+    flex: 1;
+    min-width: 160px;
+  }
+  .setting-row {
+    gap: var(--space-2);
+  }
+  .setting-row > label {
+    min-width: 140px;
+    color: var(--text-muted);
+  }
+
+  /* General panel: tighten the card that holds the URL field + actions. */
+  .settings-content .panel > .card,
+  .panel > .card {
+    padding: var(--space-3);
+  }
+
+  @media (max-width: 720px) {
+    .auth-row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: var(--space-1);
+    }
+    .auth-row > label {
+      min-width: 0;
+    }
+    .auth-row .input,
+    .auth-row .select {
+      min-width: 0;
+    }
+    .control-row .field,
+    .toolbar .field {
+      flex: 1 1 100%;
+    }
+    .setting-row {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+  }
+}

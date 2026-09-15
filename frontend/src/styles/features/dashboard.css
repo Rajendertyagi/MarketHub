@@ -1,0 +1,242 @@
+/* Dashboard: ticker tape, market cards. */
+
+@layer features{
+  /* ---------- Dashboard / Markets ---------- */
+  .app-ticker {
+    display: flex;
+    gap: var(--space-3);
+    overflow-x: auto;
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .app-ticker.ticker-empty {
+    color: var(--text-muted);
+    font-style: italic;
+  }
+  .ticker-item {
+    display: inline-flex;
+    gap: var(--space-2);
+    align-items: baseline;
+    padding: 0 var(--space-2);
+    border-right: 1px solid var(--border);
+  }
+  .ticker-sym { font-weight: 600; }
+  .ticker-ltp { color: var(--text-muted); }
+  .ticker-chg.pos { color: var(--pos); }
+  .ticker-chg.neg { color: var(--neg); }
+  .ticker-vol { color: var(--text-muted); font-size: var(--font-size-sm); }
+
+  /* ---------- Command-center layout ---------- */
+  .dash {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+  .dash-hero { display: block; }
+  /* Supporting detail: sectors / breadth / fno — secondary, not the focus. */
+  .dash-secondary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(248px, 1fr));
+    gap: var(--space-3);
+    align-items: start;
+  }
+
+  /* ---------- Hero: major indices ---------- */
+  .idx-hero {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+  /* Responsive grid of index stat cards. Auto-fills so it breathes on any
+     width without a cramped vertical scroll. */
+  .idx-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+    gap: var(--space-3);
+  }
+  .idx-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-4);
+    background: var(--surface-1);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+    cursor: pointer;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    border: none;
+    transition: transform var(--motion-fast) var(--ease),
+      box-shadow var(--motion-fast) var(--ease);
+  }
+  .idx-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-float);
+  }
+  .idx-card:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-float), var(--focus-ring);
+  }
+  .idx-name {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .idx-value {
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-bold);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .idx-change {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
+    font-variant-numeric: tabular-nums;
+  }
+  .idx-change.pos { color: var(--pos); }
+  .idx-change.neg { color: var(--neg); }
+  .idx-change .pct { font-weight: var(--font-weight-semibold); }
+
+  /* INDIA VIX: distinct, prominent volatility stat. Full-width at the top of
+     the hero with a single-accent tint so it reads as a different class of
+     signal without introducing a second color. */
+  .idx-card--vix {
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-4) var(--space-5);
+    background: color-mix(in oklch, var(--accent) 12%, var(--surface-1));
+  }
+  .idx-vix-lead {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-3);
+  }
+  .idx-card--vix .idx-name {
+    color: var(--accent);
+    align-self: center;
+  }
+  .idx-card--vix .idx-value { font-size: var(--font-size-2xl); }
+  .idx-card--vix .idx-change { font-size: var(--font-size-md); }
+  .widget-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    box-shadow: var(--shadow-card);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    cursor: pointer;
+    transition: border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+  }
+  .widget-card:hover,
+  .widget-card:focus-visible {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+    outline: none;
+  }
+  .widget-card:active { transform: translateY(1px); }
+  .widget-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+  .widget-titles { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .widget-title {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: 600;
+  }
+  .widget-sub { font-size: var(--font-size-xs); }
+  .widget-go {
+    color: var(--text-muted);
+    font-size: var(--font-size-lg);
+    line-height: 1;
+    transition: transform 120ms ease, color 120ms ease;
+  }
+  .widget-card:hover .widget-go { color: var(--accent); transform: translateX(2px); }
+  .widget-body { min-width: 0; }
+  .widget-foot {
+    font-size: var(--font-size-xs);
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-2);
+  }
+  .widget-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .widget-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: baseline;
+    gap: var(--space-3);
+    padding: 2px 0;
+  }
+  .w-sym { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .w-ltp { font-variant-numeric: tabular-nums; }
+  .w-meta { font-size: var(--font-size-xs); }
+  .w-chg { font-variant-numeric: tabular-nums; text-align: right; min-width: 5.5em; }
+
+  /* Breadth mini split bar. */
+  .breadth-mini { display: flex; flex-direction: column; gap: var(--space-2); }
+  .breadth-bar {
+    display: flex;
+    height: 10px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: var(--surface-3);
+  }
+  .breadth-bar .adv { background: var(--pos); }
+  .breadth-bar .dec { background: var(--neg); }
+  .breadth-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    font-size: var(--font-size-sm);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .market-status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 2px var(--space-2);
+    box-shadow: var(--shadow-card);
+    border-radius: 999px;
+    font-size: var(--font-size-sm);
+  }
+  .market-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--neg);
+  }
+  .market-status.is-open .market-status-dot { background: var(--pos); }
+  .market-status-label { font-weight: 600; }
+  .market-status-note { font-size: var(--font-size-xs); }
+
+  /* Numeric columns: right-aligned + tabular figures for scannability. */
+  .data-table.movers-table th.num,
+  .data-table.movers-table td.num,
+  .data-table.markets-table th:not(:first-child),
+  .data-table.markets-table td:not(:first-child) {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (max-width: 860px) {
+    .dash-secondary { grid-template-columns: 1fr; }
+  }
+}

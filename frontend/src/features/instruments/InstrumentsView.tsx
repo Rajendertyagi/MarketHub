@@ -75,7 +75,7 @@ export function InstrumentsView() {
           {providers.length === 0 ? (
             <span className="muted">No provider sync state available.</span>
           ) : (
-            <table className="table">
+            <table className="table table-compact">
               <thead>
                 <tr>
                   <th>Provider</th>
@@ -155,7 +155,7 @@ export function InstrumentsView() {
   }
 
   return (
-    <div className="panel">
+    <div className="panel instruments-view">
       <div className="page-header">
         <h1 className="page-title">Instruments</h1>
         <span className="muted">

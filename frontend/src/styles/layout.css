@@ -1,0 +1,187 @@
+/* App shell: topbar, nav, main canvas, status bar. */
+
+@layer layout{
+  /* ---------- Layout shell ---------- */
+  .app-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    min-height: 0;
+  }
+
+  .app-topbar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    height: 38px;
+    padding: 0 var(--space-2);
+    background: var(--surface-1);
+    box-shadow: var(--shadow-card);
+    z-index: 10;
+  }
+
+  .app-brand {
+    display: flex;
+    align-items: center;
+  }
+  .app-home {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius);
+    color: var(--text);
+  }
+  .app-home:hover { background: var(--surface-2); }
+
+  /* No overflow on the base rule: overflow-x: auto would force overflow-y to
+     auto too and clip the absolutely-positioned dropdown menus. Narrow
+     viewports re-enable horizontal scrolling in the media query below. */
+  .app-nav {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-1);
+  }
+  .nav-segment {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding-right: var(--space-2);
+    margin-right: var(--space-2);
+  }
+  .nav-segment:last-of-type {
+    border-right: none;
+    padding-right: 0;
+    margin-right: 0;
+  }
+
+  .app-main {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    padding: var(--space-3);
+    background: var(--bg);
+  }
+
+  .nav-link {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-md);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+  }
+
+  .nav-link:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .nav-link.active {
+    background: var(--accent-soft);
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .nav-dropdown { position: relative; }
+  .nav-dropdown-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: var(--space-1) var(--space-2);
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+    border-radius: var(--radius);
+  }
+  .nav-dropdown-trigger:hover,
+  .nav-dropdown-trigger.open { background: var(--surface-2); color: var(--text); }
+  .nav-dropdown-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 50;
+    min-width: 170px;
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-1);
+    background: var(--surface);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-float);
+  }
+  .nav-dropdown-item {
+    padding: var(--space-2);
+    border-radius: var(--radius);
+    color: var(--text);
+    white-space: nowrap;
+  }
+  .nav-dropdown-item:hover { background: var(--surface-2); }
+
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--ease),
+      border-color var(--motion-fast) var(--ease);
+  }
+  .icon-btn:hover {
+    background: var(--surface-2);
+    border-color: var(--border-strong);
+  }
+  .icon-btn:focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 1px;
+  }
+
+  .app-statusbar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    height: 20px;
+    padding: 0 var(--space-2);
+    background: var(--surface-1);
+    box-shadow: 0 -1px 0 var(--edge);
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+  }
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-faint);
+  }
+  .status-online { background: var(--pos); }
+  .status-offline { background: var(--neg); }
+  .status-checking { background: var(--warn, #d69e2e); }
+  .status-sep { opacity: 0.5; }
+  .status-spacer { flex: 1 1 auto; }
+  .status-text.muted { color: var(--text-faint); }
+  .status-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  @media (max-width: 860px) {
+    .app-nav {
+      overflow-x: auto;
+    }
+  }
+}

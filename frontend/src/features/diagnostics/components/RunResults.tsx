@@ -30,7 +30,7 @@ export function RunResults({ result }: { result: DiagnosticRunResult }) {
         ))}
       </div>
 
-      <table className="table">
+      <table className="table table-compact">
         <thead>
           <tr>
             <th>Check</th>
@@ -38,12 +38,21 @@ export function RunResults({ result }: { result: DiagnosticRunResult }) {
             <th>Layer</th>
             <th>Status</th>
             <th>Message</th>
-            <th>ms</th>
+            <th className="num">ms</th>
           </tr>
         </thead>
         <tbody>
           {result.results.map((r) => (
-            <tr key={r.id}>
+            <tr
+              key={r.id}
+              className={
+                r.status === "FAIL"
+                  ? "diag-row diag-row-fail"
+                  : r.status === "PASS"
+                    ? "diag-row diag-row-pass"
+                    : "diag-row"
+              }
+            >
               <td>{r.name}</td>
               <td>{r.category}</td>
               <td>{r.layer}</td>

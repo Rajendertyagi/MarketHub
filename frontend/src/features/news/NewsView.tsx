@@ -70,8 +70,8 @@ export function NewsView() {
   };
 
   return (
-    <div className="news-reader" onKeyDown={onKeyDown}>
-      <div className="news-reader-header">
+    <div className="panel news-reader" onKeyDown={onKeyDown}>
+      <div className="panel-header">
         <div>
           <h1 className="page-title">News</h1>
           <span className="muted">
@@ -121,12 +121,12 @@ export function NewsView() {
 
       {showSources ? (
         <div
-          className="modal-overlay"
+          className="modal-backdrop"
           onClick={() => setShowSources(false)}
           role="presentation"
         >
           <div
-            className="modal"
+            className="modal-card"
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-label="Manage news sources"

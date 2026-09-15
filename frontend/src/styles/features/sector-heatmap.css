@@ -1,0 +1,244 @@
+/* Sector Heatmap: rich sector overview cards. */
+
+@layer features {
+  .sector-heatmap .chart-frame {
+    width: 100%;
+  }
+  .sector-heatmap .chart-frame--tall {
+    height: clamp(340px, 58vh, 600px);
+  }
+
+  /* Change % color scale — mirrors the treemap's magnitude encoding using the
+     design-system --pos/--neg tokens (color-mix keeps it theme-aware). */
+  .heat-legend {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+  }
+  .heat-legend .heat-scale {
+    width: 140px;
+    height: 10px;
+    border-radius: 999px;
+    box-shadow: var(--shadow-card);
+    background: linear-gradient(
+      to right,
+      color-mix(in oklch, var(--neg) 92%, transparent),
+      color-mix(in oklch, var(--neg) 45%, transparent),
+      color-mix(in oklch, var(--neg) 14%, transparent),
+      var(--surface-2),
+      color-mix(in oklch, var(--pos) 14%, transparent),
+      color-mix(in oklch, var(--pos) 45%, transparent),
+      color-mix(in oklch, var(--pos) 92%, transparent)
+    );
+  }
+  .heat-legend .heat-scale-labels {
+    display: flex;
+    justify-content: space-between;
+    width: 140px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Clear-selection affordance sits in the toolbar next to the universe
+     control; uses the accent (selection cue) but stays a quiet ghost button. */
+  .sector-clear {
+    align-self: flex-end;
+    height: var(--control-height);
+    padding: 0 var(--space-3);
+    font-size: var(--font-size-sm);
+    color: var(--accent);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--ease),
+      border-color var(--motion-fast) var(--ease);
+  }
+  .sector-clear:hover {
+    background: var(--surface-2);
+    border-color: color-mix(in oklch, var(--accent) 45%, transparent);
+  }
+
+  /* Responsive grid of rich sector cards — uses MORE of the page (bigger,
+     less cramped) than the old list. auto-fill keeps cards wide on desktop
+     and collapses gracefully on narrow viewports. */
+  .sector-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: var(--space-5);
+  }
+  @media (min-width: 1400px) {
+    .sector-grid {
+      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    }
+  }
+
+  /* Sector card — a real elevated surface, distinct from the compact dashboard
+     widgets. Elevation via --shadow-card; accent reserved for hover/selection. */
+  .sector-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    width: 100%;
+    text-align: left;
+    font: inherit;
+    color: var(--text);
+    background: var(--surface-1);
+    border: 1px solid transparent;
+    border-radius: var(--radius-lg);
+    padding: var(--space-5);
+    box-shadow: var(--shadow-card);
+    cursor: pointer;
+    transition: box-shadow var(--motion-fast) var(--ease),
+      border-color var(--motion-fast) var(--ease),
+      transform var(--motion-fast) var(--ease);
+  }
+  .sector-card:hover,
+  .sector-card:focus-visible {
+    outline: none;
+    border-color: color-mix(in oklch, var(--accent) 55%, transparent);
+    box-shadow: var(--shadow-float);
+    transform: translateY(-2px);
+  }
+  .sector-card.is-selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent), var(--shadow-float);
+  }
+
+  .sector-card__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+  .sector-card__name {
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-tight);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sector-card__count {
+    font-size: var(--font-size-xs);
+    white-space: nowrap;
+  }
+
+  /* Prominent overall change — the clear focal point of each card. */
+  .sector-card__chg {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    font-size: var(--font-size-3xl);
+    font-weight: var(--font-weight-bold);
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    letter-spacing: -0.01em;
+  }
+  .sector-card__chg.pos { color: var(--pos); }
+  .sector-card__chg.neg { color: var(--neg); }
+  .sector-card__chg-label {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-regular);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  /* Advance/decline split bar — a single proportion meter, not borders. */
+  .sector-card__advdec {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+  .sector-card__advdec-bar {
+    display: flex;
+    width: 100%;
+    height: 6px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: var(--surface-2);
+  }
+  .sector-card__advdec-bar .seg {
+    height: 100%;
+    transition: width var(--motion-fast) var(--ease);
+  }
+  .seg-pos { background: var(--pos); }
+  .seg-neg { background: var(--neg); }
+  .seg-flat { background: var(--text-faint); }
+  .sector-card__advdec-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    font-size: var(--font-size-xs);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Inline constituent-performance sparkline — thin vertical bars, colored by
+     direction only, scaled to the sector's own max magnitude. */
+  .sector-card__bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 52px;
+    padding: var(--space-1) 0;
+  }
+  .sector-card__bars--empty {
+    align-items: center;
+    height: 52px;
+    font-size: var(--font-size-xs);
+  }
+  .sector-card__bars .bar {
+    flex: 1 1 0;
+    min-width: 1px;
+    border-radius: 1px;
+    opacity: 0.9;
+  }
+  .sector-card__bars .bar.pos { background: var(--pos); }
+  .sector-card__bars .bar.neg { background: var(--neg); }
+
+  /* Top movers — compact two-up summary of the sector's extremes. */
+  .sector-card__movers {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-4);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
+  }
+  .mover {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .mover-label {
+    font-size: var(--font-size-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .mover-sym {
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-medium);
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mover-chg {
+    font-size: var(--font-size-sm);
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (max-width: 720px) {
+    .sector-heatmap .stat-grid {
+      grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    }
+    .sector-heatmap .chart-frame--tall {
+      height: clamp(280px, 50vh, 460px);
+    }
+    .sector-grid {
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: var(--space-3);
+    }
+  }
+}

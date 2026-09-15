@@ -9,7 +9,7 @@ export function ChatView() {
     useChatConversation();
 
   return (
-    <div className="panel">
+    <div className="panel chat-panel">
       <div className="page-header">
         <h1 className="page-title">Chat</h1>
         <ChatStatusChip status={status} loading={statusLoading} />

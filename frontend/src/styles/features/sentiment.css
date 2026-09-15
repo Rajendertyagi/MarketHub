@@ -1,0 +1,45 @@
+/* Sentiment dashboard: overall bar, breakdown grid, items. */
+
+@layer features{
+  /* ---------- Sentiment dashboard ---------- */
+
+  .sentiment-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+  }
+  .sentiment-toolbar .filter-input { min-width: 150px; }
+
+  .sentiment-overall {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    flex-wrap: wrap;
+  }
+  .sentiment-avg { font-size: var(--font-size-xl); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .sentiment-bars { display: flex; flex-direction: column; gap: var(--space-1); padding: 0 var(--space-3) var(--space-3); }
+  .sentiment-bar-row { display: flex; align-items: center; gap: var(--space-2); }
+  .sentiment-bar-label { width: 64px; color: var(--text-muted); font-size: var(--font-size-sm); }
+  .sentiment-bar-track {
+    flex: 1;
+    height: 10px;
+    background: var(--surface-2);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .sentiment-bar-fill { height: 100%; width: var(--pct, 0%); border-radius: var(--radius); }
+  .sentiment-bar-fill.bar-pos { background: var(--pos); }
+  .sentiment-bar-fill.bar-neu { background: var(--text-muted); }
+  .sentiment-bar-fill.bar-neg { background: var(--neg); }
+  .sentiment-bar-count { width: 32px; text-align: right; font-variant-numeric: tabular-nums; }
+  .sentiment-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+  @media (max-width: 880px) { .sentiment-grid { grid-template-columns: 1fr; } }
+  .data-table td.neutral { color: var(--text-muted); }
+  .sentiment-items { list-style: none; margin: 0; padding: var(--space-2) var(--space-3); display: flex; flex-direction: column; gap: var(--space-2); }
+  .sentiment-item { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+  .sentiment-item-title { color: var(--text); text-decoration: none; }
+  .sentiment-item-title:hover { text-decoration: underline; }
+}

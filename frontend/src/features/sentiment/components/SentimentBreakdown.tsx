@@ -29,11 +29,13 @@ export function SentimentBreakdown({ title, groups }: Props) {
           {groups.map((g) => (
             <tr key={g.key}>
               <td>{g.key}</td>
-              <td>{g.n}</td>
-              <td>{g.pos}</td>
-              <td>{g.neu}</td>
-              <td>{g.neg}</td>
-              <td className={g.avg > 0 ? "pos" : g.avg < 0 ? "neg" : "neutral"}>
+              <td className="num">{g.n}</td>
+              <td className="num pos">{g.pos}</td>
+              <td className="num muted">{g.neu}</td>
+              <td className="num neg">{g.neg}</td>
+              <td
+                className={`num ${g.avg > 0 ? "pos" : g.avg < 0 ? "neg" : "muted"}`}
+              >
                 {g.avg.toFixed(2)}
               </td>
             </tr>

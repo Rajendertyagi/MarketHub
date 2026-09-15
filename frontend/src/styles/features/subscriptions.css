@@ -1,0 +1,39 @@
+/* Subscriptions: subscribed-instrument management. */
+
+@layer features{
+  .subscriptions-view .table-compact th,
+  .subscriptions-view .table-compact td {
+    padding: var(--space-1) var(--space-3);
+  }
+  .subscriptions-view .table-compact tbody tr {
+    cursor: default;
+  }
+  .sub-remove {
+    border-color: var(--border-strong);
+    color: var(--danger);
+  }
+  .sub-remove:hover {
+    border-color: var(--danger);
+    background: color-mix(in oklch, var(--danger) 14%, transparent);
+  }
+  .rule-editor .control-row {
+    flex-wrap: wrap;
+  }
+  .rule-editor .control-row .field {
+    min-width: 120px;
+  }
+
+  @media (max-width: 720px) {
+    .subscriptions-view .control-row {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .subscriptions-view .control-row .field {
+      flex: 1 1 auto;
+    }
+    .subscriptions-view .table-compact th:nth-child(3),
+    .subscriptions-view .table-compact td:nth-child(3) {
+      display: none;
+    }
+  }
+}

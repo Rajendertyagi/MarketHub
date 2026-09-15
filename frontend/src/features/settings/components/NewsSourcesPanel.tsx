@@ -128,7 +128,7 @@ export function NewsSourcesPanel() {
         </Button>
       </div>
       <div className="table-scroll">
-        <table className="data-table">
+        <table className="data-table table-compact">
           <thead>
             <tr>
               <th>ID</th>
@@ -193,8 +193,17 @@ export function NewsSourcesPanel() {
       </div>
 
       {isOpen && editing ? (
-        <div className="modal">
-          <div className="modal-content">
+        <div
+          className="modal-backdrop"
+          onClick={() => setIsOpen(false)}
+          role="presentation"
+        >
+          <div
+            className="modal-card"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-label={isNew ? "Add news source" : "Edit news source"}
+          >
             <div className="modal-header">
               <h3>{isNew ? "Add Source" : "Edit Source"}</h3>
               <button className="icon-btn" onClick={() => setIsOpen(false)}>

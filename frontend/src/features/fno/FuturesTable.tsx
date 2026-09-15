@@ -19,7 +19,7 @@ export function FuturesTable({ futures }: Props) {
     );
   }
   return (
-    <div className="card" style={{ padding: 0, overflow: "auto" }}>
+      <div className="card fno-table-card">
       <table className="table">
         <thead>
           <tr>

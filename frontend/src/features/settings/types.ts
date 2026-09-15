@@ -59,6 +59,7 @@ export interface FyersSettings {
   restart_recovery?: boolean;
   login_required?: boolean;
   session_restored?: boolean;
+  session_persisted?: boolean;
 }
 
 // ── Generic save/delete credential result ───────────────────────────────────

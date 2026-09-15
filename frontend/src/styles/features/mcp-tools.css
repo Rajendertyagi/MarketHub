@@ -1,0 +1,45 @@
+/* MCP tools: description truncation, schema viewer. */
+
+@layer features{
+  /* ---------- MCP Tools ---------- */
+  .mcp-tools-table tbody tr {
+    cursor: default;
+  }
+  .mcp-tools-table .mono {
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+  }
+  .mcp-tool-desc {
+    max-width: 360px;
+    color: var(--text-muted);
+  }
+  .mcp-tool-schema {
+    font-size: var(--font-size-xs);
+  }
+  .mcp-tool-schema summary {
+    cursor: pointer;
+    color: var(--text-muted);
+    user-select: none;
+  }
+  .mcp-tool-schema pre {
+    margin: var(--space-2) 0 0;
+    padding: var(--space-2);
+    background: var(--surface-2);
+    box-shadow: var(--shadow-card);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    max-height: 240px;
+    overflow: auto;
+  }
+
+  @media (max-width: 720px) {
+    .mcp-tool-desc {
+      max-width: none;
+    }
+    .mcp-tools-table th:nth-child(2),
+    .mcp-tools-table td:nth-child(2) {
+      display: none;
+    }
+  }
+}

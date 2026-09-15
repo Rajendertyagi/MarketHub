@@ -58,7 +58,7 @@ function StockRow({
       <td>{stock.label}</td>
       <td className="muted">{stock.key}</td>
       <td>
-        <Button variant="default" onClick={onRemove}>
+        <Button variant="default" className="btn-compact sub-remove" onClick={onRemove}>
           Remove
         </Button>
       </td>
@@ -202,7 +202,7 @@ export function SubscriptionsView() {
   } else if (tab === "indices") {
     body = (
       <div className="card" style={{ overflow: "auto" }}>
-        <table className="table">
+        <table className="table table-compact">
           <thead>
             <tr>
               <th>Enabled</th>
@@ -259,7 +259,7 @@ export function SubscriptionsView() {
           {data.stocks.length === 0 ? (
             <span className="muted">No stock subscriptions.</span>
           ) : (
-            <table className="table">
+            <table className="table table-compact">
               <thead>
                 <tr>
                   <th>Enabled</th>
@@ -333,7 +333,7 @@ export function SubscriptionsView() {
   }
 
   return (
-    <div className="panel">
+    <div className="panel subscriptions-view">
       <div className="page-header">
         <h1 className="page-title">Subscriptions</h1>
         <span className="muted">

@@ -29,9 +29,10 @@ export function AlertsView() {
           onRetry={() => refetch()}
         />
       ) : (
-        <div className="card">
-          <div className="card-header">
+        <div className="panel">
+          <div className="panel-header">
             <h2>Configured alerts</h2>
+            <span className="muted">{data?.alerts?.length ?? 0} alerts</span>
           </div>
           <AlertsTable alerts={data?.alerts ?? []} />
         </div>

@@ -28,3 +28,13 @@ export function changeTileColor(
   const l = 62 + mag * 32;
   return `hsl(0, 60%, ${l}%)`;
 }
+
+// Sequential "activity" scale for the Volume heatmap metric: faint -> saturated
+// cool hue as normalized volume t (0..1) increases. Independent of the
+// green/red change scale so the two metrics read distinctly.
+export function volumeTileColor(t: number | null | undefined): string {
+  if (t === null || t === undefined) return "hsl(195, 30%, 32%)";
+  const clamped = Math.max(0, Math.min(1, t));
+  const l = 62 - clamped * 36; // 62% -> 26%
+  return `hsl(195, 70%, ${l}%)`;
+}

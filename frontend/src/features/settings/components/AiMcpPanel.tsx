@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Button, Input } from "@/components/ui";
 import { AsyncStateView } from "@/components/ui";
 import { useChatStatus, useSaveChatConfig } from "../useSettings";
+import { McpToolsView } from "@/features/mcp-tools/McpToolsView";
 import type { ApiError } from "@/types";
 
 export function AiMcpPanel() {
@@ -94,16 +95,8 @@ export function AiMcpPanel() {
         </div>
         {msg ? <p className={`hint ${msg.kind}`}>{msg.text}</p> : null}
       </div>
-      <div className="panel panel-spaced">
-        <div className="panel-header">
-          <h2>MCP Tools</h2>
-        </div>
-        <p className="form-hint">
-          The MCP tool registry reference lives on its own page.
-        </p>
-        <a className="btn" href="#/mcp">
-          Open MCP Tools
-        </a>
+      <div className="panel-spaced">
+        <McpToolsView />
       </div>
     </div>
   );

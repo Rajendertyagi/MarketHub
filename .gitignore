@@ -6,9 +6,7 @@ __pycache__/
 .Python
 *.egg
 *.egg-info/
-# Root-anchored: Python build output only. Vendored UI assets under
-# web/ui/vendor/.../dist/ are intentionally tracked (self-hosted deps,
-# reproducible via vendor_webawesome.ps1).
+# Root-anchored: Python build output only.
 /dist/
 build/
 .eggs/
@@ -51,9 +49,24 @@ tmp/
 node_modules/
 
 # React frontend generated build artifact (produced by `bun run build` from
-# frontend/). Isolated from tracked legacy `web/ui` source; not committed,
+# frontend/). Isolated from any tracked source tree; not committed,
 # rebuilt at deploy. Served at /ui by the Python server.
 frontend/dist/
 
 # AI assistant memory
 .workbuddy-ai/
+
+# Runtime / build logs (large, non-source — never commit)
+server.out
+server*.out
+server*.err
+vite.out
+vite.err
+verify_boot.out
+verify_boot.err
+
+# Scratch audit scripts / one-off reports
+audit_css.py
+audit_settings.py
+B8A_AUDIT_REPORT.md
+docs/superpowers/

@@ -1227,6 +1227,7 @@ app = Starlette(
     )
     + build_settings_routes(
         _oauth_cfg_ref,
+        cred_store=_credential_store,
         source_manager=_source_manager,
         config_path=str(CONFIG_PATH),
         sources_cfg=SOURCES_CFG,
@@ -1278,11 +1279,7 @@ app = Starlette(
     + _build_news_routes(_news_service)
     + _build_diag_routes(_diagnostics_runner)
     + [Mount("/ui", app=StaticFiles(directory=str(PROJECT_ROOT / "frontend" / "dist"), html=True),
-            name="ui"),
-       # Comparison aid only: serves the legacy plain-JS app read-only at /legacy
-       # so it can be diffed against the React /ui build. Not used in production.
-       Mount("/legacy", app=StaticFiles(directory=str(PROJECT_ROOT / "web" / "ui"), html=True),
-            name="legacy-ui")],
+            name="ui")],
     middleware=list(mcp_asgi_app.user_middleware),
     lifespan=_lifespan,
 )

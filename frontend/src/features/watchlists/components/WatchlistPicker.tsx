@@ -26,7 +26,7 @@ export function WatchlistPicker({
   onImport,
 }: Props) {
   return (
-    <div className="toolbar">
+    <div className="toolbar watchlist-picker">
       <select
         className="ui-select"
         aria-label="Select watchlist"

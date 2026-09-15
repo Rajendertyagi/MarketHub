@@ -1,0 +1,311 @@
+/* F&O workspace: header, analytics, option chain ladder. */
+
+@layer features{
+  /* ── F&O Workspace ─────────────────────────────────────────────────────────── */
+  .fno-workspace {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  /* Compact header: back · symbol · spot · ATM on one line. */
+  .fno-topbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+  .fno-sym {
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .fno-ltp {
+    font-weight: 600;
+  }
+  .fno-spot {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+  .fno-atm {
+    margin-left: auto;
+  }
+  .fno-notes {
+    flex-basis: 100%;
+  }
+
+  /* Single control row: symbol · expiry · window · greeks toggle. */
+  .fno-controls {
+    align-items: flex-end;
+  }
+  .check {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding-bottom: var(--space-1);
+    font-size: var(--font-size-sm);
+    white-space: nowrap;
+  }
+
+  /* Option chain: ITM/OTM tint + OI/Volume heat bars. */
+  table.option-chain td.ce-cell {
+    background: color-mix(in oklch, var(--pos) 5%, transparent);
+  }
+  table.option-chain td.pe-cell {
+    background: color-mix(in oklch, var(--neg) 5%, transparent);
+  }
+  table.option-chain tr.ce-itm td.ce-cell {
+    background: color-mix(in oklch, var(--pos) 14%, transparent);
+  }
+  table.option-chain tr.pe-itm td.pe-cell {
+    background: color-mix(in oklch, var(--neg) 14%, transparent);
+  }
+  table.option-chain td.has-heat {
+    position: relative;
+    overflow: hidden;
+  }
+  .heat-bar {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    background: color-mix(in oklch, var(--accent) 40%, transparent);
+    border-radius: 2px;
+    pointer-events: none;
+  }
+  .heat-val {
+    position: relative;
+  }
+  .fno-analytics {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+  .fno-tab-body {
+    margin-top: var(--space-3);
+  }
+  .link {
+    color: var(--accent);
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .link:hover {
+    text-decoration: underline;
+  }
+  .stale-val {
+    color: var(--text-faint);
+    font-style: italic;
+  }
+  .chip-info {
+    background: color-mix(in oklch, var(--info) 22%, transparent);
+    color: var(--info);
+    border: 1px solid color-mix(in oklch, var(--info) 40%, transparent);
+  }
+  .chip-atm {
+    margin-left: var(--space-2);
+    background: color-mix(in oklch, var(--accent) 22%, transparent);
+    color: var(--accent);
+    border: 1px solid color-mix(in oklch, var(--accent) 40%, transparent);
+  }
+
+  /* ── Underlying Picker (full-page, clickable rows) ─────────────────────────── */
+  .fno-picker {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    height: 100%;
+    min-height: 0;
+  }
+  .fno-picker-top {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+  }
+  .fno-picker-title {
+    font-size: var(--font-size-md);
+    font-weight: 600;
+    margin: 0;
+  }
+  .fno-picker-count {
+    font-size: var(--font-size-sm);
+  }
+  .fno-picker-search {
+    margin-left: auto;
+    width: 280px;
+    max-width: 100%;
+  }
+  .fno-picker-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+    overflow: auto;
+    max-height: calc(100vh - 12rem);
+  }
+  table.fno-picker-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+  table.fno-picker-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--surface-1);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    text-align: left;
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--border-strong);
+    white-space: nowrap;
+  }
+  table.fno-picker-table thead th.num {
+    text-align: center;
+  }
+  table.fno-picker-table td {
+    padding: var(--space-3) var(--space-3);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    font-size: var(--font-size-sm);
+  }
+  table.fno-picker-table td.num {
+    text-align: center;
+  }
+  .fno-row {
+    cursor: pointer;
+    transition: background 120ms ease, box-shadow 120ms ease;
+  }
+  .fno-row:hover,
+  .fno-row:focus-visible {
+    background: var(--surface-2);
+    box-shadow: var(--shadow-card);
+    outline: none;
+  }
+  .fno-row:active {
+    background: color-mix(in oklch, var(--accent) 14%, transparent);
+  }
+  .fno-row-sym {
+    font-weight: 600;
+    color: var(--text-strong);
+  }
+
+  /* Dropdown grouping: major indices pinned to the top. */
+  .fno-controls select optgroup {
+    color: var(--text-muted);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  /* Inline analytics sit directly beneath the chain as a cohesive elevated panel. */
+  .fno-analytics-panel {
+    margin-top: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    background: var(--surface-1);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+    box-shadow: var(--shadow-card);
+  }
+  .fno-analytics-heading {
+    font-size: var(--font-size-md);
+    font-weight: 600;
+    margin: 0;
+  }
+  .fno-analytics-panel .fno-analytics {
+    margin-top: 0;
+  }
+  /* Flatten nested elevated surfaces so the panel reads as a single surface. */
+  .fno-analytics-panel .card {
+    background: transparent;
+    box-shadow: none;
+    padding: 0;
+  }
+  .fno-analytics-panel .stat-card {
+    background: var(--surface-2);
+    box-shadow: none;
+  }
+
+  /* Toolbar: compact filter row (expiry/window controls). */
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--space-3);
+  }
+
+  /* Bounded, scrollable table surface for chain/futures/greeks ladders. */
+  .fno-table-card {
+    padding: 0;
+    overflow: auto;
+    max-height: 60vh;
+  }
+
+  /* Option chain: CE | strike | PE ladder */
+  table.option-chain {
+    width: max-content;
+    min-width: 100%;
+  }
+  table.option-chain .strike-col {
+    position: sticky;
+    left: 0;
+    background: var(--surface-2);
+    text-align: center;
+    font-weight: 600;
+    z-index: 1;
+    white-space: nowrap;
+  }
+  table.option-chain .ce-col {
+    text-align: right;
+  }
+  table.option-chain .pe-col {
+    text-align: right;
+  }
+
+  /* Header + cell rhythm: sticky labelled header, hairline row separators so the
+     dense ladder stays scannable (this table does not reuse the .table class). */
+  table.option-chain thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--surface-1);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    text-align: right;
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--border-strong);
+    white-space: nowrap;
+  }
+  table.option-chain thead th.strike-col {
+    text-align: center;
+  }
+  table.option-chain td {
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  tr.option-chain-atm > td {
+    background: color-mix(in oklch, var(--accent) 12%, transparent);
+  }
+
+  @media (max-width: 720px) {
+    .toolbar {
+      gap: var(--space-2);
+    }
+    .toolbar .field {
+      flex: 1 1 100%;
+    }
+    .fno-table-card {
+      max-height: 70vh;
+    }
+  }
+}

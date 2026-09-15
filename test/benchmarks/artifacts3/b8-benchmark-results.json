@@ -1,0 +1,1341 @@
+{
+  "quote_eval": {
+    "rows": [
+      {
+        "scenario": "A:50_total_10_bucket",
+        "total_alerts": 50,
+        "bucket_size": 10,
+        "evaluated_alerts": 10,
+        "p50_ms": 448.3782,
+        "p95_ms": 724.2634,
+        "p99_ms": 911.3603,
+        "min_ms": 195.024,
+        "max_ms": 958.1345,
+        "mean_ms": 460.183,
+        "iterations": 20,
+        "warmup": 5
+      },
+      {
+        "scenario": "B:100_total_10_bucket",
+        "total_alerts": 100,
+        "bucket_size": 10,
+        "evaluated_alerts": 10,
+        "p50_ms": 413.616,
+        "p95_ms": 689.3799,
+        "p99_ms": 706.9277,
+        "min_ms": 196.2091,
+        "max_ms": 711.3147,
+        "mean_ms": 428.7611,
+        "iterations": 20,
+        "warmup": 5
+      },
+      {
+        "scenario": "C:250_total_25_bucket",
+        "total_alerts": 250,
+        "bucket_size": 25,
+        "evaluated_alerts": 25,
+        "p50_ms": 1139.275,
+        "p95_ms": 2050.7266,
+        "p99_ms": 2072.2822,
+        "min_ms": 478.1234,
+        "max_ms": 2077.6711,
+        "mean_ms": 1239.5495,
+        "iterations": 20,
+        "warmup": 5
+      },
+      {
+        "scenario": "D:500_total_10_target",
+        "total_alerts": 500,
+        "bucket_size": 10,
+        "evaluated_alerts": 10,
+        "p50_ms": 414.3654,
+        "p95_ms": 691.7067,
+        "p99_ms": 702.9105,
+        "min_ms": 194.1017,
+        "max_ms": 705.7115,
+        "mean_ms": 438.0804,
+        "iterations": 20,
+        "warmup": 5
+      },
+      {
+        "scenario": "E:500_total_50_bucket",
+        "total_alerts": 500,
+        "bucket_size": 50,
+        "evaluated_alerts": 50,
+        "p50_ms": 2547.1886,
+        "p95_ms": 4220.0447,
+        "p99_ms": 4259.1078,
+        "min_ms": 1015.9639,
+        "max_ms": 4268.8736,
+        "mean_ms": 2594.6145,
+        "iterations": 20,
+        "warmup": 5
+      }
+    ],
+    "environment": {
+      "python": "3.14.7 (tags/v3.14.7:823f032, Aug  5 2026, 10:51:32) [MSC v.1944 64 bit (AMD64)]",
+      "cpu_count": 4,
+      "platform": "win32"
+    }
+  },
+  "condition_complexity": {
+    "rows": [
+      {
+        "scenario": "v1_single_leaf",
+        "type": "v1_level",
+        "bucket_size": 10,
+        "p50_ms": 0.0383,
+        "p95_ms": 0.0721,
+        "p99_ms": 0.0803,
+        "iterations": 100
+      },
+      {
+        "scenario": "v1_crossing_leaf",
+        "type": "v1_crossing",
+        "bucket_size": 10,
+        "p50_ms": 0.0387,
+        "p95_ms": 0.0452,
+        "p99_ms": 0.0643,
+        "iterations": 100
+      },
+      {
+        "scenario": "v2_all_2leaves",
+        "type": "v2_all",
+        "bucket_size": 10,
+        "p50_ms": 0.0938,
+        "p95_ms": 0.1031,
+        "p99_ms": 0.1353,
+        "iterations": 100
+      },
+      {
+        "scenario": "v2_any_2leaves",
+        "type": "v2_any",
+        "bucket_size": 10,
+        "p50_ms": 0.0876,
+        "p95_ms": 0.1083,
+        "p99_ms": 0.1312,
+        "iterations": 100
+      },
+      {
+        "scenario": "v2_nested_all_of_any",
+        "type": "v2_nested",
+        "bucket_size": 10,
+        "p50_ms": 0.2252,
+        "p95_ms": 0.2721,
+        "p99_ms": 0.2804,
+        "iterations": 100
+      },
+      {
+        "scenario": "mixed_quote_analytics",
+        "type": "mixed",
+        "bucket_size": 10,
+        "p50_ms": 0.0998,
+        "p95_ms": 0.109,
+        "p99_ms": 0.145,
+        "iterations": 100
+      }
+    ]
+  },
+  "trigger_persistence": {
+    "rows": [
+      {
+        "scenario": "A_true_to_true_no_change",
+        "writes": 0,
+        "p50_ms": 0.005,
+        "p95_ms": 0.0061,
+        "p99_ms": 0.0073,
+        "iterations": 50
+      },
+      {
+        "scenario": "B_true_to_false_rearm",
+        "writes": 1,
+        "p50_ms": 0.0049,
+        "p95_ms": 0.0058,
+        "p99_ms": 0.0072,
+        "iterations": 50
+      },
+      {
+        "scenario": "C_root_trigger",
+        "writes": 4,
+        "p50_ms": 0.005,
+        "p95_ms": 0.0099,
+        "p99_ms": 30.2878,
+        "iterations": 50,
+        "note": "first sample is the trigger; rest are TRUE->TRUE no-fire"
+      },
+      {
+        "scenario": "D_once_trigger_disable",
+        "writes": 4,
+        "trigger_p50_ms": 48.6038,
+        "post_disable_p50_ms": 0.0073,
+        "note": "once-mode: alert removed from dep_index after fire"
+      }
+    ]
+  },
+  "sqlite_txn": {
+    "rows": [
+      {
+        "scenario": "A_non_trigger_state_save",
+        "sql_writes_p50": 0,
+        "sql_writes_p95": 0,
+        "p50_ms": 0.0051,
+        "p95_ms": 0.0064,
+        "p99_ms": 0.0076,
+        "iterations": 50
+      },
+      {
+        "scenario": "B_trigger_transaction",
+        "sql_writes_p50": 6,
+        "sql_writes_p95": 6,
+        "p50_ms": 63.0379,
+        "p95_ms": 89.901,
+        "p99_ms": 100.965,
+        "iterations": 50
+      },
+      {
+        "scenario": "C_multi_leaf_v2_trigger",
+        "sql_writes_p50": 7,
+        "sql_writes_p95": 7,
+        "p50_ms": 62.1363,
+        "p95_ms": 82.4081,
+        "p99_ms": 114.5135,
+        "iterations": 50
+      }
+    ]
+  },
+  "write_amplification": {
+    "rows": [
+      {
+        "scenario": "unchanged_state_1000_evals",
+        "evaluations": 1000,
+        "total_sql_writes": 0,
+        "avg_writes_per_eval": 0.0,
+        "min_writes": 0,
+        "max_writes": 0
+      },
+      {
+        "scenario": "alternating_true_false_200_evals",
+        "evaluations": 200,
+        "total_sql_writes": 800,
+        "avg_writes_per_eval": 4.0,
+        "min_writes": 2,
+        "max_writes": 6
+      }
+    ]
+  },
+  "max_pain": {
+    "rows": [
+      {
+        "scenario": "max_pain_N20_strikes",
+        "strikes": 20,
+        "max_pain_value": 24900.0,
+        "p50_ms": 0.1646,
+        "p95_ms": 0.1988,
+        "p99_ms": 0.2491,
+        "min_ms": 0.1625,
+        "max_ms": 0.2998,
+        "mean_ms": 0.1706,
+        "iterations": 200,
+        "correctness": "verified"
+      },
+      {
+        "scenario": "max_pain_N50_strikes",
+        "strikes": 50,
+        "max_pain_value": 24850.0,
+        "p50_ms": 0.9061,
+        "p95_ms": 0.9437,
+        "p99_ms": 0.9621,
+        "min_ms": 0.8666,
+        "max_ms": 1.7094,
+        "mean_ms": 0.9071,
+        "iterations": 200,
+        "correctness": "verified"
+      },
+      {
+        "scenario": "max_pain_N100_strikes",
+        "strikes": 100,
+        "max_pain_value": 24750.0,
+        "p50_ms": 3.4387,
+        "p95_ms": 3.5949,
+        "p99_ms": 4.3795,
+        "min_ms": 3.3561,
+        "max_ms": 6.145,
+        "mean_ms": 3.4754,
+        "iterations": 200,
+        "correctness": "verified"
+      },
+      {
+        "scenario": "max_pain_N200_strikes",
+        "strikes": 200,
+        "max_pain_value": 24700.0,
+        "p50_ms": 13.4332,
+        "p95_ms": 13.9111,
+        "p99_ms": 18.7226,
+        "min_ms": 13.2292,
+        "max_ms": 19.8477,
+        "mean_ms": 13.5867,
+        "iterations": 200,
+        "correctness": "verified"
+      },
+      {
+        "scenario": "max_pain_N500_strikes",
+        "strikes": 500,
+        "max_pain_value": 24700.0,
+        "p50_ms": 85.0265,
+        "p95_ms": 90.7411,
+        "p99_ms": 96.0123,
+        "min_ms": 83.9184,
+        "max_ms": 98.56,
+        "mean_ms": 85.6593,
+        "iterations": 200,
+        "correctness": "verified"
+      }
+    ]
+  },
+  "analytics_metrics": {
+    "rows": [
+      {
+        "scenario": "pcr_N20",
+        "metric": "pcr",
+        "strikes": 20,
+        "p50_ms": 0.0411,
+        "p95_ms": 0.0416,
+        "p99_ms": 0.0723,
+        "min_ms": 0.0407,
+        "max_ms": 0.0766,
+        "iterations": 200
+      },
+      {
+        "scenario": "pcr_N50",
+        "metric": "pcr",
+        "strikes": 50,
+        "p50_ms": 0.1006,
+        "p95_ms": 0.1254,
+        "p99_ms": 0.1396,
+        "min_ms": 0.1001,
+        "max_ms": 0.1411,
+        "iterations": 200
+      },
+      {
+        "scenario": "pcr_N100",
+        "metric": "pcr",
+        "strikes": 100,
+        "p50_ms": 0.2019,
+        "p95_ms": 0.2361,
+        "p99_ms": 0.2466,
+        "min_ms": 0.201,
+        "max_ms": 0.2671,
+        "iterations": 200
+      },
+      {
+        "scenario": "pcr_N200",
+        "metric": "pcr",
+        "strikes": 200,
+        "p50_ms": 0.394,
+        "p95_ms": 0.4424,
+        "p99_ms": 0.5332,
+        "min_ms": 0.3884,
+        "max_ms": 0.6125,
+        "iterations": 200
+      },
+      {
+        "scenario": "pcr_N500",
+        "metric": "pcr",
+        "strikes": 500,
+        "p50_ms": 1.0364,
+        "p95_ms": 1.1412,
+        "p99_ms": 1.5565,
+        "min_ms": 0.9955,
+        "max_ms": 1.8633,
+        "iterations": 200
+      },
+      {
+        "scenario": "pcr_volume_N20",
+        "metric": "pcr_volume",
+        "strikes": 20,
+        "p50_ms": 0.038,
+        "p95_ms": 0.0385,
+        "p99_ms": 0.0709,
+        "min_ms": 0.0377,
+        "max_ms": 0.0772,
+        "iterations": 200
+      },
+      {
+        "scenario": "pcr_volume_N50",
+        "metric": "pcr_volume",
+        "strikes": 50,
+        "p50_ms": 0.0917,
+        "p95_ms": 0.1191,
+        "p99_ms": 0.1361,
+        "min_ms": 0.0909,
+        "max_ms": 0.1623,
+        "iterations": 200
+      },
+      {
+        "scenario": "pcr_volume_N100",
+        "metric": "pcr_volume",
+        "strikes": 100,
+        "p50_ms": 0.1873,
+        "p95_ms": 0.2243,
+        "p99_ms": 0.2426,
+        "min_ms": 0.1847,
+        "max_ms": 0.3232,
+        "iterations": 200
+      },
+      {
+        "scenario": "pcr_volume_N200",
+        "metric": "pcr_volume",
+        "strikes": 200,
+        "p50_ms": 0.3797,
+        "p95_ms": 0.4284,
+        "p99_ms": 0.474,
+        "min_ms": 0.3752,
+        "max_ms": 0.5945,
+        "iterations": 200
+      },
+      {
+        "scenario": "pcr_volume_N500",
+        "metric": "pcr_volume",
+        "strikes": 500,
+        "p50_ms": 0.9838,
+        "p95_ms": 1.1474,
+        "p99_ms": 1.8234,
+        "min_ms": 0.9392,
+        "max_ms": 1.9243,
+        "iterations": 200
+      },
+      {
+        "scenario": "iv_skew_N20",
+        "metric": "iv_skew",
+        "strikes": 20,
+        "p50_ms": 0.0413,
+        "p95_ms": 0.0566,
+        "p99_ms": 0.063,
+        "min_ms": 0.0406,
+        "max_ms": 0.0647,
+        "iterations": 200
+      },
+      {
+        "scenario": "iv_skew_N50",
+        "metric": "iv_skew",
+        "strikes": 50,
+        "p50_ms": 0.1018,
+        "p95_ms": 0.121,
+        "p99_ms": 0.1251,
+        "min_ms": 0.0997,
+        "max_ms": 0.1369,
+        "iterations": 200
+      },
+      {
+        "scenario": "iv_skew_N100",
+        "metric": "iv_skew",
+        "strikes": 100,
+        "p50_ms": 0.1993,
+        "p95_ms": 0.2494,
+        "p99_ms": 0.3111,
+        "min_ms": 0.1928,
+        "max_ms": 0.3708,
+        "iterations": 200
+      },
+      {
+        "scenario": "iv_skew_N200",
+        "metric": "iv_skew",
+        "strikes": 200,
+        "p50_ms": 0.397,
+        "p95_ms": 0.45,
+        "p99_ms": 0.5464,
+        "min_ms": 0.3868,
+        "max_ms": 0.5809,
+        "iterations": 200
+      },
+      {
+        "scenario": "iv_skew_N500",
+        "metric": "iv_skew",
+        "strikes": 500,
+        "p50_ms": 1.0377,
+        "p95_ms": 1.0709,
+        "p99_ms": 1.1527,
+        "min_ms": 0.9971,
+        "max_ms": 1.1894,
+        "iterations": 200
+      }
+    ]
+  },
+  "analytics_scheduler": {
+    "rows": [
+      {
+        "scenario": "chains_1_rest_50ms",
+        "active_chains": 1,
+        "simulated_rest_latency_s": 0.05,
+        "total_cycle_time_s": 0.0505,
+        "expected_sequential_s": 0.05,
+        "call_count": 1,
+        "max_concurrency": 1,
+        "is_sequential": true
+      },
+      {
+        "scenario": "chains_10_rest_50ms",
+        "active_chains": 10,
+        "simulated_rest_latency_s": 0.05,
+        "total_cycle_time_s": 0.5483,
+        "expected_sequential_s": 0.5,
+        "call_count": 10,
+        "max_concurrency": 1,
+        "is_sequential": true
+      },
+      {
+        "scenario": "chains_25_rest_50ms",
+        "active_chains": 25,
+        "simulated_rest_latency_s": 0.05,
+        "total_cycle_time_s": 1.3756,
+        "expected_sequential_s": 1.25,
+        "call_count": 25,
+        "max_concurrency": 1,
+        "is_sequential": true
+      },
+      {
+        "scenario": "chains_50_rest_50ms",
+        "active_chains": 50,
+        "simulated_rest_latency_s": 0.05,
+        "total_cycle_time_s": 2.7061,
+        "expected_sequential_s": 2.5,
+        "call_count": 50,
+        "max_concurrency": 1,
+        "is_sequential": true
+      },
+      {
+        "scenario": "chains_100_rest_50ms",
+        "active_chains": 100,
+        "simulated_rest_latency_s": 0.05,
+        "total_cycle_time_s": 5.5071,
+        "expected_sequential_s": 5.0,
+        "call_count": 100,
+        "max_concurrency": 1,
+        "is_sequential": true
+      },
+      {
+        "scenario": "chains_1_rest_250ms",
+        "active_chains": 1,
+        "simulated_rest_latency_s": 0.25,
+        "total_cycle_time_s": 0.2519,
+        "expected_sequential_s": 0.25,
+        "call_count": 1,
+        "max_concurrency": 1,
+        "is_sequential": true
+      },
+      {
+        "scenario": "chains_10_rest_250ms",
+        "active_chains": 10,
+        "simulated_rest_latency_s": 0.25,
+        "total_cycle_time_s": 2.5371,
+        "expected_sequential_s": 2.5,
+        "call_count": 10,
+        "max_concurrency": 1,
+        "is_sequential": true
+      },
+      {
+        "scenario": "chains_25_rest_250ms",
+        "active_chains": 25,
+        "simulated_rest_latency_s": 0.25,
+        "total_cycle_time_s": 6.3256,
+        "expected_sequential_s": 6.25,
+        "call_count": 25,
+        "max_concurrency": 1,
+        "is_sequential": true
+      },
+      {
+        "scenario": "chains_50_rest_250ms",
+        "active_chains": 50,
+        "simulated_rest_latency_s": 0.25,
+        "total_cycle_time_s": 12.6553,
+        "expected_sequential_s": 12.5,
+        "call_count": 50,
+        "max_concurrency": 1,
+        "is_sequential": true
+      },
+      {
+        "scenario": "chains_100_rest_250ms",
+        "active_chains": 100,
+        "simulated_rest_latency_s": 0.25,
+        "total_cycle_time_s": 25.2944,
+        "expected_sequential_s": 25.0,
+        "call_count": 100,
+        "max_concurrency": 1,
+        "is_sequential": true
+      },
+      {
+        "scenario": "chains_1_rest_1000ms",
+        "active_chains": 1,
+        "simulated_rest_latency_s": 1.0,
+        "total_cycle_time_s": 1.0137,
+        "expected_sequential_s": 1.0,
+        "call_count": 1,
+        "max_concurrency": 1,
+        "is_sequential": true
+      },
+      {
+        "scenario": "chains_10_rest_1000ms",
+        "active_chains": 10,
+        "simulated_rest_latency_s": 1.0,
+        "total_cycle_time_s": 10.035,
+        "expected_sequential_s": 10.0,
+        "call_count": 10,
+        "max_concurrency": 1,
+        "is_sequential": true
+      },
+      {
+        "scenario": "chains_25_rest_1000ms",
+        "active_chains": 25,
+        "simulated_rest_latency_s": 1.0,
+        "total_cycle_time_s": 25.1174,
+        "expected_sequential_s": 25.0,
+        "call_count": 25,
+        "max_concurrency": 1,
+        "is_sequential": true
+      },
+      {
+        "scenario": "chains_50_rest_1000ms",
+        "active_chains": 50,
+        "simulated_rest_latency_s": 1.0,
+        "total_cycle_time_s": 50.2579,
+        "expected_sequential_s": 50.0,
+        "call_count": 50,
+        "max_concurrency": 1,
+        "is_sequential": true
+      },
+      {
+        "scenario": "chains_100_rest_1000ms",
+        "active_chains": 100,
+        "simulated_rest_latency_s": 1.0,
+        "total_cycle_time_s": 100.4517,
+        "expected_sequential_s": 100.0,
+        "call_count": 100,
+        "max_concurrency": 1,
+        "is_sequential": true
+      }
+    ]
+  },
+  "same_chain_dedup": {
+    "rows": [
+      {
+        "scenario": "same_chain_100_alerts",
+        "alerts_on_chain": 100,
+        "unique_chains": 1,
+        "rest_calls": 1,
+        "expected_calls": 1,
+        "cycle_time_s": 0.0151,
+        "dedup_working": true
+      },
+      {
+        "scenario": "same_chain_1000_alerts",
+        "alerts_on_chain": 1000,
+        "unique_chains": 1,
+        "rest_calls": 1,
+        "expected_calls": 1,
+        "cycle_time_s": 0.0147,
+        "dedup_working": true
+      },
+      {
+        "scenario": "1000_alerts_10_unique_chains",
+        "alerts_on_chain": 1000,
+        "unique_chains": 10,
+        "rest_calls": 10,
+        "expected_calls": 10,
+        "cycle_time_s": 0,
+        "dedup_working": true
+      }
+    ]
+  },
+  "memory": {
+    "rows": [
+      {
+        "scenario": "create_100_alerts",
+        "alert_count": 100,
+        "dep_index_entries": 100,
+        "dep_index_keys": 1,
+        "alerts_dict_size": 100,
+        "alert_deps_size": 100,
+        "alert_locks_size": 100,
+        "dep_last_values_size": 0,
+        "state_entries": 100,
+        "tracemalloc_mb": 0.5595,
+        "tracemalloc_peak_mb": 0.5901,
+        "baseline_mb": 0.0,
+        "allocated_delta_mb": 0.5594
+      },
+      {
+        "scenario": "create_1000_alerts",
+        "alert_count": 1000,
+        "dep_index_entries": 1000,
+        "dep_index_keys": 1,
+        "alerts_dict_size": 1000,
+        "alert_deps_size": 1000,
+        "alert_locks_size": 1000,
+        "dep_last_values_size": 0,
+        "state_entries": 1000,
+        "tracemalloc_mb": 4.6779,
+        "tracemalloc_peak_mb": 5.1609,
+        "baseline_mb": 0.0,
+        "allocated_delta_mb": 4.6778
+      },
+      {
+        "scenario": "create_5000_alerts",
+        "alert_count": 5000,
+        "dep_index_entries": 5000,
+        "dep_index_keys": 1,
+        "alerts_dict_size": 5000,
+        "alert_deps_size": 5000,
+        "alert_locks_size": 5000,
+        "dep_last_values_size": 0,
+        "state_entries": 5000,
+        "tracemalloc_mb": 24.1149,
+        "tracemalloc_peak_mb": 24.6637,
+        "baseline_mb": 0.0,
+        "allocated_delta_mb": 24.1148
+      },
+      {
+        "scenario": "delete_half_100_alerts",
+        "remaining_alerts": 50,
+        "dep_index_entries": 50,
+        "dep_index_keys": 1,
+        "alert_deps_size": 50,
+        "alert_locks_size": 100,
+        "dep_last_values_size": 0,
+        "state_entries": 50,
+        "tracemalloc_mb": 24.2054,
+        "tracemalloc_peak_mb": 24.6637
+      },
+      {
+        "scenario": "delete_half_1000_alerts",
+        "remaining_alerts": 500,
+        "dep_index_entries": 500,
+        "dep_index_keys": 1,
+        "alert_deps_size": 500,
+        "alert_locks_size": 1000,
+        "dep_last_values_size": 0,
+        "state_entries": 500,
+        "tracemalloc_mb": 24.7285,
+        "tracemalloc_peak_mb": 28.059
+      },
+      {
+        "scenario": "delete_half_5000_alerts",
+        "remaining_alerts": 2500,
+        "dep_index_entries": 2500,
+        "dep_index_keys": 1,
+        "alert_deps_size": 2500,
+        "alert_locks_size": 5000,
+        "dep_last_values_size": 0,
+        "state_entries": 2500,
+        "tracemalloc_mb": 25.2495,
+        "tracemalloc_peak_mb": 42.3753
+      },
+      {
+        "scenario": "disable_quarter_100_alerts",
+        "remaining_alerts": 38,
+        "dep_index_entries": 38,
+        "dep_index_keys": 1,
+        "alert_locks_size": 100,
+        "dep_last_values_size": 0,
+        "tracemalloc_mb": 19.6799,
+        "tracemalloc_peak_mb": 42.3753
+      },
+      {
+        "scenario": "disable_quarter_1000_alerts",
+        "remaining_alerts": 375,
+        "dep_index_entries": 375,
+        "dep_index_keys": 1,
+        "alert_locks_size": 1000,
+        "dep_last_values_size": 0,
+        "tracemalloc_mb": 20.2439,
+        "tracemalloc_peak_mb": 42.3753
+      },
+      {
+        "scenario": "disable_quarter_5000_alerts",
+        "remaining_alerts": 1875,
+        "dep_index_entries": 1875,
+        "dep_index_keys": 1,
+        "alert_locks_size": 5000,
+        "dep_last_values_size": 0,
+        "tracemalloc_mb": 22.3355,
+        "tracemalloc_peak_mb": 42.3753
+      }
+    ]
+  },
+  "cleanup": {
+    "rows": [
+      {
+        "scenario": "before_any_cleanup",
+        "n_created": 1000,
+        "_alerts": 1000,
+        "_dep_index_entries": 1000,
+        "_dep_index_keys": 1,
+        "_alert_deps": 1000,
+        "_alert_locks": 1000,
+        "_dep_last_values": 0,
+        "_analytics_seen": 0,
+        "_analytics_last_snapshot": 0,
+        "_state_entries": 1000
+      },
+      {
+        "scenario": "after_delete_all_reload",
+        "_alerts": 0,
+        "_dep_index_entries": 0,
+        "_dep_index_keys": 0,
+        "_alert_deps": 0,
+        "_alert_locks": 1000,
+        "_dep_last_values": 0,
+        "_analytics_seen": 0,
+        "_analytics_last_snapshot": 0,
+        "_state_entries": 0
+      },
+      {
+        "scenario": "after_disable_all_reload",
+        "_alerts": 0,
+        "_dep_index_entries": 0,
+        "_dep_index_keys": 0,
+        "_alert_deps": 0,
+        "_alert_locks": 1000,
+        "_dep_last_values": 0,
+        "_analytics_seen": 0,
+        "_analytics_last_snapshot": 0,
+        "_state_entries": 0
+      }
+    ]
+  },
+  "restart": {
+    "rows": [
+      {
+        "scenario": "restart_100_alerts",
+        "alert_count": 100,
+        "p50_ms": 4.68,
+        "p95_ms": 5.06,
+        "p99_ms": 5.07,
+        "min_ms": 4.58,
+        "max_ms": 5.07,
+        "mean_ms": 4.74,
+        "iterations": 10
+      },
+      {
+        "scenario": "restart_500_alerts",
+        "alert_count": 500,
+        "p50_ms": 10.48,
+        "p95_ms": 10.57,
+        "p99_ms": 10.58,
+        "min_ms": 10.33,
+        "max_ms": 10.58,
+        "mean_ms": 10.47,
+        "iterations": 10
+      },
+      {
+        "scenario": "restart_1000_alerts",
+        "alert_count": 1000,
+        "p50_ms": 19.45,
+        "p95_ms": 20.72,
+        "p99_ms": 20.92,
+        "min_ms": 17.94,
+        "max_ms": 20.97,
+        "mean_ms": 19.45,
+        "iterations": 10
+      },
+      {
+        "scenario": "restart_5000_alerts",
+        "alert_count": 5000,
+        "p50_ms": 89.11,
+        "p95_ms": 128.9,
+        "p99_ms": 131.69,
+        "min_ms": 86.52,
+        "max_ms": 132.38,
+        "mean_ms": 97.6,
+        "iterations": 10
+      }
+    ]
+  },
+  "replay": {
+    "rows": [
+      {
+        "scenario": "pending_status_100",
+        "pending_events": 100,
+        "pending_count": 100,
+        "latest_sequence": 100
+      },
+      {
+        "scenario": "replay_page_100_events_page100",
+        "total_events": 100,
+        "page_size": 100,
+        "returned": 100,
+        "p50_ms": 0.7123,
+        "p95_ms": 4.4351,
+        "p99_ms": 6.8174,
+        "iterations": 10
+      },
+      {
+        "scenario": "ack_100_events_sample100",
+        "total_events": 100,
+        "acked_sample": 100,
+        "p50_ms": 0.8824,
+        "p95_ms": 0.9589,
+        "p99_ms": 0.9887
+      },
+      {
+        "scenario": "pending_status_500",
+        "pending_events": 500,
+        "pending_count": 500,
+        "latest_sequence": 500
+      },
+      {
+        "scenario": "replay_page_500_events_page100",
+        "total_events": 500,
+        "page_size": 100,
+        "returned": 100,
+        "p50_ms": 0.8629,
+        "p95_ms": 4.8934,
+        "p99_ms": 7.4706,
+        "iterations": 10
+      },
+      {
+        "scenario": "ack_500_events_sample100",
+        "total_events": 500,
+        "acked_sample": 100,
+        "p50_ms": 0.9345,
+        "p95_ms": 1.0715,
+        "p99_ms": 1.1094
+      },
+      {
+        "scenario": "pending_status_1000",
+        "pending_events": 1000,
+        "pending_count": 1000,
+        "latest_sequence": 1000
+      },
+      {
+        "scenario": "replay_page_1000_events_page100",
+        "total_events": 1000,
+        "page_size": 100,
+        "returned": 100,
+        "p50_ms": 1.0867,
+        "p95_ms": 4.8814,
+        "p99_ms": 7.1972,
+        "iterations": 10
+      },
+      {
+        "scenario": "ack_1000_events_sample100",
+        "total_events": 1000,
+        "acked_sample": 100,
+        "p50_ms": 0.9345,
+        "p95_ms": 1.0263,
+        "p99_ms": 1.104
+      }
+    ]
+  },
+  "ack": {
+    "rows": [
+      {
+        "scenario": "sequential_ack_1_events",
+        "event_count": 1,
+        "total_ms": 22.89,
+        "per_ack_p50_ms": 22.8854,
+        "per_ack_p95_ms": 22.8854,
+        "per_ack_p99_ms": 22.8854,
+        "min_ms": 22.8854,
+        "max_ms": 22.8854
+      },
+      {
+        "scenario": "sequential_ack_100_events",
+        "event_count": 100,
+        "total_ms": 2491.34,
+        "per_ack_p50_ms": 20.9303,
+        "per_ack_p95_ms": 54.1529,
+        "per_ack_p99_ms": 65.3578,
+        "min_ms": 15.7205,
+        "max_ms": 95.907
+      },
+      {
+        "scenario": "sequential_ack_500_events",
+        "event_count": 500,
+        "total_ms": 13063.1,
+        "per_ack_p50_ms": 23.9553,
+        "per_ack_p95_ms": 37.3658,
+        "per_ack_p99_ms": 54.2805,
+        "min_ms": 16.8435,
+        "max_ms": 154.7166
+      }
+    ]
+  },
+  "live_wake": {
+    "rows": [
+      {
+        "scenario": "live_wake_1_subscribers",
+        "subscribers": 1,
+        "total_p50_ms": 61.6992,
+        "total_p95_ms": 81.5468,
+        "total_p99_ms": 104.7692,
+        "iterations": 20,
+        "bus_publish_calls": 50
+      },
+      {
+        "scenario": "live_wake_10_subscribers",
+        "subscribers": 10,
+        "total_p50_ms": 60.4621,
+        "total_p95_ms": 72.3643,
+        "total_p99_ms": 97.6992,
+        "iterations": 20,
+        "bus_publish_calls": 50
+      },
+      {
+        "scenario": "live_wake_100_subscribers",
+        "subscribers": 100,
+        "total_p50_ms": 56.1509,
+        "total_p95_ms": 67.8804,
+        "total_p99_ms": 76.7574,
+        "iterations": 20,
+        "bus_publish_calls": 50
+      }
+    ]
+  },
+  "concurrency": {
+    "rows": [
+      {
+        "scenario": "same_alert_100_concurrent",
+        "concurrent_tasks": 100,
+        "total_fired": 0,
+        "expected_fired": 0,
+        "correctness_ok": true,
+        "total_time_ms": 1.15,
+        "trigger_count": 1,
+        "expected_trigger_count": 1
+      },
+      {
+        "scenario": "50_alerts_10_concurrent_samesimulate",
+        "alerts": 50,
+        "concurrent_tasks": 10,
+        "total_fired": 50,
+        "total_time_ms": 3249.35
+      }
+    ]
+  },
+  "explain_plan": {
+    "rows": [
+      {
+        "scenario": "pending_list",
+        "sql": "SELECT pe.sequence, pe.id, pe.type, pe.source, pe.timestamp,\n                   pe.data, pe.routing, pe.created_at\n     ",
+        "query_plan": "SEARCH ces USING INDEX idxCES_ack (consumer_id=? AND acknowledged_at=?); SEARCH pe USING INDEX sqlite_autoindex_persistent_events_1 (id=? AND rowid>?); USE TEMP B-TREE FOR ORDER BY",
+        "uses_index": true
+      },
+      {
+        "scenario": "inbox_status",
+        "sql": "SELECT COUNT(*) AS pending_count, MAX(pe.sequence) AS latest_sequence\n            FROM consumer_event_state ces\n        ",
+        "query_plan": "SEARCH ces USING INDEX idxCES_ack (consumer_id=? AND acknowledged_at=?); SEARCH pe USING COVERING INDEX sqlite_autoindex_persistent_events_1 (id=? AND rowid>?)",
+        "uses_index": true
+      },
+      {
+        "scenario": "advance_checkpoint_find_next",
+        "sql": "SELECT MIN(pe.sequence)\n            FROM persistent_events pe\n            JOIN consumer_event_state ces ON ces.event_id ",
+        "query_plan": "SEARCH ces USING INDEX idxCES_ack (consumer_id=? AND acknowledged_at=?); SEARCH pe USING COVERING INDEX sqlite_autoindex_persistent_events_1 (id=? AND rowid>?)",
+        "uses_index": true
+      },
+      {
+        "scenario": "ack_lookup",
+        "sql": "SELECT 1 FROM consumer_event_state WHERE consumer_id = ? AND event_id = ?",
+        "query_plan": "SEARCH consumer_event_state USING COVERING INDEX sqlite_autoindex_consumer_event_state_1 (consumer_id=? AND event_id=?)",
+        "uses_index": true
+      }
+    ]
+  },
+  "q1q7_quote_scale": {
+    "rows": [
+      {
+        "scenario": "Q1:100_total_100_bucket",
+        "total_alerts": 100,
+        "target_bucket": 100,
+        "evaluated_alerts": 100,
+        "iterations": 50,
+        "warmup": 20,
+        "mode": "NO-TRIGGER",
+        "p50_ms": 0.3766,
+        "p95_ms": 0.4197,
+        "p99_ms": 0.4668,
+        "min_ms": 0.3703,
+        "max_ms": 0.508,
+        "mean_ms": 0.3856
+      },
+      {
+        "scenario": "Q2:1000_total_1000_bucket",
+        "total_alerts": 1000,
+        "target_bucket": 1000,
+        "evaluated_alerts": 1000,
+        "iterations": 20,
+        "warmup": 20,
+        "mode": "NO-TRIGGER",
+        "p50_ms": 3.9165,
+        "p95_ms": 4.0808,
+        "p99_ms": 4.1297,
+        "min_ms": 3.8773,
+        "max_ms": 4.1419,
+        "mean_ms": 3.9351
+      },
+      {
+        "scenario": "Q3:1000_total_10_bucket",
+        "total_alerts": 1000,
+        "target_bucket": 10,
+        "evaluated_alerts": 10,
+        "iterations": 100,
+        "warmup": 20,
+        "mode": "NO-TRIGGER",
+        "p50_ms": 0.0383,
+        "p95_ms": 0.0433,
+        "p99_ms": 0.0646,
+        "min_ms": 0.038,
+        "max_ms": 0.0711,
+        "mean_ms": 0.0396
+      },
+      {
+        "scenario": "Q4:5000_total_10_bucket",
+        "total_alerts": 5000,
+        "target_bucket": 10,
+        "evaluated_alerts": 10,
+        "iterations": 100,
+        "warmup": 20,
+        "mode": "NO-TRIGGER",
+        "p50_ms": 0.0386,
+        "p95_ms": 0.0424,
+        "p99_ms": 0.0605,
+        "min_ms": 0.0381,
+        "max_ms": 0.0608,
+        "mean_ms": 0.0397
+      },
+      {
+        "scenario": "Q5:5000_total_1000_bucket",
+        "total_alerts": 5000,
+        "target_bucket": 1000,
+        "evaluated_alerts": 1000,
+        "iterations": 20,
+        "warmup": 20,
+        "mode": "NO-TRIGGER",
+        "p50_ms": 3.9106,
+        "p95_ms": 4.0032,
+        "p99_ms": 4.0907,
+        "min_ms": 3.8374,
+        "max_ms": 4.1126,
+        "mean_ms": 3.9145
+      },
+      {
+        "scenario": "Q6:10000_total_10_bucket",
+        "total_alerts": 10000,
+        "target_bucket": 10,
+        "evaluated_alerts": 10,
+        "iterations": 100,
+        "warmup": 20,
+        "mode": "NO-TRIGGER",
+        "p50_ms": 0.0383,
+        "p95_ms": 0.0411,
+        "p99_ms": 0.0618,
+        "min_ms": 0.0378,
+        "max_ms": 0.0624,
+        "mean_ms": 0.0393
+      },
+      {
+        "scenario": "Q7:10000_total_1000_bucket",
+        "total_alerts": 10000,
+        "target_bucket": 1000,
+        "evaluated_alerts": 1000,
+        "iterations": 20,
+        "warmup": 20,
+        "mode": "NO-TRIGGER",
+        "p50_ms": 3.9139,
+        "p95_ms": 3.9523,
+        "p99_ms": 4.0076,
+        "min_ms": 3.8772,
+        "max_ms": 4.0214,
+        "mean_ms": 3.9209
+      }
+    ],
+    "environment": {
+      "python": "3.14.7 (tags/v3.14.7:823f032, Aug  5 2026, 10:51:32) [MSC v.1944 64 bit (AMD64)]",
+      "cpu_count": 4,
+      "platform": "win32"
+    }
+  },
+  "slow_chain_blocking": {
+    "rows": [
+      {
+        "scenario": "slow_B_50_1000_50",
+        "A_latency_ms": 50,
+        "B_latency_ms": 1000,
+        "C_latency_ms": 50,
+        "total_cycle_ms": 168.2,
+        "expected_sequential_ms": 1100,
+        "call_count": 3,
+        "observed_c_delay_caused_by_b_ms": 0
+      },
+      {
+        "scenario": "B_fails_A_then_C",
+        "A_latency_ms": 50,
+        "B_behavior": "raises RuntimeError",
+        "C_latency_ms": 50,
+        "total_cycle_ms": 173.27,
+        "B_call_count": 0,
+        "C_was_called": false,
+        "cycle_completed": true,
+        "call_order": [
+          [
+            "call_start",
+            0
+          ],
+          [
+            "call_end",
+            0
+          ],
+          [
+            "call_start",
+            0
+          ],
+          [
+            "call_end",
+            0
+          ],
+          [
+            "call_start",
+            0
+          ],
+          [
+            "call_end",
+            0
+          ]
+        ]
+      },
+      {
+        "scenario": "B_slow_then_fail_50_500_50",
+        "A_latency_ms": 50,
+        "B_behavior": "500ms delay then raises RuntimeError",
+        "C_latency_ms": 50,
+        "total_cycle_ms": 157.59,
+        "B_call_count": 0,
+        "C_was_called": false,
+        "cycle_completed": true
+      }
+    ]
+  },
+  "restart_10k": {
+    "rows": [
+      {
+        "scenario": "restart_10000_alerts",
+        "alert_count": 10000,
+        "p50_ms": 188.45,
+        "p95_ms": 262.08,
+        "p99_ms": 263.47,
+        "min_ms": 184.03,
+        "max_ms": 263.82,
+        "mean_ms": 214.23,
+        "iterations": 10,
+        "loaded_alert_count": 10000,
+        "dep_index_count": 10000,
+        "correct": true
+      }
+    ]
+  },
+  "replay_10k": {
+    "rows": [
+      {
+        "scenario": "inbox_status_10k",
+        "pending_events_created": 10000,
+        "pending_count": 10000,
+        "latest_sequence": 10000,
+        "correct": true
+      },
+      {
+        "scenario": "replay_10k_page10",
+        "total_events": 10000,
+        "page_size": 10,
+        "returned": 10,
+        "p50_ms": 5.4606,
+        "p95_ms": 6.0346,
+        "p99_ms": 11.3036,
+        "min_ms": 5.3773,
+        "max_ms": 12.6209,
+        "mean_ms": 5.8364,
+        "iterations": 20,
+        "ordered": true,
+        "no_duplicates": true
+      },
+      {
+        "scenario": "replay_10k_page100",
+        "total_events": 10000,
+        "page_size": 100,
+        "returned": 100,
+        "p50_ms": 6.0073,
+        "p95_ms": 6.6239,
+        "p99_ms": 7.1005,
+        "min_ms": 5.916,
+        "max_ms": 7.2196,
+        "mean_ms": 6.0978,
+        "iterations": 20,
+        "ordered": true,
+        "no_duplicates": true
+      },
+      {
+        "scenario": "replay_10k_pageMAX",
+        "total_events": 10000,
+        "page_size": "MAX (10000)",
+        "returned": 10000,
+        "p50_ms": 102.213,
+        "p95_ms": 134.2257,
+        "p99_ms": 153.0893,
+        "min_ms": 101.2712,
+        "max_ms": 157.8052,
+        "mean_ms": 108.4278,
+        "iterations": 10
+      },
+      {
+        "scenario": "explain_pending_list",
+        "sql": "SELECT pe.sequence, pe.id, pe.type, pe.source, pe.timestamp,\n                   pe.data, pe.routing, pe.created_at\n     ",
+        "query_plan": "SEARCH ces USING INDEX idxCES_ack (consumer_id=? AND acknowledged_at=?); SEARCH pe USING INDEX sqlite_autoindex_persistent_events_1 (id=? AND rowid>?); USE TEMP B-TREE FOR ORDER BY",
+        "uses_index": true,
+        "table_scan": false
+      },
+      {
+        "scenario": "explain_inbox_status",
+        "sql": "SELECT COUNT(*) AS pending_count, MAX(pe.sequence) AS latest_sequence\n            FROM consumer_event_state ces\n        ",
+        "query_plan": "SEARCH ces USING INDEX idxCES_ack (consumer_id=? AND acknowledged_at=?); SEARCH pe USING COVERING INDEX sqlite_autoindex_persistent_events_1 (id=? AND rowid>?)",
+        "uses_index": true,
+        "table_scan": false
+      }
+    ]
+  },
+  "ack_10k": {
+    "rows": [
+      {
+        "scenario": "sequential_ack_10000_events",
+        "event_count": 10000,
+        "total_ms": 252692.46,
+        "throughput_ack_per_second": 39.6,
+        "per_ack_p50_ms": 23.1208,
+        "per_ack_p95_ms": 37.1338,
+        "per_ack_p99_ms": 57.7811,
+        "min_ms": 15.3791,
+        "max_ms": 294.8207,
+        "mean_ms": 25.2692
+      },
+      {
+        "scenario": "ack_correctness_10000",
+        "pending_after_ack": 0,
+        "expected_pending": 0,
+        "correct": true
+      },
+      {
+        "scenario": "sequential_ack_100_events",
+        "event_count": 100,
+        "total_ms": 2320.06,
+        "per_ack_p50_ms": 21.7333,
+        "per_ack_p95_ms": 32.8568,
+        "per_ack_p99_ms": 48.9327
+      },
+      {
+        "scenario": "sequential_ack_1000_events",
+        "event_count": 1000,
+        "total_ms": 24932.98,
+        "per_ack_p50_ms": 22.9633,
+        "per_ack_p95_ms": 37.1609,
+        "per_ack_p99_ms": 53.6079
+      }
+    ]
+  }
+}

@@ -31,9 +31,10 @@ export function LogsFilterBar({
 }: LogsFilterBarProps) {
   return (
     <div className="card logs-filterbar">
-      <div className="control-row">
+      <div className="toolbar logs-filterbar-row">
         <Field label="Level">
           <Select
+            className="filter-input"
             value={draft.level ?? ""}
             onChange={(e) => onChange({ ...draft, level: e.target.value })}
           >
@@ -47,6 +48,7 @@ export function LogsFilterBar({
         </Field>
         <Field label="Component">
           <Input
+            className="filter-input"
             placeholder="logger substring"
             value={draft.logger ?? ""}
             onChange={(e) => onChange({ ...draft, logger: e.target.value })}
@@ -57,6 +59,7 @@ export function LogsFilterBar({
         </Field>
         <Field label="Search">
           <Input
+            className="filter-input"
             placeholder="message text"
             value={draft.search ?? ""}
             onChange={(e) => onChange({ ...draft, search: e.target.value })}

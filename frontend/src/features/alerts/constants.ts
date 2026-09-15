@@ -44,3 +44,26 @@ export const ALERT_REFRESH_MS = 15000;
 
 // Bounded history page size (legacy requested limit=50).
 export const ALERT_HISTORY_LIMIT = 50;
+
+// Small static list of well-known NSE symbols used to back the alert-creation
+// <datalist> autocomplete. Purely presentational — no broker/API calls.
+export const NSE_SYMBOLS: readonly { token: string; label: string }[] = [
+  { token: "NSE_EQ|RELIANCE", label: "RELIANCE" },
+  { token: "NSE_EQ|INFY", label: "INFY" },
+  { token: "NSE_EQ|TCS", label: "TCS" },
+  { token: "NSE_EQ|HDFCBANK", label: "HDFCBANK" },
+  { token: "NSE_EQ|ICICIBANK", label: "ICICIBANK" },
+  { token: "NSE_EQ|SBIN", label: "SBIN" },
+  { token: "NSE_EQ|ITC", label: "ITC" },
+  { token: "NSE_EQ|WIPRO", label: "WIPRO" },
+  { token: "NSE_EQ|HDFC", label: "HDFC" },
+  { token: "NSE_EQ|LT", label: "LT" },
+  { token: "NSE_EQ|AXISBANK", label: "AXISBANK" },
+  { token: "NSE_EQ|KOTAKBANK", label: "KOTAKBANK" },
+  { token: "NSE_EQ|MARUTI", label: "MARUTI" },
+  { token: "NSE_EQ|SUNPHARMA", label: "SUNPHARMA" },
+  { token: "NSE_EQ|TATAMOTORS", label: "TATAMOTORS" },
+  { token: "NSE_EQ|TATASTEEL", label: "TATASTEEL" },
+  { token: "NSE_EQ|BAJFINANCE", label: "BAJFINANCE" },
+  { token: "NSE_EQ|ASIANPAINT", label: "ASIANPAINT" },
+];

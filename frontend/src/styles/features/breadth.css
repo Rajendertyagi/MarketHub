@@ -1,0 +1,222 @@
+/* Breadth: market-breadth summary + advancing/declining views.
+   Scoped to .breadth — only presentation over the canonical snapshot. */
+
+@layer features {
+  /* Tighten the page-root panel for a more compact, premium feel. */
+  .breadth {
+    gap: var(--space-4);
+  }
+
+  /* ---- Control row (universe / sort / search) ---- */
+  .breadth .toolbar {
+    gap: var(--space-3);
+  }
+  .breadth .toolbar .field {
+    min-width: 140px;
+  }
+  .breadth .toolbar .field:last-child {
+    flex: 1 1 200px;
+    max-width: 320px;
+  }
+
+  /* ---- Hero breadth block: visual split + big directional stats ---- */
+  .breadth-hero {
+    display: grid;
+    grid-template-columns: 1.5fr 1fr;
+    gap: var(--space-4);
+    align-items: stretch;
+  }
+
+  .breadth-hero .hero-viz {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .breadth-hero .hero-viz .panel-header {
+    margin-bottom: var(--space-2);
+  }
+  .breadth-hero .hint.ok {
+    margin-bottom: var(--space-2);
+  }
+  .breadth-hero .chart-frame--hero {
+    width: 100%;
+    height: clamp(130px, 20vh, 184px);
+    margin-top: auto;
+  }
+
+  .breadth-hero .hero-stats {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    justify-content: center;
+  }
+  .hero-stat {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "label pct"
+      "value pct";
+    align-items: baseline;
+    column-gap: var(--space-3);
+    padding: var(--space-2) var(--space-4);
+    background: var(--surface-2);
+    border-radius: var(--radius-md);
+  }
+  .hero-stat-label {
+    grid-area: label;
+    font-size: var(--font-size-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+  }
+  .hero-stat-value {
+    grid-area: value;
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-semibold);
+    font-variant-numeric: tabular-nums;
+    line-height: var(--line-height-tight);
+  }
+  .hero-stat-pct {
+    grid-area: pct;
+    font-size: var(--font-size-md);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    text-align: right;
+  }
+  .hero-stat--pos .hero-stat-value { color: var(--pos); }
+  .hero-stat--neg .hero-stat-value { color: var(--neg); }
+  .hero-stat--pos .hero-stat-pct,
+  .hero-stat--neg .hero-stat-pct { color: inherit; opacity: 0.85; }
+  .hero-stat--flat .hero-stat-value { color: var(--text); }
+
+  /* ---- Section titles ---- */
+  .breadth .section-title {
+    margin: 0;
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text);
+  }
+  .breadth .breadth-metrics,
+  .breadth .breadth-constituents {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  /* ---- Refined metric grid ~4-5 per row ---- */
+  .breadth .stat-grid {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: var(--space-3);
+  }
+  .breadth .stat-card {
+    padding: var(--space-3) var(--space-4);
+    gap: 2px;
+  }
+  .breadth .stat-value {
+    font-size: var(--font-size-xl);
+  }
+  .breadth .stat-sub {
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  /* Single, sparing accent highlight for the key A/D ratio metric. */
+  .breadth .stat-card--accent {
+    box-shadow: var(--shadow-card),
+      0 0 0 1px color-mix(in oklch, var(--accent) 45%, transparent);
+  }
+  .breadth .stat-card--accent .stat-value {
+    color: var(--accent);
+  }
+  .breadth .stat-card--accent .stat-sub {
+    color: var(--accent);
+    opacity: 0.85;
+  }
+  .breadth .stat-card.tone-pos .stat-value { color: var(--pos); }
+  .breadth .stat-card.tone-neg .stat-value { color: var(--neg); }
+  .breadth .stat-card.tone-muted .stat-value { color: var(--text-muted); }
+
+  /* ---- Constituent section header: title + segmented status filter ---- */
+  .breadth .section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+  }
+  .breadth .breadth-constituents .card {
+    margin-top: 0;
+  }
+
+  /* Status filter as a segmented control — accent only on the active chip. */
+  .breadth .tabs {
+    display: inline-flex;
+    gap: var(--space-1);
+    padding: var(--space-1);
+    background: var(--surface-2);
+    border-radius: var(--radius-md);
+    border-bottom: none;
+  }
+  .breadth .tab {
+    border-bottom: none;
+    border-radius: var(--radius-sm);
+    padding: var(--space-2) var(--space-3);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+  }
+  .breadth .tab:hover {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+  .breadth .tab.active {
+    background: var(--accent);
+    color: var(--accent-contrast);
+    border-bottom: none;
+    font-weight: var(--font-weight-semibold);
+  }
+
+  /* ---- Direction legend for the breadth split bar ---- */
+  .breadth-legend {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-xs);
+  }
+  .breadth-legend .swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: var(--radius-sm);
+    display: inline-block;
+  }
+  .breadth-legend .swatch.pos { background: var(--pos); }
+  .breadth-legend .swatch.neg { background: var(--neg); }
+  .breadth-legend .swatch.flat { background: var(--text-muted); }
+
+  /* ---- Constituent table keeps the panel compact on small heights ---- */
+  .breadth .table-scroll {
+    max-height: 460px;
+    overflow: auto;
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-card);
+    margin-top: var(--space-3);
+  }
+
+  @media (max-width: 880px) {
+    .breadth-hero {
+      grid-template-columns: 1fr;
+    }
+    .breadth-hero .chart-frame--hero {
+      height: clamp(130px, 20vh, 180px);
+    }
+  }
+
+  @media (max-width: 540px) {
+    .breadth .stat-grid {
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    }
+    .breadth .section-head {
+      align-items: flex-start;
+    }
+  }
+}

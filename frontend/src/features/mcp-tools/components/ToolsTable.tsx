@@ -25,7 +25,7 @@ export function ToolsTable() {
   }
 
   return (
-    <table className="table">
+    <table className="table table-compact mcp-tools-table">
       <thead>
         <tr>
           <th>Name</th>

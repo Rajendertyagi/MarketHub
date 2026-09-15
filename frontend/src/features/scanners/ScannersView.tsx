@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { ApiError, type ScannerDef, type ScanRow } from "@/types";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ApiError, type ScannerDef, type ScanResult, type ScanRow } from "@/types";
 import { listScanners, resolveInstrument, runScanner } from "@/api/market";
 import {
   COLUMNS,
@@ -25,49 +25,55 @@ function kindOf(def: ScannerDef | undefined): ScannerKind {
   return "equity";
 }
 
-export function ScannersView() {
+// Compact summary line shown on the card face once a scan resolves:
+// the head of the ranking plus how many names matched.
+function summarize(result: ScanResult | undefined) {
+  if (!result) return null;
+  const top = result.rows[0];
+  return {
+    matched: result.matched,
+    eligible: result.eligible,
+    quoted: result.quoted,
+    top,
+  };
+}
+
+function ScannerCard({
+  def,
+  universe,
+  limit,
+  expiry,
+  atmRange,
+  optionType,
+  defaultOpen,
+}: {
+  def: ScannerDef;
+  universe: string;
+  limit: number;
+  expiry: string;
+  atmRange: number;
+  optionType: "CE" | "PE" | "BOTH";
+  defaultOpen?: boolean;
+}) {
   const navigate = useNavigate();
-
-  const scannersQuery = useQuery({
-    queryKey: ["scanners"],
-    queryFn: ({ signal }) => listScanners(signal),
-  });
-
-  const defs = scannersQuery.data ?? [];
-  const [name, setName] = useState<string>("");
-  const [universe, setUniverse] = useState<string>("FNO");
-  const [limit, setLimit] = useState<number>(25);
-  const [expiry, setExpiry] = useState<string>("");
-  const [atmRange, setAtmRange] = useState<number>(5);
-  const [optionType, setOptionType] = useState<"CE" | "PE" | "BOTH">("BOTH");
-  const [navError, setNavError] = useState<string>("");
-
-  // Default to the first scanner once the list loads.
-  useEffect(() => {
-    if (!name && defs.length) setName(defs[0]!.name);
-  }, [defs, name]);
-
-  const selectedDef = useMemo(
-    () => defs.find((d) => d.name === name),
-    [defs, name],
-  );
-  const kind = kindOf(selectedDef);
+  const kind = kindOf(def);
   const isOption = kind === "option";
 
-  const runQuery = useQuery({
+  const [open, setOpen] = useState(!!defaultOpen);
+
+  const query = useQuery({
     queryKey: [
       "scanner-run",
-      name,
+      def.name,
       universe,
       limit,
-      expiry,
-      atmRange,
-      optionType,
+      isOption ? expiry : "",
+      isOption ? atmRange : "",
+      isOption ? optionType : "",
     ],
-    enabled: !!name,
     queryFn: ({ signal }) =>
       runScanner(
-        name,
+        def.name,
         {
           universe,
           limit,
@@ -80,14 +86,10 @@ export function ScannersView() {
   });
 
   const onRowClick = async (row: ScanRow) => {
-    setNavError("");
     const nav = rowNavigation(row, kind);
     if (!nav) return;
     const inst = await resolveInstrument(nav.tradingsymbol, nav.type);
-    if (!inst) {
-      setNavError(`Could not resolve instrument for ${nav.tradingsymbol}.`);
-      return;
-    }
+    if (!inst) return;
     navigate(
       `/charts?key=${encodeURIComponent(inst.instrument_token)}` +
         `&sym=${encodeURIComponent(inst.tradingsymbol)}` +
@@ -97,37 +99,42 @@ export function ScannersView() {
   };
 
   const columns = COLUMNS[kind];
-  const rows = runQuery.data?.rows ?? [];
+  const rows = query.data?.rows ?? [];
+  const summary = summarize(query.data);
 
-  let body: React.ReactNode;
-  if (scannersQuery.isLoading) {
-    body = <AsyncStateView status="loading" loadingLabel="Loading scanners…" />;
-  } else if (scannersQuery.isError) {
-    body = (
-      <AsyncStateView status="error" error={scannersQuery.error as ApiError} />
+  const toggle = () => setOpen((o) => !o);
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggle();
+    }
+  };
+
+  let detail: React.ReactNode;
+  if (query.isLoading && !query.data) {
+    detail = (
+      <AsyncStateView status="loading" loadingLabel="Scanning…" />
     );
-  } else if (runQuery.isLoading) {
-    body = <AsyncStateView status="loading" loadingLabel="Scanning…" />;
-  } else if (runQuery.isError) {
-    body = (
+  } else if (query.isError) {
+    detail = (
       <AsyncStateView
         status="error"
-        error={runQuery.error as ApiError}
-        onRetry={() => runQuery.refetch()}
+        error={query.error as ApiError}
+        onRetry={() => query.refetch()}
       />
     );
   } else if (!rows.length) {
-    const r = runQuery.data;
-    body = (
+    const r = query.data;
+    detail = (
       <AsyncStateView
         status="empty"
         emptyLabel={`No rows (eligible ${r?.eligible ?? 0}, quoted ${r?.quoted ?? 0}).`}
       />
     );
   } else {
-    body = (
-      <div className="card" style={{ padding: 0, overflow: "auto" }}>
-        <table className="table">
+    detail = (
+      <div className="scanner-card__table">
+        <table className="table table-compact">
           <thead>
             <tr>
               <th>#</th>
@@ -140,7 +147,13 @@ export function ScannersView() {
           </thead>
           <tbody>
             {rows.map((row, i) => (
-              <tr key={`${row.symbol}-${row.contract ?? ""}-${i}`} onClick={() => onRowClick(row)}>
+              <tr
+                key={`${row.symbol}-${row.contract ?? ""}-${i}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRowClick(row);
+                }}
+              >
                 <td className="muted">{i + 1}</td>
                 {columns.map((c) => (
                   <td key={c.key} className={c.numeric ? "num" : ""}>
@@ -156,29 +169,135 @@ export function ScannersView() {
   }
 
   return (
+    <article
+      className={`scanner-card${open ? " is-open" : ""}`}
+      role="button"
+      tabIndex={0}
+      aria-expanded={open}
+      onClick={toggle}
+      onKeyDown={onKey}
+    >
+      <header className="scanner-card__head">
+        <div className="scanner-card__titles">
+          <h3 className="scanner-card__title">{def.title}</h3>
+          <span className="scanner-card__chevron" aria-hidden="true">
+            ⌄
+          </span>
+        </div>
+        <span className="scanner-card__hint" aria-hidden="true">
+          {open ? "Click to collapse" : "Click to expand"}
+        </span>
+        <div className="scanner-card__meta">
+          <span className="scanner-tag">{def.instrument_class}</span>
+          {def.contract_kind && (
+            <span className="scanner-tag">{def.contract_kind}</span>
+          )}
+          <span className="scanner-tag">{def.metric}</span>
+        </div>
+        <p className="scanner-card__desc">{def.description}</p>
+      </header>
+
+      {summary && (
+        <div className="scanner-card__summary">
+          <span className="scanner-card__count">
+            {summary.matched} matches
+          </span>
+          {summary.top && (
+            <span className="scanner-card__top">
+              Top&nbsp;
+              <strong>{summary.top.symbol}</strong>
+              {summary.top.change_percent != null ? (
+                <span
+                  className={
+                    summary.top.change_percent > 0
+                      ? "pos"
+                      : summary.top.change_percent < 0
+                        ? "neg"
+                        : ""
+                  }
+                >
+                  {summary.top.change_percent > 0 ? " +" : " "}
+                  {summary.top.change_percent.toFixed(2)}%
+                </span>
+              ) : summary.top.ltp != null ? (
+                <span className="muted">{summary.top.ltp}</span>
+              ) : null}
+            </span>
+          )}
+          <span className="muted scanner-card__coverage">
+            {summary.eligible} eligible · {summary.quoted} quoted
+          </span>
+        </div>
+      )}
+
+      <div className="scanner-card__detail">
+        <div className="scanner-card__detail-inner">{detail}</div>
+      </div>
+    </article>
+  );
+}
+
+export function ScannersView() {
+  const queryClient = useQueryClient();
+
+  const scannersQuery = useQuery({
+    queryKey: ["scanners"],
+    queryFn: ({ signal }) => listScanners(signal),
+  });
+
+  const defs = scannersQuery.data ?? [];
+  const [universe, setUniverse] = useState<string>("FNO");
+  const [limit, setLimit] = useState<number>(25);
+  const [expiry, setExpiry] = useState<string>("");
+  const [atmRange, setAtmRange] = useState<number>(5);
+  const [optionType, setOptionType] = useState<"CE" | "PE" | "BOTH">("BOTH");
+
+  const hasOption = useMemo(
+    () => defs.some((d) => kindOf(d) === "option"),
+    [defs],
+  );
+
+  const refreshAll = () =>
+    queryClient.invalidateQueries({ queryKey: ["scanner-run"] });
+
+  let grid: React.ReactNode;
+  if (scannersQuery.isLoading) {
+    grid = <AsyncStateView status="loading" loadingLabel="Loading scanners…" />;
+  } else if (scannersQuery.isError) {
+    grid = (
+      <AsyncStateView status="error" error={scannersQuery.error as ApiError} />
+    );
+  } else if (!defs.length) {
+    grid = <AsyncStateView status="empty" emptyLabel="No scanners available." />;
+  } else {
+    grid = (
+      <div className="scanner-grid">
+        {defs.map((def, i) => (
+          <ScannerCard
+            key={def.name}
+            def={def}
+            universe={universe}
+            limit={limit}
+            expiry={expiry}
+            atmRange={atmRange}
+            optionType={optionType}
+            defaultOpen={i === 0}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  return (
     <div className="panel">
       <div className="page-header">
         <h1 className="page-title">Scanners</h1>
-        {runQuery.data && (
-          <span className="muted">
-            {runQuery.data.scanner} · {runQuery.data.universe}
-            {runQuery.data.as_of
-              ? ` · as of ${runQuery.data.as_of}`
-              : ` · no live quotes (eligible ${runQuery.data.eligible}, quoted ${runQuery.data.quoted})`}
-          </span>
-        )}
+        <span className="muted">
+          {defs.length} scanners · click a card to expand results
+        </span>
       </div>
 
-      <div className="control-row">
-        <Field label="Scanner">
-          <Select value={name} onChange={(e) => setName(e.target.value)}>
-            {defs.map((d) => (
-              <option key={d.name} value={d.name}>
-                {d.title}
-              </option>
-            ))}
-          </Select>
-        </Field>
+      <div className="toolbar">
         <Field label="Universe">
           <Select value={universe} onChange={(e) => setUniverse(e.target.value)}>
             {UNIVERSES.map((u) => (
@@ -198,7 +317,7 @@ export function ScannersView() {
           </Select>
         </Field>
 
-        {isOption && (
+        {hasOption && (
           <>
             <Field label="Expiry">
               <Input
@@ -235,13 +354,12 @@ export function ScannersView() {
           </>
         )}
 
-        <Button variant="primary" onClick={() => runQuery.refetch()}>
-          Run
+        <Button variant="primary" onClick={refreshAll}>
+          Refresh
         </Button>
       </div>
 
-      {navError && <div className="hint err">{navError}</div>}
-      {body}
+      {grid}
     </div>
   );
 }

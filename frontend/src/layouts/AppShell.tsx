@@ -1,60 +1,104 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useTheme } from "@/app/ThemeProvider";
+import { Icon } from "@/components/Icon";
+import { NAV } from "./nav";
+import { StatusBar } from "./StatusBar";
 
-const NAV = [
-  { to: "/charts", label: "Charts" },
-  { to: "/scanners", label: "Scanners" },
-  { to: "/fno", label: "F&O Workspace" },
-  { to: "/option-chain", label: "Option Chain" },
-  { to: "/subscriptions", label: "Subscriptions" },
-  { to: "/instruments", label: "Instruments" },
-  { to: "/news", label: "News" },
-  { to: "/dashboard", label: "Dashboard" },
-  { to: "/watchlists", label: "Watchlists" },
-  { to: "/alerts", label: "Alerts" },
-  { to: "/ai-alerts", label: "AI Alerts" },
-  { to: "/mcp", label: "MCP Tools" },
-  { to: "/logs", label: "Logs" },
-  { to: "/diagnostics", label: "Test Center" },
-  { to: "/chat", label: "Chat" },
-  { to: "/sentiment", label: "Sentiment" },
-  { to: "/market-map", label: "Market Map" },
-  { to: "/breadth", label: "Breadth" },
-  { to: "/sector-heatmap", label: "Sector Heatmap" },
-  { to: "/settings", label: "Settings" },
-];
-
+// Compact top navbar + bottom status strip. Navigation is data-driven from
+// `./nav` so adding links/groups/dropdowns never touches this component.
 export function AppShell() {
   const { theme, toggleTheme } = useTheme();
+  const location = useLocation();
+  const [openIdx, setOpenIdx] = useState<number | null>(null);
+  const navRef = useRef<HTMLElement>(null);
+
+  // Close any open dropdown on navigation or outside click.
+  useEffect(() => setOpenIdx(null), [location.pathname]);
+  useEffect(() => {
+    if (openIdx === null) return;
+    const onDown = (e: MouseEvent) => {
+      if (navRef.current && !navRef.current.contains(e.target as Node)) {
+        setOpenIdx(null);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [openIdx]);
+
   return (
     <div className="app-shell">
-      <div className="app-brand">MarketHub</div>
-      <div className="app-topbar">
+      <header className="app-topbar">
+        <div className="app-brand">
+          <NavLink to="/dashboard" className="app-home" aria-label="Home" title="Home">
+            <Icon name="home" />
+          </NavLink>
+        </div>
+
+        <nav className="app-nav" aria-label="Primary" ref={navRef}>
+          {NAV.map((seg, i) => (
+            <div className="nav-segment" key={i}>
+              {seg.kind === "links" ? (
+                seg.items.map((it) => (
+                  <NavLink
+                    key={it.to}
+                    to={it.to}
+                    className={({ isActive }) =>
+                      isActive ? "nav-link active" : "nav-link"
+                    }
+                  >
+                    {it.label}
+                  </NavLink>
+                ))
+              ) : (
+                <div className="nav-dropdown">
+                  <button
+                    type="button"
+                    className={`nav-dropdown-trigger${openIdx === i ? " open" : ""}`}
+                    aria-expanded={openIdx === i}
+                    aria-haspopup="true"
+                    onClick={() => setOpenIdx(openIdx === i ? null : i)}
+                  >
+                    {seg.label}
+                    <Icon name="chevron-down" size={14} />
+                  </button>
+                  {openIdx === i ? (
+                    <div className="nav-dropdown-menu" role="menu">
+                      {seg.items.map((it) => (
+                        <NavLink
+                          key={it.to}
+                          to={it.to}
+                          role="menuitem"
+                          className="nav-dropdown-item"
+                          onClick={() => setOpenIdx(null)}
+                        >
+                          {it.label}
+                        </NavLink>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
+          ))}
+        </nav>
+
         <button
-          className="btn"
+          type="button"
+          className="icon-btn theme-toggle"
           onClick={toggleTheme}
           aria-label="Toggle theme"
-          title="Toggle dark/light"
+          title="Toggle theme"
         >
-          {theme === "dark" ? "☾ Dark" : "☀ Light"}
+          <Icon name={theme === "dark" ? "sun" : "moon"} />
         </button>
-      </div>
-      <nav className="app-nav">
-        {NAV.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            className={({ isActive }) =>
-              isActive ? "nav-link active" : "nav-link"
-            }
-          >
-            {item.label}
-          </NavLink>
-        ))}
-      </nav>
+      </header>
+
       <main className="app-main">
         <Outlet />
       </main>
+
+      <StatusBar />
     </div>
   );
 }

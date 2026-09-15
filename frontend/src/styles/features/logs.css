@@ -1,0 +1,87 @@
+/* Logs: filter bar, connection state, level colors. */
+
+@layer features{
+  /* ---------- Logs ---------- */
+  .logs-filterbar {
+    padding: var(--space-3);
+  }
+  .logs-filterbar .toolbar {
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+  .logs-filterbar-row {
+    width: 100%;
+  }
+  .logs-autofollow {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: var(--font-size-sm);
+    color: var(--text-muted);
+  }
+  .logs-conn {
+    font-size: var(--font-size-sm);
+  }
+  .logs-conn-on {
+    color: var(--success);
+  }
+  .logs-conn-off {
+    color: var(--warning);
+  }
+  .logs-container {
+    max-height: 60vh;
+    overflow: auto;
+    box-shadow: var(--shadow-card);
+    border-radius: var(--radius-md);
+    background: var(--surface-1);
+  }
+  .logs-table .logs-ts {
+    white-space: nowrap;
+  }
+  .logs-table tbody tr {
+    cursor: default;
+  }
+  .logs-table .logs-component {
+    white-space: nowrap;
+  }
+  .logs-message {
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .logs-exception {
+    color: var(--neg);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+  }
+  .logs-lvl-debug {
+    color: var(--text-faint);
+  }
+  .logs-lvl-info {
+    color: var(--text-muted);
+  }
+  .logs-lvl-warning {
+    color: var(--warning);
+    font-weight: 600;
+  }
+  .logs-lvl-error {
+    color: var(--danger);
+    font-weight: 600;
+  }
+  .logs-lvl-critical {
+    color: var(--danger);
+    font-weight: 700;
+  }
+
+  @media (max-width: 720px) {
+    .logs-filterbar .toolbar .field {
+      flex: 1 1 100%;
+    }
+    .logs-filterbar .toolbar {
+      gap: var(--space-2);
+    }
+    .logs-container {
+      max-height: 50vh;
+    }
+  }
+}

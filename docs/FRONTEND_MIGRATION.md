@@ -14,9 +14,9 @@ consumption only.
 |---|---|---|
 | Toolchain | Bun (package manager + runner + test) | Already available; no Node needed. |
 | Build tool | Vite 5 | Build/dev tooling only. |
-| Build output | `frontend/dist/` (isolated, gitignored) | Generated artifact is separate from tracked legacy `web/ui` source; a build never overwrites tracked files. |
+| Build output | `frontend/dist/` (isolated, gitignored) | Generated artifact is isolated; a build never overwrites tracked source files. |
 | Routing | **HashRouter** | `StaticFiles` at `/ui` has no SPA fallback; HashRouter needs zero changes to frozen `app/server.py`. |
-| Production serving | `bun run build` → `frontend/dist/`; the Python `/ui` Mount must point at `frontend/dist` (one-line protected change, pending approval) | No separate Node/Vite production server. Until that change lands, `/ui` still serves the legacy app. |
+| Production serving | `bun run build` → `frontend/dist/`; the Python `/ui` Mount points at `frontend/dist` | No separate Node/Vite production server. The cutover is complete: `/ui` serves the React build and the legacy plain-JS app has been removed. |
 | Typed API | One `api/client.ts` (fetch wrapper) + Zod schemas | No scattered `fetch()`; predictable `ApiError` taxonomy. |
 | Server state | TanStack Query | Dedupe, caching, cancellation, loading/error — no giant global client state. |
 | Charts | Single `EChart` lifecycle wrapper | One `init`/`setOption`/`resize`/`dispose`; no leaked observers. |
@@ -34,11 +34,11 @@ bun run test       # vitest run
 ```
 
 Production: run `bun run build` (emits `frontend/dist`). The MarketHub Python
-server's `/ui` Mount must be repointed from `web/ui` to `frontend/dist` (see
+server's `/ui` Mount was repointed from `web/ui` to `frontend/dist` (see
 "CUTOVER" below) so the built React app is served at `/ui`. No separate
 Vite/Node/Bun production server is required.
 
-## Production `/ui` cutover (protected change — pending approval)
+## Production `/ui` cutover (complete)
 
 The existing server serves `/ui` via:
 
@@ -48,16 +48,16 @@ Mount("/ui", app=StaticFiles(directory=str(PROJECT_ROOT / "web" / "ui"), html=Tr
 ```
 
 To serve the React build at `/ui` with the final architecture, the mount
-directory must change from `web/ui` to `frontend/dist`:
+directory changed from `web/ui` to `frontend/dist`:
 
 ```python
 Mount("/ui", app=StaticFiles(directory=str(PROJECT_ROOT / "frontend" / "dist"), html=True), name="ui")
 ```
 
 - **Exact change:** one line, `app/server.py` line ~1280 (the `Mount("/ui", ...)` call).
-- **Why necessary:** the existing `/ui` Mount root is the tracked legacy `web/ui`
+- **Why necessary:** the existing `/ui` Mount root was the tracked legacy `web/ui`
   directory. The isolated React artifact lives in `frontend/dist`; StaticFiles
-  serves the directory it is pointed at, so the mount directory must move.
+  serves the directory it is pointed at, so the mount directory moved.
 - **Startup/auth risk:** low — `StaticFiles` is a pure static file server; this
   does not touch `app/auth/*`, credentials, broker lifecycle, or any composition
   logic. It only changes which directory `/ui` reads static files from.
@@ -65,14 +65,9 @@ Mount("/ui", app=StaticFiles(directory=str(PROJECT_ROOT / "frontend" / "dist"), 
   it overwrites the tracked legacy `index.html`; (b) serve React at a subpath
   like `/ui/react` — rejected as a permanent hybrid; (c) a separate Vite/Node
   production server — rejected (task requires no separate server).
-- **Status:** the running server already mounts `/ui` from `frontend/dist` (cutover
-  effectively live). A **read-only** `/legacy` mount (`web/ui`) was added
-  alongside it purely as a side-by-side comparison aid — it does not delete or
-  alter the legacy files and is not used in production. Remove the `/legacy`
-  Mount from `app/server.py` once comparison is done.
-
-`/ui` serves the React build; `/legacy` serves the legacy plain-JS app. Open
-both in separate tabs to diff screens.
+- **Status:** the running server mounts `/ui` from `frontend/dist` (cutover
+  complete). The legacy plain-JS app (`web/ui`) has been fully removed, and the
+  read-only `/legacy` comparison Mount was removed from `app/server.py`.
 
 ## Status legend
 
@@ -116,7 +111,7 @@ both in separate tabs to diff screens.
 5. ~~**Alerts / AI Alerts**~~ — migrated (React `/alerts`, `/ai-alerts`)
 6. ~~**Logs / MCP Tools**~~ — migrated (React `/logs`, `/mcp`)
 7. ~~**Dashboard / Markets / Watchlists**~~ — migrated (React `/dashboard`, `/watchlists`); live via shared `SSEManager`
-7. **final legacy frontend removal** (`web/ui/js`, `web/ui/css`) once parity verified + `/ui` cutover approved
+ 7. ~~**final legacy frontend removal** (`web/ui/js`, `web/ui/css`)~~ — complete: the legacy plain-JS `web/ui` directory has been deleted and the `/legacy` Mount removed.
 8. ~~**Chat**~~ — migrated (React `/chat`)
 
 ### Market analytics migration notes (Breadth / Sector Heatmap / Market Map)
@@ -154,17 +149,86 @@ market-map weighting is computed in React.
 
 ## Files eligible for removal after parity
 
-Once a feature's React replacement is `VERIFIED`, its legacy
-`web/ui/js/<feature>.js` and `web/ui/css/features/<feature>.css` may be deleted.
-Do not delete until then. The legacy `web/ui/index.html` is superseded only
-when the approved `/ui` Mount change (see CUTOVER) lands and the full React app
-replaces `/ui` at the final step.
+All React replacements are `VERIFIED`; the legacy `web/ui` directory (HTML, CSS,
+JS, vendor) has been deleted and the `/legacy` Mount removed. No legacy frontend
+files remain.
 
 ## Build/deploy boundary (verified)
 
 - React source: `frontend/src/`
 - Generated build: `frontend/dist/` (isolated, gitignored)
-- `bun run build` writes ONLY to `frontend/dist/` and never touches tracked
-  legacy `web/ui` files (verified across repeated builds).
+- `bun run build` writes ONLY to `frontend/dist/` (verified across repeated builds).
 - Generated artifacts are NOT committed; they are rebuilt at deploy.
-- Legacy `web/ui` remains the current `/ui` source until the cutover is approved.
+
+## CSS architecture (React frontend)
+
+The stylesheet is split by cascade layer (`frontend/src/styles/`), replacing the
+former single `global.css` monolith whose appended-feature structure allowed the
+`.panel` surface regression to slip through. Layer order is declared **once** in
+`index.css` and is the cascade precedence (first = lowest, last = highest):
+
+```
+@layer tokens, base, layout, components, features, utilities;
+```
+
+| File(s) | Layer | Content |
+|---|---|---|
+| `tokens.css` | `tokens` | Design tokens, dark/light themes, surface-hierarchy contract |
+| `base.css` | `base` | Element defaults (`body`, `a`, `#root`) |
+| `layout.css` | `layout` | App shell: topbar, nav, main canvas, status bar |
+| `components.css` | `components` | Shared vocabulary: `.btn`, `.card`, `.panel`, `.tabs`, tables, chips, modals, `.data-table`, `.stat-*`, `.panel-header` |
+| `features/*.css` | `features` | Per-feature styles (fno, news, alerts, chat, settings, …) — all files append to the same `features` layer |
+| `utilities.css` | `utilities` | Conflict-free single-purpose classes only (`.mono`, `.cursor-pointer`) |
+
+**Surface hierarchy contract** (also documented in `tokens.css`): `--bg` = page
+canvas → `--surface-1` = elevated panels/cards → `--surface-2` = nested items →
+`--surface-3` = hover/raised. Every container that visually separates content
+must declare its surface level; layout-only wrappers (e.g. `.settings-page`,
+`.settings-content`) carry no surface styling. `.panel` is a page-root elevated
+surface (family contract with `.card`) and must not be nested inside another
+elevated surface.
+
+**Rules (violating these caused the original regression):**
+
+1. Every rule must live inside its file's `@layer` block — unlayered styles
+   outrank ALL layers (spec behavior, per CSS Cascade 5).
+2. Layers do not scope: keep using proper selectors.
+3. Never fight layers with `!important` — important declarations invert layer
+   order.
+4. Only provably conflict-free classes may enter `utilities` (highest layer).
+   Combo rules such as `.hint.err` or `.status-text.muted` rely on specificity
+   and must stay in `components` — moving a combo participant to `utilities`
+   silently changes which rule wins.
+
+Evaluated and rejected (2026-09): CSS nesting and `light-dark()` (churn without
+user-visible gain; `[data-theme]` toggle stays), `@property` typed tokens (no
+animatable custom properties), container queries (fixed-viewport desktop admin),
+W3C Design Tokens CG format / Style Dictionary (overkill at this scale).
+Cascade layers itself is Baseline widely-available since March 2022.
+
+## Web UI overhaul (2026-09)
+
+Goal: modern, compact, trader-relevant UI; Chat demoted from primary nav.
+Frontend-only — no P&L/positions/orders (frozen broker/auth zone). Full plan in
+`docs/UI_OVERHAUL_PLAN.md` (updated per phase). Phases:
+
+- **Design-system cleanup**: tokenized `features/fno.css` px → `--space-*`;
+  fixed `chat.css` hardcoded `color:#fff` → `var(--text-inverse)`; unified
+  `.table` + `.data-table` into one primitive + `.table-compact`; expanded
+  `Icon.tsx` (arrow-up/down, star, bell, search, settings, plus, refresh,
+  live-dot); added `.num`/`.tnum`/`.text-muted` utilities.
+- **IA / nav**: regrouped `layouts/nav.ts` (My / Markets ▾ / Analyze / Insights
+  / More ▾); landing → `/dashboard`; `StatusBar` shows inferred market session
+  + alerts count; moved `inferredMarketOpen` → `utils/market.ts`.
+- **Dashboard command-center**: hero (title + Live + inferred session + stream
+  count), TickerStrip, Movers/Indices grid, full-width Live Market table;
+  `MoversTable` configurable `limit` (default 5); tabular numerics.
+- **Per-view polish**: watchlists/alerts/ai-alerts, charts/scanners/fno,
+  breadth/sector-heatmap/market-map, news/sentiment/chat, and
+  settings/logs/diagnostics/subscriptions/instruments/mcp-tools/analytics —
+  all wrapped in `.panel`/`.panel-header`, `.table-compact` + `.num` numerics,
+  `.toolbar`/`.filter-input` controls, responsive media queries. Created missing
+  feature CSS files and wired `@import`s in `index.css`.
+
+Verification: `bun run build` clean; `pytest test/test_architecture_boundaries.py`
+15/15 green after every phase.

@@ -225,38 +225,8 @@ async def test_wa7_runtime_overrides_env(runner: R) -> None:
                          feed._credentials.access_token)
 
 
-async def test_wa8_wa9_frontend_hygiene(runner: R) -> None:
-    """WA8/WA9: input cleared after success; no browser-storage writes."""
-    js_path = os.path.join(_PROJECT_DIR, "web", "ui", "js", "app.js")
-    with open(js_path, encoding="utf-8") as f:
-        src = f.read()
-    runner.assert_in("WA8-clears-input", 'input.value = ""', src)
-    # Theme persistence via localStorage is allowed; token storage is not.
-    # Assert no storage write occurs on any line mentioning a token.
-    storage_writes = [ln for ln in src.splitlines()
-                      if ("localStorage.setItem" in ln
-                          or "sessionStorage.setItem" in ln
-                          or "document.cookie" in ln)]
-    token_storage = [ln for ln in storage_writes
-                     if "token" in ln.lower()]
-    runner.assert_eq("WA9-no-token-storage-writes", token_storage, [])
 
 
-async def test_wa10_auth_failure_safe_message(runner: R) -> None:
-    """WA10: failure wording is safe; no raw error or WSS leak in client.
-
-    The safe wording lives in auth.js (not app.js).
-    """
-    app_js_path = os.path.join(_PROJECT_DIR, "web", "ui", "js", "app.js")
-    auth_js_path = os.path.join(_PROJECT_DIR, "web", "ui", "js", "auth.js")
-    with open(app_js_path, encoding="utf-8") as f:
-        app_js = f.read()
-    with open(auth_js_path, encoding="utf-8") as f:
-        auth_js = f.read()
-    runner.assert_in("WA10-safe-wording",
-                     "Access token may be invalid or expired", auth_js)
-    runner.assert_not_in("WA10-no-raw-error-passthrough", "data.raw", app_js)
-    runner.assert_not_in("WA10-no-wss-leak", "wss://", app_js)
 
 
 async def test_wa11_shared_market_service(runner: R) -> None:
@@ -318,8 +288,6 @@ async def main() -> bool:
     await test_wa5_token_absent_from_repr(runner)
     await test_wa6_empty_token_rejected(runner)
     await test_wa7_runtime_overrides_env(runner)
-    await test_wa8_wa9_frontend_hygiene(runner)
-    await test_wa10_auth_failure_safe_message(runner)
     await test_wa11_shared_market_service(runner)
     await test_wa12_no_duplicate_source(runner)
     await test_wa13_source_manager_owner(runner)

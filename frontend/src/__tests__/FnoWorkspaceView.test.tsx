@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, fireEvent, cleanup, within } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, cleanup } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
@@ -203,16 +203,17 @@ describe("FnoWorkspaceView", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderWithProviders(<FnoWorkspaceView />, ["/fno"]);
 
-    expect(await screen.findByText("F&O Workspace")).toBeTruthy();
-    // Wait for the underlying list to load, then open the HDFCBANK equity row.
+    expect(await screen.findByText("F&O Underlyings")).toBeTruthy();
+    // Wait for the underlying list to load, then click the HDFCBANK equity row
+    // (rows are clickable, no separate Open button).
     const row = (await screen.findByText("HDFCBANK")).closest("tr")!;
-    fireEvent.click(within(row).getByText("Open"));
+    fireEvent.click(row);
 
-    // Workspace renders (overview tab) for the selected underlying.
-    expect(await screen.findByText("Option Strikes")).toBeTruthy();
+    // Workspace renders the Option Chain for the selected underlying.
+    expect(await screen.findByText("Option Chain")).toBeTruthy();
   });
 
-  it("renders an index option chain with analytics", async () => {
+  it("renders an index option chain (link preserves identity)", async () => {
     const fetchMock = makeFetch();
     vi.stubGlobal("fetch", fetchMock);
     renderWithProviders(
@@ -221,15 +222,27 @@ describe("FnoWorkspaceView", () => {
     );
 
     // Bootstrap picks the first expiry from the chain response and the chain
-    // renders with analytics.
-    expect(await screen.findByText("PCR (OI)")).toBeTruthy();
-    expect(await screen.findByText("ATM Straddle")).toBeTruthy();
+    // renders with option links preserving the exact option identity.
     const optLink = await waitFor(() => {
       const l = firstOptionLink();
       expect(l).toBeTruthy();
       return l!;
     });
     expect(optLink.getAttribute("href")).toContain("key=NSE%3A1");
+  });
+
+  it("renders index option-chain analytics inline beneath the chain", async () => {
+    const fetchMock = makeFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    renderWithProviders(
+      <FnoWorkspaceView />,
+      ["/fno?sym=NIFTY&kind=index&tab=chain"],
+    );
+
+    // Analytics (PCR / ATM straddle) renders inline directly below the chain
+    // table, not on a separate tab.
+    expect(await screen.findByText("PCR (OI)")).toBeTruthy();
+    expect(await screen.findByText("ATM Straddle")).toBeTruthy();
   });
 
   it("consumes backend-owned index option underlyings (no hard-coded list)", async () => {

@@ -765,11 +765,12 @@ def build_settings_routes(
         # Distinguish "nothing stored" from "stored but undecryptable with
         # the current master.key" (a store ERROR, not plain unconfigured).
         status["store_error"] = store.get("reason")
+        # The persisted store is the authoritative source of truth for
+        # credential presence. OAuth availability must survive restart and must
+        # not depend on a volatile in-memory mirror being hydrated at startup.
         status["oauth_available"] = bool(
-            isinstance(oauth_ref.get("api_key"), str)
-            and oauth_ref["api_key"].strip()
-            and isinstance(oauth_ref.get("api_secret"), str)
-            and oauth_ref["api_secret"].strip()
+            status.get("api_key_configured")
+            and status.get("api_secret_configured")
         )
         return _json(status)
 
@@ -894,13 +895,48 @@ def build_auth_routes(
             return "stopped"
         return "ok"
 
+    def _oauth_secrets() -> tuple[str, str]:
+        """Return (api_key, api_secret) from the persisted store (authoritative).
+
+        The encrypted CredentialStore is the single source of truth. The static
+        in-memory ``oauth`` dict is only a fallback for credentials that were
+        supplied via environment and never persisted.
+        """
+        if cred_store is not None:
+            try:
+                creds = cred_store.load_upstox_app_credentials()
+                if creds:
+                    ak = (creds.get("api_key") or "").strip()
+                    sk = (creds.get("api_secret") or "").strip()
+                    if ak and sk:
+                        return ak, sk
+            except Exception:
+                logger.exception(
+                    "upstox oauth: failed to load stored credentials")
+        ak = (oauth.get("api_key") if isinstance(oauth, dict) else "") or ""
+        sk = (oauth.get("api_secret") if isinstance(oauth, dict) else "") or ""
+        return ak.strip(), sk.strip()
+
+    def _live_oauth() -> dict[str, str]:
+        """Authoritative oauth config passed to the (frozen) auth service.
+
+        Secrets come from the persisted store; redirect_uri is non-secret
+        configuration. The static ``oauth`` dict is never the source of truth.
+        """
+        ak, sk = _oauth_secrets()
+        redirect = (oauth.get("redirect_uri") if isinstance(oauth, dict) else "") or ""
+        return {
+            "api_key": ak,
+            "api_secret": sk,
+            "redirect_uri": redirect.strip(),
+        }
+
     def _oauth_ready() -> bool:
         if not isinstance(oauth, dict):
             return False
-        return all(
-            isinstance(oauth.get(k), str) and oauth.get(k).strip()
-            for k in ("api_key", "api_secret", "redirect_uri")
-        )
+        redirect = (oauth.get("redirect_uri") or "").strip()
+        ak, sk = _oauth_secrets()
+        return bool(redirect) and bool(ak) and bool(sk)
 
     def _require_auth() -> Any:
         """The injected broker auth service (composition root owns it).
@@ -970,7 +1006,7 @@ def build_auth_routes(
         _pending_states[state] = now + _STATE_TTL_S
         _pending_pin[state] = pin_mode
         try:
-            url = _require_auth().build_login_url(oauth, state)
+            url = _require_auth().build_login_url(_live_oauth(), state)
         except Exception:
             _pending_states.pop(state, None)
             _pending_pin.pop(state, None)
@@ -1024,11 +1060,14 @@ def build_auth_routes(
             return _fail("error")
 
         try:
+            api_key, api_secret = _oauth_secrets()
+            if not api_key or not api_secret:
+                return _fail("error")
             creds = await _require_auth().exchange_code(
                 rest,
                 code=code.strip(),
-                client_id=oauth["api_key"].strip(),
-                client_secret=oauth["api_secret"].strip(),
+                client_id=api_key,
+                client_secret=api_secret,
                 redirect_uri=oauth["redirect_uri"].strip(),
             )
         except Exception as exc:
@@ -1072,12 +1111,15 @@ def build_auth_routes(
                 400)
 
         try:
+            api_key, api_secret = _oauth_secrets()
+            if not api_key or not api_secret:
+                return _json({"error": "oauth not configured"}, 503)
             creds = await _require_auth().exchange_pin(
                 rest,
                 code=code.strip(),
                 pin=pin.strip(),
-                client_id=oauth["api_key"].strip(),
-                client_secret=oauth["api_secret"].strip(),
+                client_id=api_key,
+                client_secret=api_secret,
                 redirect_uri=oauth["redirect_uri"].strip(),
             )
         except Exception as exc:

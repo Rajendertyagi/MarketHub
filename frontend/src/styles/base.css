@@ -1,0 +1,75 @@
+/* Base element defaults. */
+
+@layer base{
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-family);
+    font-size: var(--font-size-base);
+    line-height: var(--line-height-normal);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  a:hover {
+    color: var(--accent-hover);
+    text-decoration: underline;
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+    color: var(--text);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 1px;
+  }
+
+  button {
+    font: inherit;
+  }
+
+  /* Thin, theme-aware scrollbars to match the lightweight feel. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-faint);
+  }
+
+  /* Tabular figures keep columns of numbers aligned. */
+  table,
+  .num,
+  .stat-value,
+  .kv-table td:last-child {
+    font-variant-numeric: tabular-nums;
+  }
+}

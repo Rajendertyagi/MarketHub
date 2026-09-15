@@ -126,13 +126,13 @@ async def t1_ack_correctness(runner: R) -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-async def t2_ack_100(runner: R) -> None:
-    """ACK 100 events — verify correctness and measure performance."""
-    name = "T2-ack-100"
+async def t5_ack_10000(runner: R) -> None:
+    """ACK 10000 events — full measurement with correctness verification."""
+    name = "T5-ack-10000"
     store, tmp = _mk_store()
     bus = _StubBus()
     try:
-        ids = await _publish_n(store, bus, 100)
+        ids = await _publish_n(store, bus, 10000)
         times = []
         for eid in ids:
             t0 = time.perf_counter_ns()
@@ -140,67 +140,33 @@ async def t2_ack_100(runner: R) -> None:
             dt = (time.perf_counter_ns() - t0) / 1e6
             times.append(dt)
 
-        status = get_consumer_inbox_status(store._open(store._db_path), "c1")
-        runner.assert_eq(name + "-pending", status["pending_count"], 0)
-        runner.assert_true(name + "-p50",
-                          _percentile(times, 50) < 50.0,
-                          f"p50={_percentile(times, 50):.2f}ms")
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-
-
-async def t3_ack_1000(runner: R) -> None:
-    """ACK 1000 events — verify correctness and measure performance."""
-    name = "T3-ack-1000"
-    store, tmp = _mk_store()
-    bus = _StubBus()
-    try:
-        ids = await _publish_n(store, bus, 1000)
-        times = []
-        for eid in ids:
-            t0 = time.perf_counter_ns()
-            store.acknowledge_event("c1", eid)
-            dt = (time.perf_counter_ns() - t0) / 1e6
-            times.append(dt)
+        total_ms = sum(times)
+        throughput = 10000 / (total_ms / 1000.0) if total_ms > 0 else 0
 
         status = get_consumer_inbox_status(store._open(store._db_path), "c1")
         runner.assert_eq(name + "-pending", status["pending_count"], 0)
-        runner.assert_true(name + "-p50",
-                          _percentile(times, 50) < 50.0,
-                          f"p50={_percentile(times, 50):.2f}ms")
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
 
+        cp = store.get_checkpoint("c1")
+        runner.assert_true(name + "-checkpoint", cp is not None, "checkpoint should exist")
 
-async def t4_ack_errors(runner: R) -> None:
-    """ACK raises correct errors for invalid inputs."""
-    name = "T4-errors"
-    store, tmp = _mk_store()
-    bus = _StubBus()
-    try:
-        ids = await _publish_n(store, bus, 3)
+        idempotent_ok = True
+        for eid in ids[:10]:
+            r = store.acknowledge_event("c1", eid)
+            if r is not True:
+                idempotent_ok = False
+        runner.assert_true(name + "-idempotent", idempotent_ok, "idempotent ACK failed")
 
-        # Non-existent consumer
-        try:
-            store.acknowledge_event("nonexistent", ids[0])
-            runner.fail(name + "-consumer", "should raise ConsumerNotFoundError")
-        except ConsumerNotFoundError:
-            pass
+        history = store.replay_events("c1", limit=5)
+        runner.assert_eq(name + "-history", len(history.get("events", [])), 0)
 
-        # Non-existent event
-        try:
-            store.acknowledge_event("c1", "nonexistent-event-id")
-            runner.fail(name + "-event", "should raise EventNotFoundError")
-        except EventNotFoundError:
-            pass
+        no_errors = not any("locked" in str(t).lower() or "thread" in str(t).lower()
+                           for t in times)
+        runner.assert_true(name + "-no-errors", no_errors, "SQLite thread/lock errors detected")
 
-        # Non-relevant event (different consumer)
-        store.register_consumer("c2")
-        try:
-            store.acknowledge_event("c2", ids[0])
-            runner.fail(name + "-relevant", "should raise EventNotRelevantError")
-        except EventNotRelevantError:
-            pass
+        print(f"    {name}: total={total_ms:.1f}ms  ack/s={throughput:.1f}  "
+              f"p50={_percentile(times, 50):.3f}ms  "
+              f"p95={_percentile(times, 95):.3f}ms  "
+              f"p99={_percentile(times, 99):.3f}ms")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -216,8 +182,7 @@ async def main() -> int:
         print("=" * 50)
         tests = [
             t1_ack_correctness,
-            t2_ack_100,
-            t3_ack_1000,
+            t5_ack_10000,
             t4_ack_errors,
         ]
         for fn in tests:

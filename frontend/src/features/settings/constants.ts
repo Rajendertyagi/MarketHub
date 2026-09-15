@@ -7,15 +7,14 @@ import type {
 // inlining literals (single source of truth — mirrors the backend's allowed
 // field sets so the two never diverge silently).
 
-// Settings navigation sections (mirrors the legacy SECTIONS list in
-// web/ui/js/features/settings/index.js). Subscriptions + theme are intentionally
+// Settings navigation sections (mirrors the legacy SECTIONS list that the old
+// web/ui used to define). Subscriptions + theme are intentionally
 // omitted: they are covered by dedicated React features (/subscriptions,
 // ThemeProvider).
 export const SETTINGS_SECTIONS: { value: SettingsSection; label: string }[] = [
   { value: "general", label: "General" },
   { value: "brokers", label: "Brokers" },
   { value: "news-sources", label: "News Sources" },
-  { value: "market-sources", label: "Market Sources" },
   { value: "ai-mcp", label: "AI / MCP" },
   { value: "data-retention", label: "Data & Retention" },
   { value: "logging", label: "Logging" },

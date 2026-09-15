@@ -14,23 +14,24 @@ export function AlertsTable({ alerts }: { alerts: MarketAlert[] }) {
   }
 
   return (
-    <table className="table alerts-table">
-      <thead>
-        <tr>
-          <th>Symbol</th>
-          <th>Condition</th>
-          <th>State</th>
-          <th>Enabled</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {alerts.map((a) => (
-          <tr key={a.id}>
-            <td>{a.tradingsymbol}</td>
-            <td className="num">
-              {formatCondition(a.field, a.operator, a.threshold)}
-            </td>
+    <div className="table-scroll">
+      <table className="table alerts-table table-compact">
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th className="num">Condition</th>
+            <th>State</th>
+            <th>Enabled</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {alerts.map((a) => (
+            <tr key={a.id}>
+              <td>{a.tradingsymbol}</td>
+              <td className="num">
+                {formatCondition(a.field, a.operator, a.threshold)}
+              </td>
             <td>
               <span className={`chip ${a.state === "triggered" ? "chip-off" : a.enabled ? "chip-on" : ""}`}>
                 {a.state}
@@ -66,5 +67,6 @@ export function AlertsTable({ alerts }: { alerts: MarketAlert[] }) {
         ))}
       </tbody>
     </table>
+    </div>
   );
 }

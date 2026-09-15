@@ -27,9 +27,14 @@ export function ConsumersPanel() {
   }
 
   return (
-    <div className="ai-consumers-grid">
-      {consumers.map((c) => (
-        <div className="card ai-consumer-card" key={c.consumer_id}>
+    <div className="panel">
+      <div className="panel-header">
+        <h2>Consumers</h2>
+        <span className="muted">{consumers.length} consumers</span>
+      </div>
+      <div className="ai-consumers-grid">
+        {consumers.map((c) => (
+          <div className="ai-consumer-card" key={c.consumer_id}>
           <div className="ai-consumer-id" title={c.consumer_id}>
             {c.consumer_id}
           </div>
@@ -59,6 +64,7 @@ export function ConsumersPanel() {
           </div>
         </div>
       ))}
+      </div>
     </div>
   );
 }

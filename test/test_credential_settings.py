@@ -334,6 +334,56 @@ async def test_cs20_oauth_uses_decrypted(runner: R) -> None:
                      qs.get("client_id", [""])[0], KEY)
 
 
+async def test_cs27_store_authoritative_after_restart(runner: R) -> None:
+    """CS27 (REQUIRED REGRESSION): the persisted store is the single source of
+    truth. After a restart the in-memory oauth_ref dict is empty, yet OAuth
+    availability must reflect the stored credentials and the login redirect must
+    carry the decrypted key — with NO re-save.
+
+    This is the exact invariant that previously forced users to re-enter keys on
+    every restart: availability and token exchange read a volatile RAM mirror
+    that was empty after restart while the DB still held the credentials.
+    """
+    from api.routes import build_auth_routes, build_settings_routes
+
+    env = _Env()
+    env.cred_store.save_upstox_app_credentials(KEY, SECRET)
+
+    # Simulate a real restart: a brand-new store instance (same files) AND a
+    # freshly-initialised, deliberately EMPTY oauth_ref dict (no startup
+    # hydration from the store). This reproduces the previously-broken state.
+    _es, cs = env.reopen()
+    oauth_ref: dict = {
+        "api_key": "",
+        "api_secret": "",
+        "redirect_uri": "http://localhost:7070/auth/upstox/callback",
+    }
+    settings = build_settings_routes(oauth_ref, cred_store=cs)
+    auth = build_auth_routes(
+        {"feed": None}, restart_fn=None, oauth=oauth_ref,
+        rest=object(), cred_store=cs,
+    )
+
+    # 1) Settings reports OAuth available purely from the DB.
+    code, status = await _call(_find(settings, "/api/settings/upstox"), "GET")
+    runner.assert_eq("CS27-settings-oauth-available",
+                     status.get("oauth_available"), True)
+    # The empty RAM dict must NOT have been treated as authoritative.
+    runner.assert_eq("CS27-dict-still-empty", oauth_ref["api_key"], "")
+
+    # 2) Auth status reports OAuth available purely from the DB.
+    code, astatus = await _call(_find(auth, "/api/auth/upstox/status"), "GET")
+    runner.assert_eq("CS27-auth-oauth-available",
+                     astatus.get("oauth_available"), True)
+
+    # 3) Login redirect carries the decrypted stored key (no re-save).
+    login = _find(auth, "/api/auth/upstox/login")
+    code, location = await _call(login, "GET")
+    qs = urllib.parse.parse_qs(urllib.parse.urlsplit(location).query)
+    runner.assert_eq("CS27-login-uses-stored-key",
+                     qs.get("client_id", [""])[0], KEY)
+
+
 def test_cs21_access_token_memory_only(runner: R) -> None:
     """CS21: daily access token is never written to the secrets table."""
     env = _Env()
@@ -347,18 +397,6 @@ def test_cs21_access_token_memory_only(runner: R) -> None:
                      {"api_key", "api_secret"})
 
 
-def test_cs22_frontend_hygiene(runner: R) -> None:
-    """CS22: no credential values into browser storage."""
-    js_path = os.path.join(_PROJECT_DIR, "web", "ui", "js", "app.js")
-    with open(js_path, encoding="utf-8") as f:
-        js = f.read()
-    storage_writes = [ln for ln in js.splitlines()
-                      if ("localStorage.setItem" in ln
-                          or "sessionStorage.setItem" in ln
-                          or "document.cookie" in ln)]
-    cred_storage = [ln for ln in storage_writes
-                    if "secret" in ln.lower() or "api_key" in ln.lower()]
-    runner.assert_eq("CS22-no-cred-storage-writes", cred_storage, [])
 
 
 async def test_cs23_cs24_identity(runner: R) -> None:
@@ -421,7 +459,6 @@ async def main() -> bool:
     test_cs18_cs19_lost_master_key(runner)
     await test_cs20_oauth_uses_decrypted(runner)
     test_cs21_access_token_memory_only(runner)
-    test_cs22_frontend_hygiene(runner)
     await test_cs23_cs24_identity(runner)
     test_cs25_route_surface(runner)
     test_cs26_imports(runner)

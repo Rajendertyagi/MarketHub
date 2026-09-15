@@ -15,7 +15,7 @@ git operations are manual and deliberate.
 - [ ] fast
 - [ ] source
 - [ ] lifecycle
-- [ ] web_ui (covered by fast; run standalone if web changes)
+- [ ] frontend (React UI: `cd frontend && bun run test`)
 - [ ] unit
 - [ ] mcp
 - [ ] consumer

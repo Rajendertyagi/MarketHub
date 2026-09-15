@@ -1,0 +1,117 @@
+/* MarketHub design tokens.
+   Surface hierarchy contract: --bg = page canvas; --surface-1 = elevated
+   panels/cards; --surface-2 = nested items; --surface-3 = hover/raised.
+   Every container that visually separates content must declare its surface
+   level; layout-only wrappers carry no surface styling. */
+
+@layer tokens{
+  /* MarketHub React — design foundation.
+     Reuses the legacy OKLCH token decisions (financial --pos/--neg, surfaces,
+     accent) and establishes a small, intentional component system. No Tailwind /
+     MUI / Bootstrap. Two themes only: dark (primary) and light. */
+
+  :root {
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --space-6: 32px;
+
+    --radius-sm: 3px;
+    --radius-md: 4px;
+    --radius-lg: 6px;
+
+    --font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+      Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      "Liberation Mono", "Courier New", monospace;
+    --font-size-xs: 11px;
+    --font-size-sm: 12px;
+    --font-size-md: 13px;
+    --font-size-base: 14px;
+    --font-size-lg: 16px;
+    --font-size-2xl: 22px;
+    --line-height-tight: 1.25;
+    --line-height-normal: 1.45;
+
+    --control-height-sm: 24px;
+    --control-height: 30px;
+    --control-height-lg: 34px;
+
+    --font-weight-regular: 400;
+    --font-weight-medium: 500;
+    --font-weight-semibold: 600;
+    --font-weight-bold: 700;
+
+    --motion-fast: 120ms;
+    --ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+    --focus-ring-color: var(--accent);
+    --focus-ring: 0 0 0 2px color-mix(in oklch, var(--accent) 55%, transparent);
+
+    --z-drawer: 200;
+    --z-modal: 300;
+
+    /* Financial direction (overridden per theme). */
+    --pos: oklch(78% 0.17 155);
+    --neg: oklch(72% 0.18 25);
+
+    /* Shorthand aliases used across feature blocks. */
+    --surface: var(--surface-1);
+    --radius: var(--radius-md);
+    --font-size-xl: 18px;
+    --info: oklch(68% 0.12 240);
+    --warn: oklch(60% 0.11 75);
+  }
+
+  [data-theme="dark"] {
+    color-scheme: dark;
+    --bg: oklch(0% 0 0);
+    --surface-1: oklch(28.5% 0 0);
+    --surface-2: oklch(33% 0 0);
+    --surface-3: oklch(38% 0 0);
+    --text: oklch(94% 0.01 100);
+    --text-muted: oklch(72% 0.008 100);
+    --text-faint: oklch(52% 0.006 80);
+    --text-inverse: oklch(0% 0 0);
+    --border: oklch(40% 0 0);
+    --border-strong: oklch(54% 0 0);
+    --accent: oklch(66% 0.124 254);
+    --accent-hover: oklch(72% 0.124 254);
+    --accent-active: oklch(78% 0.124 254);
+    --accent-contrast: oklch(0% 0 0);
+    --accent-soft: color-mix(in oklch, var(--accent) 50%, transparent);
+    --success: oklch(72% 0.14 150);
+    --danger: oklch(70% 0.17 25);
+    --warning: oklch(68% 0.13 75);
+    --shadow-card: 0 1px 0 var(--edge), 0 1px 3px rgba(0, 0, 0, 0.45);
+    --shadow-float: 0 1px 0 var(--edge), 0 10px 30px rgba(0, 0, 0, 0.55);
+    --edge: rgba(255, 255, 255, 0.06);
+  }
+
+  [data-theme="light"] {
+    color-scheme: light;
+    --bg: oklch(97% 0.012 250);
+    --surface-1: oklch(100% 0.004 250);
+    --surface-2: oklch(96% 0.012 250);
+    --surface-3: oklch(93% 0.014 250);
+    --text: oklch(25% 0.01 250);
+    --text-muted: oklch(45% 0.01 250);
+    --text-faint: oklch(62% 0.01 250);
+    --text-inverse: oklch(100% 0 0);
+    --border: oklch(85% 0.01 250);
+    --border-strong: oklch(62% 0.012 250);
+    --accent: oklch(52% 0.15 254);
+    --accent-hover: oklch(47% 0.15 254);
+    --accent-active: oklch(42% 0.15 254);
+    --accent-contrast: oklch(100% 0 0);
+    --accent-soft: color-mix(in oklch, var(--accent) 50%, transparent);
+    --success: oklch(45% 0.14 150);
+    --danger: oklch(52% 0.17 25);
+    --warning: oklch(50% 0.13 75);
+    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.10);
+    --shadow-float: 0 10px 30px rgba(0, 0, 0, 0.14);
+    --edge: transparent;
+  }
+}

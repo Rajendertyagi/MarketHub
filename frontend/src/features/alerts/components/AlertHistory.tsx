@@ -26,8 +26,8 @@ export function AlertHistory() {
   const rows = data?.history ?? [];
 
   return (
-    <div className="card">
-      <div className="card-header alert-history-head">
+    <div className="panel">
+      <div className="panel-header alert-history-head">
         <h2>Trigger history</h2>
         <Button
           className="btn-compact"
@@ -47,30 +47,32 @@ export function AlertHistory() {
       {rows.length === 0 ? (
         <p className="hint">No trigger history yet.</p>
       ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th>When</th>
-              <th>Symbol</th>
-              <th>Condition</th>
-              <th>Observed</th>
-              <th>Provider</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((h) => (
-              <tr key={h.id}>
-                <td>{formatTimestamp(h.triggered_at)}</td>
-                <td>{h.tradingsymbol ?? "—"}</td>
-                <td>
-                  {formatCondition(h.field, h.operator, h.threshold ?? 0)}
-                </td>
-                <td className="num">{h.observed_value ?? "—"}</td>
-                <td>{h.provider ?? "—"}</td>
+        <div className="table-scroll">
+          <table className="table table-compact">
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Symbol</th>
+                <th>Condition</th>
+                <th className="num">Observed</th>
+                <th>Provider</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((h) => (
+                <tr key={h.id}>
+                  <td>{formatTimestamp(h.triggered_at)}</td>
+                  <td>{h.tradingsymbol ?? "—"}</td>
+                  <td>
+                    {formatCondition(h.field, h.operator, h.threshold ?? 0)}
+                  </td>
+                  <td className="num">{h.observed_value ?? "—"}</td>
+                  <td>{h.provider ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

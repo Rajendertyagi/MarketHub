@@ -120,18 +120,6 @@ async def test_auth_section_absent_without_fn(runner: R) -> None:
     runner.assert_eq("diag-auth-empty", d.get("auth"), {})
 
 
-async def test_webui_renders_five_states(runner: R) -> None:
-    text = open(os.path.join(_PROJECT_DIR, "web", "ui", "js",
-                             "diagnostics.js"), encoding="utf-8").read()
-    for label in ("Authenticated + Feed Streaming", "Authenticated + Feed ",
-                  "Login Required", "Expired", "Rejected"):
-        runner.assert_in(f"diag-ui-{label[:12]}", label, text)
-    runner.assert_in("diag-ui-fetch", "/api/diagnostics", text)
-    runner.assert_in("diag-ui-auth-div", "diag-auth", text)
-    html = open(os.path.join(_PROJECT_DIR, "web", "ui", "index.html"),
-                encoding="utf-8").read()
-    runner.assert_in("diag-ui-container", 'id="diag-auth"', html)
-
 
 async def main() -> bool:
     runner = R()
@@ -139,7 +127,6 @@ async def main() -> bool:
     await test_auth_fields_allow_listed(runner)
     await test_no_secrets_anywhere(runner)
     await test_auth_section_absent_without_fn(runner)
-    await test_webui_renders_five_states(runner)
     return runner.summary()
 
 

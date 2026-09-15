@@ -1,0 +1,41 @@
+/* Instruments: instrument browser. */
+
+@layer features{
+  .instruments-view .table-compact th,
+  .instruments-view .table-compact td {
+    padding: var(--space-1) var(--space-3);
+  }
+  .instruments-view .table-compact tbody tr {
+    cursor: default;
+  }
+  .instruments-view .card h3 {
+    margin: 0 0 var(--space-2);
+    font-size: var(--font-size-md);
+    font-weight: 600;
+  }
+  .segment-item {
+    font-size: var(--font-size-sm);
+  }
+  .segment-item .muted {
+    margin-left: auto;
+    font-size: var(--font-size-xs);
+  }
+
+  @media (max-width: 720px) {
+    .instruments-view .control-row {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .instruments-view .control-row .field {
+      flex: 1 1 auto;
+    }
+    .segment-grid {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  @media (max-width: 480px) {
+    .segment-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+}

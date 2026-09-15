@@ -38,7 +38,6 @@ import {
 const APP_SETTINGS = "/settings/app";
 const UPSTOX_AUTH_STATUS = "/auth/upstox/status";
 const UPSTOX_TOKEN = "/auth/upstox/token";
-const UPSTOX_PIN = "/auth/upstox/pin";
 const UPSTOX_SESSION = "/auth/upstox/session";
 const UPSTOX_CRED = "/settings/upstox";
 const UPSTOX_FEED = "/settings/upstox/feed";
@@ -82,8 +81,8 @@ export async function getUpstoxAuthStatus(
 }
 
 // Plain navigation: hand off to the backend OAuth redirect (no fetch).
-export function loginWithUpstox(pin = false): void {
-  window.location.href = pin ? "/api/auth/upstox/login?pin=1" : "/api/auth/upstox/login";
+export function loginWithUpstox(): void {
+  window.location.href = "/api/auth/upstox/login";
 }
 
 export async function submitUpstoxToken(
@@ -93,17 +92,6 @@ export async function submitUpstoxToken(
   return request(UPSTOX_TOKEN, {
     method: "POST",
     body: { access_token: accessToken },
-    signal,
-  });
-}
-
-export async function submitUpstoxPin(
-  pin: string,
-  signal?: AbortSignal,
-): Promise<unknown> {
-  return request(UPSTOX_PIN, {
-    method: "POST",
-    body: { pin },
     signal,
   });
 }

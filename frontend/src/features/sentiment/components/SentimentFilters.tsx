@@ -22,8 +22,7 @@ export function SentimentFilters({ filters, sources, onChange }: Props) {
   const category = filters.categories?.[0] ?? "";
   const maxAge = filters.max_age_hours ? String(filters.max_age_hours) : "";
   return (
-    <div className="news-toolbar sentiment-toolbar">
-      <h2>Market Sentiment</h2>
+    <div className="sentiment-toolbar">
       <select
         className="ui-select filter-input"
         aria-label="Source"

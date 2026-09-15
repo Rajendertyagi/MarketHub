@@ -10,8 +10,8 @@ export function NotificationsPanel({
 }) {
   if (!notifications.length) {
     return (
-      <div className="card">
-        <div className="card-header">
+      <div className="panel">
+        <div className="panel-header">
           <h2>Triggered</h2>
         </div>
         <p className="hint">No recent triggers.</p>
@@ -19,8 +19,8 @@ export function NotificationsPanel({
     );
   }
   return (
-    <div className="card">
-      <div className="card-header">
+    <div className="panel">
+      <div className="panel-header">
         <h2>Triggered</h2>
       </div>
       <ul className="notifications-list">

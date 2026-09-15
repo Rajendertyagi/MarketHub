@@ -1,0 +1,18 @@
+/* Single-purpose utilities (highest layer: always win ties). */
+
+@layer utilities{
+  /* ---------- Monospace utility ---------- */
+  .mono {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+  }
+
+  .cursor-pointer { cursor: pointer; }
+
+  .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .tnum { font-variant-numeric: tabular-nums; }
+  .text-muted { color: var(--text-muted); }
+}

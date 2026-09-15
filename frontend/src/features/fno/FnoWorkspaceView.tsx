@@ -1,13 +1,12 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { ApiError, type ChainRowView, type FutureView } from "@/types";
 import {
-  AsyncStateView,
-  Field,
-  Select,
-  Tabs,
-} from "@/components/ui";
-import { fmtInt, fmtNum } from "@/utils/format";
+  ApiError,
+  type ChainRowView,
+  type FutureView,
+  type FnoUnderlyingKind,
+} from "@/types";
+import { AsyncStateView, Field, Select, Tabs } from "@/components/ui";
 import {
   normalizeChainRows,
   normalizeEquityOptions,
@@ -23,9 +22,18 @@ import { FuturesTable } from "./FuturesTable";
 import { OptionChainTable } from "./OptionChainTable";
 import { OptionAnalytics } from "./OptionAnalytics";
 
-type Tab = "overview" | "futures" | "chain" | "greeks" | "analytics";
+type Tab = "chain" | "futures";
 
 const WINDOWS = [5, 10, 15, 20, 25];
+
+// Major indices surfaced at the top of the symbol dropdown so the user can jump
+// straight to NIFTY/BANKNIFTY/etc. Order here defines dropdown order.
+const MAJOR_INDICES = [
+  "NIFTY",
+  "BANKNIFTY",
+  "FINNIFTY",
+  "MIDCPNIFTY",
+];
 
 export function FnoWorkspaceView() {
   const [params, setParams] = useSearchParams();
@@ -33,7 +41,8 @@ export function FnoWorkspaceView() {
   const kind = (params.get("kind") as "equity" | "index" | null) ?? null;
   const expiry = params.get("expiry") ?? "";
   const windowSize = Number(params.get("window") ?? "10") || 10;
-  const tab = (params.get("tab") as Tab) ?? "overview";
+  const tab = (params.get("tab") as Tab) ?? "chain";
+  const [showGreeks, setShowGreeks] = useState(true);
 
   const { all, isLoading: uLoading } = useFnoUnderlyings();
   const activeView = useFnoActiveView();
@@ -45,7 +54,8 @@ export function FnoWorkspaceView() {
   // Bootstrap index expiry from the loaded chain (backend defaults to first).
   useEffect(() => {
     if (kind === "index" && !expiry && indexChain.data) {
-      const first = indexChain.data.expiry || indexChain.data.expiries_available[0];
+      const first =
+        indexChain.data.expiry || indexChain.data.expiries_available[0];
       if (first) {
         setParams(
           (prev) => {
@@ -79,6 +89,33 @@ export function FnoWorkspaceView() {
     );
   };
 
+  // Symbol → kind lookup so the on-page dropdown can switch underlyings directly.
+  const bySymbol = useMemo(() => {
+    const m = new Map<string, FnoUnderlyingKind>();
+    for (const u of all) m.set(u.symbol, u.kind);
+    return m;
+  }, [all]);
+
+  // Group the dropdown: major indices first (pinned, in fixed order), then any
+  // other indices, then equities — so the user can grab NIFTY/BANKNIFTY fast.
+  const groups = useMemo(() => {
+    const major: typeof all = [];
+    const otherIdx: typeof all = [];
+    const eq: typeof all = [];
+    const majorOrder = new Map(MAJOR_INDICES.map((s, i) => [s, i]));
+    for (const u of all) {
+      if (u.kind === "index" && majorOrder.has(u.symbol)) major.push(u);
+      else if (u.kind === "index") otherIdx.push(u);
+      else eq.push(u);
+    }
+    major.sort(
+      (a, b) => (majorOrder.get(a.symbol) ?? 0) - (majorOrder.get(b.symbol) ?? 0),
+    );
+    otherIdx.sort((a, b) => a.symbol.localeCompare(b.symbol));
+    eq.sort((a, b) => a.symbol.localeCompare(b.symbol));
+    return { major, otherIdx, eq };
+  }, [all]);
+
   const selectUnderlying = (symbol: string, k: "equity" | "index") => {
     setParams(
       (prev) => {
@@ -86,11 +123,15 @@ export function FnoWorkspaceView() {
         n.set("sym", symbol);
         n.set("kind", k);
         n.delete("expiry");
-        n.set("tab", "overview");
+        n.set("tab", "chain");
         return n;
       },
       { replace: true },
     );
+  };
+
+  const onSymbolChange = (symbol: string) => {
+    selectUnderlying(symbol, bySymbol.get(symbol) ?? "index");
   };
 
   const back = () => {
@@ -163,11 +204,8 @@ export function FnoWorkspaceView() {
   const error = isEquity ? equity.error : indexChain.error;
 
   const tabs = [
-    { value: "overview" as Tab, label: "Overview" },
-    { value: "futures" as Tab, label: "Futures" },
     { value: "chain" as Tab, label: "Option Chain" },
-    { value: "greeks" as Tab, label: "Greeks" },
-    ...(isEquity ? [] : [{ value: "analytics" as Tab, label: "Analytics" }]),
+    { value: "futures" as Tab, label: "Futures" },
   ];
 
   let body: React.ReactNode;
@@ -181,7 +219,7 @@ export function FnoWorkspaceView() {
         onRetry={() => (isEquity ? equity.refetch() : indexChain.refetch())}
       />
     );
-  } else if (!rows.length && !futuresView.length && tab !== "overview") {
+  } else if (!rows.length && !futuresView.length && tab !== "chain") {
     body = (
       <AsyncStateView
         status="empty"
@@ -189,33 +227,28 @@ export function FnoWorkspaceView() {
       />
     );
   } else {
-    switch (tab) {
-      case "overview":
-        body = <OverviewTab header={header} futuresCount={futuresView.length} rows={rows} />;
-        break;
-      case "futures":
-        body = <FuturesTable futures={futuresView} />;
-        break;
-      case "chain":
-        body = (
-          <>
-            <OptionChainTable rows={rows} />
-            {!isEquity && chain && (
-              <OptionAnalytics analytics={chain.analytics} rows={rows} />
-            )}
-          </>
-        );
-        break;
-      case "greeks":
-        body = <GreeksLadder rows={rows} />;
-        break;
-      case "analytics":
-        body =
-          !isEquity && chain ? (
-            <OptionAnalytics analytics={chain.analytics} rows={rows} />
-          ) : null;
-        break;
-    }
+     switch (tab) {
+       case "chain":
+         body = (
+           <>
+             <OptionChainTable
+               rows={rows}
+               spot={header.ltp}
+               showGreeks={showGreeks}
+             />
+              {!isEquity && chain ? (
+                <section className="fno-analytics-panel">
+                  <h2 className="fno-analytics-heading">Chain Analytics</h2>
+                  <OptionAnalytics analytics={chain.analytics} rows={rows} />
+                </section>
+              ) : null}
+           </>
+         );
+         break;
+       case "futures":
+         body = <FuturesTable futures={futuresView} />;
+         break;
+     }
   }
 
   const expiryOptions = isEquity
@@ -233,7 +266,7 @@ export function FnoWorkspaceView() {
   }
 
   return (
-    <div className="panel">
+    <div className="panel fno-workspace">
       <SpotHeader
         symbol={sym}
         kind={kind}
@@ -246,7 +279,41 @@ export function FnoWorkspaceView() {
         onBack={back}
       />
 
-      <div className="control-row">
+      <div className="toolbar fno-controls">
+        <Field label="Symbol">
+          <Select value={sym} onChange={(e) => onSymbolChange(e.target.value)}>
+            {groups.major.length > 0 && (
+              <optgroup label="Major Indices">
+                {groups.major.map((u) => (
+                  <option key={`${u.kind}:${u.symbol}`} value={u.symbol}>
+                    {u.symbol}
+                    {u.name ? ` · ${u.name}` : ""}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {groups.otherIdx.length > 0 && (
+              <optgroup label="Indices">
+                {groups.otherIdx.map((u) => (
+                  <option key={`${u.kind}:${u.symbol}`} value={u.symbol}>
+                    {u.symbol}
+                    {u.name ? ` · ${u.name}` : ""}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {groups.eq.length > 0 && (
+              <optgroup label="Equity">
+                {groups.eq.map((u) => (
+                  <option key={`${u.kind}:${u.symbol}`} value={u.symbol}>
+                    {u.symbol}
+                    {u.name ? ` · ${u.name}` : ""}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+          </Select>
+        </Field>
         <Field label="Expiry">
           <Select
             value={isEquity ? ws?.selected_expiry ?? "" : expiry}
@@ -273,108 +340,22 @@ export function FnoWorkspaceView() {
             ))}
           </Select>
         </Field>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={showGreeks}
+            onChange={(e) => setShowGreeks(e.target.checked)}
+          />
+          Greeks
+        </label>
         {activeView.isPending && isEquity && (
           <span className="hint">applying live view…</span>
         )}
       </div>
 
-      <Tabs
-        tabs={tabs}
-        active={tab}
-        onChange={(t) => setParam("tab", t)}
-      />
+      <Tabs tabs={tabs} active={tab} onChange={(t) => setParam("tab", t)} />
 
       <div className="fno-tab-body">{body}</div>
-    </div>
-  );
-}
-
-function OverviewTab({
-  header,
-  futuresCount,
-  rows,
-}: {
-  header: { atm: number | null; notes: string[] };
-  futuresCount: number;
-  rows: ChainRowView[];
-}) {
-  return (
-    <div className="fno-analytics">
-      <div className="stat-grid">
-        <div className="stat-card">
-          <span className="stat-label">ATM Strike</span>
-          <span className="stat-value">
-            {header.atm == null ? "—" : fmtNum(header.atm)}
-          </span>
-        </div>
-        <div className="stat-card">
-          <span className="stat-label">Futures</span>
-          <span className="stat-value">{fmtInt(futuresCount)}</span>
-        </div>
-        <div className="stat-card">
-          <span className="stat-label">Option Strikes</span>
-          <span className="stat-value">{fmtInt(rows.length)}</span>
-        </div>
-      </div>
-      {header.notes.length > 0 && (
-        <div className="card">
-          <div className="hint">{header.notes.join("; ")}</div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Dedicated Greeks ladder (canonical values passed through; null → "—").
-function GreeksLadder({ rows }: { rows: ChainRowView[] }) {
-  if (!rows.length) {
-    return (
-      <div className="state">
-        <span className="muted">No option contracts for this selection.</span>
-      </div>
-    );
-  }
-  const cell = (v: number | null | undefined, d = 2) => (
-    <td className="num">{v == null ? "—" : fmtNum(v, d)}</td>
-  );
-  return (
-    <div className="card" style={{ padding: 0, overflow: "auto" }}>
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Strike</th>
-            <th className="num">CE Δ</th>
-            <th className="num">CE Γ</th>
-            <th className="num">CE Θ</th>
-            <th className="num">CE Vega</th>
-            <th className="num">CE ρ</th>
-            <th className="num">PE Δ</th>
-            <th className="num">PE Γ</th>
-            <th className="num">PE Θ</th>
-            <th className="num">PE Vega</th>
-            <th className="num">PE ρ</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.strike} className={r.atm ? "option-chain-atm" : ""}>
-              <td>
-                <b>{fmtNum(r.strike)}</b>
-              </td>
-              {cell(r.call?.quote?.delta)}
-              {cell(r.call?.quote?.gamma, 3)}
-              {cell(r.call?.quote?.theta)}
-              {cell(r.call?.quote?.vega)}
-              {cell(r.call?.quote?.rho)}
-              {cell(r.put?.quote?.delta)}
-              {cell(r.put?.quote?.gamma, 3)}
-              {cell(r.put?.quote?.theta)}
-              {cell(r.put?.quote?.vega)}
-              {cell(r.put?.quote?.rho)}
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }

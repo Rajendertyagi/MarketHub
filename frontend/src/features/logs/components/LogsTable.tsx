@@ -20,7 +20,7 @@ export const LogsTable = forwardRef<HTMLDivElement, { records: LogRecord[] }>(
     }
     return (
       <div className="logs-container" ref={ref}>
-        <table className="table logs-table">
+        <table className="table logs-table table-compact">
           <thead>
             <tr>
               <th>Time</th>
@@ -32,7 +32,7 @@ export const LogsTable = forwardRef<HTMLDivElement, { records: LogRecord[] }>(
           <tbody>
             {records.map((r, i) => (
               <tr key={`${r.ts}-${i}`} className={`logs-row logs-level-${r.level.toLowerCase()}`}>
-                <td className="mono logs-ts">{formatTs(r.ts)}</td>
+                <td className="mono logs-ts num">{formatTs(r.ts)}</td>
                 <td className={`logs-lvl-${r.level.toLowerCase()}`}>{r.level}</td>
                 <td className="logs-component">{r.logger}</td>
                 <td className="logs-message">

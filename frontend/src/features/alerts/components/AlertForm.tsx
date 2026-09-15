@@ -1,6 +1,11 @@
 import { useState } from "react";
 import { Button, Field, Input, Select } from "@/components/ui";
-import { ALERT_FIELDS, ALERT_OPERATORS, DEFAULT_ALERT_EXCHANGE } from "../constants";
+import {
+  ALERT_FIELDS,
+  ALERT_OPERATORS,
+  DEFAULT_ALERT_EXCHANGE,
+  NSE_SYMBOLS,
+} from "../constants";
 import { ALERT_FIELD_LABELS, ALERT_OPERATOR_LABELS } from "../constants";
 import { useAlertMutations } from "../useAlerts";
 import type { AlertField, AlertOperator, CreateAlertInput } from "../types";
@@ -56,17 +61,25 @@ export function AlertForm() {
   }
 
   return (
-    <form className="card alert-form" onSubmit={onSubmit}>
-      <div className="card-header">
+    <form className="panel alert-form" onSubmit={onSubmit}>
+      <div className="panel-header">
         <h2>New alert</h2>
       </div>
       <div className="control-row">
         <Field label="Instrument token">
           <Input
-            placeholder="e.g. NSE_EQ|RELIANCE"
+            list="alert-symbol-list"
+            placeholder="NSE_EQ|RELIANCE"
             value={form.instrument_token}
             onChange={(e) => update("instrument_token", e.target.value)}
           />
+          <datalist id="alert-symbol-list">
+            {NSE_SYMBOLS.map((s) => (
+              <option key={s.token} value={s.token}>
+                {s.label}
+              </option>
+            ))}
+          </datalist>
         </Field>
         <Field label="Symbol (optional)">
           <Input

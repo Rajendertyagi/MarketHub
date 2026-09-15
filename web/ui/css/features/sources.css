@@ -1,4 +1,0 @@
-/* Sources feature — composition only. */
-
-.source-id { font-family: var(--font-mono); font-size: var(--font-size-xs); }
-.source-summary { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

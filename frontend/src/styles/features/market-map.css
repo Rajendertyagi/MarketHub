@@ -1,0 +1,195 @@
+/* Market Map: full-bleed treemap heatmap surface. */
+
+@layer features {
+  /* Full-bleed page surface: cancel the app-main padding so the map owns the
+     whole viewport, but keep the controls/summary inset from the screen edges. */
+  .market-map {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    height: 100%;
+    min-height: 100%;
+    overflow: hidden;
+    margin: calc(-1 * var(--space-3));
+  }
+  .market-map > .control-row,
+  .market-map > .stat-grid {
+    flex: 0 0 auto;
+    padding: 0 var(--space-3);
+  }
+
+  /* Elevated container that owns the map; elevation not borders. */
+  .market-map .heatmap-surface {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface-1);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+  }
+
+  .heatmap-bar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    background: color-mix(in oklch, var(--surface-2) 55%, transparent);
+  }
+  .heatmap-title {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.01em;
+  }
+  .heatmap-meta {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-regular);
+    color: var(--text-muted);
+    letter-spacing: 0;
+  }
+
+  .mktreemap {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 320px;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  .mk-sector {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .mk-sector-label {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0 var(--space-2);
+    overflow: hidden;
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .mk-sector-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .mk-sector-count {
+    color: var(--text-faint);
+    font-weight: var(--font-weight-regular);
+  }
+
+  /* Tiles: each is its own container so text scales with tile size (readable
+     on large tiles, compact on small ones). */
+  .mk-tile {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 2px;
+    padding: var(--space-1) var(--space-2);
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+    overflow: hidden;
+    container-type: size;
+    container-name: tile;
+    transition: box-shadow var(--motion-fast) var(--ease),
+      transform var(--motion-fast) var(--ease), filter var(--motion-fast) var(--ease);
+  }
+  .mk-tile:hover,
+  .mk-tile:focus-visible {
+    z-index: 3;
+    outline: 1px solid var(--accent);
+    box-shadow: var(--shadow-float);
+    filter: brightness(1.06);
+  }
+  .mk-sym {
+    font-weight: var(--font-weight-bold);
+    line-height: var(--line-height-tight);
+    font-size: clamp(13px, 32cqmin, 34px);
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mk-chg {
+    font-variant-numeric: tabular-nums;
+    line-height: var(--line-height-tight);
+    font-size: clamp(11px, 20cqmin, 18px);
+    opacity: 0.92;
+  }
+
+  /* Only trim the change % on genuinely tiny tiles so the symbol stays the
+     readable focal point; the symbol is never shrunk below its clamp floor. */
+  @container tile (max-height: 28px), tile (max-width: 40px) {
+    .mk-chg {
+      display: none;
+    }
+  }
+
+  /* Change % color scale — same convention as the sector heatmap. */
+  .heat-legend {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+  }
+  .heat-legend .heat-scale {
+    width: 140px;
+    height: 10px;
+    border-radius: 999px;
+    box-shadow: var(--shadow-card);
+    background: linear-gradient(
+      to right,
+      color-mix(in oklch, var(--neg) 92%, transparent),
+      color-mix(in oklch, var(--neg) 45%, transparent),
+      color-mix(in oklch, var(--neg) 14%, transparent),
+      var(--surface-2),
+      color-mix(in oklch, var(--pos) 14%, transparent),
+      color-mix(in oklch, var(--pos) 45%, transparent),
+      color-mix(in oklch, var(--pos) 92%, transparent)
+    );
+  }
+  .heat-legend .heat-scale-labels {
+    display: flex;
+    justify-content: space-between;
+    width: 140px;
+    font-variant-numeric: tabular-nums;
+  }
+  /* Volume metric: accent intensity scale (faint -> saturated). */
+  .heat-legend .heat-scale-vol {
+    background: linear-gradient(
+      to right,
+      color-mix(in oklch, var(--accent) 12%, var(--surface-2)),
+      color-mix(in oklch, var(--accent) 82%, var(--surface-2))
+    );
+  }
+
+  @media (max-width: 720px) {
+    .market-map .stat-grid {
+      grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    }
+    .market-map .control-row {
+      gap: var(--space-2);
+    }
+    .heatmap-bar {
+      flex-wrap: wrap;
+    }
+  }
+}

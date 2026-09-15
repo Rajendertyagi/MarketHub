@@ -626,33 +626,6 @@ async def test_upstox_status_clears_only_on_broker_rejection(runner: R) -> None:
             runner.assert_true(f"store-kept-{reason}", len(saved) == 1)
 
 
-def test_ol22_ol23_ui(runner: R) -> None:
-    """OL22/OL23: Login button present; no token browser-storage writes.
-
-    The Upstox login handler lives in auth.js (not app.js), so the handler
-    assertions read that module.
-    """
-    html_path = os.path.join(_PROJECT_DIR, "web", "ui", "index.html")
-    app_js_path = os.path.join(_PROJECT_DIR, "web", "ui", "js", "app.js")
-    auth_js_path = os.path.join(_PROJECT_DIR, "web", "ui", "js", "auth.js")
-    with open(html_path, encoding="utf-8") as f:
-        html = f.read()
-    with open(app_js_path, encoding="utf-8") as f:
-        app_js = f.read()
-    with open(auth_js_path, encoding="utf-8") as f:
-        auth_js = f.read()
-    runner.assert_in("OL22-login-button-id", 'id="oauth-login-btn"', html)
-    runner.assert_in("OL22-login-handler", "/api/auth/upstox/login", auth_js)
-    runner.assert_in("OL22-auth-param-handler", "history.replaceState", auth_js)
-
-    storage_writes = [ln for ln in (app_js + "\n" + auth_js).splitlines()
-                      if ("localStorage.setItem" in ln
-                          or "sessionStorage.setItem" in ln
-                          or "document.cookie" in ln)]
-    token_storage = [ln for ln in storage_writes if "token" in ln.lower()]
-    runner.assert_eq("OL23-no-token-storage-writes", token_storage, [])
-
-
 def test_ol24_imports_intact(runner: R) -> None:
     """OL24: composition imports cleanly (D1-D4 surfaces unchanged)."""
     from sources import SourceManager  # noqa: F401
@@ -683,7 +656,6 @@ async def main() -> bool:
     await test_upstox_manual_token_gets_expiry(runner)
     await test_upstox_pin_path_persists(runner)
     await test_upstox_status_clears_only_on_broker_rejection(runner)
-    test_ol22_ol23_ui(runner)
     test_ol24_imports_intact(runner)
 
     return runner.summary()

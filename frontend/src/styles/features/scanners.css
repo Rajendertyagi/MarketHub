@@ -1,0 +1,247 @@
+/* Scanners: responsive card gallery + inline expand accordion. */
+
+@layer features {
+  /* Toolbar: compact filter row (universe/limit/expiry controls). */
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--space-3);
+  }
+
+  /* Responsive grid of scanner cards. */
+  .scanner-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+    gap: var(--space-5);
+    margin-top: var(--space-5);
+  }
+
+  /* A single scanner card. Elevation carries separation, not borders. */
+  .scanner-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    padding: var(--space-5);
+    background: var(--surface-1);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+    color: var(--text);
+    cursor: pointer;
+    outline: none;
+    transition:
+      box-shadow var(--motion-fast) var(--ease),
+      background-color var(--motion-fast) var(--ease),
+      transform var(--motion-fast) var(--ease);
+  }
+
+  .scanner-card:hover {
+    background: var(--surface-2);
+    box-shadow: var(--shadow-float);
+    transform: translateY(-2px);
+  }
+
+  .scanner-card:focus-visible {
+    box-shadow: var(--focus-ring), var(--shadow-float);
+  }
+
+  /* Active / expanded: one accent cue via an inset accent rail + float. */
+  .scanner-card.is-open {
+    background: var(--surface-2);
+    box-shadow:
+      inset 3px 0 0 var(--accent),
+      var(--shadow-float);
+  }
+
+  .scanner-card__head {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .scanner-card__titles {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+
+  .scanner-card__title {
+    margin: 0;
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-tight);
+    color: var(--text);
+    transition: color var(--motion-fast) var(--ease);
+  }
+
+  .scanner-card.is-open .scanner-card__title {
+    color: var(--accent);
+  }
+
+  .scanner-card__chevron {
+    flex: none;
+    font-size: var(--font-size-lg);
+    line-height: 1;
+    color: var(--text-muted);
+    transition:
+      transform var(--motion-fast) var(--ease),
+      color var(--motion-fast) var(--ease);
+  }
+
+  .scanner-card.is-open .scanner-card__chevron {
+    transform: rotate(180deg);
+    color: var(--accent);
+  }
+
+  /* Subtle affordance that the whole card is an expandable control. */
+  .scanner-card__hint {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    align-self: flex-start;
+    margin-top: calc(-1 * var(--space-1));
+    font-size: var(--font-size-xs);
+    letter-spacing: 0.02em;
+    color: var(--text-muted);
+    opacity: 0.85;
+    transition:
+      color var(--motion-fast) var(--ease),
+      opacity var(--motion-fast) var(--ease);
+  }
+
+  .scanner-card:hover .scanner-card__hint,
+  .scanner-card:focus-visible .scanner-card__hint {
+    color: var(--accent);
+    opacity: 1;
+  }
+
+  /* Compact meta tags (instrument class / kind / metric). */
+  .scanner-card__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+
+  .scanner-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px var(--space-2);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    letter-spacing: 0.02em;
+    text-transform: capitalize;
+    color: var(--text-muted);
+    background: var(--surface-3);
+    border-radius: var(--radius-sm);
+  }
+
+  .scanner-card__desc {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-normal);
+    color: var(--text-muted);
+  }
+
+  /* Concise summary strip on the card face. */
+  .scanner-card__summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-1) var(--space-3);
+    padding-top: var(--space-2);
+    border-top: 1px solid var(--edge);
+    font-size: var(--font-size-sm);
+  }
+
+  .scanner-card__count {
+    font-weight: var(--font-weight-semibold);
+    color: var(--text);
+  }
+
+  .scanner-card__top strong {
+    color: var(--text);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .scanner-card__coverage {
+    margin-left: auto;
+    font-size: var(--font-size-xs);
+  }
+
+  /* Inline expand accordion via grid-rows 0fr -> 1fr. */
+  .scanner-card__detail {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows var(--motion-fast) var(--ease);
+  }
+
+  .scanner-card.is-open .scanner-card__detail {
+    grid-template-rows: 1fr;
+  }
+
+  .scanner-card__detail-inner {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .scanner-card__table {
+    margin-top: var(--space-3);
+    max-height: 56vh;
+    overflow: auto;
+    border-radius: var(--radius-md);
+    background: var(--surface-1);
+    box-shadow: var(--shadow-card);
+  }
+
+  /* Readable expanded ranking: roomy rows, aligned tabular numerics. */
+  .scanner-card__table .table {
+    margin: 0;
+    font-size: var(--font-size-sm);
+  }
+
+  .scanner-card__table .table th,
+  .scanner-card__table .table td {
+    padding: var(--space-2) var(--space-3);
+    white-space: nowrap;
+    line-height: var(--line-height-tight);
+  }
+
+  .scanner-card__table .table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--surface-2);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-muted);
+    text-align: left;
+  }
+
+  .scanner-card__table .table td.num,
+  .scanner-card__table .table th.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+
+  .scanner-card__table .table tbody tr {
+    transition: background-color var(--motion-fast) var(--ease);
+  }
+
+  .scanner-card__table .table tbody tr:hover {
+    background: var(--surface-2);
+    cursor: pointer;
+  }
+
+  @media (max-width: 720px) {
+    .toolbar {
+      gap: var(--space-2);
+    }
+    .toolbar .field {
+      flex: 1 1 100%;
+    }
+    .scanner-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+}

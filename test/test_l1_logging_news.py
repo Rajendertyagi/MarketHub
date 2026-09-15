@@ -1557,103 +1557,6 @@ def test_sentiment_persisted_no_dupes(r: R) -> None:
 
 
 # ===================================================================
-# P10/P11/P3-G — ES MODULES / ROUTING / HISTORY UI
-# ===================================================================
-
-def test_es_modules(r: R) -> None:
-    """P10/P11/P3: module files, imports, router boot, no inline handlers."""
-    base = os.path.join(_PROJECT_DIR, "web", "ui", "js")
-    mods = {}
-    for name in ("app.js", "utils.js", "api.js", "router.js", "logs.js",
-                 "news.js", "sources.js"):
-        try:
-            with open(os.path.join(base, name), encoding="utf-8") as fh:
-                mods[name] = fh.read()
-        except Exception as exc:
-            r.fail(f"G:readable:{name}", str(exc))
-            return
-    r.ok("G:readable")
-
-    for name in ("utils.js", "api.js", "router.js", "logs.js", "news.js",
-                 "sources.js"):
-        if "export " in mods[name]:
-            r.ok(f"G:exports:{name}")
-        else:
-            r.fail(f"G:exports:{name}", "no exports")
-
-    for imp in ('from "./router.js"', 'from "./sources.js"',
-                'from "./news.js"', 'from "./logs.js"'):
-        if imp in mods["app.js"]:
-            r.ok(f"G:app_imports:{imp}")
-        else:
-            r.fail(f"G:app_imports:{imp}", "missing import")
-
-    # Router: single-registration boot covering click + hashchange + load.
-    router = mods["router.js"]
-    if ("hashchange" in router and "_fire(_currentView())" in router
-            and "_routerBound" in router and "onViewEnter" in router):
-        r.ok("G:router_boot")
-    else:
-        r.fail("G:router_boot", "router boot wiring missing")
-
-    # No inline handlers anywhere in the news/sources path.
-    if ("onclick=" not in mods["sources.js"]
-            and "onclick=" not in mods["news.js"]):
-        r.ok("G:no_inline_handlers")
-    else:
-        r.fail("G:no_inline_handlers", "onclick present")
-
-    # History-first UI: openNews loads sources + history; refresh persists.
-    # N-UI1: news.js is a thin compat shim; orchestration lives in
-    # features/news/index.js, selection state in features/news/state.js.
-    try:
-        with open(os.path.join(base, "features", "news", "index.js"),
-                  encoding="utf-8") as fh:
-            mods["news/index.js"] = fh.read()
-    except Exception as exc:
-        r.fail("G:readable:features/news/index.js", str(exc))
-        return
-    if ("openNews" in mods["news.js"]
-            and "openNews" in mods["news/index.js"]
-            and "/api/news/refresh" in mods["news/index.js"]):
-        r.ok("G:history_refresh_flow")
-    else:
-        r.fail("G:history_refresh_flow", "news flow incomplete")
-
-    # Logs SSE ownership unchanged: exactly one logs stream constructor.
-    if mods["logs.js"].count('new EventSource("/api/logs/stream")') == 1:
-        r.ok("G:logs_sse_single")
-    else:
-        r.fail("G:logs_sse_single", "stream count changed")
-
-    # EventSource budget across the phase-2 split: still 3 streams total
-    # (market.js + alerts.js + logs.js), none left in app.js. This
-    # supersedes the old "3 total, 2 in app.js" layout assertion — the
-    # runtime topology is unchanged, only the file layout moved.
-    import glob as _glob
-    _all = ""
-    for _p in _glob.glob(os.path.join(base, "*.js")):
-        with open(_p, encoding="utf-8") as _fh:
-            _all += _fh.read()
-    if _all.count("new EventSource") == 3:
-        r.ok("G:eventsource_budget")
-    else:
-        r.fail("G:eventsource_budget",
-               f"total={_all.count('new EventSource')}")
-
-    # index.html loads app as a module (cache-busted).
-    try:
-        with open(os.path.join(_PROJECT_DIR, "web", "ui", "index.html"),
-                  encoding="utf-8") as fh:
-            html = fh.read()
-    except Exception as exc:
-        r.fail("G:html_readable", str(exc))
-        return
-    if 'type="module"' in html and "/ui/js/app.js?v=" in html:
-        r.ok("G:module_script_tag")
-    else:
-        r.fail("G:module_script_tag", "script tag not modularized")
-
 
 # ===================================================================
 # D1 — EXCLUDE-KEYWORD FILTER REGRESSION
@@ -2039,59 +1942,6 @@ def test_sse_thread_churn(r: R) -> None:
         r.fail("D10:full_queue_no_leak", f"count={broker.subscriber_count}")
 
 
-# ===================================================================
-# D7/D8 — WEBUI STATIC WIRING REGRESSION
-# ===================================================================
-
-def _read_webui(rel: str) -> str | None:
-    try:
-        with open(os.path.join(_PROJECT_DIR, "web", "ui", "js", rel),
-                  encoding="utf-8") as fh:
-            return fh.read()
-    except Exception:
-        return None
-
-
-def test_webui_static_wiring(r: R) -> None:
-    """D7/D8: live-filter gating + delegation present, inline JS absent.
-
-    News/Logs UI now lives in ES modules (sources.js / logs.js); app.js
-    keeps only orchestration.  Assertions target the owning modules.
-    """
-    app = _read_webui("app.js")
-    sources = _read_webui("sources.js")
-    logs = _read_webui("logs.js")
-    if app is None or sources is None or logs is None:
-        r.fail("WEBUI:readable", "missing js module(s)")
-        return
-    r.ok("WEBUI:readable")
-
-    blob = app + sources + logs
-    if ("window._newsToggle" in blob or "window._newsEdit" in blob
-            or "window._newsDelete" in blob):
-        r.fail("D8:no_window_handlers", "inline window.* news handlers remain")
-    else:
-        r.ok("D8:no_window_handlers")
-    if 'onclick="window._news' in blob or "onclick='window._news" in blob:
-        r.fail("D8:no_inline_onclick", "inline onclick with source id remains")
-    else:
-        r.ok("D8:no_inline_onclick")
-    if "data-news-action" in sources and "_onNewsActionClick" in sources:
-        r.ok("D8:delegation_present")
-    else:
-        r.fail("D8:delegation_present", "data-attribute delegation missing")
-
-    if "_logRecordPassesFilters(record)" in logs:
-        r.ok("D7:live_filter_gated")
-    else:
-        # tolerate formatting drift: check both halves co-occur in onmessage
-        i = logs.find("es.onmessage")
-        window_ = logs[i:i + 600] if i >= 0 else ""
-        if "_logRecordPassesFilters" in window_:
-            r.ok("D7:live_filter_gated")
-        else:
-            r.fail("D7:live_filter_gated", "onmessage bypasses filters")
-
 
 # ===================================================================
 # D12 — RUN_ALL REGISTRATION REGRESSION
@@ -2195,7 +2045,6 @@ def main() -> None:
     test_sse_thread_churn(r)
 
     print("\n--- D7/D8 WebUI Wiring ---")
-    test_webui_static_wiring(r)
 
     print("\n--- D12 run_all Registration ---")
     test_runall_registered(r)
@@ -2229,7 +2078,6 @@ def main() -> None:
     test_sentiment_persisted_no_dupes(r)
 
     print("\n--- P10/P11/P3 ES Modules ---")
-    test_es_modules(r)
 
     print("\n" + "=" * 60)
     r.summary()

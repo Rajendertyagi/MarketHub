@@ -15,10 +15,5 @@ export const QUOTE_FLUSH_MS = 1000;
 // prices never read as live ticks.
 export const STALE_QUOTE_MIN = 5;
 
-// Inferred NSE equity session window (IST), used only for a clearly-labelled
-// "inferred" status banner — never broker-confirmed.
-export const MARKET_OPEN_IST_MIN = 9 * 60 + 15; // 09:15
-export const MARKET_CLOSE_IST_MIN = 15 * 60 + 30; // 15:30
-
 export const MOVER_CATEGORIES = ["Top Gainer", "Top Loser", "Volume Leader"] as const;
 export type MoverCategory = (typeof MOVER_CATEGORIES)[number];

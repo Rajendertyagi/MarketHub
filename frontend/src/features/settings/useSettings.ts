@@ -27,7 +27,6 @@ import {
   saveUpstoxCredentials,
   saveUpstoxFeedConfig,
   setNewsSourceEnabled,
-  submitUpstoxPin,
   submitUpstoxToken,
   testNewsSource,
   updateNewsSource,
@@ -68,15 +67,8 @@ export function useUpstoxTokenLogin() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (accessToken: string) => submitUpstoxToken(accessToken),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["settings", "upstox"] }),
-  });
-}
-
-export function useUpstoxPinLogin() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (pin: string) => submitUpstoxPin(pin),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["settings", "upstox"] }),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["settings", "upstox-auth"] }),
   });
 }
 
@@ -84,7 +76,8 @@ export function useForgetUpstoxSession() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => forgetUpstoxSession(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["settings", "upstox"] }),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["settings", "upstox-auth"] }),
   });
 }
 
@@ -100,8 +93,10 @@ export function useSaveUpstoxCredentials() {
   return useMutation({
     mutationFn: (args: { apiKey: string; apiSecret: string }) =>
       saveUpstoxCredentials(args.apiKey, args.apiSecret),
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["settings", "upstox-cred"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["settings", "upstox-auth"] });
+      qc.invalidateQueries({ queryKey: ["settings", "upstox-cred"] });
+    },
   });
 }
 
@@ -109,8 +104,10 @@ export function useDeleteUpstoxCredentials() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => deleteUpstoxCredentials(),
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["settings", "upstox-cred"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["settings", "upstox-auth"] });
+      qc.invalidateQueries({ queryKey: ["settings", "upstox-cred"] });
+    },
   });
 }
 

@@ -8,7 +8,7 @@ being a brittle gate. Add new edges ONLY when they are already clean.
 Policy (see docs/ARCHITECTURE_BOUNDARIES.md):
   - OPTIONS analytics must not depend on auth/secrets/broker internals/config.
   - NEWS must not depend on broker auth/secrets/config/server.
-  - The WebUI (web/ui/js) must never import broker/provider code.
+    - The WebUI (frontend/src) must never import broker/provider code.
   - Config loading (app/config.py) must stay non-secret and adapter-free.
   - Canonical market data must not depend on transport/UI/adapters.
   - Core is a lower layer and must not depend on app composition.
@@ -265,21 +265,27 @@ def test_core_does_not_depend_on_app():
 
 
 def test_webui_never_imports_broker_provider_code():
-    """Provider-specific code must never leak into the WebUI."""
-    webui = ROOT / "web" / "ui" / "js"
+    """Provider-specific code must never leak into the WebUI.
+
+    The WebUI is now the React app in frontend/src (TypeScript). It must only
+    talk to the backend through the API layer — never import broker/provider
+    implementation modules directly.
+    """
+    webui = ROOT / "frontend" / "src"
     if not webui.exists():
         return
     violations = []
-    for f in webui.rglob("*.js"):
-        if "__pycache__" in f.parts:
-            continue
-        text = f.read_text(encoding="utf-8", errors="ignore")
-        for line in text.splitlines():
-            s = line.strip()
-            if not (s.startswith("import ") or s.startswith("from ")):
+    for ext in ("*.ts", "*.tsx"):
+        for f in webui.rglob(ext):
+            if "__pycache__" in f.parts or "node_modules" in f.parts:
                 continue
-            if "brokers" in s or "/brokers" in s or "broker/" in s:
-                violations.append((str(f.relative_to(ROOT)), s))
+            text = f.read_text(encoding="utf-8", errors="ignore")
+            for line in text.splitlines():
+                s = line.strip()
+                if not (s.startswith("import ") or s.startswith("from ")):
+                    continue
+                if "brokers" in s or "/brokers" in s or "broker/" in s:
+                    violations.append((str(f.relative_to(ROOT)), s))
     assert not violations, f"WebUI must never import broker/provider code: {violations}"
 
 

@@ -1,0 +1,117 @@
+/* Charts: compact control bar + elevated chart card. */
+
+@layer features {
+  .charts-view {
+    gap: var(--space-4);
+  }
+
+  /* Compact control row: symbol/option selector + timeframe on one line. */
+  .charts-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--space-2) var(--space-3);
+  }
+
+  .charts-bar .field {
+    margin: 0;
+  }
+
+  /* Symbol / option combobox: search input reveals a live dropdown of matches
+     (including option contracts) — a real selector, not search-then-pick. */
+  .charts-symbol {
+    position: relative;
+  }
+
+  .charts-symbol-search {
+    width: 260px;
+    max-width: 100%;
+  }
+
+  .charts-provider {
+    width: 110px;
+  }
+
+  /* Live result dropdown — elevated surface, accent-free hover, no borders. */
+  .charts-symbol-list {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    z-index: 50;
+    max-height: 280px;
+    overflow: auto;
+    margin: 0;
+    padding: var(--space-1);
+    list-style: none;
+    background: var(--surface-1);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-float);
+  }
+  .charts-symbol-opt {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    transition: background var(--motion-fast) var(--ease);
+  }
+  .charts-symbol-opt:hover,
+  .charts-symbol-opt:focus {
+    background: var(--surface-2);
+    outline: none;
+  }
+  .charts-symbol-opt-name {
+    font-weight: var(--font-weight-semibold);
+    font-variant-numeric: tabular-nums;
+  }
+  .charts-symbol-opt-meta {
+    font-size: var(--font-size-xs);
+    white-space: nowrap;
+  }
+
+  /* Primary action stays visually anchored to the control row. */
+  .charts-bar .btn-primary {
+    height: var(--control-height);
+    padding: 0 var(--space-4);
+  }
+
+  /* Chart elevation: a single raised surface, no borders. */
+  .chart-card {
+    background: var(--surface-1);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+    padding: var(--space-3);
+  }
+
+  .charts-canvas {
+    width: 100%;
+    height: 480px;
+  }
+
+  /* Compact caption above the chart: symbol + metadata on one muted line. */
+  .charts-caption {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    font-size: var(--font-size-sm);
+  }
+
+  .charts-symbol-tag {
+    font-weight: var(--font-weight-semibold);
+    color: var(--text);
+  }
+
+  @media (max-width: 860px) {
+    .charts-symbol-search {
+      width: 100%;
+    }
+    .charts-canvas {
+      height: 360px;
+    }
+  }
+}

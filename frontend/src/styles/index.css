@@ -1,0 +1,39 @@
+/* MarketHub CSS entry — cascade layer architecture.
+   The @layer statement below IS the cascade precedence (first = lowest,
+   last = highest). Because layer order is declared once, up-front, the
+   @import order after it is irrelevant to the cascade.
+   Rules:
+   1. Every rule lives inside its file's layer block — unlayered styles
+      would outrank ALL layers.
+   2. Layers do not scope: still use proper selectors.
+   3. Never fight layers with !important (important inverts layer order).
+   4. Only conflict-free single-purpose classes go in `utilities`
+      (combo rules like `.hint.err` rely on specificity and must stay in
+      `components`). See docs/FRONTEND_MIGRATION.md "CSS architecture". */
+@layer tokens, base, layout, components, features, utilities;
+
+@import "./tokens.css";
+@import "./base.css";
+@import "./layout.css";
+@import "./components.css";
+@import "./features/ai-alerts.css";
+@import "./features/alerts.css";
+@import "./features/chat.css";
+@import "./features/dashboard.css";
+@import "./features/diagnostics.css";
+@import "./features/fno.css";
+@import "./features/logs.css";
+@import "./features/mcp-tools.css";
+@import "./features/news.css";
+@import "./features/sentiment.css";
+@import "./features/settings.css";
+@import "./features/breadth.css";
+@import "./features/charts.css";
+@import "./features/market-map.css";
+@import "./features/scanners.css";
+@import "./features/sector-heatmap.css";
+@import "./features/watchlists.css";
+@import "./features/instruments.css";
+@import "./features/subscriptions.css";
+@import "./features/analytics.css";
+@import "./utilities.css";

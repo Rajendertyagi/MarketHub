@@ -23,13 +23,13 @@
 | **INSTRUMENT / CATALOG** | `app/instruments.py`, `app/instrument_identity.py`, `core/persistence/modules/products.py` | canonical identity, catalog, provider→canonical mappings |
 | **OPTIONS** | `market/analytics/option_chain.py`, `market/analytics/strategies.py`, `mcp_server/tools/options_analytics_tools.py` | expiries, option contracts, chain, greeks/OI analytics |
 | **ALERTS** | `app/alerts.py`, `app/condition_alerts.py`, `app/market_analytics.py`, `core/alerts.py`, `core/persistence/modules/{alerts,condition_alerts,delivery,consumers}.py` | condition engine, persistence, delivery/ACK |
-| **NEWS** | `news/service.py`, `news/adapters/{base,rss,reddit}.py`, `api/news_routes.py`, `web/ui/js/{news,sentiment}.js`, `core/persistence/modules/news.py` | sources, ingestion, sentiment |
+| **NEWS** | `news/service.py`, `news/adapters/{base,rss,reddit}.py`, `api/news_routes.py`, `frontend/src/features/news`, `frontend/src/features/sentiment`, `core/persistence/modules/news.py` | sources, ingestion, sentiment |
 | **MCP** | `mcp_server/{contract,metrics,registry,resources,services}.py`, `mcp_server/tools/*` | MCP surface over canonical services |
 | **REST API** | `api/routes.py`, `api/product_routes.py`, `api/{chat,ai_alert,log,news}_routes.py` | HTTP route registration (composition-injected) |
 | **SSE** | `core/sse_broker.py`, `api/routes.py::_market_stream`, `app/server.py::_event_stream` | live event/quote fan-out |
 | **APPLICATION STARTUP** | `app/server.py` | composes all services, wires transports, runs restore |
-| **WEBUI SHELL** | `web/ui/js/{app,shell,router}.js`, `web/ui/index.html`, `web/ui/css/{shell,style,base,components,tokens,app}.css` | bootstrap, router, shell chrome |
-| **WEBUI FEATURES** | `web/ui/js/{option-chain,news,sentiment,alerts,ai-alerts,charts,watchlists,instruments,market,market-sources,sources,quotes,logs,mcp-tools,auth}.js`, `web/ui/js/features/settings/*` | per-feature state/DOM/listeners/timers |
+| **WEBUI SHELL** | `frontend/src` (AppShell, HashRouter, `global.css`) | bootstrap, router, shell chrome |
+| **WEBUI FEATURES** | `frontend/src/features/*` (per-feature modules under `settings`, `news`, `alerts`, `charts`, `watchlists`, `instruments`, `market`, `logs`, `mcp-tools`, etc.) | per-feature state/DOM/listeners/timers |
 | **SETTINGS / CONFIG** | `app/config.py`, `config.json`, `api/routes.py::build_settings_routes`, `api/product_routes.py::build_app_settings_routes` | app/source config (non-secret) vs encrypted secrets |
 | **PERSISTENCE** | `core/persistence/store.py`, `core/persistence/modules/*.py` | encrypted event/secret/source-state store, schema |
 
@@ -161,7 +161,7 @@ A change to a red-zone file requires extra verification matched to the boundary.
 | `sources/registry.py`, `core/runtime.py` | RUNTIME | source start/stop/restart + reconnect |
 | `market/service.py`, `market/models.py` | MARKET | representative canonical quote + SSE reconciliation |
 | `api/product_routes.py` | ROUTER | affected endpoints only |
-| `web/ui/js/app.js`, `web/ui/js/shell.js`, `web/ui/js/router.js` | SHELL | all WebUI routes render + active-view-only |
+| `frontend/src/app.js`, `frontend/src/shell.js`, `frontend/src/router.js` | SHELL | all WebUI routes render + active-view-only |
 
 Do **not** run the entire suite for every change; verify the touched zone.
 
@@ -212,10 +212,10 @@ No module outside `MarketService` may own the quote store.
 
 | Task | Allowed areas | NOT allowed |
 |---|---|---|
-| Option Chain visual layout | `web/ui/js/option-chain.js`, `web/ui/css/features/option-chain.css` | auth, secrets, broker login, feed lifecycle, `MarketService`, MCP |
+| Option Chain visual layout | `frontend/src/option-chain.js`, `frontend/src/features/option-chain.css` | auth, secrets, broker login, feed lifecycle, `MarketService`, MCP |
 | Breadth backend | `market/analytics/*` (new module), `market/models.py` (add model) | auth, `brokers/*`, WebUI, `config.json` secrets |
-| Breadth WebUI | `web/ui/js/breadth.js` (new), `web/ui/css/features/breadth.css` | `brokers/*`, `app.secrets_store`, login |
-| News change | `news/*`, `api/news_routes.py`, `web/ui/js/news.js` | broker auth, option-chain internals, `config.json` secrets |
+| Breadth WebUI | `frontend/src/breadth.js` (new), `frontend/src/features/breadth.css` | `brokers/*`, `app.secrets_store`, login |
+| News change | `news/*`, `api/news_routes.py`, `frontend/src/news.js` | broker auth, option-chain internals, `config.json` secrets |
 | Broker login change | `brokers/*/auth.py`, `app/secrets_store.py`, auth routes | WebUI features, `MarketService`, news, options |
 | SSE change | `core/sse_broker.py`, `_market_stream`/`_event_stream` | `brokers/*` internals, auth, persistence schema |
 
@@ -230,7 +230,7 @@ check (AST-based, no runtime), low-maintenance, and currently green. It forbids:
   `api.routes`, `app.config`.
 - `news/` importing `brokers.*.auth`, `app.secrets_store`, `api.routes`,
   `app.config`.
-- Any `web/ui/js` module importing broker/provider code (`brokers`).
+- Any `frontend/src` module importing broker/provider code (`brokers`).
 
 Add new forbidden edges there as boundaries harden — but only edges that are
 **already clean today**, so the guard stays green and protective rather than a
@@ -260,11 +260,11 @@ file being *shared* does **not** grant every task permission to modify it (§14)
 | **BROKER ADAPTERS** | `brokers/upstox/*`, `brokers/fyers/*` | canonical models, `market/normalize` | AUTH store (via injected store) | `brokers/upstox/feed.py`, `brokers/fyers/feed.py` | representative feed connect/stream |
 | **CANONICAL MARKET DATA** | `market/service.py`, `market/models.py`, `market/serialization.py`, `market/normalize/*`, `app/market_data.py`, `app/market_identity.py` | `core/sse_broker.py` | WebUI/API (never import) | `market/service.py`, `market/models.py` | representative canonical quote + SSE reconcile |
 | **OPTIONS** | `market/analytics/option_chain.py`, `market/analytics/strategies.py`, `mcp_server/tools/options_analytics_tools.py` | canonical market, instruments | auth/secrets/adapters | (none red — feature-local) | Option Chain only |
-| **NEWS** | `news/*`, `api/news_routes.py`, `web/ui/js/news.js`, `web/ui/js/sentiment.js` | canonical models, persistence | broker auth/secrets/config | (none red — feature-local) | News reader + sentiment |
+| **NEWS** | `news/*`, `api/news_routes.py`, `frontend/src/features/news`, `frontend/src/features/sentiment` | canonical models, persistence | broker auth/secrets/config | (none red — feature-local) | News reader + sentiment |
 | **ALERTS** | `app/alerts.py`, `app/condition_alerts.py`, `core/alerts.py`, `core/persistence/modules/{alerts,condition_alerts,delivery,consumers}.py` | market data, persistence | auth/secrets | `app/condition_alerts.py` | alert trigger + ACK |
 | **TRANSPORT/API** | `api/routes.py`, `api/product_routes.py`, `api/{chat,ai_alert,log,news}_routes.py`, `core/sse_broker.py` | canonical services (injected) | broker adapter internals (except designated auth surface) | `api/routes.py`, `api/product_routes.py` | affected endpoints only |
-| **WEBUI SHELL** | `web/ui/js/{app,shell,router}.js`, `web/ui/index.html`, `web/ui/css/{shell,style,base,components,tokens,app}.css` | feature modules (composition), REST/SSE | broker adapters, secrets | `web/ui/js/app.js`, `web/ui/js/router.js`, `web/ui/js/shell.js` | all routes render + active-view-only |
-| **WEBUI FEATURES** | `web/ui/js/{option-chain,news,sentiment,alerts,ai-alerts,charts,watchlists,instruments,market,market-sources,sources,quotes,logs,mcp-tools,auth}.js`, `web/ui/js/features/settings/*`, `web/ui/css/features/*` | utils, api, sibling read-helpers | auth internals (beyond stable `getAuthStatus`/`pollAuthStatus` read) | (feature-local) | feature only |
+| **WEBUI SHELL** | `frontend/src` (AppShell, HashRouter, `global.css`) | feature modules (composition), REST/SSE | broker adapters, secrets | `frontend/src/App.tsx`, `frontend/src/routes/router.tsx`, `frontend/src/layouts/AppShell.tsx` | all routes render + active-view-only |
+| **WEBUI FEATURES** | `frontend/src/features/*` (per-feature modules under `settings`, `news`, `alerts`, `charts`, `watchlists`, `instruments`, `market`, `logs`, `mcp-tools`, etc.) | utils, api, sibling read-helpers | auth internals (beyond stable auth-status reads) | (feature-local) | feature only |
 | **CONFIG/PERSISTENCE** | `app/config.py`, `config.json`, `core/persistence/*` | stdlib (config), store API (persistence) | secrets must never enter `config.json` | `core/persistence/store.py`, `core/persistence/modules/schema.py` | config loads; secrets unchanged |
 
 ---
@@ -296,7 +296,7 @@ Example:
 ```
 TASK: Option Chain CSS layout
 TASK ZONE: WEBUI FEATURES
-ALLOWED: web/ui/js/option-chain.js, web/ui/css/features/option-chain.css
+ALLOWED: frontend/src/option-chain.js, frontend/src/features/option-chain.css
 PROTECTED: auth, secrets, startup, broker lifecycle, MarketService, config,
            unrelated WebUI features, router/shell unless nav behavior changes
 ```
@@ -315,7 +315,7 @@ A file being shared does **not** mean every task may modify it.
   to change startup/restore logic.
 - `config.json` is shared. A feature task must not casually write credentials or
   feed config there.
-- `web/ui/js/app.js` imports all features. A feature task edits its *own* module,
+- `frontend/src/app.js` imports all features. A feature task edits its *own* module,
   not the bootstrap, unless navigation behavior changes (then WEBUI SHELL).
 
 ---
@@ -343,7 +343,7 @@ Isolation first; targeted verification second.
 For each: ALLOWED / PROTECTED / RED-ZONE ESCALATION / MINIMUM VERIFICATION.
 
 **A. Option Chain CSS/layout**
-- ALLOWED: `web/ui/js/option-chain.js`, `web/ui/css/features/option-chain.css`
+- ALLOWED: `frontend/src/option-chain.js`, `frontend/src/features/option-chain.css`
 - PROTECTED: auth, secrets, startup, broker lifecycle, MarketService, config,
   unrelated features, global CSS
 - ESCALATION: none unless global CSS or router must change
@@ -362,13 +362,13 @@ For each: ALLOWED / PROTECTED / RED-ZONE ESCALATION / MINIMUM VERIFICATION.
 - VERIFY: canonical identity + representative breadth value
 
 **D. Breadth WebUI**
-- ALLOWED: new `web/ui/js/breadth.js`, `web/ui/css/features/breadth.css`
+- ALLOWED: new `frontend/src/breadth.js`, `frontend/src/features/breadth.css`
 - PROTECTED: `brokers/*`, `app.secrets_store`, login, `app/server.py`
 - ESCALATION: STOP if it needs broker tokens
 - VERIFY: breadth view renders
 
 **E. News reader change**
-- ALLOWED: `news/*`, `api/news_routes.py`, `web/ui/js/news.js`
+- ALLOWED: `news/*`, `api/news_routes.py`, `frontend/src/news.js`
 - PROTECTED: broker auth, option-chain internals, `config.json` secrets
 - ESCALATION: STOP if it needs broker credentials
 - VERIFY: news ingestion + UI list
@@ -392,7 +392,7 @@ For each: ALLOWED / PROTECTED / RED-ZONE ESCALATION / MINIMUM VERIFICATION.
 - VERIFY: framing + reconnect/reset + representative event
 
 **I. WebUI router/shell change**
-- ALLOWED: `web/ui/js/{app,shell,router}.js`, shell/global CSS
+- ALLOWED: `frontend/src/{app,shell,router}.js`, shell/global CSS
 - PROTECTED: feature module internals, broker adapters, login
 - ESCALATION: STOP if feature modules must be rewritten
 - VERIFY: all routes reachable, inactive views hidden
