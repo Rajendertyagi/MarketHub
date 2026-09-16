@@ -56,6 +56,12 @@ jobs:
           python -m nuitka `
             --standalone `
             --assume-yes-for-downloads `
+            --msvc=latest `
+            --noinclude-pytest-mode=nofollow `
+            --noinclude-setuptools-mode=nofollow `
+            --noinclude-unittest-mode=nofollow `
+            --noinclude-IPython-mode=nofollow `
+            --noinclude-dask-mode=nofollow `
             --output-filename=MarketHub.exe `
             --output-dir=build `
             --include-package=app `
