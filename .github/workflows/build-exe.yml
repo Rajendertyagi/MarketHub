@@ -5,7 +5,7 @@ name: Build Windows EXE (Nuitka)
 # (frontend/dist), and an initialized data/ directory (the app's database).
 #
 # Toolchain: Node.js 26 (frontend) + Python 3.14 (Nuitka), latest packages.
-# Published to a rolling GitHub Release (tag `latest-exe`) for easy download.
+# Published to a GitHub Release (one release per run, marked "Latest") for easy download.
 #
 # Triggers: push to the production-hardening branch, or manual dispatch.
 
@@ -25,7 +25,7 @@ jobs:
       PYTHONUTF8: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Node.js 26
         uses: actions/setup-node@v5
@@ -96,7 +96,7 @@ jobs:
         run: Compress-Archive -Path MarketHub -DestinationPath MarketHub-win64.zip
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: MarketHub-win64
           path: MarketHub-win64.zip
@@ -105,10 +105,11 @@ jobs:
       - name: Publish to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest-exe
-          name: MarketHub EXE (latest build)
+          tag_name: exe-${{ github.run_id }}
+          name: MarketHub EXE build #${{ github.run_number }}
           prerelease: true
-          overwrite: true
+          make_latest: true
+          overwrite_files: true
           files: MarketHub-win64.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
