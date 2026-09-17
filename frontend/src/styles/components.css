@@ -286,6 +286,25 @@
     }
   }
 
+  /* ---------- Shared live-stream status + in-text links ---------- */
+  .stream-status {
+    font-size: var(--font-size-sm);
+    white-space: nowrap;
+  }
+  .stream-status-on {
+    color: var(--success);
+  }
+  .stream-status-off {
+    color: var(--warning);
+  }
+  .link {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .link:hover {
+    text-decoration: underline;
+  }
+
   /* ---------- Tabs ---------- */
   .tabs {
     display: flex;

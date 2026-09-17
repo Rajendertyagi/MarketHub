@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { fmtNum, fmtVol, tone } from "@/utils/format";
-import type { MarketQuote } from "@/features/dashboard/types";
+import { quoteKey, type MarketQuote } from "@/features/dashboard/types";
 import type { WatchlistItem } from "../types";
+import { chartHref } from "@/features/fno/chartNav";
 
 interface Props {
   items: WatchlistItem[];
@@ -11,6 +13,26 @@ interface Props {
 
 export function WatchlistTable({ items, quotes, onRemove }: Props) {
   const [query, setQuery] = useState("");
+
+  // O(1) quote join. Exact exchange:token match first, bare-token fallback
+  // for items whose exchange is unknown — built once per quote flush.
+  const { byKey, byToken } = useMemo(() => {
+    const byKey = new Map<string, MarketQuote>();
+    const byToken = new Map<string, MarketQuote>();
+    for (const q of quotes) {
+      byKey.set(quoteKey(q), q);
+      if (!byToken.has(q.instrument_token)) byToken.set(q.instrument_token, q);
+    }
+    return { byKey, byToken };
+  }, [quotes]);
+
+  const quoteFor = (it: WatchlistItem): MarketQuote | undefined => {
+    if (it.exchange) {
+      const exact = byKey.get(`${it.exchange}:${it.instrument_token}`);
+      if (exact) return exact;
+    }
+    return byToken.get(it.instrument_token);
+  };
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -26,7 +48,7 @@ export function WatchlistTable({ items, quotes, onRemove }: Props) {
         <tbody>
           <tr>
             <td colSpan={8} className="empty-row">
-              No items. Add instruments from the Instruments page.
+              No items yet. Search above to add instruments to this watchlist.
             </td>
           </tr>
         </tbody>
@@ -65,13 +87,25 @@ export function WatchlistTable({ items, quotes, onRemove }: Props) {
           </thead>
           <tbody>
             {visible.map((it) => {
-              const q = quotes.find(
-                (x) => x.instrument_token === it.instrument_token,
-              );
+              const q = quoteFor(it);
               const t = tone(q?.change);
+              const sym = it.tradingsymbol ?? it.instrument_token;
               return (
                 <tr key={it.id}>
-                  <td>{it.tradingsymbol ?? it.instrument_token}</td>
+                  <td>
+                    <Link
+                      className="link"
+                      to={chartHref(
+                        it.instrument_token,
+                        sym,
+                        it.exchange ?? "",
+                        "EQUITY",
+                      )}
+                      title={`Chart ${sym}`}
+                    >
+                      {sym}
+                    </Link>
+                  </td>
                   <td className="num">{q?.ltp != null ? fmtNum(q.ltp) : "—"}</td>
                   <td className={`num ${t}`}>
                     {q?.change != null ? fmtNum(q.change) : "—"}

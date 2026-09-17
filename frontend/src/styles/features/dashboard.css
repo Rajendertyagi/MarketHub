@@ -27,6 +27,44 @@
   .ticker-chg.neg { color: var(--neg); }
   .ticker-vol { color: var(--text-muted); font-size: var(--font-size-sm); }
 
+  /* Stale quotes: dimmed + explicit tag (never color-only). */
+  .ticker-item.is-stale,
+  .idx-card.is-stale { opacity: 0.65; }
+  .stale-tag {
+    font-size: var(--font-size-xs);
+    color: var(--warning);
+    border: 1px solid var(--warning);
+    border-radius: 999px;
+    padding: 0 var(--space-1);
+    white-space: nowrap;
+  }
+
+  /* Live-stream status row above the ticker. */
+  .dash-status {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  /* Movers category tabs (live inside the Movers WidgetCard). */
+  .movers-tabs {
+    display: flex;
+    gap: var(--space-1);
+    margin-bottom: var(--space-2);
+  }
+  .movers-tab {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    border-radius: 999px;
+    padding: 2px var(--space-2);
+    font-size: var(--font-size-xs);
+    cursor: pointer;
+  }
+  .movers-tab.active {
+    color: var(--text);
+    border-color: var(--accent);
+  }
+
   /* ---------- Command-center layout ---------- */
   .dash {
     display: flex;

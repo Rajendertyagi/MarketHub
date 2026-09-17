@@ -36,6 +36,53 @@
     overflow-x: auto;
   }
 
+  /* Search-and-add row: input + dropdown + Add button. */
+  .watchlist-add {
+    margin-bottom: var(--space-3);
+  }
+  .watchlist-add-row {
+    display: flex;
+    gap: var(--space-2);
+    align-items: flex-start;
+  }
+  .watchlist-add-search {
+    position: relative;
+    flex: 1 1 auto;
+  }
+  .watchlist-add-search .filter-input {
+    width: 100%;
+  }
+  .watchlist-add-list {
+    position: absolute;
+    z-index: 10;
+    left: 0;
+    right: 0;
+    top: 100%;
+    list-style: none;
+    margin: 2px 0 0;
+    padding: var(--space-1);
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-float);
+    max-height: 240px;
+    overflow-y: auto;
+  }
+  .watchlist-add-opt {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+  .watchlist-add-opt:hover {
+    background: var(--surface-2);
+  }
+  .watchlist-add-opt-name {
+    font-weight: 600;
+  }
+
   @media (max-width: 760px) {
     .toolbar {
       flex-direction: column;

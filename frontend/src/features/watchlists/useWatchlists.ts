@@ -2,6 +2,7 @@
 // invalidate the ["watchlists"] query group.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  addWatchlistItem,
   createWatchlist,
   deleteWatchlist,
   getWatchlists,
@@ -9,6 +10,7 @@ import {
   renameWatchlist,
 } from "./api";
 import { WATCHLISTS_REFRESH_MS } from "./constants";
+import type { AddWatchlistItemInput } from "./api";
 
 export function useWatchlists() {
   return useQuery({
@@ -23,6 +25,9 @@ export interface WatchlistMutations {
   rename: (args: { id: number; name: string }) => Promise<unknown>;
   remove: (id: number) => Promise<unknown>;
   removeItem: (itemId: number) => Promise<unknown>;
+  addItem: (
+    args: { watchlistId: number } & AddWatchlistItemInput,
+  ) => Promise<unknown>;
 }
 
 export function useWatchlistMutations(): WatchlistMutations {
@@ -47,7 +52,14 @@ export function useWatchlistMutations(): WatchlistMutations {
     onSuccess: invalidate,
   });
 
+  const addItemMut = useMutation({
+    mutationFn: ({ watchlistId, ...item }: { watchlistId: number } & AddWatchlistItemInput) =>
+      addWatchlistItem(watchlistId, item),
+    onSuccess: invalidate,
+  });
+
   return {
+    addItem: (args) => addItemMut.mutateAsync(args),
     create: (name) => createMut.mutateAsync(name),
     rename: ({ id, name }) => renameMut.mutateAsync({ id, name }),
     remove: (id) => deleteMut.mutateAsync(id),

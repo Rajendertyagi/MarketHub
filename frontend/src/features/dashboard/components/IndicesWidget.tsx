@@ -6,6 +6,7 @@ import type { ApiError } from "@/types";
 import type { MarketQuote } from "../types";
 import { AsyncStateView } from "@/components/ui";
 import { fmtNum, fmtPct, tone } from "@/utils/format";
+import { isStaleQuote } from "../format";
 
 interface Props {
   quotes: MarketQuote[];
@@ -83,9 +84,11 @@ function IndexCard({
 }) {
   const navigate = useNavigate();
   const t = tone(q?.change);
+  const stale = q ? isStaleQuote(q) : false;
   const go = () => navigate("/charts");
 
   const value = q?.ltp != null ? fmtNum(q.ltp) : "—";
+  const staleLabel = stale ? ", stale data" : "";
   const change = (
     <span className={`idx-change ${t}`}>
       <span className="idx-pts">
@@ -100,10 +103,10 @@ function IndexCard({
   if (variant === "vix") {
     return (
       <section
-        className="idx-card idx-card--vix"
+        className={`idx-card idx-card--vix${stale ? " is-stale" : ""}`}
         role="link"
         tabIndex={0}
-        aria-label={`${idx.label}${q?.ltp != null ? ` ${fmtNum(q.ltp)}` : ""}`}
+        aria-label={`${idx.label}${q?.ltp != null ? ` ${fmtNum(q.ltp)}` : ""}${staleLabel}`}
         onClick={go}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -115,6 +118,7 @@ function IndexCard({
         <span className="idx-vix-lead">
           <span className="idx-name">{idx.label}</span>
           <span className="idx-value">{value}</span>
+          {stale && <span className="stale-tag">stale</span>}
         </span>
         {change}
       </section>
@@ -123,10 +127,10 @@ function IndexCard({
 
   return (
     <section
-      className="idx-card"
+      className={`idx-card${stale ? " is-stale" : ""}`}
       role="link"
       tabIndex={0}
-      aria-label={`${idx.label}${q?.ltp != null ? ` ${fmtNum(q.ltp)}` : ""}`}
+      aria-label={`${idx.label}${q?.ltp != null ? ` ${fmtNum(q.ltp)}` : ""}${staleLabel}`}
       onClick={go}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -137,6 +141,7 @@ function IndexCard({
     >
       <span className="idx-name">{idx.label}</span>
       <span className="idx-value">{value}</span>
+      {stale && <span className="stale-tag">stale</span>}
       {change}
     </section>
   );

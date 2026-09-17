@@ -5,13 +5,15 @@ import { AsyncStateView } from "@/components/ui";
 import { useMarketQuotes } from "@/features/dashboard/useMarketQuotes";
 import { useWatchlists, useWatchlistMutations } from "./useWatchlists";
 import { exportWatchlists, importWatchlists } from "./api";
+import { AddInstrument } from "./components/AddInstrument";
 import { WatchlistPicker } from "./components/WatchlistPicker";
 import { WatchlistTable } from "./components/WatchlistTable";
+import { StreamStatus } from "@/components/StreamStatus";
 
 export function WatchlistsView() {
   const { data, status, error, refetch } = useWatchlists();
   const mutations = useWatchlistMutations();
-  const { quotes } = useMarketQuotes();
+  const { quotes, connected } = useMarketQuotes();
   const qc = useQueryClient();
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -90,7 +92,14 @@ export function WatchlistsView() {
         <div className="panel">
           <div className="panel-header">
             <h2>{selected?.name ?? "Watchlist"}</h2>
+            <StreamStatus connected={connected} />
           </div>
+          <AddInstrument
+            watchlistId={selected?.id ?? null}
+            existingTokens={
+              new Set((selected?.items ?? []).map((it) => it.instrument_token))
+            }
+          />
           <WatchlistTable
             items={selected?.items ?? []}
             quotes={quotes}

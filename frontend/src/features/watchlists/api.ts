@@ -39,6 +39,24 @@ export async function deleteWatchlist(id: number, signal?: AbortSignal) {
   return request(`${WATCHLISTS}/${id}`, { method: "DELETE", signal });
 }
 
+export interface AddWatchlistItemInput {
+  exchange: string;
+  instrument_token: string;
+  tradingsymbol: string;
+}
+
+export async function addWatchlistItem(
+  watchlistId: number,
+  item: AddWatchlistItemInput,
+  signal?: AbortSignal,
+) {
+  return request(`${WATCHLISTS}/${watchlistId}/items`, {
+    method: "POST",
+    body: item,
+    signal,
+  });
+}
+
 export async function removeWatchlistItem(itemId: number, signal?: AbortSignal) {
   return request(`${WATCHLISTS}/items/${itemId}`, {
     method: "DELETE",
