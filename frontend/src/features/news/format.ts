@@ -29,11 +29,13 @@ export function articleSnippet(article: {
   summary?: string | null;
   selftext?: string | null;
 }): string {
-  const raw =
-    article.type === "rss" ? article.summary : article.selftext;
+  const raw = article.type === "rss" ? article.summary : article.selftext;
   if (!raw) return "";
-  const text = raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-  return text.length > 220 ? text.slice(0, 220) + "…" : text;
+  const text = raw
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > 220 ? `${text.slice(0, 220)}…` : text;
 }
 
 export function articleBody(article: {
@@ -41,8 +43,10 @@ export function articleBody(article: {
   summary?: string | null;
   selftext?: string | null;
 }): string {
-  const raw =
-    article.type === "rss" ? article.summary : article.selftext;
+  const raw = article.type === "rss" ? article.summary : article.selftext;
   if (!raw) return "";
-  return raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  return raw
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }

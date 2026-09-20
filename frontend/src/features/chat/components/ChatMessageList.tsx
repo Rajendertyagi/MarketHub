@@ -10,21 +10,15 @@ export function ChatMessageList({ messages }: Props) {
   if (!messages.length) {
     return (
       <div className="chat-empty muted">
-        Ask about NIFTY, RELIANCE, option chains, alerts — the AI uses MarketHub
-        tools to answer.
+        Ask about NIFTY, RELIANCE, option chains, alerts — the AI uses MarketHub tools to answer.
       </div>
     );
   }
   return (
     <div className="chat-messages">
-      {messages.map((m, i) => (
-        <div
-          key={i}
-          className={`chat-msg chat-msg-${m.role}`}
-        >
-          <div className="chat-bubble">
-            {m.content || "…"}
-          </div>
+      {messages.map((m) => (
+        <div key={m.id} className={`chat-msg chat-msg-${m.role}`}>
+          <div className="chat-bubble">{m.content || "…"}</div>
         </div>
       ))}
     </div>

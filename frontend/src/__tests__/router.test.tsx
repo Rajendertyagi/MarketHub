@@ -1,5 +1,5 @@
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, cleanup, waitFor } from "@testing-library/react";
 import { App } from "@/app/App";
 
 vi.mock("@/api/market", () => ({
@@ -33,9 +33,7 @@ describe("Router deep-link behavior", () => {
     });
     window.location.hash = "#/charts?key=NSE_HDFC&sym=HDFCBANK&ex=NSE&type=EQUITY";
     render(<App />);
-    await waitFor(() =>
-      expect(screen.getByText(/HDFCBANK/)).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText(/HDFCBANK/)).toBeInTheDocument());
   });
 
   it("deep-links to Scanners", async () => {
@@ -63,9 +61,7 @@ describe("Router deep-link behavior", () => {
     window.location.hash = "#/scanners";
     render(<App />);
     await waitFor(() =>
-      expect(
-        screen.findByRole("heading", { name: /Scanners/ }),
-      ).resolves.toBeInTheDocument(),
+      expect(screen.findByRole("heading", { name: /Scanners/ })).resolves.toBeInTheDocument(),
     );
   });
 
@@ -73,8 +69,6 @@ describe("Router deep-link behavior", () => {
     (getHistory as ReturnType<typeof vi.fn>).mockResolvedValue({ candles: [] });
     window.location.hash = "#/";
     render(<App />);
-    await waitFor(() =>
-      expect(screen.getByText(/Historical Charts/)).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText(/Historical Charts/)).toBeInTheDocument());
   });
 });

@@ -1,5 +1,4 @@
 import { Button } from "@/components/ui";
-import { useSourceControl } from "../useSettings";
 import { BROKER_UPSTOX } from "../constants";
 import {
   formatFeedState,
@@ -9,6 +8,7 @@ import {
   formatTransition,
 } from "../format";
 import type { MarketSource } from "../types";
+import { useSourceControl } from "../useSettings";
 
 interface SourceDetailProps {
   source: MarketSource | undefined;
@@ -23,9 +23,7 @@ export function SourceDetail({ source, feedEnabled, onFeedToggle, feedBusy }: So
     return <em>Source not configured</em>;
   }
   const state = source.state ?? "stopped";
-  const active = ["streaming", "connecting", "authorizing", "reconnecting"].includes(
-    state,
-  );
+  const active = ["streaming", "connecting", "authorizing", "reconnecting"].includes(state);
   const ready = (source.provider ?? "") !== BROKER_UPSTOX || state !== "auth_required";
 
   const rows: [string, string][] = [
@@ -35,13 +33,19 @@ export function SourceDetail({ source, feedEnabled, onFeedToggle, feedBusy }: So
     ["Mode", source.mode ?? "—"],
     ["Instruments", formatInstruments(source)],
     ["Connect Attempts", String(source.connect_attempts ?? 0)],
-    ["Reconnects", `${source.reconnect_count ?? 0}${source.reconnecting ? " (reconnecting now)" : ""}`],
+    [
+      "Reconnects",
+      `${source.reconnect_count ?? 0}${source.reconnecting ? " (reconnecting now)" : ""}`,
+    ],
     ["Frames Received", String(source.frames_received ?? 0)],
     ["Malformed Frames", String(source.malformed_frames ?? 0)],
     ["Last Connected", formatTimestamp(source.last_connected_at)],
     ["Last Message", formatTimestamp(source.last_message_at)],
     ["Last Error", source.last_error ?? "—"],
-    ["Last Exit", `${source.last_exit_reason ?? "—"}${source.last_exit_at ? ` at ${source.last_exit_at}` : ""}`],
+    [
+      "Last Exit",
+      `${source.last_exit_reason ?? "—"}${source.last_exit_at ? ` at ${source.last_exit_at}` : ""}`,
+    ],
     ["Stop Reason", formatStopReason(source.stop_reason)],
   ];
 
@@ -60,15 +64,18 @@ export function SourceDetail({ source, feedEnabled, onFeedToggle, feedBusy }: So
             <td>{source.not_ready_reason}</td>
           </tr>
         ) : null}
-        {source.recent_transitions && source.recent_transitions.length ? (
+        {source.recent_transitions?.length ? (
           <tr>
             <td className="market-source-transitions-label">Recent Transitions</td>
             <td>
               {source.recent_transitions
                 .slice(-8)
                 .reverse()
-                .map((t, i) => (
-                  <div className="market-source-meta" key={i}>
+                .map((t) => (
+                  <div
+                    className="market-source-meta"
+                    key={`${t.at ?? ""}-${t.from ?? ""}-${t.to ?? ""}`}
+                  >
                     {formatTransition(t)}
                   </div>
                 ))}
@@ -96,10 +103,7 @@ export function SourceDetail({ source, feedEnabled, onFeedToggle, feedBusy }: So
                   >
                     Restart Feed
                   </Button>
-                  <Button
-                    className="btn btn-compact"
-                    onClick={() => control(source.name, "stop")}
-                  >
+                  <Button className="btn btn-compact" onClick={() => control(source.name, "stop")}>
                     Stop Feed
                   </Button>
                 </>

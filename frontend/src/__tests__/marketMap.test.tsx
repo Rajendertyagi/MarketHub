@@ -1,9 +1,9 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
-import * as RR from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
+import type * as RR from "react-router-dom";
 import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { echartsMock } = vi.hoisted(() => {
   const onHandlers: Record<string, (p: unknown) => void> = {};
@@ -149,7 +149,9 @@ describe("MarketMapView", () => {
     (getMarketMap as ReturnType<typeof vi.fn>).mockResolvedValue(SNAP);
     renderWithProviders(<MarketMapView />);
     await waitFor(() => expect(echartsMock.onHandlers.click).toBeTypeOf("function"));
-    echartsMock.onHandlers.click!({
+    const onClick = echartsMock.onHandlers.click;
+    if (!onClick) throw new Error("expected click handler");
+    onClick({
       data: {
         _meta: {
           symbol: "RELIANCE",
@@ -172,7 +174,9 @@ describe("MarketMapView", () => {
     (getMarketMap as ReturnType<typeof vi.fn>).mockResolvedValue(SNAP);
     renderWithProviders(<MarketMapView />);
     await waitFor(() => expect(echartsMock.onHandlers.click).toBeTypeOf("function"));
-    echartsMock.onHandlers.click!({
+    const onFallbackClick = echartsMock.onHandlers.click;
+    if (!onFallbackClick) throw new Error("expected click handler");
+    onFallbackClick({
       data: {
         _meta: {
           symbol: "X",
@@ -189,15 +193,11 @@ describe("MarketMapView", () => {
         expect.stringContaining("/charts?sym=X&ex=NSE&type=EQUITY"),
       ),
     );
-    expect(mockNavigate).not.toHaveBeenCalledWith(
-      expect.stringContaining("key="),
-    );
+    expect(mockNavigate).not.toHaveBeenCalledWith(expect.stringContaining("key="));
   });
 
   it("shows error state", async () => {
-    (getMarketMap as ReturnType<typeof vi.fn>).mockRejectedValue(
-      new Error("map failed"),
-    );
+    (getMarketMap as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("map failed"));
     renderWithProviders(<MarketMapView />);
     expect(await screen.findByText(/map failed/)).toBeInTheDocument();
   });

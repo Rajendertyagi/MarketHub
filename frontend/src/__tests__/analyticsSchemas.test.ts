@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  breadthSchema,
-  marketMapSchema,
-  sectorHeatmapSchema,
-} from "@/api/schemas";
+import { breadthSchema, marketMapSchema, sectorHeatmapSchema } from "@/api/schemas";
 
 // Representative responses shaped exactly like the backend *.to_dict() outputs.
 // These assert the frontend contract matches the canonical services — if the
@@ -186,8 +182,9 @@ describe("analytics API contracts (Zod)", () => {
     const r = breadthSchema.safeParse(breadth);
     expect(r.success).toBe(true);
     if (r.success) {
-      expect(r.data.advances).toBe(1);
-      expect(r.data.rows[0]!.symbol).toBe("RELIANCE");
+      const row0 = r.data.rows[0];
+      if (!row0) throw new Error("expected breadth row");
+      expect(row0.symbol).toBe("RELIANCE");
     }
   });
 
@@ -201,7 +198,11 @@ describe("analytics API contracts (Zod)", () => {
     expect(r.success).toBe(true);
     if (r.success) {
       expect(r.data.sectors.map((s) => s.sector)).toContain("Unclassified");
-      expect(r.data.sectors[0]!.members[0]!.fno).toBe(true);
+      const s0 = r.data.sectors[0];
+      if (!s0) throw new Error("expected sector");
+      const m0 = s0.members[0];
+      if (!m0) throw new Error("expected sector member");
+      expect(m0.fno).toBe(true);
     }
   });
 

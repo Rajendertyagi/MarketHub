@@ -2,8 +2,8 @@ import { useState } from "react";
 import { AsyncStateView, Button, Field, Input, Select } from "@/components/ui";
 import type { ApiError } from "@/types";
 import { NEWS_SOURCE_TYPES } from "../constants";
-import { useNewsMutations, useNewsSources } from "../useNews";
 import type { NewsSource, NewsSourceInput, NewsSourceType } from "../types";
+import { useNewsMutations, useNewsSources } from "../useNews";
 
 interface DraftState {
   source_id: string;
@@ -244,10 +244,7 @@ export function SourcesManager() {
                     <Button variant="default" onClick={() => startEdit(src)}>
                       Edit
                     </Button>
-                    <Button
-                      variant="default"
-                      onClick={() => m.deleteSource(src.source_id)}
-                    >
+                    <Button variant="default" onClick={() => m.deleteSource(src.source_id)}>
                       Delete
                     </Button>
                   </td>

@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, fireEvent, cleanup, within } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
   getSubscriptions: vi.fn(),
@@ -28,8 +28,14 @@ vi.mock("@/api/market", () => ({
 import { SubscriptionsView } from "@/features/subscriptions/SubscriptionsView";
 
 const CANONICAL = [
-  "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY",
-  "NIFTYNXT50", "INDIA VIX", "SENSEX", "BANKEX",
+  "NIFTY",
+  "BANKNIFTY",
+  "FINNIFTY",
+  "MIDCPNIFTY",
+  "NIFTYNXT50",
+  "INDIA VIX",
+  "SENSEX",
+  "BANKEX",
 ];
 
 function prefs(overrides: Partial<Record<string, unknown>> = {}) {
@@ -92,7 +98,9 @@ describe("SubscriptionsView", () => {
     api.getSubscriptions.mockResolvedValue(prefs());
     renderWithProviders(<SubscriptionsView />);
     // Every canonical label appears as a row label.
-    const rows = await screen.findAllByText(/NIFTY|BANKNIFTY|FINNIFTY|MIDCPNIFTY|NIFTYNXT50|INDIA VIX|SENSEX|BANKEX/);
+    const rows = await screen.findAllByText(
+      /NIFTY|BANKNIFTY|FINNIFTY|MIDCPNIFTY|NIFTYNXT50|INDIA VIX|SENSEX|BANKEX/,
+    );
     expect(rows.length).toBeGreaterThanOrEqual(8);
   });
 
@@ -100,11 +108,10 @@ describe("SubscriptionsView", () => {
     api.getSubscriptions.mockResolvedValue(prefs());
     api.setIndexEnabled.mockResolvedValue({});
     renderWithProviders(<SubscriptionsView />);
-    const checkbox = (await screen.findAllByRole("checkbox"))[0]!;
+    const checkbox = (await screen.findAllByRole("checkbox"))[0];
+    if (!checkbox) throw new Error("expected subscription checkbox");
     fireEvent.click(checkbox);
-    await waitFor(() =>
-      expect(api.setIndexEnabled).toHaveBeenCalledWith("NIFTY", false),
-    );
+    await waitFor(() => expect(api.setIndexEnabled).toHaveBeenCalledWith("NIFTY", false));
   });
 
   it("shows error state on load failure", async () => {
@@ -119,9 +126,7 @@ describe("SubscriptionsView", () => {
     renderWithProviders(<SubscriptionsView />);
     await screen.findByText("NIFTY");
     fireEvent.click(screen.getByText(/Save & Apply/));
-    await waitFor(() =>
-      expect(api.applySubscriptions).toHaveBeenCalled(),
-    );
+    await waitFor(() => expect(api.applySubscriptions).toHaveBeenCalled());
     expect(await screen.findByText(/142 contracts resolved/)).toBeTruthy();
   });
 
@@ -143,12 +148,17 @@ describe("SubscriptionsView", () => {
     const editor = screen.getByText("HDFCBANK").closest(".rule-editor") as HTMLElement;
     const selects = within(editor).getAllByRole("combobox") as HTMLElement[];
     const numbers = within(editor).getAllByRole("spinbutton") as HTMLElement[];
+    const reqEl = (els: HTMLElement[], i: number, what: string): HTMLElement => {
+      const el = els[i];
+      if (!el) throw new Error(`expected ${what}`);
+      return el;
+    };
     // selects order: Futures, FuturesExpiry, Options, OptionsExpiry, Calls, Puts
     // numbers order: ATM below, ATM above
-    fireEvent.change(selects[1]!, { target: { value: "2" } }); // futures expiry -> next
-    fireEvent.change(numbers[0]!, { target: { value: "10" } }); // ATM below
-    fireEvent.change(selects[4]!, { target: { value: "off" } }); // Calls (CE) off
-    fireEvent.click(within(editor).getByText("Save rule")!);
+    fireEvent.change(reqEl(selects, 1, "futures expiry select"), { target: { value: "2" } }); // futures expiry -> next
+    fireEvent.change(reqEl(numbers, 0, "ATM below input"), { target: { value: "10" } }); // ATM below
+    fireEvent.change(reqEl(selects, 4, "calls select"), { target: { value: "off" } }); // Calls (CE) off
+    fireEvent.click(within(editor).getByText("Save rule"));
     await waitFor(() => expect(api.putDerivativeRule).toHaveBeenCalled());
     const call = api.putDerivativeRule.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(call.underlying).toBe("HDFCBANK");
@@ -163,14 +173,14 @@ describe("SubscriptionsView", () => {
     api.removeStock.mockResolvedValue(true);
     renderWithProviders(<SubscriptionsView />);
     fireEvent.click(await screen.findByText("Stocks"));
-    const keyInput = screen.getByPlaceholderText("NSE:RELIANCE")!;
+    const keyInput = screen.getByPlaceholderText("NSE:RELIANCE");
     fireEvent.change(keyInput, { target: { value: "NSE:TCS" } });
     fireEvent.click(screen.getByText("Add stock"));
-    await waitFor(() =>
-      expect(api.addStock).toHaveBeenCalledWith("NSE:TCS", "NSE:TCS"),
-    );
+    await waitFor(() => expect(api.addStock).toHaveBeenCalledWith("NSE:TCS", "NSE:TCS"));
     // Remove the first stock row.
-    fireEvent.click(screen.getAllByText("Remove")[0]!);
+    const removeBtn = screen.getAllByText("Remove")[0];
+    if (!removeBtn) throw new Error("expected Remove button");
+    fireEvent.click(removeBtn);
     await waitFor(() => expect(api.removeStock).toHaveBeenCalled());
   });
 });

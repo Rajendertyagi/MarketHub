@@ -6,8 +6,10 @@ function sma(values: number[], period: number): (number | null)[] {
   const out: (number | null)[] = [];
   let sum = 0;
   for (let i = 0; i < values.length; i++) {
-    sum += values[i]!;
-    if (i >= period) sum -= values[i - period]!;
+    // ?? 0 preserves behavior (indices valid by loop bounds) while
+    // satisfying noUncheckedIndexedAccess without assertions.
+    sum += values[i] ?? 0;
+    if (i >= period) sum -= values[i - period] ?? 0;
     out.push(i >= period - 1 ? +(sum / period).toFixed(4) : null);
   }
   return out;
@@ -25,7 +27,7 @@ export function buildChartOption(candles: Candle[]): EChartsOption {
   const kline = candles.map((k) => [k.open, k.close, k.low, k.high]);
   const vols = candles.map((k, i) => ({
     value: k.volume ?? 0,
-    itemStyle: { color: closes[i]! >= opens[i]! ? c.pos : c.neg },
+    itemStyle: { color: (closes[i] ?? 0) >= (opens[i] ?? 0) ? c.pos : c.neg },
   }));
 
   return {

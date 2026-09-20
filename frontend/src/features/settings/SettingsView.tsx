@@ -1,15 +1,15 @@
 import { useNavigate, useParams } from "react-router-dom";
 import { Tabs } from "@/components/ui";
+import { AiMcpPanel } from "./components/AiMcpPanel";
+import { AlertsSettingsPanel } from "./components/AlertsSettingsPanel";
+import { BackupPanel } from "./components/BackupPanel";
+import { BrokersPanel } from "./components/BrokersPanel";
+import { DataRetentionPanel } from "./components/DataRetentionPanel";
+import { GeneralPanel } from "./components/GeneralPanel";
+import { LoggingPanel } from "./components/LoggingPanel";
+import { NewsSourcesPanel } from "./components/NewsSourcesPanel";
 import { SETTINGS_SECTIONS } from "./constants";
 import type { SettingsSection } from "./types";
-import { GeneralPanel } from "./components/GeneralPanel";
-import { BrokersPanel } from "./components/BrokersPanel";
-import { NewsSourcesPanel } from "./components/NewsSourcesPanel";
-import { AiMcpPanel } from "./components/AiMcpPanel";
-import { DataRetentionPanel } from "./components/DataRetentionPanel";
-import { LoggingPanel } from "./components/LoggingPanel";
-import { BackupPanel } from "./components/BackupPanel";
-import { AlertsSettingsPanel } from "./components/AlertsSettingsPanel";
 
 export function SettingsView() {
   const { section: raw } = useParams();

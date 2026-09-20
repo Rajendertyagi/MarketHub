@@ -1,2 +1,2 @@
-export { WatchlistsView } from "./WatchlistsView";
 export * from "./types";
+export { WatchlistsView } from "./WatchlistsView";

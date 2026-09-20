@@ -59,20 +59,21 @@ export function subscribeStream<T>(
   if (!entry) {
     const source = new EventSource(url);
     entry = { source, handlers: new Set() };
+    // Capture into consts so closures below need no assertions.
+    const active = entry;
+    const onReset = options.onReset;
     const dispatch = (raw: string) => {
       const env = parseEnvelope(raw);
       if (!env) return;
-      for (const h of entry!.handlers) h(env as StreamEvent<T>);
+      for (const h of active.handlers) h(env as StreamEvent<T>);
     };
     if (options.event) {
-      source.addEventListener(options.event, (e: MessageEvent) =>
-        dispatch(e.data as string),
-      );
+      source.addEventListener(options.event, (e: MessageEvent) => dispatch(e.data as string));
     } else {
       source.onmessage = (e: MessageEvent) => dispatch(e.data as string);
     }
-    if (options.onReset) {
-      source.addEventListener("reset", () => options.onReset!());
+    if (onReset) {
+      source.addEventListener("reset", () => onReset());
     }
     source.onopen = () => options.onOpen?.();
     source.onerror = () => options.onError?.();

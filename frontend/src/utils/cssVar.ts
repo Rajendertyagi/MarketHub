@@ -29,11 +29,11 @@ function oklabToRgb(L: number, a: number, b: number, alpha: number): string {
   const l = l_ * l_ * l_;
   const m = m_ * m_ * m_;
   const s = s_ * s_ * s_;
-  let r = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
-  let g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
-  let bl = -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s;
+  const r = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+  const g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+  const bl = -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s;
   const enc = (x: number) => {
-    const v = x <= 0.0031308 ? 12.92 * x : 1.055 * Math.pow(x, 1 / 2.4) - 0.055;
+    const v = x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055;
     return Math.round(Math.max(0, Math.min(1, v)) * 255);
   };
   const R = enc(r);
@@ -47,27 +47,23 @@ function parseColor(value: string): string {
   const num = (s: string) => parseFloat(s);
   const grp = (m: RegExpMatchArray, i: number): string => m[i] ?? "";
   const oklch = value.match(
-    /^oklch\(\s*([\d.]+)%?\s+([\d.\-]+)\s+([\d.\-]+)(?:\s*\/\s*([\d.]+)%?\s*)?\)$/,
+    /^oklch\(\s*([\d.]+)%?\s+([\d.-]+)\s+([\d.-]+)(?:\s*\/\s*([\d.]+)%?\s*)?\)$/,
   );
   if (oklch) {
     const L = num(grp(oklch, 1)) / (grp(oklch, 1).includes("%") ? 100 : 1);
     const C = num(grp(oklch, 2));
     const H = (num(grp(oklch, 3)) * Math.PI) / 180;
-    const alpha = grp(oklch, 4)
-      ? num(grp(oklch, 4)) / (grp(oklch, 4).includes("%") ? 100 : 1)
-      : 1;
+    const alpha = grp(oklch, 4) ? num(grp(oklch, 4)) / (grp(oklch, 4).includes("%") ? 100 : 1) : 1;
     return oklabToRgb(L, C * Math.cos(H), C * Math.sin(H), alpha);
   }
   const oklab = value.match(
-    /^oklab\(\s*([\d.\-]+)%?\s+([\d.\-]+)\s+([\d.\-]+)(?:\s*\/\s*([\d.]+)%?\s*)?\)$/,
+    /^oklab\(\s*([\d.-]+)%?\s+([\d.-]+)\s+([\d.-]+)(?:\s*\/\s*([\d.]+)%?\s*)?\)$/,
   );
   if (oklab) {
     const L = num(grp(oklab, 1)) / (grp(oklab, 1).includes("%") ? 100 : 1);
     const a = num(grp(oklab, 2));
     const b = num(grp(oklab, 3));
-    const alpha = grp(oklab, 4)
-      ? num(grp(oklab, 4)) / (grp(oklab, 4).includes("%") ? 100 : 1)
-      : 1;
+    const alpha = grp(oklab, 4) ? num(grp(oklab, 4)) / (grp(oklab, 4).includes("%") ? 100 : 1) : 1;
     return oklabToRgb(L, a, b, alpha);
   }
   return value;

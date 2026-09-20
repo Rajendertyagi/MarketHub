@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AsyncStateView } from "@/components/ui";
-import { ApiError } from "@/types";
-import { LOG_MAX_ROWS } from "./constants";
-import { useLogStream, useLogs } from "./useLogs";
-import type { LogFilters } from "./types";
+import type { ApiError } from "@/types";
 import { LogsFilterBar } from "./components/LogsFilterBar";
 import { LogsTable } from "./components/LogsTable";
+import { LOG_MAX_ROWS } from "./constants";
+import type { LogFilters } from "./types";
+import { useLogStream, useLogs } from "./useLogs";
 
 const EMPTY_FILTERS: LogFilters = { level: "", logger: "", search: "" };
 
@@ -25,8 +25,9 @@ export function LogsView() {
   }, [live, history.data]);
 
   // Auto-follow keeps the newest record (top of the list) in view.
+  // The combined-length read subscribes this effect to new data.
   useEffect(() => {
-    if (autoFollow && containerRef.current) {
+    if (autoFollow && combined.length > 0 && containerRef.current) {
       containerRef.current.scrollTop = 0;
     }
   }, [combined, autoFollow]);

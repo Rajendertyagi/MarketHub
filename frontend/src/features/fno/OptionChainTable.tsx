@@ -1,9 +1,9 @@
-import { useMemo, type ReactNode } from "react";
+import { type ReactNode, useMemo } from "react";
 import { Link } from "react-router-dom";
 import type { ChainLegView, ChainRowView } from "@/types";
-import { bidOf, askOf } from "./useFno";
-import { chartHref } from "./chartNav";
 import { fmtInt, fmtIv, fmtNum, tone } from "@/utils/format";
+import { chartHref } from "./chartNav";
+import { askOf, bidOf } from "./useFno";
 
 interface Props {
   rows: ChainRowView[];
@@ -169,4 +169,3 @@ function legCells(
   }
   return <>{cells}</>;
 }
-

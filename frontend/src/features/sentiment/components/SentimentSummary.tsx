@@ -1,15 +1,14 @@
-import type { SentimentSummary } from "../types";
+import type { SentimentSummary as SentimentSummaryData } from "../types";
 
 interface Props {
-  summary: SentimentSummary;
+  summary: SentimentSummaryData;
   total: number;
   sources: number;
 }
 
 // Overall sentiment: label badge, average score, distribution bars.
 export function SentimentSummary({ summary, total, sources }: Props) {
-  const cls =
-    summary.avg > 0 ? "bull" : summary.avg < 0 ? "bear" : "neutral";
+  const cls = summary.avg > 0 ? "bull" : summary.avg < 0 ? "bear" : "neutral";
   const denom = summary.count || 1;
   return (
     <div className="panel panel-spaced">

@@ -2,15 +2,8 @@
 // `request()` helper (owns the /api prefix + Zod validation) — no hardcoded
 // URLs, no direct fetch. Diagnostics are server-side; React only renders.
 import { request } from "@/api/client";
-import type {
-  DiagnosticMode,
-  DiagnosticRunResult,
-  DiagnosticsChecksResponse,
-} from "./types";
-import {
-  diagnosticRunResultSchema,
-  diagnosticsChecksSchema,
-} from "./schemas";
+import { diagnosticRunResultSchema, diagnosticsChecksSchema } from "./schemas";
+import type { DiagnosticMode, DiagnosticRunResult, DiagnosticsChecksResponse } from "./types";
 
 export async function getDiagnosticsChecks(
   signal?: AbortSignal,

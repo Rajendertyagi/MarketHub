@@ -1,10 +1,10 @@
 import { useState } from "react";
+import { ChecksList } from "./components/ChecksList";
+import { DiagnosticsControls } from "./components/DiagnosticsControls";
+import { RunResults } from "./components/RunResults";
 import { DEFAULT_SYMBOL } from "./constants";
 import type { DiagnosticMode, DiagnosticRunResult } from "./types";
 import { useRunDiagnostics } from "./useDiagnostics";
-import { DiagnosticsControls } from "./components/DiagnosticsControls";
-import { RunResults } from "./components/RunResults";
-import { ChecksList } from "./components/ChecksList";
 
 export function DiagnosticsView() {
   const [mode, setMode] = useState<DiagnosticMode>("quick");
@@ -14,10 +14,7 @@ export function DiagnosticsView() {
 
   const onRun = () => {
     setResult(null);
-    run.mutate(
-      { mode, symbol },
-      { onSuccess: (res) => setResult(res) },
-    );
+    run.mutate({ mode, symbol }, { onSuccess: (res) => setResult(res) });
   };
 
   return (
@@ -39,9 +36,7 @@ export function DiagnosticsView() {
       />
 
       {run.isError ? (
-        <p className="hint err">
-          {(run.error as Error).message || "Diagnostics run failed"}
-        </p>
+        <p className="hint err">{(run.error as Error).message || "Diagnostics run failed"}</p>
       ) : null}
 
       {result ? <RunResults result={result} /> : null}

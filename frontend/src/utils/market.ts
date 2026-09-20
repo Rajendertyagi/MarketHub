@@ -9,7 +9,5 @@ export function inferredMarketOpen(now: Date = new Date()): boolean {
   const ist = new Date(now.getTime() + (330 + now.getTimezoneOffset()) * 60000);
   const day = ist.getDay();
   const mins = ist.getHours() * 60 + ist.getMinutes();
-  return (
-    day >= 1 && day <= 5 && mins >= MARKET_OPEN_IST_MIN && mins <= MARKET_CLOSE_IST_MIN
-  );
+  return day >= 1 && day <= 5 && mins >= MARKET_OPEN_IST_MIN && mins <= MARKET_CLOSE_IST_MIN;
 }

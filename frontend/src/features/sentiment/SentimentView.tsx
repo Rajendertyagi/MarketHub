@@ -1,22 +1,18 @@
 import { useState } from "react";
-import { ApiError } from "@/types";
 import { AsyncStateView, Button } from "@/components/ui";
-import {
-  useSentiment,
-  useSentimentRefresh,
-  useSentimentSources,
-} from "./useSentiment";
 import type { NewsFilters } from "@/features/news/types";
+import type { ApiError } from "@/types";
 import {
   aggregateSentiment,
   articleCategory,
   buildSentimentMap,
   groupBySentiment,
 } from "./aggregate";
-import { SentimentSummary } from "./components/SentimentSummary";
 import { SentimentBreakdown } from "./components/SentimentBreakdown";
-import { SentimentItems } from "./components/SentimentItems";
 import { SentimentFilters } from "./components/SentimentFilters";
+import { SentimentItems } from "./components/SentimentItems";
+import { SentimentSummary } from "./components/SentimentSummary";
+import { useSentiment, useSentimentRefresh, useSentimentSources } from "./useSentiment";
 
 // Standalone Market Sentiment dashboard — the aggregate view the legacy app
 // exposed as its own nav item. Reuses the News sentiment endpoint.
@@ -38,9 +34,7 @@ export function SentimentView() {
     <div className="panel">
       <div className="page-header">
         <h1 className="page-title">Market Sentiment</h1>
-        <span className="muted">
-          Aggregated from persisted news sentiment — React renders only
-        </span>
+        <span className="muted">Aggregated from persisted news sentiment — React renders only</span>
       </div>
 
       <SentimentFilters

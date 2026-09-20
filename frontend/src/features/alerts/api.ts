@@ -2,17 +2,13 @@
 // shared `request()` helper (owns the /api prefix + Zod validation) — no
 // hardcoded URLs, no direct fetch, no client-side evaluation.
 import { request } from "@/api/client";
+import { alertActionSchema, alertHistoryResponseSchema, alertsResponseSchema } from "./schemas";
 import type {
   AlertHistoryParams,
   AlertHistoryResponse,
   AlertsResponse,
   CreateAlertInput,
 } from "./types";
-import {
-  alertActionSchema,
-  alertHistoryResponseSchema,
-  alertsResponseSchema,
-} from "./schemas";
 
 // Endpoint paths kept as named constants (single source of truth; no scattered
 // string literals in components).
@@ -26,10 +22,7 @@ export async function getAlerts(signal?: AbortSignal): Promise<AlertsResponse> {
   });
 }
 
-export async function createAlert(
-  input: CreateAlertInput,
-  signal?: AbortSignal,
-): Promise<unknown> {
+export async function createAlert(input: CreateAlertInput, signal?: AbortSignal): Promise<unknown> {
   return request(ALERTS, {
     method: "POST",
     body: input,
@@ -38,17 +31,11 @@ export async function createAlert(
   });
 }
 
-export async function deleteAlert(
-  id: number,
-  signal?: AbortSignal,
-): Promise<unknown> {
+export async function deleteAlert(id: number, signal?: AbortSignal): Promise<unknown> {
   return request(`${ALERTS}/${id}`, { method: "DELETE", signal });
 }
 
-export async function rearmAlert(
-  id: number,
-  signal?: AbortSignal,
-): Promise<unknown> {
+export async function rearmAlert(id: number, signal?: AbortSignal): Promise<unknown> {
   return request(`${ALERTS}/${id}/rearm`, { method: "POST", signal });
 }
 
@@ -80,10 +67,7 @@ export async function getAlertHistory(
   });
 }
 
-export async function clearAlertHistory(
-  alertId?: number,
-  signal?: AbortSignal,
-): Promise<unknown> {
+export async function clearAlertHistory(alertId?: number, signal?: AbortSignal): Promise<unknown> {
   return request(HISTORY, {
     method: "DELETE",
     params: { alert_id: alertId },

@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, cleanup } from "@testing-library/react";
+import { cleanup, render } from "@testing-library/react";
 import type { EChartsOption } from "echarts";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { echartsMock } = vi.hoisted(() => {
   const setOption = vi.fn();

@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   fnoUniverseSchema,
   fnoWorkspaceSchema,
+  futuresResponseSchema,
   optionChainViewSchema,
   optionExpiriesSchema,
   optionUnderlyingsSchema,
-  futuresResponseSchema,
 } from "@/api/schemas";
 
 describe("F&O contract schemas", () => {
@@ -133,10 +133,9 @@ describe("F&O contract schemas", () => {
   });
 
   it("accepts option underlyings and expiries", () => {
-    expect(
-      optionUnderlyingsSchema.safeParse({ underlyings: ["NIFTY", "BANKNIFTY"] })
-        .success,
-    ).toBe(true);
+    expect(optionUnderlyingsSchema.safeParse({ underlyings: ["NIFTY", "BANKNIFTY"] }).success).toBe(
+      true,
+    );
     expect(
       optionExpiriesSchema.safeParse({
         underlying: "NIFTY",

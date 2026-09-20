@@ -1,19 +1,19 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, cleanup, fireEvent } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/api/market", () => ({
   runScanner: vi.fn(),
   getSubscriptions: vi.fn(),
 }));
 
-import { runScanner, getSubscriptions } from "@/api/market";
+import { getSubscriptions, runScanner } from "@/api/market";
 import { StreamStatus } from "@/components/StreamStatus";
-import { TickerStrip } from "@/features/dashboard/components/TickerStrip";
 import { IndicesWidget } from "@/features/dashboard/components/IndicesWidget";
 import { MoversWidget } from "@/features/dashboard/components/MoversWidget";
+import { TickerStrip } from "@/features/dashboard/components/TickerStrip";
 
 function renderWithProviders(ui: ReactNode) {
   const client = new QueryClient({
@@ -125,8 +125,8 @@ describe("MoversWidget", () => {
   };
 
   it("renders gainers and switches category on tab select", async () => {
-    (runScanner as ReturnType<typeof vi.fn>).mockImplementation(
-      (name: string) => Promise.resolve(name === "losers" ? losers : gainers),
+    (runScanner as ReturnType<typeof vi.fn>).mockImplementation((name: string) =>
+      Promise.resolve(name === "losers" ? losers : gainers),
     );
 
     renderWithProviders(<MoversWidget />);

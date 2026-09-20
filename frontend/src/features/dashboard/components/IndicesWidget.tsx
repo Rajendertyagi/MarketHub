@@ -1,12 +1,12 @@
-import { useMemo } from "react";
-import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { Link } from "react-router-dom";
 import { getSubscriptions } from "@/api/market";
-import type { ApiError } from "@/types";
-import type { MarketQuote } from "../types";
 import { AsyncStateView } from "@/components/ui";
+import type { ApiError } from "@/types";
 import { fmtNum, fmtPct, tone } from "@/utils/format";
 import { isStaleQuote } from "../format";
+import type { MarketQuote } from "../types";
 
 interface Props {
   quotes: MarketQuote[];
@@ -28,10 +28,7 @@ export function IndicesWidget({ quotes }: Props) {
     queryFn: ({ signal }) => getSubscriptions(signal),
   });
 
-  const byKey = useMemo(
-    () => new Map(quotes.map((q) => [q.instrument_token, q])),
-    [quotes],
-  );
+  const byKey = useMemo(() => new Map(quotes.map((q) => [q.instrument_token, q])), [quotes]);
 
   const indices = (subs.data?.indices ?? []).filter((i) => i.enabled);
   const vix = indices.find((i) => i.label === VIX_LABEL);
@@ -58,9 +55,7 @@ export function IndicesWidget({ quotes }: Props) {
 
   return (
     <div className="idx-hero">
-      {vix && (
-        <IndexCard idx={vix} q={byKey.get(vix.key)} variant="vix" />
-      )}
+      {vix && <IndexCard idx={vix} q={byKey.get(vix.key)} variant="vix" />}
       <div className="idx-grid">
         {others.map((idx) => (
           <IndexCard key={idx.key} idx={idx} q={byKey.get(idx.key)} />
@@ -71,8 +66,8 @@ export function IndicesWidget({ quotes }: Props) {
 }
 
 // A single hero stat card: the index name, its live value, and the change /
-// % change colored by direction. The whole surface is the affordance into
-// Charts — it never nests buttons, so keyboard + pointer both navigate.
+// % change colored by direction. A real link into Charts (never a clickable
+// div) so keyboard and assistive tech navigate natively.
 function IndexCard({
   idx,
   q,
@@ -82,10 +77,8 @@ function IndexCard({
   q: MarketQuote | undefined;
   variant?: "vix";
 }) {
-  const navigate = useNavigate();
   const t = tone(q?.change);
   const stale = q ? isStaleQuote(q) : false;
-  const go = () => navigate("/charts");
 
   const value = q?.ltp != null ? fmtNum(q.ltp) : "—";
   const staleLabel = stale ? ", stale data" : "";
@@ -94,26 +87,16 @@ function IndexCard({
       <span className="idx-pts">
         {q?.change != null ? `${q.change > 0 ? "+" : ""}${fmtNum(q.change)}` : "—"}
       </span>
-      <span className="pct">
-        {q?.change_percent != null ? fmtPct(q.change_percent) : "—"}
-      </span>
+      <span className="pct">{q?.change_percent != null ? fmtPct(q.change_percent) : "—"}</span>
     </span>
   );
 
   if (variant === "vix") {
     return (
-      <section
+      <Link
+        to="/charts"
         className={`idx-card idx-card--vix${stale ? " is-stale" : ""}`}
-        role="link"
-        tabIndex={0}
         aria-label={`${idx.label}${q?.ltp != null ? ` ${fmtNum(q.ltp)}` : ""}${staleLabel}`}
-        onClick={go}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            go();
-          }
-        }}
       >
         <span className="idx-vix-lead">
           <span className="idx-name">{idx.label}</span>
@@ -121,28 +104,20 @@ function IndexCard({
           {stale && <span className="stale-tag">stale</span>}
         </span>
         {change}
-      </section>
+      </Link>
     );
   }
 
   return (
-    <section
+    <Link
+      to="/charts"
       className={`idx-card${stale ? " is-stale" : ""}`}
-      role="link"
-      tabIndex={0}
       aria-label={`${idx.label}${q?.ltp != null ? ` ${fmtNum(q.ltp)}` : ""}${staleLabel}`}
-      onClick={go}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          go();
-        }
-      }}
     >
       <span className="idx-name">{idx.label}</span>
       <span className="idx-value">{value}</span>
       {stale && <span className="stale-tag">stale</span>}
       {change}
-    </section>
+    </Link>
   );
 }

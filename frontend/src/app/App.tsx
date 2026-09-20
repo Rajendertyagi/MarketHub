@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ThemeProvider } from "@/app/ThemeProvider";
 import { GlobalErrorBoundary } from "@/app/GlobalErrorBoundary";
+import { ThemeProvider } from "@/app/ThemeProvider";
 import { AppRouter } from "@/routes/router";
 
 const queryClient = new QueryClient({

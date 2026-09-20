@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
-import type { CombinedUnderlying } from "./useFno";
 import { Input } from "@/components/ui";
 import { fmtInt } from "@/utils/format";
+import type { CombinedUnderlying } from "./useFno";
 
 interface Props {
   underlyings: CombinedUnderlying[];
@@ -19,9 +19,7 @@ export function UnderlyingPicker({ underlyings, isLoading, onSelect }: Props) {
     const t = q.trim().toUpperCase();
     if (!t) return underlyings;
     return underlyings.filter(
-      (u) =>
-        u.symbol.includes(t) ||
-        (u.name ?? "").toUpperCase().includes(t),
+      (u) => u.symbol.includes(t) || (u.name ?? "").toUpperCase().includes(t),
     );
   }, [underlyings, q]);
 
@@ -65,17 +63,21 @@ export function UnderlyingPicker({ underlyings, isLoading, onSelect }: Props) {
                 <tr
                   key={`${u.kind}:${u.symbol}`}
                   className="fno-row"
-                  role="button"
-                  tabIndex={0}
                   onClick={() => onSelect(u.symbol, u.kind)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      onSelect(u.symbol, u.kind);
-                    }
-                  }}
                 >
-                  <td className="fno-row-sym">{u.symbol}</td>
+                  <td className="fno-row-sym">
+                    <button
+                      type="button"
+                      className="fno-row-select"
+                      aria-label={`Select ${u.symbol}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelect(u.symbol, u.kind);
+                      }}
+                    >
+                      {u.symbol}
+                    </button>
+                  </td>
                   <td className="muted">{u.name ?? "—"}</td>
                   <td>
                     <span className={u.kind === "index" ? "chip chip-info" : "chip"}>
@@ -83,18 +85,10 @@ export function UnderlyingPicker({ underlyings, isLoading, onSelect }: Props) {
                     </span>
                   </td>
                   <td className="num muted">
-                    {u.futures_available == null
-                      ? "—"
-                      : u.futures_available
-                        ? "✓"
-                        : "—"}
+                    {u.futures_available == null ? "—" : u.futures_available ? "✓" : "—"}
                   </td>
                   <td className="num muted">
-                    {u.options_available == null
-                      ? "—"
-                      : u.options_available
-                        ? "✓"
-                        : "—"}
+                    {u.options_available == null ? "—" : u.options_available ? "✓" : "—"}
                   </td>
                 </tr>
               ))}

@@ -11,9 +11,7 @@ export function MarketStatus() {
       title="Inferred from IST time, not broker-confirmed"
     >
       <span className="market-status-dot" aria-hidden="true" />
-      <span className="market-status-label">
-        Market {open ? "Open" : "Closed"}
-      </span>
+      <span className="market-status-label">Market {open ? "Open" : "Closed"}</span>
       <span className="market-status-note muted">inferred</span>
     </span>
   );

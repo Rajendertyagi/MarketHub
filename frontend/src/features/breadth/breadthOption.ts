@@ -23,8 +23,8 @@ export function buildBreadthBarOption(s: BreadthSnapshot): EChartsOption {
       textStyle: { color: c.text },
       formatter: (params: unknown) => {
         const arr = params as Array<{ name: string; value: number; seriesName: string }>;
-        if (!arr.length) return "";
-        const p = arr[0]!;
+        const p = arr[0];
+        if (!p) return "";
         return `${p.seriesName}: <b>${p.value}</b> (${pct(p.value)})`;
       },
     },
@@ -47,7 +47,11 @@ export function buildBreadthBarOption(s: BreadthSnapshot): EChartsOption {
         stack: "b",
         data: [s.advances],
         itemStyle: { color: c.pos },
-        label: { show: true, color: c.text, formatter: () => (s.advances ? String(s.advances) : "") },
+        label: {
+          show: true,
+          color: c.text,
+          formatter: () => (s.advances ? String(s.advances) : ""),
+        },
       },
       {
         name: "Declines",
@@ -55,7 +59,11 @@ export function buildBreadthBarOption(s: BreadthSnapshot): EChartsOption {
         stack: "b",
         data: [s.declines],
         itemStyle: { color: c.neg },
-        label: { show: true, color: c.text, formatter: () => (s.declines ? String(s.declines) : "") },
+        label: {
+          show: true,
+          color: c.text,
+          formatter: () => (s.declines ? String(s.declines) : ""),
+        },
       },
       {
         name: "Unchanged",
@@ -63,7 +71,11 @@ export function buildBreadthBarOption(s: BreadthSnapshot): EChartsOption {
         stack: "b",
         data: [s.unchanged],
         itemStyle: { color: c.textMuted },
-        label: { show: true, color: c.text, formatter: () => (s.unchanged ? String(s.unchanged) : "") },
+        label: {
+          show: true,
+          color: c.text,
+          formatter: () => (s.unchanged ? String(s.unchanged) : ""),
+        },
       },
       {
         name: "Unavailable",
@@ -71,7 +83,11 @@ export function buildBreadthBarOption(s: BreadthSnapshot): EChartsOption {
         stack: "b",
         data: [s.unavailable],
         itemStyle: { color: c.border },
-        label: { show: true, color: c.text, formatter: () => (s.unavailable ? String(s.unavailable) : "") },
+        label: {
+          show: true,
+          color: c.text,
+          formatter: () => (s.unavailable ? String(s.unavailable) : ""),
+        },
       },
     ],
   };

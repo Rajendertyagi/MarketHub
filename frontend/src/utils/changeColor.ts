@@ -15,10 +15,7 @@ export interface TileColors {
 
 // Concrete colors are supplied by the caller (resolved from theme tokens) so the
 // function stays pure and testable. `null`/undefined change -> unavailable gray.
-export function changeTileColor(
-  pct: number | null | undefined,
-  colors: TileColors,
-): string {
+export function changeTileColor(pct: number | null | undefined, colors: TileColors): string {
   if (pct === null || pct === undefined) return colors.unavailable;
   const mag = Math.max(-1, Math.min(1, pct / CHANGE_CAP));
   if (mag >= 0) {

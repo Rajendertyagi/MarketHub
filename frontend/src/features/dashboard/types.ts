@@ -63,8 +63,6 @@ export interface MarketQuotesResponse {
 
 // Stable composite key for a quote, matching the backend's exchange:token
 // identity. Used for map lookups and table row keys.
-export function quoteKey(
-  q: Pick<MarketQuote, "exchange" | "instrument_token">,
-): string {
+export function quoteKey(q: Pick<MarketQuote, "exchange" | "instrument_token">): string {
   return `${q.exchange}:${q.instrument_token}`;
 }

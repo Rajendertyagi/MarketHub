@@ -62,9 +62,7 @@ export function SentimentFilters({ filters, sources, onChange }: Props) {
         placeholder="Symbol."
         aria-label="Symbol filter"
         value={filters.symbol ?? ""}
-        onChange={(e) =>
-          onChange({ ...filters, symbol: e.target.value || undefined })
-        }
+        onChange={(e) => onChange({ ...filters, symbol: e.target.value || undefined })}
       />
       <select
         className="ui-select filter-input"

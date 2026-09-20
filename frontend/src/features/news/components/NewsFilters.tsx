@@ -50,8 +50,7 @@ export function NewsFiltersBar({ filters, onChange }: NewsFiltersProps) {
           value={filters.max_age_hours ?? ""}
           onChange={(e) =>
             set({
-              max_age_hours:
-                e.target.value === "" ? undefined : Number(e.target.value),
+              max_age_hours: e.target.value === "" ? undefined : Number(e.target.value),
             })
           }
         />

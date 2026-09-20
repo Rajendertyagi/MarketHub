@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, fireEvent, cleanup } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { FnoWorkspaceView } from "@/features/fno/FnoWorkspaceView";
 
 const { echartsMock } = vi.hoisted(() => {
@@ -59,7 +59,16 @@ const EQUITY_WORKSPACE = {
       strike: 2500,
       option_type: "CE",
       provider: "upstox",
-      quote: { ltp: 50, bid: 49, ask: 51, open_interest: 1000, oi_change: 10, volume: 500, iv: 0.1758, delta: 0.5 },
+      quote: {
+        ltp: 50,
+        bid: 49,
+        ask: 51,
+        open_interest: 1000,
+        oi_change: 10,
+        volume: 500,
+        iv: 0.1758,
+        delta: 0.5,
+      },
     },
     {
       key: "NSE_FO:3",
@@ -68,7 +77,16 @@ const EQUITY_WORKSPACE = {
       strike: 2500,
       option_type: "PE",
       provider: "upstox",
-      quote: { ltp: 40, bid: 39, ask: 41, open_interest: 800, oi_change: 5, volume: 400, iv: 0.18, delta: -0.5 },
+      quote: {
+        ltp: 40,
+        bid: 39,
+        ask: 41,
+        open_interest: 800,
+        oi_change: 5,
+        volume: 400,
+        iv: 0.18,
+        delta: -0.5,
+      },
     },
   ],
   option_expiries: ["2026-10-29", "2026-11-26"],
@@ -113,8 +131,8 @@ const INDEX_CHAIN = {
 };
 
 function makeFetch() {
-  return vi.fn(async (input: any) => {
-    const url = typeof input === "string" ? input : input.url;
+  return vi.fn(async (input: string | URL | Request) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     if (url.includes("/api/market/fno/universe"))
       return jsonResponse({
         status: "ok",
@@ -145,20 +163,23 @@ function makeFetch() {
         ],
       });
     if (url.includes("/api/market/fno/view"))
-      return jsonResponse({ status: "ok", symbol: "HDFCBANK", active_view: {}, resolved_count: 0, apply: {} });
-    if (url.includes("/api/futures"))
-      return jsonResponse({ underlying: "NIFTY", contracts: [] });
-    if (url.includes("/api/market/fno/stock/"))
-      return jsonResponse(EQUITY_WORKSPACE);
-    if (url.includes("/api/options/chain/view"))
-      return jsonResponse(INDEX_CHAIN);
+      return jsonResponse({
+        status: "ok",
+        symbol: "HDFCBANK",
+        active_view: {},
+        resolved_count: 0,
+        apply: {},
+      });
+    if (url.includes("/api/futures")) return jsonResponse({ underlying: "NIFTY", contracts: [] });
+    if (url.includes("/api/market/fno/stock/")) return jsonResponse(EQUITY_WORKSPACE);
+    if (url.includes("/api/options/chain/view")) return jsonResponse(INDEX_CHAIN);
     return jsonResponse({ error: "not found" }, 404);
   });
 }
 
 function firstOptionLink(): HTMLAnchorElement | undefined {
-  return (Array.from(document.querySelectorAll("a.link")) as HTMLAnchorElement[]).find(
-    (a) => (a.getAttribute("href") ?? "").includes("type=OPTION"),
+  return (Array.from(document.querySelectorAll("a.link")) as HTMLAnchorElement[]).find((a) =>
+    (a.getAttribute("href") ?? "").includes("type=OPTION"),
   );
 }
 
@@ -172,17 +193,12 @@ describe("FnoWorkspaceView", () => {
   it("renders an equity option chain with the bounded active-view subscription", async () => {
     const fetchMock = makeFetch();
     vi.stubGlobal("fetch", fetchMock);
-    renderWithProviders(
-      <FnoWorkspaceView />,
-      ["/fno?sym=HDFCBANK&kind=equity&tab=chain"],
-    );
+    renderWithProviders(<FnoWorkspaceView />, ["/fno?sym=HDFCBANK&kind=equity&tab=chain"]);
 
     // Equity workspace establishes the bounded active-view subscription.
     await waitFor(() =>
       expect(
-        fetchMock.mock.calls.some((c: any[]) =>
-          String(c[0]).includes("/api/market/fno/view"),
-        ),
+        fetchMock.mock.calls.some((c: unknown[]) => String(c[0]).includes("/api/market/fno/view")),
       ).toBe(true),
     );
 
@@ -191,8 +207,8 @@ describe("FnoWorkspaceView", () => {
     // LTP link preserves exact option identity (type=OPTION, key=NSE_FO:2).
     const optLink = await waitFor(() => {
       const l = firstOptionLink();
-      expect(l).toBeTruthy();
-      return l!;
+      if (!l) throw new Error("expected option link");
+      return l;
     });
     expect(optLink.getAttribute("href")).toContain("type=OPTION");
     expect(optLink.getAttribute("href")).toContain("key=NSE_FO%3A2");
@@ -206,7 +222,8 @@ describe("FnoWorkspaceView", () => {
     expect(await screen.findByText("F&O Underlyings")).toBeTruthy();
     // Wait for the underlying list to load, then click the HDFCBANK equity row
     // (rows are clickable, no separate Open button).
-    const row = (await screen.findByText("HDFCBANK")).closest("tr")!;
+    const row = (await screen.findByText("HDFCBANK")).closest("tr");
+    if (!row) throw new Error("expected HDFCBANK row");
     fireEvent.click(row);
 
     // Workspace renders the Option Chain for the selected underlying.
@@ -216,17 +233,14 @@ describe("FnoWorkspaceView", () => {
   it("renders an index option chain (link preserves identity)", async () => {
     const fetchMock = makeFetch();
     vi.stubGlobal("fetch", fetchMock);
-    renderWithProviders(
-      <FnoWorkspaceView />,
-      ["/fno?sym=NIFTY&kind=index&tab=chain"],
-    );
+    renderWithProviders(<FnoWorkspaceView />, ["/fno?sym=NIFTY&kind=index&tab=chain"]);
 
     // Bootstrap picks the first expiry from the chain response and the chain
     // renders with option links preserving the exact option identity.
     const optLink = await waitFor(() => {
       const l = firstOptionLink();
-      expect(l).toBeTruthy();
-      return l!;
+      if (!l) throw new Error("expected option link");
+      return l;
     });
     expect(optLink.getAttribute("href")).toContain("key=NSE%3A1");
   });
@@ -234,10 +248,7 @@ describe("FnoWorkspaceView", () => {
   it("renders index option-chain analytics inline beneath the chain", async () => {
     const fetchMock = makeFetch();
     vi.stubGlobal("fetch", fetchMock);
-    renderWithProviders(
-      <FnoWorkspaceView />,
-      ["/fno?sym=NIFTY&kind=index&tab=chain"],
-    );
+    renderWithProviders(<FnoWorkspaceView />, ["/fno?sym=NIFTY&kind=index&tab=chain"]);
 
     // Analytics (PCR / ATM straddle) renders inline directly below the chain
     // table, not on a separate tab.
@@ -254,7 +265,7 @@ describe("FnoWorkspaceView", () => {
     // hard-coded in the frontend.
     await waitFor(() =>
       expect(
-        fetchMock.mock.calls.some((c: any[]) =>
+        fetchMock.mock.calls.some((c: unknown[]) =>
           String(c[0]).includes("/api/options/index-underlyings"),
         ),
       ).toBe(true),

@@ -3,8 +3,9 @@
 //  - useLogStream: browser EventSource over /api/logs/stream, applying the same
 //    active filters as the history view so live rows never bypass filters.
 // React never produces log records — they are generated server-side.
-import { useEffect, useRef, useState } from "react";
+
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 import { getLogs } from "./api";
 import { LOG_MAX_ROWS, LOG_SSE_ENDPOINT } from "./constants";
 import type { LogFilters, LogRecord } from "./types";
@@ -17,8 +18,7 @@ export function useLogs(filters: LogFilters) {
 }
 
 function passesFilters(rec: LogRecord, f: LogFilters): boolean {
-  if (f.level && String(rec.level || "").toUpperCase() !== f.level.toUpperCase())
-    return false;
+  if (f.level && String(rec.level || "").toUpperCase() !== f.level.toUpperCase()) return false;
   if (
     f.logger &&
     !String(rec.logger || "")

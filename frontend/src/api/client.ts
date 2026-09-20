@@ -11,8 +11,8 @@
 //
 // It does NOT redesign backend semantics; it only consumes existing contracts.
 
+import type { z } from "zod";
 import { ApiError } from "@/types";
-import { z } from "zod";
 
 const API_BASE = "/api";
 
@@ -29,10 +29,7 @@ export interface RequestOptions {
   body?: unknown;
 }
 
-export function buildIdlessUrl(
-  path: string,
-  params?: RequestOptions["params"],
-): string {
+export function buildIdlessUrl(path: string, params?: RequestOptions["params"]): string {
   // Every endpoint lives under the API base. Call sites pass paths like
   // "/market/breadth"; ensure the "/api" prefix is always present (paths that
   // already include it are left untouched).
@@ -54,8 +51,8 @@ async function readErrorPayload(resp: Response): Promise<string> {
   try {
     const data = await resp.json();
     if (data && typeof data === "object") {
-      const msg = (data as Record<string, unknown>).error ??
-        (data as Record<string, unknown>).message;
+      const msg =
+        (data as Record<string, unknown>).error ?? (data as Record<string, unknown>).message;
       if (typeof msg === "string" && msg.length) return msg;
     }
   } catch {
@@ -64,10 +61,7 @@ async function readErrorPayload(resp: Response): Promise<string> {
   return `Request failed (HTTP ${resp.status})`;
 }
 
-export async function request<T>(
-  path: string,
-  options: RequestOptions = {},
-): Promise<T> {
+export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const url = buildIdlessUrl(path, options.params);
   const headers: Record<string, string> = { Accept: "application/json" };
   const init: RequestInit = {
@@ -75,11 +69,7 @@ export async function request<T>(
     headers,
     signal: options.signal,
   };
-  if (
-    options.body !== undefined &&
-    options.method !== undefined &&
-    options.method !== "GET"
-  ) {
+  if (options.body !== undefined && options.method !== undefined && options.method !== "GET") {
     init.body = JSON.stringify(options.body);
     headers["Content-Type"] = "application/json";
   }
@@ -98,11 +88,9 @@ export async function request<T>(
     ) {
       throw new ApiError("abort", "Request aborted", { status: 0 });
     }
-    throw new ApiError(
-      "network",
-      "Network error — MarketHub backend may be offline.",
-      { status: 0 },
-    );
+    throw new ApiError("network", "Network error — MarketHub backend may be offline.", {
+      status: 0,
+    });
   }
 
   if (!resp.ok) {

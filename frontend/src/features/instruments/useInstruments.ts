@@ -5,12 +5,7 @@
 // never parses provider master files or infers instrument type client-side.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  getSegments,
-  getSyncState,
-  setSegments,
-  syncInstruments,
-} from "@/api/market";
+import { getSegments, getSyncState, setSegments, syncInstruments } from "@/api/market";
 
 export function useSegments() {
   return useQuery({
@@ -30,8 +25,7 @@ export function useSyncState() {
 
 export function useInstrumentMutations() {
   const qc = useQueryClient();
-  const invalidate = () =>
-    qc.invalidateQueries({ queryKey: ["instruments"] });
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["instruments"] });
 
   const segmentsMut = useMutation({
     mutationFn: (segments: string[]) => setSegments(segments),

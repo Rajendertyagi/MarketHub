@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { ApiError } from "@/types";
-import { useInstrumentMutations, useSegments, useSyncState } from "./useInstruments";
 import { AsyncStateView, Button, Field, Select } from "@/components/ui";
+import type { ApiError } from "@/types";
+import { useInstrumentMutations, useSegments, useSyncState } from "./useInstruments";
 
 type SyncPhase = "idle" | "running" | "success" | "error";
 
@@ -56,9 +56,7 @@ export function InstrumentsView() {
 
   let body: React.ReactNode;
   if (segmentsQuery.isLoading) {
-    body = (
-      <AsyncStateView status="loading" loadingLabel="Loading catalog status…" />
-    );
+    body = <AsyncStateView status="loading" loadingLabel="Loading catalog status…" />;
   } else if (segmentsQuery.isError) {
     body = (
       <AsyncStateView
@@ -86,9 +84,9 @@ export function InstrumentsView() {
                 </tr>
               </thead>
               <tbody>
-                {providers.map((p, i) => (
-                  <tr key={i}>
-                    <td>{String(p.provider ?? i)}</td>
+                {providers.map((p) => (
+                  <tr key={p.provider ?? "unknown"}>
+                    <td>{String(p.provider ?? "unknown")}</td>
                     <td>{String(p.status ?? "—")}</td>
                     <td className="muted">{String(p.last_sync ?? "—")}</td>
                     <td className="num">{String(p.rows ?? "—")}</td>
@@ -103,9 +101,8 @@ export function InstrumentsView() {
         <div className="card">
           <h3>Segments</h3>
           <p className="hint">
-            Enable the market segments included in the catalog. Saving triggers a
-            re-sync — this may change catalog contents. Saved preferences are
-            preserved across restart.
+            Enable the market segments included in the catalog. Saving triggers a re-sync — this may
+            change catalog contents. Saved preferences are preserved across restart.
           </p>
           <div className="segment-grid">
             {segments.map((s) => (
@@ -143,9 +140,7 @@ export function InstrumentsView() {
                       : "hint err"
                 }
               >
-                {syncPhase === "running"
-                  ? "Working…"
-                  : syncMsg}
+                {syncPhase === "running" ? "Working…" : syncMsg}
               </span>
             )}
           </div>
@@ -158,9 +153,7 @@ export function InstrumentsView() {
     <div className="panel instruments-view">
       <div className="page-header">
         <h1 className="page-title">Instruments</h1>
-        <span className="muted">
-          Catalog status · segment preferences · master sync
-        </span>
+        <span className="muted">Catalog status · segment preferences · master sync</span>
       </div>
       {body}
     </div>

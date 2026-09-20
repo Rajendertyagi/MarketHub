@@ -1,6 +1,7 @@
 // Data hooks for Watchlists. Thin consumers of the API module; all mutations
 // invalidate the ["watchlists"] query group.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { AddWatchlistItemInput } from "./api";
 import {
   addWatchlistItem,
   createWatchlist,
@@ -10,7 +11,6 @@ import {
   renameWatchlist,
 } from "./api";
 import { WATCHLISTS_REFRESH_MS } from "./constants";
-import type { AddWatchlistItemInput } from "./api";
 
 export function useWatchlists() {
   return useQuery({
@@ -25,9 +25,7 @@ export interface WatchlistMutations {
   rename: (args: { id: number; name: string }) => Promise<unknown>;
   remove: (id: number) => Promise<unknown>;
   removeItem: (itemId: number) => Promise<unknown>;
-  addItem: (
-    args: { watchlistId: number } & AddWatchlistItemInput,
-  ) => Promise<unknown>;
+  addItem: (args: { watchlistId: number } & AddWatchlistItemInput) => Promise<unknown>;
 }
 
 export function useWatchlistMutations(): WatchlistMutations {
@@ -39,8 +37,7 @@ export function useWatchlistMutations(): WatchlistMutations {
     onSuccess: invalidate,
   });
   const renameMut = useMutation({
-    mutationFn: ({ id, name }: { id: number; name: string }) =>
-      renameWatchlist(id, name),
+    mutationFn: ({ id, name }: { id: number; name: string }) => renameWatchlist(id, name),
     onSuccess: invalidate,
   });
   const deleteMut = useMutation({

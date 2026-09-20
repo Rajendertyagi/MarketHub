@@ -5,11 +5,7 @@
 
 export type AlertField = "ltp" | "change_percent" | "volume" | "oi_change_percent";
 
-export type AlertOperator =
-  | "gt"
-  | "lt"
-  | "crosses_above"
-  | "crosses_below";
+export type AlertOperator = "gt" | "lt" | "crosses_above" | "crosses_below";
 
 // A persisted market alert (market_alerts row, returned by GET /api/alerts).
 // `enabled` arrives as a SQLite INTEGER (1/0); we normalize it to a boolean.

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import {
-  ApiError,
-  type ChainRowView,
-  type FutureView,
-  type FnoUnderlyingKind,
-} from "@/types";
 import { AsyncStateView, Field, Select, Tabs } from "@/components/ui";
+import type { ApiError, ChainRowView, FnoUnderlyingKind, FutureView } from "@/types";
+import { FuturesTable } from "./FuturesTable";
+import { OptionAnalytics } from "./OptionAnalytics";
+import { OptionChainTable } from "./OptionChainTable";
+import { SpotHeader } from "./SpotHeader";
+import { UnderlyingPicker } from "./UnderlyingPicker";
 import {
   normalizeChainRows,
   normalizeEquityOptions,
@@ -16,11 +16,6 @@ import {
   useFutures,
   useIndexChain,
 } from "./useFno";
-import { UnderlyingPicker } from "./UnderlyingPicker";
-import { SpotHeader } from "./SpotHeader";
-import { FuturesTable } from "./FuturesTable";
-import { OptionChainTable } from "./OptionChainTable";
-import { OptionAnalytics } from "./OptionAnalytics";
 
 type Tab = "chain" | "futures";
 
@@ -28,12 +23,7 @@ const WINDOWS = [5, 10, 15, 20, 25];
 
 // Major indices surfaced at the top of the symbol dropdown so the user can jump
 // straight to NIFTY/BANKNIFTY/etc. Order here defines dropdown order.
-const MAJOR_INDICES = [
-  "NIFTY",
-  "BANKNIFTY",
-  "FINNIFTY",
-  "MIDCPNIFTY",
-];
+const MAJOR_INDICES = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"];
 
 export function FnoWorkspaceView() {
   const [params, setParams] = useSearchParams();
@@ -54,8 +44,7 @@ export function FnoWorkspaceView() {
   // Bootstrap index expiry from the loaded chain (backend defaults to first).
   useEffect(() => {
     if (kind === "index" && !expiry && indexChain.data) {
-      const first =
-        indexChain.data.expiry || indexChain.data.expiries_available[0];
+      const first = indexChain.data.expiry || indexChain.data.expiries_available[0];
       if (first) {
         setParams(
           (prev) => {
@@ -71,12 +60,13 @@ export function FnoWorkspaceView() {
 
   // Equity F&O: establish the bounded active-view subscription (reuses the
   // existing owner). Best-effort; never blocks rendering.
+  // activeView is a stable useMutation result, so including it never
+  // causes extra runs.
   useEffect(() => {
     if (kind === "equity" && sym) {
       activeView.mutate({ symbol: sym, window: windowSize });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind, sym, windowSize]);
+  }, [kind, sym, windowSize, activeView]);
 
   const setParam = (key: string, value: string) => {
     setParams(
@@ -108,9 +98,7 @@ export function FnoWorkspaceView() {
       else if (u.kind === "index") otherIdx.push(u);
       else eq.push(u);
     }
-    major.sort(
-      (a, b) => (majorOrder.get(a.symbol) ?? 0) - (majorOrder.get(b.symbol) ?? 0),
-    );
+    major.sort((a, b) => (majorOrder.get(a.symbol) ?? 0) - (majorOrder.get(b.symbol) ?? 0));
     otherIdx.sort((a, b) => a.symbol.localeCompare(b.symbol));
     eq.sort((a, b) => a.symbol.localeCompare(b.symbol));
     return { major, otherIdx, eq };
@@ -221,48 +209,33 @@ export function FnoWorkspaceView() {
     );
   } else if (!rows.length && !futuresView.length && tab !== "chain") {
     body = (
-      <AsyncStateView
-        status="empty"
-        emptyLabel="No contracts available for this selection."
-      />
+      <AsyncStateView status="empty" emptyLabel="No contracts available for this selection." />
     );
   } else {
-     switch (tab) {
-       case "chain":
-         body = (
-           <>
-             <OptionChainTable
-               rows={rows}
-               spot={header.ltp}
-               showGreeks={showGreeks}
-             />
-              {!isEquity && chain ? (
-                <section className="fno-analytics-panel">
-                  <h2 className="fno-analytics-heading">Chain Analytics</h2>
-                  <OptionAnalytics analytics={chain.analytics} rows={rows} />
-                </section>
-              ) : null}
-           </>
-         );
-         break;
-       case "futures":
-         body = <FuturesTable futures={futuresView} />;
-         break;
-     }
+    switch (tab) {
+      case "chain":
+        body = (
+          <>
+            <OptionChainTable rows={rows} spot={header.ltp} showGreeks={showGreeks} />
+            {!isEquity && chain ? (
+              <section className="fno-analytics-panel">
+                <h2 className="fno-analytics-heading">Chain Analytics</h2>
+                <OptionAnalytics analytics={chain.analytics} rows={rows} />
+              </section>
+            ) : null}
+          </>
+        );
+        break;
+      case "futures":
+        body = <FuturesTable futures={futuresView} />;
+        break;
+    }
   }
 
-  const expiryOptions = isEquity
-    ? ws?.option_expiries ?? []
-    : chain?.expiries_available ?? [];
+  const expiryOptions = isEquity ? (ws?.option_expiries ?? []) : (chain?.expiries_available ?? []);
 
   if (!sym || !kind) {
-    return (
-      <UnderlyingPicker
-        underlyings={all}
-        isLoading={uLoading}
-        onSelect={selectUnderlying}
-      />
-    );
+    return <UnderlyingPicker underlyings={all} isLoading={uLoading} onSelect={selectUnderlying} />;
   }
 
   return (
@@ -316,7 +289,7 @@ export function FnoWorkspaceView() {
         </Field>
         <Field label="Expiry">
           <Select
-            value={isEquity ? ws?.selected_expiry ?? "" : expiry}
+            value={isEquity ? (ws?.selected_expiry ?? "") : expiry}
             onChange={(e) => setParam("expiry", e.target.value)}
             disabled={!expiryOptions.length}
           >
@@ -329,10 +302,7 @@ export function FnoWorkspaceView() {
           </Select>
         </Field>
         <Field label="Window">
-          <Select
-            value={String(windowSize)}
-            onChange={(e) => setParam("window", e.target.value)}
-          >
+          <Select value={String(windowSize)} onChange={(e) => setParam("window", e.target.value)}>
             {WINDOWS.map((w) => (
               <option key={w} value={w}>
                 ±{w}
@@ -348,9 +318,7 @@ export function FnoWorkspaceView() {
           />
           Greeks
         </label>
-        {activeView.isPending && isEquity && (
-          <span className="hint">applying live view…</span>
-        )}
+        {activeView.isPending && isEquity && <span className="hint">applying live view…</span>}
       </div>
 
       <Tabs tabs={tabs} active={tab} onChange={(t) => setParam("tab", t)} />

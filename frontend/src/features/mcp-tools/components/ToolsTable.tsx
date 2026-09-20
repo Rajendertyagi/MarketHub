@@ -1,5 +1,5 @@
 import { AsyncStateView } from "@/components/ui";
-import { ApiError } from "@/types";
+import type { ApiError } from "@/types";
 import { useMcpTools } from "../useMcpTools";
 
 // Lists all registered MCP tools from the canonical registry. Read-only.
@@ -10,13 +10,7 @@ export function ToolsTable() {
     return <AsyncStateView status="loading" loadingLabel="Loading tools…" />;
   }
   if (status === "error") {
-    return (
-      <AsyncStateView
-        status="error"
-        error={error as ApiError}
-        onRetry={() => refetch()}
-      />
-    );
+    return <AsyncStateView status="error" error={error as ApiError} onRetry={() => refetch()} />;
   }
 
   const tools = data?.tools ?? [];

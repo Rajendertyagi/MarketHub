@@ -25,10 +25,7 @@ export function DiagnosticsControls({
     <div className="card diag-controls">
       <div className="control-row">
         <Field label="Mode">
-          <Select
-            value={mode}
-            onChange={(e) => onModeChange(e.target.value as DiagnosticMode)}
-          >
+          <Select value={mode} onChange={(e) => onModeChange(e.target.value as DiagnosticMode)}>
             {DIAGNOSTIC_MODES.map((m) => (
               <option key={m} value={m}>
                 {m === "quick" ? "Quick" : "Full"}

@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, render, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
   getMcpTools: vi.fn(),
@@ -45,9 +45,7 @@ describe("McpToolsView", () => {
     expect(await screen.findByText("get_quote")).toBeTruthy();
     expect(await screen.findByText("Get Quote")).toBeTruthy();
     expect(await screen.findByText("market")).toBeTruthy();
-    expect(
-      await screen.findByText("Fetch the latest quote for an instrument."),
-    ).toBeTruthy();
+    expect(await screen.findByText("Fetch the latest quote for an instrument.")).toBeTruthy();
   });
 
   it("shows error state on load failure", async () => {

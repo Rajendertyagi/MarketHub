@@ -4,12 +4,7 @@ import { z } from "zod";
 // mismatch surfaces as a typed `parse` error instead of `undefined` fields.
 
 const alertFieldSchema = z.enum(["ltp", "change_percent", "volume", "oi_change_percent"]);
-const alertOperatorSchema = z.enum([
-  "gt",
-  "lt",
-  "crosses_above",
-  "crosses_below",
-]);
+const alertOperatorSchema = z.enum(["gt", "lt", "crosses_above", "crosses_below"]);
 
 // SQLite returns `enabled` as INTEGER (1/0); normalize to boolean.
 const enabledSchema = z.union([z.boolean(), z.number()]).transform((v) => Boolean(v));

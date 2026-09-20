@@ -1,10 +1,4 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
+import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
 
 export type ThemeMode = "dark" | "light";
 
@@ -23,9 +17,7 @@ function readInitialTheme(): ThemeMode {
   if (typeof window === "undefined") return "dark";
   const stored = window.localStorage.getItem(STORAGE_KEY);
   if (stored === "dark" || stored === "light") return stored;
-  const prefersLight =
-    window.matchMedia &&
-    window.matchMedia("(prefers-color-scheme: light)").matches;
+  const prefersLight = window.matchMedia?.("(prefers-color-scheme: light)").matches ?? false;
   return prefersLight ? "light" : "dark";
 }
 
@@ -40,8 +32,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [theme]);
 
   const setTheme = (mode: ThemeMode) => setThemeState(mode);
-  const toggleTheme = () =>
-    setThemeState((t) => (t === "dark" ? "light" : "dark"));
+  const toggleTheme = () => setThemeState((t) => (t === "dark" ? "light" : "dark"));
 
   return (
     <ThemeContext.Provider value={{ theme, setTheme, toggleTheme }}>

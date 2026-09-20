@@ -1,6 +1,6 @@
+import { Button } from "@/components/ui";
 import type { FnoUnderlyingKind } from "@/types";
 import { fmtNum, fmtPct, tone } from "@/utils/format";
-import { Button } from "@/components/ui";
 
 interface Props {
   symbol: string;
@@ -31,14 +31,13 @@ export function SpotHeader({
   const t = tone(change);
   const stale = spotBasis === "stale";
   const fallback = spotBasis === "fallback_mid_strike";
-  const spotHint =
-    stale
-      ? "last-session"
-      : fallback
-        ? "midpoint"
-        : spotBasis === "live" || spotBasis === "explicit"
-          ? "live"
-          : "";
+  const spotHint = stale
+    ? "last-session"
+    : fallback
+      ? "midpoint"
+      : spotBasis === "live" || spotBasis === "explicit"
+        ? "live"
+        : "";
 
   return (
     <div className="fno-topbar">
@@ -64,12 +63,8 @@ export function SpotHeader({
           </>
         )}
       </span>
-      <span className="chip chip-atm fno-atm">
-        ATM {atm == null ? "—" : fmtNum(atm)}
-      </span>
-      {notes && notes.length > 0 && (
-        <span className="hint fno-notes">{notes.join("; ")}</span>
-      )}
+      <span className="chip chip-atm fno-atm">ATM {atm == null ? "—" : fmtNum(atm)}</span>
+      {notes && notes.length > 0 && <span className="hint fno-notes">{notes.join("; ")}</span>}
     </div>
   );
 }

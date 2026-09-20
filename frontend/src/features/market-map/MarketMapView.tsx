@@ -1,11 +1,16 @@
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { ApiError, type MarketMapSnapshot, type MarketMapSector, type MapStock } from "@/types";
 import { getMarketMap } from "@/api/market";
-import { ANALYTICS_UNIVERSES } from "@/types";
-import { useAnalyticsCoverage } from "@/features/analytics/useAnalyticsCoverage";
 import { AsyncStateView, Field, Input, Select } from "@/components/ui";
+import { useAnalyticsCoverage } from "@/features/analytics/useAnalyticsCoverage";
+import {
+  ANALYTICS_UNIVERSES,
+  type ApiError,
+  type MapStock,
+  type MarketMapSector,
+  type MarketMapSnapshot,
+} from "@/types";
 import { fmtInt } from "@/utils/format";
 
 type MapSizeMode = "equal" | "volume";
@@ -17,6 +22,10 @@ interface Rect {
   w: number;
   h: number;
 }
+
+// Degenerate rect used as a typed fallback where an index is valid by
+// construction (squarify returns one rect per weight).
+const ZERO_RECT: Rect = { x: 0, y: 0, w: 0, h: 0 };
 
 interface PlacedTile {
   stock: MapStock;
@@ -154,7 +163,11 @@ function tileFill(st: MapStock, metric: MapMetric, volNorm: (v: number | null) =
   return `color-mix(in oklch, ${dir} ${22 + mag * 70}%, var(--surface-2))`;
 }
 
-function tileTextColor(st: MapStock, metric: MapMetric, volNorm: (v: number | null) => number): string {
+function tileTextColor(
+  st: MapStock,
+  metric: MapMetric,
+  volNorm: (v: number | null) => number,
+): string {
   if (st.status === "unavailable") return "var(--text-muted)";
   if (metric === "volume") {
     return volNorm(st.volume ?? null) > 0.45 ? "var(--text-inverse)" : "var(--text)";
@@ -218,7 +231,9 @@ export function MarketMapView() {
     const sectorRects = squarify(sectorWeights, { x: 0, y: 0, w: width, h: height });
 
     return filteredSectors.map((sg, idx) => {
-      const sr = sectorRects[idx]!;
+      // squarify returns one rect per weight, so indices are valid by
+      // construction; ZERO_RECT keeps the type honest without assertions.
+      const sr = sectorRects[idx] ?? ZERO_RECT;
       const headerH = Math.min(HEADER_MAX, Math.max(HEADER_MIN, sr.h * 0.12));
       const inner: Rect = {
         x: sr.x,
@@ -229,9 +244,8 @@ export function MarketMapView() {
       const stockWeights = sg.stocks.map((st) =>
         sizeMode === "volume" ? volumeWeight(st.volume) : 1,
       );
-      const tileRects =
-        inner.w > 2 && inner.h > 2 ? squarify(stockWeights, inner) : [];
-      const tiles = sg.stocks.map((st, i) => ({ stock: st, rect: tileRects[i]! }));
+      const tileRects = inner.w > 2 && inner.h > 2 ? squarify(stockWeights, inner) : [];
+      const tiles = sg.stocks.map((st, i) => ({ stock: st, rect: tileRects[i] ?? ZERO_RECT }));
       return { sector: sg, rect: sr, headerH, tiles };
     });
   }, [filteredSectors, sizeMode, width, height]);
@@ -258,24 +272,21 @@ export function MarketMapView() {
       />
     );
   } else if (!data || data.eligible === 0) {
-    body = (
-      <AsyncStateView status="empty" emptyLabel={`No constituents for ${universe}.`} />
-    );
+    body = <AsyncStateView status="empty" emptyLabel={`No constituents for ${universe}.`} />;
   } else {
     body = (
-        <div className="heatmap-surface">
-          <div className="heatmap-bar">
-            <span className="heatmap-title">
-              Market Heatmap
-              {data && (
-                <span className="heatmap-meta">
-                  {data.universe} · {data.sectors.length} sectors ·{" "}
-                  {data.unclassified} unclassified
-                  {data.stale ? " · stale (last session)" : ""}
-                </span>
-              )}
-            </span>
-          <div className="heat-legend" aria-label={`${metric} color scale`}>
+      <div className="heatmap-surface">
+        <div className="heatmap-bar">
+          <span className="heatmap-title">
+            Market Heatmap
+            {data && (
+              <span className="heatmap-meta">
+                {data.universe} · {data.sectors.length} sectors · {data.unclassified} unclassified
+                {data.stale ? " · stale (last session)" : ""}
+              </span>
+            )}
+          </span>
+          <div className="heat-legend">
             {metric === "price" ? (
               <>
                 <span className="heat-scale" aria-hidden="true" />
@@ -366,19 +377,13 @@ export function MarketMapView() {
           </Select>
         </Field>
         <Field label="Metric">
-          <Select
-            value={metric}
-            onChange={(e) => setMetric(e.target.value as MapMetric)}
-          >
+          <Select value={metric} onChange={(e) => setMetric(e.target.value as MapMetric)}>
             <option value="price">Price %</option>
             <option value="volume">Volume</option>
           </Select>
         </Field>
         <Field label="Tile Size">
-          <Select
-            value={sizeMode}
-            onChange={(e) => setSizeMode(e.target.value as MapSizeMode)}
-          >
+          <Select value={sizeMode} onChange={(e) => setSizeMode(e.target.value as MapSizeMode)}>
             <option value="equal">Equal</option>
             <option value="volume">Volume</option>
           </Select>

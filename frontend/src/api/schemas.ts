@@ -41,10 +41,7 @@ export const scannerDefSchema = z.object({
   instrument_class: z.string(),
   metric: z.string(),
   order: z.string(),
-  contract_kind: z
-    .enum(["future", "option"])
-    .nullable()
-    .optional(),
+  contract_kind: z.enum(["future", "option"]).nullable().optional(),
   extra: z.array(z.string()).nullable().optional(),
   description: z.string(),
 });

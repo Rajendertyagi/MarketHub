@@ -20,9 +20,8 @@ export function OptionChainView() {
     if (next.toString() !== params.toString()) {
       setParams(next, { replace: true });
     }
-    // Run once on mount to seed defaults.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // Idempotent: re-runs safely when params change, no-ops once seeded.
+  }, [params, setParams]);
 
   return <FnoWorkspaceView />;
 }

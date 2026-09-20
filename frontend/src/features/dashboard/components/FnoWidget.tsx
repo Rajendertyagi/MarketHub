@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { getFnoUniverse } from "@/api/market";
-import { WidgetCard } from "./WidgetCard";
 import { fmtInt } from "@/utils/format";
+import { WidgetCard } from "./WidgetCard";
 
 // F&O universe snapshot: total covered stocks plus a few representatives with
 // their futures/options availability. Entry point to the F&O workspace.

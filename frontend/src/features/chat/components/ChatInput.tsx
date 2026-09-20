@@ -34,7 +34,7 @@ export function ChatInput({ onSend, streaming }: Props) {
           }
         }}
       />
-      <button className="btn" onClick={submit} disabled={streaming}>
+      <button type="button" className="btn" onClick={submit} disabled={streaming}>
         {streaming ? "…" : "Send"}
       </button>
     </div>

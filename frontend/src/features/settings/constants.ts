@@ -1,7 +1,4 @@
-import type {
-  NewsSourceType,
-  SettingsSection,
-} from "./types";
+import type { NewsSourceType, SettingsSection } from "./types";
 
 // Canonical, backend-aligned constants. Components reference these instead of
 // inlining literals (single source of truth — mirrors the backend's allowed

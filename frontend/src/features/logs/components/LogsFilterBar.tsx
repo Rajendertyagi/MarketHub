@@ -78,16 +78,9 @@ export function LogsFilterBar({
           {paused ? "Resume" : "Pause"}
         </Button>
         <label className="logs-autofollow">
-          <input
-            type="checkbox"
-            checked={autoFollow}
-            onChange={onToggleAutoFollow}
-          />{" "}
-          Auto-follow
+          <input type="checkbox" checked={autoFollow} onChange={onToggleAutoFollow} /> Auto-follow
         </label>
-        <span
-          className={`logs-conn ${connected ? "logs-conn-on" : "logs-conn-off"}`}
-        >
+        <span className={`logs-conn ${connected ? "logs-conn-on" : "logs-conn-off"}`}>
           {connected ? "● Connected" : "● Reconnecting"}
         </span>
         <span className="muted">{count} records</span>

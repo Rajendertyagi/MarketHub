@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
 import * as echarts from "echarts";
+import { useEffect, useRef } from "react";
 import { THEME_CHANGE_EVENT } from "@/app/ThemeProvider";
 
 interface EChartProps {
@@ -25,8 +25,13 @@ export function EChart({ option, onInit, className, style }: EChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const instanceRef = useRef<echarts.ECharts | null>(null);
   const latestOption = useRef<echarts.EChartsOption>(option);
+  // Latest-callback ref: the mount effect must run exactly once
+  // (init/dispose lifecycle), so it reads onInit through a ref instead
+  // of subscribing to its identity.
+  const onInitRef = useRef(onInit);
 
   latestOption.current = option;
+  onInitRef.current = onInit;
 
   useEffect(() => {
     const el = containerRef.current;
@@ -35,7 +40,7 @@ export function EChart({ option, onInit, className, style }: EChartProps) {
     const instance = echarts.init(el, undefined, { renderer: "canvas" });
     instanceRef.current = instance;
     instance.setOption(latestOption.current);
-    onInit?.(instance);
+    onInitRef.current?.(instance);
 
     const observer = new ResizeObserver(() => instance.resize());
     observer.observe(el);
@@ -49,8 +54,8 @@ export function EChart({ option, onInit, className, style }: EChartProps) {
       instance.dispose();
       instanceRef.current = null;
     };
-    // Init/dispose only on mount/unmount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Init/dispose only on mount/unmount; option/theme updates flow
+    // through refs and the dedicated update effect below.
   }, []);
 
   // Apply option updates on every render where `option` identity changes.
@@ -58,11 +63,5 @@ export function EChart({ option, onInit, className, style }: EChartProps) {
     instanceRef.current?.setOption(option);
   }, [option]);
 
-  return (
-    <div
-      ref={containerRef}
-      className={className ?? "chart-container"}
-      style={style}
-    />
-  );
+  return <div ref={containerRef} className={className ?? "chart-container"} style={style} />;
 }

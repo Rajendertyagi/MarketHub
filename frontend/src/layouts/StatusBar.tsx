@@ -1,8 +1,8 @@
 import { useLocation } from "react-router-dom";
 import { Icon } from "@/components/Icon";
+import { useAlerts } from "@/features/alerts/useAlerts";
 import { useBackendStatus } from "@/hooks/useBackendStatus";
 import { inferredMarketOpen } from "@/utils/market";
-import { useAlerts } from "@/features/alerts/useAlerts";
 import { labelForPath } from "./nav";
 
 // App-wide thin status strip: live backend connection, inferred market session,
@@ -18,11 +18,7 @@ export function StatusBar() {
   const apiBase = `${window.location.origin}/api`;
 
   const statusLabel =
-    status === "online"
-      ? "Online"
-      : status === "offline"
-        ? "Offline"
-        : "Connecting…";
+    status === "online" ? "Online" : status === "offline" ? "Offline" : "Connecting…";
 
   return (
     <footer className="app-statusbar">

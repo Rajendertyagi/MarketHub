@@ -1,7 +1,7 @@
 import type { EChartsOption } from "echarts";
-import type { MarketMapSector, MapStock } from "@/types";
+import type { MapStock, MarketMapSector } from "@/types";
+import { changeTileColor, type TileColors, volumeTileColor } from "@/utils/changeColor";
 import { themeColors } from "@/utils/cssVar";
-import { changeTileColor, volumeTileColor, type TileColors } from "@/utils/changeColor";
 import { fmtVol } from "@/utils/format";
 
 export type MapSizeMode = "equal" | "volume";
@@ -115,8 +115,7 @@ export function buildMarketMapOption(
         const d = p as { data?: { _meta?: StockMeta } };
         const meta = d.data?._meta;
         if (meta) {
-          const chg =
-            meta.status === "unavailable" ? "no quote" : fmtChange(meta.change);
+          const chg = meta.status === "unavailable" ? "no quote" : fmtChange(meta.change);
           const vol = meta.volume != null ? fmtVol(meta.volume) : "—";
           return `<b>${meta.symbol}</b><br/>Chg: ${chg}<br/>Vol: ${vol}`;
         }
@@ -160,7 +159,10 @@ export function buildMarketMapOption(
         upperLabel: { show: true, height: 20, color: c.textMuted, fontSize: 12, fontWeight: 600 },
         itemStyle: { borderColor: c.surface, borderWidth: 1, gapWidth: 1 },
         levels: [
-          { itemStyle: { borderWidth: 2, gapWidth: 2, borderColor: c.surface }, upperLabel: { show: true } },
+          {
+            itemStyle: { borderWidth: 2, gapWidth: 2, borderColor: c.surface },
+            upperLabel: { show: true },
+          },
           { itemStyle: { borderWidth: 1, gapWidth: 1, borderColorSaturation: 0.3 } },
         ],
       },

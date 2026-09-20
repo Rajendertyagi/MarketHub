@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { echartsMock } = vi.hoisted(() => {
   const instance = {
@@ -148,9 +148,7 @@ describe("SectorHeatmapView", () => {
   });
 
   it("shows error state", async () => {
-    (getSectorHeatmap as ReturnType<typeof vi.fn>).mockRejectedValue(
-      new Error("heatmap failed"),
-    );
+    (getSectorHeatmap as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("heatmap failed"));
     renderWithProviders(<SectorHeatmapView />);
     expect(await screen.findByText(/heatmap failed/)).toBeInTheDocument();
   });

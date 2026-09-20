@@ -1,10 +1,7 @@
-import type { ApiError } from "@/types";
 import { AsyncStateView } from "@/components/ui";
+import type { ApiError } from "@/types";
+import { articleSnippet, formatRelativeTime } from "../format";
 import type { NewsArticle, NewsSentiment } from "../types";
-import {
-  articleSnippet,
-  formatRelativeTime,
-} from "../format";
 
 interface Props {
   articles: NewsArticle[];
@@ -46,11 +43,7 @@ export function NewsArticleList({
   if (isError) {
     return (
       <div className="news-pane">
-        <AsyncStateView
-          status="error"
-          error={error as ApiError}
-          onRetry={onRetry}
-        />
+        <AsyncStateView status="error" error={error as ApiError} onRetry={onRetry} />
       </div>
     );
   }
@@ -74,11 +67,11 @@ export function NewsArticleList({
       <ul className="news-article-list">
         {articles.map((a) => {
           const s = sentimentById.get(a.item_id);
-          const when =
-            a.type === "rss" ? a.published : a.created_utc;
+          const when = a.type === "rss" ? a.published : a.created_utc;
           return (
             <li key={a.item_id}>
               <button
+                type="button"
                 className={`news-article-row ${selectedId === a.item_id ? "is-active" : ""}`}
                 onClick={() => onSelect(a.item_id)}
               >
@@ -89,14 +82,10 @@ export function NewsArticleList({
                       {s.sentiment} {s.score.toFixed(2)}
                     </span>
                   ) : null}
-                  <span className="muted news-article-time">
-                    {formatRelativeTime(when)}
-                  </span>
+                  <span className="muted news-article-time">{formatRelativeTime(when)}</span>
                 </div>
                 <div className="news-article-title">{a.title}</div>
-                <p className="news-article-snippet">
-                  {articleSnippet(a)}
-                </p>
+                <p className="news-article-snippet">{articleSnippet(a)}</p>
               </button>
             </li>
           );

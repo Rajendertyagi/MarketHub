@@ -19,8 +19,6 @@ export function ChatStatusChip({ status, loading }: Props) {
     );
   }
   return (
-    <span className="chip chip-off">
-      AI not configured — set it in Settings → AI Provider
-    </span>
+    <span className="chip chip-off">AI not configured — set it in Settings → AI Provider</span>
   );
 }

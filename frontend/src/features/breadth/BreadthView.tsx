@@ -1,13 +1,17 @@
-import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ApiError, type BreadthSnapshot, type BreadthStatus } from "@/types";
+import { useMemo, useState } from "react";
 import { getBreadth } from "@/api/market";
-import { ANALYTICS_UNIVERSES } from "@/types";
-import { useAnalyticsCoverage } from "@/features/analytics/useAnalyticsCoverage";
-import { buildBreadthBarOption } from "./breadthOption";
 import { EChart } from "@/components/EChart";
-import { AsyncStateView, Field, Select, Input, Tabs } from "@/components/ui";
+import { AsyncStateView, Field, Input, Select, Tabs } from "@/components/ui";
+import { useAnalyticsCoverage } from "@/features/analytics/useAnalyticsCoverage";
+import {
+  ANALYTICS_UNIVERSES,
+  type ApiError,
+  type BreadthSnapshot,
+  type BreadthStatus,
+} from "@/types";
 import { fmtInt, fmtNum, fmtPct, fmtVol } from "@/utils/format";
+import { buildBreadthBarOption } from "./breadthOption";
 
 type StatusFilter = "all" | BreadthStatus;
 type SortKey = "symbol" | "change_percent" | "change" | "ltp";
@@ -77,7 +81,7 @@ export function BreadthView() {
   const option = useMemo(() => (data ? buildBreadthBarOption(data) : null), [data]);
 
   const unchangedShare = useMemo(() => {
-    if (!data || !data.eligible) return "0.0%";
+    if (!data?.eligible) return "0.0%";
     return `${((data.unchanged / data.eligible) * 100).toFixed(1)}%`;
   }, [data]);
 
@@ -107,12 +111,7 @@ export function BreadthView() {
       />
     );
   } else if (!data || data.eligible === 0) {
-    body = (
-      <AsyncStateView
-        status="empty"
-        emptyLabel={`No constituents for ${universe}.`}
-      />
-    );
+    body = <AsyncStateView status="empty" emptyLabel={`No constituents for ${universe}.`} />;
   } else {
     body = (
       <div className="card">
@@ -145,7 +144,9 @@ export function BreadthView() {
                     <td className={`num ${chgCls}`}>{fmtPct(r.change_percent)}</td>
                     <td>{r.sector}</td>
                     <td>
-                      <span className={r.status === "unavailable" ? "chip chip-off" : "chip chip-on"}>
+                      <span
+                        className={r.status === "unavailable" ? "chip chip-off" : "chip chip-on"}
+                      >
                         {r.status}
                       </span>
                     </td>
@@ -165,8 +166,8 @@ export function BreadthView() {
         <h1 className="page-title">Market Breadth</h1>
         {data && (
           <span className="muted">
-            {data.universe} · {data.eligible} eligible · {data.quoted} quoted ·{" "}
-            {data.unclassified} unclassified
+            {data.universe} · {data.eligible} eligible · {data.quoted} quoted · {data.unclassified}{" "}
+            unclassified
             {data.stale ? " · stale (last session)" : ""}
           </span>
         )}
@@ -259,16 +260,8 @@ export function BreadthView() {
               />
               <StatCard label="Advance %" value={fmtPct(data.advance_percent)} tone="pos" />
               <StatCard label="Decline %" value={fmtPct(data.decline_percent)} tone="neg" />
-              <StatCard
-                label="Volume Adv."
-                value={fmtVol(data.volume_advancing)}
-                sub="advancing"
-              />
-              <StatCard
-                label="Volume Dec."
-                value={fmtVol(data.volume_declining)}
-                sub="declining"
-              />
+              <StatCard label="Volume Adv." value={fmtVol(data.volume_advancing)} sub="advancing" />
+              <StatCard label="Volume Dec." value={fmtVol(data.volume_declining)} sub="declining" />
               <StatCard
                 label="Day Highs"
                 value={fmtInt(data.intraday_highs)}

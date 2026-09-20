@@ -3,26 +3,6 @@
 // Each function is a thin, typed wrapper over the shared client. They preserve
 // backend naming/semantics and never recompute canonical values client-side.
 
-import { request } from "./client";
-import {
-  breadthSchema,
-  fnoUniverseSchema,
-  fnoWorkspaceSchema,
-  fnoViewSchema,
-  futuresResponseSchema,
-  historyResponseSchema,
-  indexOptionUnderlyingsSchema,
-  marketMapSchema,
-  optionChainViewSchema,
-  optionExpiriesSchema,
-  scannersListSchema,
-  scanResultSchema,
-  sectorHeatmapSchema,
-  subscriptionPreferencesSchema,
-  applyResultSchema,
-  segmentsResponseSchema,
-  syncStateSchema,
-} from "./schemas";
 import type {
   ApplyResult,
   BreadthSnapshot,
@@ -39,14 +19,34 @@ import type {
   OptionChainView,
   OptionExpiriesResponse,
   ScannerDef,
-  ScanResult,
   ScannerRunParams,
-  SegmentsResponse,
+  ScanResult,
   SectorHeatmapSnapshot,
+  SegmentsResponse,
   SubscriptionPreferences,
   SyncProviderState,
   SyncResult,
 } from "@/types";
+import { request } from "./client";
+import {
+  applyResultSchema,
+  breadthSchema,
+  fnoUniverseSchema,
+  fnoViewSchema,
+  fnoWorkspaceSchema,
+  futuresResponseSchema,
+  historyResponseSchema,
+  indexOptionUnderlyingsSchema,
+  marketMapSchema,
+  optionChainViewSchema,
+  optionExpiriesSchema,
+  scannersListSchema,
+  scanResultSchema,
+  sectorHeatmapSchema,
+  segmentsResponseSchema,
+  subscriptionPreferencesSchema,
+  syncStateSchema,
+} from "./schemas";
 
 export interface HistoryParams {
   instrument_key: string;
@@ -75,13 +75,11 @@ export async function getHistory(
   });
 }
 
-export async function listScanners(
-  signal?: AbortSignal,
-): Promise<ScannerDef[]> {
-  const data = await request<{ status: string; scanners: ScannerDef[] }>(
-    "/market/scanners",
-    { schema: scannersListSchema, signal },
-  );
+export async function listScanners(signal?: AbortSignal): Promise<ScannerDef[]> {
+  const data = await request<{ status: string; scanners: ScannerDef[] }>("/market/scanners", {
+    schema: scannersListSchema,
+    signal,
+  });
   return data.scanners;
 }
 
@@ -115,19 +113,16 @@ export async function searchInstruments(
   params: InstrumentSearchParams,
   signal?: AbortSignal,
 ): Promise<Instrument[]> {
-  const data = await request<{ results: Instrument[]; count: number }>(
-    "/instruments/search",
-    {
-      params: {
-        q: params.q,
-        exchange: params.exchange ?? "",
-        type: params.type ?? "",
-        provider: params.provider ?? "",
-        limit: params.limit ?? 25,
-      },
-      signal,
+  const data = await request<{ results: Instrument[]; count: number }>("/instruments/search", {
+    params: {
+      q: params.q,
+      exchange: params.exchange ?? "",
+      type: params.type ?? "",
+      provider: params.provider ?? "",
+      limit: params.limit ?? 25,
     },
-  );
+    signal,
+  });
   return data.results;
 }
 
@@ -145,10 +140,7 @@ export async function resolveInstrument(
   type: string,
   signal?: AbortSignal,
 ): Promise<Instrument | null> {
-  const results = await searchInstruments(
-    { q: tradingsymbol, type, limit: 10 },
-    signal,
-  );
+  const results = await searchInstruments({ q: tradingsymbol, type, limit: 10 }, signal);
   const match = results.find((r) => r.tradingsymbol === tradingsymbol);
   return match ?? results[0] ?? null;
 }
@@ -157,10 +149,7 @@ export async function resolveInstrument(
 // Thin typed wrappers over the canonical aggregated endpoints. They preserve
 // backend naming/semantics and never recompute canonical values client-side.
 
-export async function getBreadth(
-  universe: string,
-  signal?: AbortSignal,
-): Promise<BreadthSnapshot> {
+export async function getBreadth(universe: string, signal?: AbortSignal): Promise<BreadthSnapshot> {
   return request<BreadthSnapshot>("/market/breadth", {
     params: { universe },
     schema: breadthSchema,
@@ -219,18 +208,15 @@ export async function getFnoWorkspace(
   params: FnoWorkspaceParams,
   signal?: AbortSignal,
 ): Promise<FnoWorkspace> {
-  return request<FnoWorkspace>(
-    `/market/fno/stock/${encodeURIComponent(params.symbol)}`,
-    {
-      params: {
-        window: params.window ?? 10,
-        futures: params.futures ?? 2,
-        expiries: params.expiries ?? 1,
-      },
-      schema: fnoWorkspaceSchema,
-      signal,
+  return request<FnoWorkspace>(`/market/fno/stock/${encodeURIComponent(params.symbol)}`, {
+    params: {
+      window: params.window ?? 10,
+      futures: params.futures ?? 2,
+      expiries: params.expiries ?? 1,
     },
-  );
+    schema: fnoWorkspaceSchema,
+    signal,
+  });
 }
 
 export interface FnoViewParams {
@@ -259,7 +245,6 @@ export async function postFnoView(
     signal,
   });
 }
-
 
 export async function getOptionExpiries(
   underlying: string,
@@ -322,9 +307,7 @@ export async function getFutures(
 // React is only the control surface. The DB remains the source of truth; the
 // backend resolves actual contracts and reconciles the live feed. No client-side
 // expiry rollover or strike discovery.
-export async function getSubscriptions(
-  signal?: AbortSignal,
-): Promise<SubscriptionPreferences> {
+export async function getSubscriptions(signal?: AbortSignal): Promise<SubscriptionPreferences> {
   return request<SubscriptionPreferences>("/subscriptions", {
     schema: subscriptionPreferencesSchema,
     signal,
@@ -343,11 +326,7 @@ export async function setIndexEnabled(
   });
 }
 
-export async function addStock(
-  key: string,
-  label: string,
-  signal?: AbortSignal,
-): Promise<unknown> {
+export async function addStock(key: string, label: string, signal?: AbortSignal): Promise<unknown> {
   return request("/subscriptions/stocks", {
     method: "POST",
     body: { key, label },
@@ -367,10 +346,7 @@ export async function setStockEnabled(
   });
 }
 
-export async function removeStock(
-  key: string,
-  signal?: AbortSignal,
-): Promise<unknown> {
+export async function removeStock(key: string, signal?: AbortSignal): Promise<unknown> {
   return request("/subscriptions/stocks", {
     method: "DELETE",
     params: { key },
@@ -401,9 +377,7 @@ export async function deleteDerivativeRule(
 }
 
 // Reconcile the live feed to the current DB-backed preferences (no restart).
-export async function applySubscriptions(
-  signal?: AbortSignal,
-): Promise<ApplyResult> {
+export async function applySubscriptions(signal?: AbortSignal): Promise<ApplyResult> {
   return request<ApplyResult>("/subscriptions/apply", {
     method: "POST",
     schema: applyResultSchema,
@@ -414,19 +388,14 @@ export async function applySubscriptions(
 // ── Instruments / catalog (segment preferences + master sync) ────────────────
 // React reads catalog/source status and edits segment preferences; it never
 // parses provider master files or infers instrument type client-side.
-export async function getSegments(
-  signal?: AbortSignal,
-): Promise<SegmentsResponse> {
+export async function getSegments(signal?: AbortSignal): Promise<SegmentsResponse> {
   return request<SegmentsResponse>("/instruments/segments", {
     schema: segmentsResponseSchema,
     signal,
   });
 }
 
-export async function setSegments(
-  segments: string[],
-  signal?: AbortSignal,
-): Promise<unknown> {
+export async function setSegments(segments: string[], signal?: AbortSignal): Promise<unknown> {
   return request("/instruments/segments", {
     method: "PUT",
     body: { segments },
@@ -434,10 +403,7 @@ export async function setSegments(
   });
 }
 
-export async function syncInstruments(
-  provider: string,
-  signal?: AbortSignal,
-): Promise<SyncResult> {
+export async function syncInstruments(provider: string, signal?: AbortSignal): Promise<SyncResult> {
   return request<SyncResult>("/instruments/sync", {
     method: "POST",
     body: { provider },

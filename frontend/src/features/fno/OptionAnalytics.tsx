@@ -1,8 +1,8 @@
 import { useMemo } from "react";
-import type { ChainAnalytics, ChainRowView } from "@/types";
 import { EChart } from "@/components/EChart";
-import { buildOiByStrikeOption } from "./fnoOption";
+import type { ChainAnalytics, ChainRowView } from "@/types";
 import { fmtInt, fmtNum } from "@/utils/format";
+import { buildOiByStrikeOption } from "./fnoOption";
 
 interface Props {
   analytics: ChainAnalytics;
@@ -28,9 +28,7 @@ export function OptionAnalytics({ analytics, rows }: Props) {
       <div className="stat-grid">
         <div className="stat-card">
           <span className="stat-label">PCR (OI)</span>
-          <span className="stat-value">
-            {pcr == null ? "—" : pcr.toFixed(3)}
-          </span>
+          <span className="stat-value">{pcr == null ? "—" : pcr.toFixed(3)}</span>
         </div>
         <div className="stat-card">
           <span className="stat-label">Total CE OI</span>

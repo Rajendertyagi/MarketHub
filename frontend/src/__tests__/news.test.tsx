@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, fireEvent, cleanup, within } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
   getNews: vi.fn(),
@@ -159,6 +159,11 @@ describe("NewsView", () => {
   });
 
   it("manages sources: enable toggle, add, delete", async () => {
+    const requireCard = (): HTMLElement => {
+      const card = screen.getByText("Add news source").closest(".card");
+      if (!(card instanceof HTMLElement)) throw new Error("expected Add news source card");
+      return card;
+    };
     api.getNewsSources.mockResolvedValue({ status: "ok", sources: [SOURCE] });
     api.setNewsSourceEnabled.mockResolvedValue({ status: "ok" });
     api.createNewsSource.mockResolvedValue({ status: "ok" });
@@ -181,7 +186,7 @@ describe("NewsView", () => {
     fireEvent.change(screen.getByPlaceholderText("My RSS Feed"), {
       target: { value: "New Feed" },
     });
-    fireEvent.click(within(screen.getByText("Add news source").closest(".card")!).getByText("Add"));
+    fireEvent.click(within(requireCard()).getByText("Add"));
     await waitFor(() =>
       expect(api.createNewsSource).toHaveBeenCalledWith(
         expect.objectContaining({ name: "New Feed", source_type: "rss" }),
@@ -189,7 +194,9 @@ describe("NewsView", () => {
     );
 
     // Delete existing source.
-    fireEvent.click(screen.getAllByText("Delete")[0]!);
+    const delBtn = screen.getAllByText("Delete")[0];
+    if (!delBtn) throw new Error("expected Delete button");
+    fireEvent.click(delBtn);
     await waitFor(() => expect(api.deleteNewsSource).toHaveBeenCalledWith("src-a"));
   });
 });

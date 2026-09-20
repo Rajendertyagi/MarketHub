@@ -1,10 +1,6 @@
 // Pure presentation helpers for the Settings feature. Kept separate from
 // data/logic so components stay declarative and formatting is unit-testable.
-import {
-  FEED_STATE_LABELS,
-  FEED_STATE_SHORT_LABELS,
-  STOP_REASON_LABELS,
-} from "./constants";
+import { FEED_STATE_LABELS, FEED_STATE_SHORT_LABELS, STOP_REASON_LABELS } from "./constants";
 import type { MarketSource, UpstoxAuthStatus } from "./types";
 
 // Friendly, long-form feed-state label (Settings detail tables).
@@ -28,9 +24,7 @@ export function formatStopReason(reason?: string | null): string {
 }
 
 // Upstox auth chip label + css class (mirrors legacy auth.js state machine).
-export function formatUpstoxAuthChip(
-  s: UpstoxAuthStatus,
-): { label: string; cls: string } {
+export function formatUpstoxAuthChip(s: UpstoxAuthStatus): { label: string; cls: string } {
   if (s.oauth_available === false) {
     return { label: "Credentials Missing", cls: "chip chip-off" };
   }
@@ -53,9 +47,7 @@ export function formatOnOffChip(
   onLabel = "On",
   offLabel = "Off",
 ): { label: string; cls: string } {
-  return on
-    ? { label: onLabel, cls: "chip chip-on" }
-    : { label: offLabel, cls: "chip chip-off" };
+  return on ? { label: onLabel, cls: "chip chip-on" } : { label: offLabel, cls: "chip chip-off" };
 }
 
 // Render a recent transition (e.g. "12:30:45  stopped → streaming (reason)").

@@ -1,23 +1,12 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, type ScannerDef, type ScanResult, type ScanRow } from "@/types";
 import { listScanners, resolveInstrument, runScanner } from "@/api/market";
-import {
-  COLUMNS,
-  renderCell,
-  rowNavigation,
-  type ScannerKind,
-} from "./columns";
 import { AsyncStateView, Button, Field, Input, Select } from "@/components/ui";
+import type { ApiError, ScannerDef, ScanResult, ScanRow } from "@/types";
+import { COLUMNS, renderCell, rowNavigation, type ScannerKind } from "./columns";
 
-const UNIVERSES = [
-  "FNO",
-  "NIFTY50",
-  "BANKNIFTY",
-  "FINNIFTY",
-  "MIDCPNIFTY",
-];
+const UNIVERSES = ["FNO", "NIFTY50", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"];
 
 function kindOf(def: ScannerDef | undefined): ScannerKind {
   if (def?.contract_kind === "future") return "future";
@@ -103,18 +92,10 @@ function ScannerCard({
   const summary = summarize(query.data);
 
   const toggle = () => setOpen((o) => !o);
-  const onKey = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      toggle();
-    }
-  };
 
   let detail: React.ReactNode;
   if (query.isLoading && !query.data) {
-    detail = (
-      <AsyncStateView status="loading" loadingLabel="Scanning…" />
-    );
+    detail = <AsyncStateView status="loading" loadingLabel="Scanning…" />;
   } else if (query.isError) {
     detail = (
       <AsyncStateView
@@ -148,7 +129,7 @@ function ScannerCard({
           <tbody>
             {rows.map((row, i) => (
               <tr
-                key={`${row.symbol}-${row.contract ?? ""}-${i}`}
+                key={`${row.symbol}-${row.contract ?? ""}-${row.expiry ?? ""}-${row.strike ?? ""}-${row.option_type ?? ""}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   onRowClick(row);
@@ -169,29 +150,27 @@ function ScannerCard({
   }
 
   return (
-    <article
-      className={`scanner-card${open ? " is-open" : ""}`}
-      role="button"
-      tabIndex={0}
-      aria-expanded={open}
-      onClick={toggle}
-      onKeyDown={onKey}
-    >
+    <article className={`scanner-card${open ? " is-open" : ""}`}>
       <header className="scanner-card__head">
-        <div className="scanner-card__titles">
-          <h3 className="scanner-card__title">{def.title}</h3>
-          <span className="scanner-card__chevron" aria-hidden="true">
-            ⌄
+        <button
+          type="button"
+          className="scanner-card__toggle"
+          aria-expanded={open}
+          onClick={toggle}
+        >
+          <span className="scanner-card__titles">
+            <span className="scanner-card__title">{def.title}</span>
+            <span className="scanner-card__chevron" aria-hidden="true">
+              ⌄
+            </span>
           </span>
-        </div>
-        <span className="scanner-card__hint" aria-hidden="true">
-          {open ? "Click to collapse" : "Click to expand"}
-        </span>
+          <span className="scanner-card__hint" aria-hidden="true">
+            {open ? "Click to collapse" : "Click to expand"}
+          </span>
+        </button>
         <div className="scanner-card__meta">
           <span className="scanner-tag">{def.instrument_class}</span>
-          {def.contract_kind && (
-            <span className="scanner-tag">{def.contract_kind}</span>
-          )}
+          {def.contract_kind && <span className="scanner-tag">{def.contract_kind}</span>}
           <span className="scanner-tag">{def.metric}</span>
         </div>
         <p className="scanner-card__desc">{def.description}</p>
@@ -199,9 +178,7 @@ function ScannerCard({
 
       {summary && (
         <div className="scanner-card__summary">
-          <span className="scanner-card__count">
-            {summary.matched} matches
-          </span>
+          <span className="scanner-card__count">{summary.matched} matches</span>
           {summary.top && (
             <span className="scanner-card__top">
               Top&nbsp;
@@ -252,21 +229,15 @@ export function ScannersView() {
   const [atmRange, setAtmRange] = useState<number>(5);
   const [optionType, setOptionType] = useState<"CE" | "PE" | "BOTH">("BOTH");
 
-  const hasOption = useMemo(
-    () => defs.some((d) => kindOf(d) === "option"),
-    [defs],
-  );
+  const hasOption = useMemo(() => defs.some((d) => kindOf(d) === "option"), [defs]);
 
-  const refreshAll = () =>
-    queryClient.invalidateQueries({ queryKey: ["scanner-run"] });
+  const refreshAll = () => queryClient.invalidateQueries({ queryKey: ["scanner-run"] });
 
   let grid: React.ReactNode;
   if (scannersQuery.isLoading) {
     grid = <AsyncStateView status="loading" loadingLabel="Loading scanners…" />;
   } else if (scannersQuery.isError) {
-    grid = (
-      <AsyncStateView status="error" error={scannersQuery.error as ApiError} />
-    );
+    grid = <AsyncStateView status="error" error={scannersQuery.error as ApiError} />;
   } else if (!defs.length) {
     grid = <AsyncStateView status="empty" emptyLabel="No scanners available." />;
   } else {
@@ -292,9 +263,7 @@ export function ScannersView() {
     <div className="panel">
       <div className="page-header">
         <h1 className="page-title">Scanners</h1>
-        <span className="muted">
-          {defs.length} scanners · click a card to expand results
-        </span>
+        <span className="muted">{defs.length} scanners · click a card to expand results</span>
       </div>
 
       <div className="toolbar">
@@ -328,10 +297,7 @@ export function ScannersView() {
               />
             </Field>
             <Field label="ATM Range">
-              <Select
-                value={atmRange}
-                onChange={(e) => setAtmRange(Number(e.target.value))}
-              >
+              <Select value={atmRange} onChange={(e) => setAtmRange(Number(e.target.value))}>
                 {[1, 3, 5, 10, 20].map((a) => (
                   <option key={a} value={a}>
                     {a}
@@ -342,9 +308,7 @@ export function ScannersView() {
             <Field label="CE/PE">
               <Select
                 value={optionType}
-                onChange={(e) =>
-                  setOptionType(e.target.value as "CE" | "PE" | "BOTH")
-                }
+                onChange={(e) => setOptionType(e.target.value as "CE" | "PE" | "BOTH")}
               >
                 <option value="BOTH">Both</option>
                 <option value="CE">CE</option>

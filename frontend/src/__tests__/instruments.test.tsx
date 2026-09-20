@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, fireEvent, cleanup } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
   getSegments: vi.fn(),
@@ -62,7 +62,9 @@ describe("InstrumentsView", () => {
   it("renders catalog/source status and segment states", async () => {
     api.getSegments.mockResolvedValue(segResponse(["NSE_EQ", "NSE_FO", "NSE_INDEX", "BSE_INDEX"]));
     api.getSyncState.mockResolvedValue({
-      providers: [{ provider: "upstox", status: "ready", last_sync: "2026-01-01", rows: 2200, error: null }],
+      providers: [
+        { provider: "upstox", status: "ready", last_sync: "2026-01-01", rows: 2200, error: null },
+      ],
     });
     renderWithProviders(<InstrumentsView />);
     expect(await screen.findByText("Source / Sync status")).toBeTruthy();
@@ -78,9 +80,7 @@ describe("InstrumentsView", () => {
   it("reflects SAVED state, not defaults (Fyers NSE_EQ off + NSE_INDEX on)", async () => {
     // Backend returns NSE_EQ disabled but NSE_INDEX enabled — React must show
     // that exact saved state, not overwrite it with defaults.
-    api.getSegments.mockResolvedValue(
-      segResponse(["NSE_FO", "NSE_INDEX", "BSE_INDEX"]),
-    );
+    api.getSegments.mockResolvedValue(segResponse(["NSE_FO", "NSE_INDEX", "BSE_INDEX"]));
     api.getSyncState.mockResolvedValue({ providers: [] });
     renderWithProviders(<InstrumentsView />);
     await screen.findByText("Segments");
@@ -92,9 +92,7 @@ describe("InstrumentsView", () => {
   });
 
   it("toggles a segment and saves via Save & Re-sync", async () => {
-    api.getSegments.mockResolvedValue(
-      segResponse(["NSE_EQ", "NSE_FO", "NSE_INDEX", "BSE_INDEX"]),
-    );
+    api.getSegments.mockResolvedValue(segResponse(["NSE_EQ", "NSE_FO", "NSE_INDEX", "BSE_INDEX"]));
     api.getSyncState.mockResolvedValue({ providers: [] });
     api.setSegments.mockResolvedValue({ status: "ok", enabled: [] });
     api.syncInstruments.mockResolvedValue({ status: "ok", rows: 2200 });
@@ -114,9 +112,7 @@ describe("InstrumentsView", () => {
   });
 
   it("shows sync failure", async () => {
-    api.getSegments.mockResolvedValue(
-      segResponse(["NSE_EQ", "NSE_FO", "NSE_INDEX", "BSE_INDEX"]),
-    );
+    api.getSegments.mockResolvedValue(segResponse(["NSE_EQ", "NSE_FO", "NSE_INDEX", "BSE_INDEX"]));
     api.getSyncState.mockResolvedValue({ providers: [] });
     api.setSegments.mockResolvedValue({ status: "ok", enabled: [] });
     api.syncInstruments.mockRejectedValue(new Error("sync failed: UpstreamError"));

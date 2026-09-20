@@ -2,9 +2,7 @@
 // backend-provided articles + sentiment scores; no scoring, no network.
 import type { NewsArticle, NewsSentiment, SentimentGroup, SentimentSummary } from "./types";
 
-export function buildSentimentMap(
-  sentiments: NewsSentiment[],
-): Map<string, NewsSentiment> {
+export function buildSentimentMap(sentiments: NewsSentiment[]): Map<string, NewsSentiment> {
   return new Map(sentiments.map((s) => [s.item_id, s]));
 }
 
@@ -28,13 +26,7 @@ export function aggregateSentiment(
   }
   const avg = count ? sum / count : 0;
   const label: SentimentSummary["label"] =
-    count === 0
-      ? "No data"
-      : avg > 0
-        ? "Bullish"
-        : avg < 0
-          ? "Bearish"
-          : "Neutral";
+    count === 0 ? "No data" : avg > 0 ? "Bullish" : avg < 0 ? "Bearish" : "Neutral";
   return { avg, count, pos, neu, neg, label };
 }
 
@@ -78,5 +70,5 @@ export function groupBySentiment(
 // the React NewsArticle union does not declare it, so read it loosely.
 export function articleCategory(a: NewsArticle): string {
   const c = (a as NewsArticle & { category?: string }).category;
-  return c && c.length ? c : "—";
+  return c?.length ? c : "—";
 }

@@ -2,6 +2,7 @@
 // shared `request()` helper (which owns the /api prefix and Zod validation) —
 // no hardcoded URLs, no direct fetch, no client-side data processing.
 import { request } from "@/api/client";
+import { newsListSchema, newsSentimentResponseSchema, newsSourcesSchema } from "./schemas";
 import type {
   NewsFilters,
   NewsListResponse,
@@ -10,14 +11,9 @@ import type {
   NewsSource,
   NewsSourceActionResponse,
   NewsSourceInput,
-  NewsSourceType,
   NewsSourcesResponse,
+  NewsSourceType,
 } from "./types";
-import {
-  newsListSchema,
-  newsSentimentResponseSchema,
-  newsSourcesSchema,
-} from "./schemas";
 
 // Translate a NewsFilters object into flat query params the backend expects.
 // Empty arrays are omitted so the backend applies its own defaults.
@@ -25,13 +21,10 @@ export function buildNewsQuery(filters: NewsFilters): Record<string, string> {
   const q: Record<string, string> = {};
   if (filters.source_ids?.length) q.source_ids = filters.source_ids.join(",");
   if (filters.categories?.length) q.categories = filters.categories.join(",");
-  if (filters.keywords_include?.length)
-    q.keywords_include = filters.keywords_include.join(",");
-  if (filters.keywords_exclude?.length)
-    q.keywords_exclude = filters.keywords_exclude.join(",");
+  if (filters.keywords_include?.length) q.keywords_include = filters.keywords_include.join(",");
+  if (filters.keywords_exclude?.length) q.keywords_exclude = filters.keywords_exclude.join(",");
   if (filters.symbol) q.symbol = filters.symbol;
-  if (filters.max_age_hours != null)
-    q.max_age_hours = String(filters.max_age_hours);
+  if (filters.max_age_hours != null) q.max_age_hours = String(filters.max_age_hours);
   if (filters.limit != null) q.limit = String(filters.limit);
   return q;
 }
@@ -69,9 +62,7 @@ export async function refreshNews(
   });
 }
 
-export async function getNewsSources(
-  signal?: AbortSignal,
-): Promise<NewsSourcesResponse> {
+export async function getNewsSources(signal?: AbortSignal): Promise<NewsSourcesResponse> {
   return request<NewsSourcesResponse>("/news/sources", {
     schema: newsSourcesSchema,
     signal,
@@ -94,20 +85,21 @@ export async function updateNewsSource(
   input: Partial<NewsSourceInput>,
   signal?: AbortSignal,
 ): Promise<NewsSourceActionResponse> {
-  return request<NewsSourceActionResponse>(
-    `/news/sources/${encodeURIComponent(sourceId)}`,
-    { method: "PUT", body: input, signal },
-  );
+  return request<NewsSourceActionResponse>(`/news/sources/${encodeURIComponent(sourceId)}`, {
+    method: "PUT",
+    body: input,
+    signal,
+  });
 }
 
 export async function deleteNewsSource(
   sourceId: string,
   signal?: AbortSignal,
 ): Promise<NewsSourceActionResponse> {
-  return request<NewsSourceActionResponse>(
-    `/news/sources/${encodeURIComponent(sourceId)}`,
-    { method: "DELETE", signal },
-  );
+  return request<NewsSourceActionResponse>(`/news/sources/${encodeURIComponent(sourceId)}`, {
+    method: "DELETE",
+    signal,
+  });
 }
 
 export async function setNewsSourceEnabled(
@@ -115,9 +107,7 @@ export async function setNewsSourceEnabled(
   enabled: boolean,
   signal?: AbortSignal,
 ): Promise<NewsSourceActionResponse> {
-  const path = `/news/sources/${encodeURIComponent(sourceId)}/${
-    enabled ? "enable" : "disable"
-  }`;
+  const path = `/news/sources/${encodeURIComponent(sourceId)}/${enabled ? "enable" : "disable"}`;
   return request<NewsSourceActionResponse>(path, { method: "POST", signal });
 }
 

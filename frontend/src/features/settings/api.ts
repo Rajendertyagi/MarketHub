@@ -3,6 +3,19 @@
 // URLs, no direct fetch. OAuth redirects are plain navigation functions (they
 // hand off to the backend which 302s to the broker), not fetch calls.
 import { request } from "@/api/client";
+import {
+  actionResultSchema,
+  appSettingsSchema,
+  chatStatusSchema,
+  fyersSettingsSchema,
+  newsSourcesResponseSchema,
+  sourceControlResultSchema,
+  sourcesStatusResponseSchema,
+  testSourceResultSchema,
+  upstoxAuthStatusSchema,
+  upstoxCredStatusSchema,
+  upstoxFeedConfigSchema,
+} from "./schemas";
 import type {
   AppSettings,
   BackupResult,
@@ -20,19 +33,6 @@ import type {
   UpstoxCredStatus,
   UpstoxFeedConfig,
 } from "./types";
-import {
-  actionResultSchema,
-  appSettingsSchema,
-  chatStatusSchema,
-  fyersSettingsSchema,
-  newsSourcesResponseSchema,
-  sourceControlResultSchema,
-  sourcesStatusResponseSchema,
-  testSourceResultSchema,
-  upstoxAuthStatusSchema,
-  upstoxCredStatusSchema,
-  upstoxFeedConfigSchema,
-} from "./schemas";
 
 // ── Endpoint paths (named constants; no scattered literals in components) ────
 const APP_SETTINGS = "/settings/app";
@@ -71,9 +71,7 @@ export async function saveAppSettings(
 }
 
 // ── Upstox auth + credentials ────────────────────────────────────────────────
-export async function getUpstoxAuthStatus(
-  signal?: AbortSignal,
-): Promise<UpstoxAuthStatus> {
+export async function getUpstoxAuthStatus(signal?: AbortSignal): Promise<UpstoxAuthStatus> {
   return request<UpstoxAuthStatus>(UPSTOX_AUTH_STATUS, {
     schema: upstoxAuthStatusSchema,
     signal,
@@ -100,9 +98,7 @@ export async function forgetUpstoxSession(signal?: AbortSignal): Promise<unknown
   return request(UPSTOX_SESSION, { method: "DELETE", signal });
 }
 
-export async function getUpstoxCredStatus(
-  signal?: AbortSignal,
-): Promise<UpstoxCredStatus> {
+export async function getUpstoxCredStatus(signal?: AbortSignal): Promise<UpstoxCredStatus> {
   return request<UpstoxCredStatus>(UPSTOX_CRED, {
     schema: upstoxCredStatusSchema,
     signal,
@@ -122,9 +118,7 @@ export async function saveUpstoxCredentials(
   });
 }
 
-export async function deleteUpstoxCredentials(
-  signal?: AbortSignal,
-): Promise<SaveResult> {
+export async function deleteUpstoxCredentials(signal?: AbortSignal): Promise<SaveResult> {
   return request<SaveResult>(UPSTOX_CRED, {
     method: "DELETE",
     schema: actionResultSchema,
@@ -132,9 +126,7 @@ export async function deleteUpstoxCredentials(
   });
 }
 
-export async function getUpstoxFeedConfig(
-  signal?: AbortSignal,
-): Promise<UpstoxFeedConfig> {
+export async function getUpstoxFeedConfig(signal?: AbortSignal): Promise<UpstoxFeedConfig> {
   return request<UpstoxFeedConfig>(UPSTOX_FEED, {
     schema: upstoxFeedConfigSchema,
     signal,
@@ -158,9 +150,7 @@ export function loginWithFyers(): void {
   window.location.href = "/api/auth/fyers/login";
 }
 
-export async function getFyersSettings(
-  signal?: AbortSignal,
-): Promise<FyersSettings> {
+export async function getFyersSettings(signal?: AbortSignal): Promise<FyersSettings> {
   return request<FyersSettings>(FYERS_CRED, {
     schema: fyersSettingsSchema,
     signal,
@@ -198,19 +188,14 @@ export async function saveFyersFeedConfig(
 }
 
 // ── News sources ─────────────────────────────────────────────────────────────
-export async function getNewsSources(
-  signal?: AbortSignal,
-): Promise<NewsSourcesResponse> {
+export async function getNewsSources(signal?: AbortSignal): Promise<NewsSourcesResponse> {
   return request<NewsSourcesResponse>(NEWS_SOURCES, {
     schema: newsSourcesResponseSchema,
     signal,
   });
 }
 
-export async function createNewsSource(
-  source: NewsSource,
-  signal?: AbortSignal,
-): Promise<unknown> {
+export async function createNewsSource(source: NewsSource, signal?: AbortSignal): Promise<unknown> {
   return request(NEWS_SOURCES, {
     method: "POST",
     body: source,
@@ -231,10 +216,7 @@ export async function updateNewsSource(
   });
 }
 
-export async function deleteNewsSource(
-  sourceId: string,
-  signal?: AbortSignal,
-): Promise<unknown> {
+export async function deleteNewsSource(sourceId: string, signal?: AbortSignal): Promise<unknown> {
   return request(`${NEWS_SOURCES}/${encodeURIComponent(sourceId)}`, {
     method: "DELETE",
     signal,
@@ -247,10 +229,11 @@ export async function setNewsSourceEnabled(
   signal?: AbortSignal,
 ): Promise<unknown> {
   const action = enabled ? "enable" : "disable";
-  return request(
-    `${NEWS_SOURCES}/${encodeURIComponent(sourceId)}/${action}`,
-    { method: "POST", body: {}, signal },
-  );
+  return request(`${NEWS_SOURCES}/${encodeURIComponent(sourceId)}/${action}`, {
+    method: "POST",
+    body: {},
+    signal,
+  });
 }
 
 export async function testNewsSource(
@@ -266,9 +249,7 @@ export async function testNewsSource(
 }
 
 // ── Market (broker feed) sources ─────────────────────────────────────────────
-export async function getSourcesStatus(
-  signal?: AbortSignal,
-): Promise<SourcesStatusResponse> {
+export async function getSourcesStatus(signal?: AbortSignal): Promise<SourcesStatusResponse> {
   return request<SourcesStatusResponse>(SOURCES_STATUS, {
     schema: sourcesStatusResponseSchema,
     signal,
@@ -280,10 +261,11 @@ export async function controlSource(
   action: "start" | "stop" | "restart",
   signal?: AbortSignal,
 ): Promise<SourceControlResult> {
-  return request<SourceControlResult>(
-    `/sources/${encodeURIComponent(name)}/${action}`,
-    { method: "POST", schema: sourceControlResultSchema, signal },
-  );
+  return request<SourceControlResult>(`/sources/${encodeURIComponent(name)}/${action}`, {
+    method: "POST",
+    schema: sourceControlResultSchema,
+    signal,
+  });
 }
 
 // Reconnect a broker feed through the source manager (no full restart).
@@ -291,10 +273,11 @@ export async function restartBrokerFeed(
   name: string,
   signal?: AbortSignal,
 ): Promise<SourceControlResult> {
-  return request<SourceControlResult>(
-    `/sources/${encodeURIComponent(name)}/restart`,
-    { method: "POST", schema: sourceControlResultSchema, signal },
-  );
+  return request<SourceControlResult>(`/sources/${encodeURIComponent(name)}/restart`, {
+    method: "POST",
+    schema: sourceControlResultSchema,
+    signal,
+  });
 }
 
 // ── AI / MCP ─────────────────────────────────────────────────────────────────

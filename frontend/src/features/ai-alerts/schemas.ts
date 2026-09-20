@@ -48,9 +48,7 @@ const consumerStatusSchema = z.object({
       alert_id: z.string(),
     })
     .nullable(),
-  last_checkpoint: z
-    .object({ last_sequence: z.number(), updated_at: z.string() })
-    .nullable(),
+  last_checkpoint: z.object({ last_sequence: z.number(), updated_at: z.string() }).nullable(),
   unacknowledged_count: z.number(),
 });
 

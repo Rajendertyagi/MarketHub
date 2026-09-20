@@ -1,8 +1,8 @@
 export { AlertsView } from "./AlertsView";
-export * from "./types";
 export {
-  ALERT_FIELDS,
-  ALERT_OPERATORS,
   ALERT_FIELD_LABELS,
+  ALERT_FIELDS,
   ALERT_OPERATOR_LABELS,
+  ALERT_OPERATORS,
 } from "./constants";
+export * from "./types";

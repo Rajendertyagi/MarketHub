@@ -1,7 +1,8 @@
 // Data hooks for Chat. Status is a plain react-query; the conversation is local
 // state with a streaming send (the backend streams SSE events, not a JSON body).
-import { useCallback, useState } from "react";
+
 import { useQuery } from "@tanstack/react-query";
+import { useCallback, useRef, useState } from "react";
 import { getChatStatus, sendChatMessage } from "./api";
 import { CHAT_MAX_MESSAGE } from "./constants";
 import type { ChatEvent, ChatMessage } from "./types";
@@ -28,6 +29,8 @@ export function useChatConversation(): ChatConversation {
   const [activity, setActivity] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [streaming, setStreaming] = useState(false);
+  // Monotonic client-side message ids for stable React keys.
+  const idRef = useRef(0);
 
   const clear = useCallback(() => {
     setMessages([]);
@@ -46,13 +49,17 @@ export function useChatConversation(): ChatConversation {
       setError(null);
       setActivity("");
       const prior = messages;
-      const history: ChatMessage[] = [...prior, { role: "user", content }];
+      const assistantId = `m${idRef.current++}`;
+      const history: ChatMessage[] = [
+        ...prior,
+        { role: "user", content, id: `m${idRef.current++}` },
+      ];
       setMessages(history);
 
       const patchAssistant = (content: string) =>
         setMessages((m) => {
           const copy = [...m];
-          copy[copy.length - 1] = { role: "assistant", content };
+          copy[copy.length - 1] = { role: "assistant", content, id: assistantId };
           return copy;
         });
 

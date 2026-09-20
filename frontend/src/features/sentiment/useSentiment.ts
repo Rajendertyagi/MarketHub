@@ -2,8 +2,8 @@
 // (same backend endpoint) so there is a single source of truth for news data.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getNewsSentiment, refreshNews } from "@/features/news/api";
-import { useNewsSources } from "@/features/news/useNews";
 import type { NewsFilters } from "@/features/news/types";
+import { useNewsSources } from "@/features/news/useNews";
 
 export function useSentiment(filters: NewsFilters) {
   return useQuery({

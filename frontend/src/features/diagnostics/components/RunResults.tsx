@@ -12,19 +12,14 @@ export function RunResults({ result }: { result: DiagnosticRunResult }) {
         <span className="muted">
           {result.symbol ?? "—"} · {result.duration_ms} ms ·{" "}
           {new Date(
-            result.run_at.includes("T")
-              ? result.run_at
-              : result.run_at.replace(" ", "T"),
+            result.run_at.includes("T") ? result.run_at : result.run_at.replace(" ", "T"),
           ).toLocaleString()}
         </span>
       </div>
 
       <div className="diag-summary">
         {statuses.map(([status, count]) => (
-          <span
-            key={status}
-            className={`ui-badge ui-badge-${statusKind(status)}`}
-          >
+          <span key={status} className={`ui-badge ui-badge-${statusKind(status)}`}>
             {status}: {count}
           </span>
         ))}
@@ -57,9 +52,7 @@ export function RunResults({ result }: { result: DiagnosticRunResult }) {
               <td>{r.category}</td>
               <td>{r.layer}</td>
               <td>
-                <span className={`ui-badge ui-badge-${statusKind(r.status)}`}>
-                  {r.status}
-                </span>
+                <span className={`ui-badge ui-badge-${statusKind(r.status)}`}>{r.status}</span>
               </td>
               <td className="diag-msg">{r.message}</td>
               <td className="num">{r.duration_ms}</td>

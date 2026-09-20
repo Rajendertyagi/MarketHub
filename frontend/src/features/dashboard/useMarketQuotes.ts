@@ -4,15 +4,11 @@
 // UI stays smooth without per-tick re-renders. The initial snapshot seeds the
 // map before the stream arrives. A `reset` event clears stale pre-restart state.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useStream } from "@/streams/useStream";
 import type { StreamEvent } from "@/streams/SSEManager";
+import { useStream } from "@/streams/useStream";
 import { getMarketQuotes } from "./api";
-import {
-  MARKET_STREAM_KEY,
-  MARKET_STREAM_URL,
-  QUOTE_FLUSH_MS,
-} from "./constants";
-import { quoteKey, type MarketQuote } from "./types";
+import { MARKET_STREAM_KEY, MARKET_STREAM_URL, QUOTE_FLUSH_MS } from "./constants";
+import { type MarketQuote, quoteKey } from "./types";
 
 export interface MarketQuotesState {
   quotes: MarketQuote[];

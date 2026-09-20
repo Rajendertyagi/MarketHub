@@ -22,7 +22,11 @@ export function normalizeCandles(candles: Candle[]): Candle[] {
 
 export function isChronological(candles: Candle[]): boolean {
   for (let i = 1; i < candles.length; i++) {
-    if (tsOf(candles[i]!) < tsOf(candles[i - 1]!)) return false;
+    const cur = candles[i];
+    const prev = candles[i - 1];
+    // Guarded for noUncheckedIndexedAccess; unreachable by loop bounds.
+    if (cur === undefined || prev === undefined) continue;
+    if (tsOf(cur) < tsOf(prev)) return false;
   }
   return true;
 }

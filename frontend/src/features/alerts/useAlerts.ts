@@ -11,10 +11,7 @@ import {
   rearmAlert,
   setAlertEnabled,
 } from "./api";
-import {
-  ALERT_HISTORY_LIMIT,
-  ALERT_REFRESH_MS,
-} from "./constants";
+import { ALERT_HISTORY_LIMIT, ALERT_REFRESH_MS } from "./constants";
 import type { AlertHistoryParams, CreateAlertInput } from "./types";
 
 export function useAlerts() {
@@ -29,10 +26,7 @@ export function useAlertHistory(params: AlertHistoryParams = {}) {
   return useQuery({
     queryKey: ["alerts", "history", params],
     queryFn: ({ signal }) =>
-      getAlertHistory(
-        { limit: ALERT_HISTORY_LIMIT, offset: 0, ...params },
-        signal,
-      ),
+      getAlertHistory({ limit: ALERT_HISTORY_LIMIT, offset: 0, ...params }, signal),
     refetchInterval: ALERT_REFRESH_MS,
   });
 }
@@ -62,8 +56,7 @@ export function useAlertMutations(): AlertMutations {
     onSuccess: invalidate,
   });
   const enableMut = useMutation({
-    mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) =>
-      setAlertEnabled(id, enabled),
+    mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) => setAlertEnabled(id, enabled),
     onSuccess: invalidate,
   });
   const clearMut = useMutation({

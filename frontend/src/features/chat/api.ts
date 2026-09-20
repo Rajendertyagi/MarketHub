@@ -3,8 +3,8 @@
 // fetch stream and surfaced through the `onEvent` callback — no direct JSON
 // parsing of the stream, no client-side response synthesis.
 import { request } from "@/api/client";
-import { chatStatusSchema } from "./schemas";
 import { CHAT_HISTORY_LIMIT } from "./constants";
+import { chatStatusSchema } from "./schemas";
 import type { ChatEvent, ChatMessage, ChatStatus } from "./types";
 
 export async function getChatStatus(signal?: AbortSignal): Promise<ChatStatus> {
@@ -24,7 +24,10 @@ export async function sendChatMessage(opts: SendChatOptions): Promise<void> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       message: opts.message,
-      history: opts.history.slice(-CHAT_HISTORY_LIMIT),
+      // Wire contract is {role, content} only — strip client-side ids.
+      history: opts.history
+        .slice(-CHAT_HISTORY_LIMIT)
+        .map(({ role, content }) => ({ role, content })),
     }),
     signal: opts.signal,
   });
@@ -39,15 +42,15 @@ export async function sendChatMessage(opts: SendChatOptions): Promise<void> {
     throw new Error(message);
   }
 
-  const reader = res.body!.getReader();
+  if (!res.body) throw new Error("empty response body");
+  const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   for (;;) {
     const chunk = await reader.read();
     if (chunk.done) break;
     buffer += decoder.decode(chunk.value, { stream: true });
-    let idx: number;
-    while ((idx = buffer.indexOf("\n\n")) >= 0) {
+    for (let idx = buffer.indexOf("\n\n"); idx >= 0; idx = buffer.indexOf("\n\n")) {
       const raw = buffer.slice(0, idx);
       buffer = buffer.slice(idx + 2);
       if (!raw.startsWith("data:")) continue;

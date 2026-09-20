@@ -30,7 +30,7 @@ export class GlobalErrorBoundary extends Component<Props, State> {
         <div className="state">
           <h2>Something went wrong</h2>
           <p className="muted">{this.state.error.message}</p>
-          <button className="btn btn-primary" onClick={this.reset}>
+          <button type="button" className="btn btn-primary" onClick={this.reset}>
             Try again
           </button>
         </div>

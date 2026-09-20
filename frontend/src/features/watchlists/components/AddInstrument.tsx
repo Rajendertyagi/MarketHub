@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { searchInstruments } from "@/api/market";
+import { Button, Input } from "@/components/ui";
 import type { Instrument } from "@/types";
 import { ApiError } from "@/types";
-import { Button, Input } from "@/components/ui";
 import { useWatchlistMutations } from "../useWatchlists";
 
 interface Props {
@@ -111,8 +111,6 @@ export function AddInstrument({ watchlistId, existingTokens, onAdded }: Props) {
             className="filter-input"
             placeholder="Search catalog to add (RELIANCE, NIFTY)…"
             aria-label="Search instruments to add to watchlist"
-            aria-expanded={listOpen}
-            role="combobox"
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
@@ -122,22 +120,24 @@ export function AddInstrument({ watchlistId, existingTokens, onAdded }: Props) {
             onFocus={() => setListOpen(true)}
           />
           {listOpen && results.length > 0 && (
-            <ul className="watchlist-add-list" role="listbox">
+            <ul className="watchlist-add-list">
               {results.map((r) => (
-                <li
-                  key={`${r.exchange}:${r.instrument_token}`}
-                  role="option"
-                  aria-selected={false}
-                  className="watchlist-add-opt"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    pick(r);
-                  }}
-                >
-                  <span className="watchlist-add-opt-name">{r.tradingsymbol}</span>
-                  <span className="muted">
-                    {r.exchange} · {r.instrument_type}
-                  </span>
+                <li key={`${r.exchange}:${r.instrument_token}`}>
+                  <button
+                    type="button"
+                    className="watchlist-add-opt"
+                    aria-label={`Add ${r.tradingsymbol}, ${r.exchange}`}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      pick(r);
+                    }}
+                    onClick={() => pick(r)}
+                  >
+                    <span className="watchlist-add-opt-name">{r.tradingsymbol}</span>
+                    <span className="muted">
+                      {r.exchange} · {r.instrument_type}
+                    </span>
+                  </button>
                 </li>
               ))}
             </ul>

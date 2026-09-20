@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, cleanup, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ThemeProvider } from "@/app/ThemeProvider";
 import { ApiError } from "@/types";
 
@@ -30,16 +30,13 @@ function renderWithProviders(ui: ReactNode, entries: string[] = ["/charts"]) {
   );
 }
 
-const URL_WITH_INST =
-  "/charts?key=NSE_HDFC&sym=HDFCBANK&ex=NSE&type=EQUITY";
+const URL_WITH_INST = "/charts?key=NSE_HDFC&sym=HDFCBANK&ex=NSE&type=EQUITY";
 
 afterEach(() => cleanup());
 
 describe("ChartsView async states", () => {
   it("shows loading state while history is requested", async () => {
-    (getHistory as ReturnType<typeof vi.fn>).mockReturnValue(
-      new Promise(() => {}),
-    );
+    (getHistory as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
     renderWithProviders(<ChartsView />, [URL_WITH_INST]);
     expect(await screen.findByText(/Loading history/)).toBeInTheDocument();
   });
@@ -49,9 +46,7 @@ describe("ChartsView async states", () => {
       candles: [],
     });
     renderWithProviders(<ChartsView />, [URL_WITH_INST]);
-    expect(
-      await screen.findByText(/No history data returned/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/No history data returned/)).toBeInTheDocument();
   });
 
   it("shows error state on backend failure", async () => {
@@ -69,9 +64,7 @@ describe("ChartsView async states", () => {
       }),
     );
     renderWithProviders(<ChartsView />, [URL_WITH_INST]);
-    expect(
-      await screen.findByText(/does not support history/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/does not support history/)).toBeInTheDocument();
   });
 
   it("renders the chart heading and instrument context from URL", async () => {
@@ -87,8 +80,6 @@ describe("ChartsView async states", () => {
       ],
     });
     renderWithProviders(<ChartsView />, [URL_WITH_INST]);
-    await waitFor(() =>
-      expect(screen.getByText(/HDFCBANK/)).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText(/HDFCBANK/)).toBeInTheDocument());
   });
 });

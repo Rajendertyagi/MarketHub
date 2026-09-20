@@ -1,9 +1,5 @@
 import { useEffect, useRef } from "react";
-import {
-  subscribeStream,
-  type StreamEvent,
-  type StreamOptions,
-} from "./SSEManager";
+import { type StreamEvent, type StreamOptions, subscribeStream } from "./SSEManager";
 
 // React binding for the single-owner SSE layer.
 //

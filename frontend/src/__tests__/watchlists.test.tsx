@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/api/market", () => ({
   searchInstruments: vi.fn(),
@@ -19,9 +19,9 @@ vi.mock("@/features/watchlists/api", () => ({
 
 import { searchInstruments } from "@/api/market";
 import { addWatchlistItem } from "@/features/watchlists/api";
-import { ApiError } from "@/types";
 import { AddInstrument } from "@/features/watchlists/components/AddInstrument";
 import { WatchlistTable } from "@/features/watchlists/components/WatchlistTable";
+import { ApiError } from "@/types";
 
 function renderWithProviders(ui: ReactNode) {
   const client = new QueryClient({
@@ -53,18 +53,15 @@ describe("AddInstrument", () => {
       status: "ok",
     });
 
-    renderWithProviders(
-      <AddInstrument watchlistId={7} existingTokens={new Set()} />,
-    );
+    renderWithProviders(<AddInstrument watchlistId={7} existingTokens={new Set()} />);
 
-    fireEvent.change(
-      screen.getByLabelText("Search instruments to add to watchlist"),
-      { target: { value: "RELI" } },
-    );
+    fireEvent.change(screen.getByLabelText("Search instruments to add to watchlist"), {
+      target: { value: "RELI" },
+    });
 
-    const opt = await screen.findByRole("option");
+    const opt = await screen.findByRole("button", { name: /RELIANCE/ });
     expect(opt).toHaveTextContent("RELIANCE");
-    fireEvent.mouseDown(opt);
+    fireEvent.click(opt);
 
     fireEvent.click(screen.getByRole("button", { name: /add/i }));
 
@@ -84,20 +81,15 @@ describe("AddInstrument", () => {
       new ApiError("http", "already in watchlist", { status: 409 }),
     );
 
-    renderWithProviders(
-      <AddInstrument watchlistId={7} existingTokens={new Set()} />,
-    );
+    renderWithProviders(<AddInstrument watchlistId={7} existingTokens={new Set()} />);
 
-    fireEvent.change(
-      screen.getByLabelText("Search instruments to add to watchlist"),
-      { target: { value: "RELI" } },
-    );
-    fireEvent.mouseDown(await screen.findByRole("option"));
+    fireEvent.change(screen.getByLabelText("Search instruments to add to watchlist"), {
+      target: { value: "RELI" },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /RELIANCE/ }));
     fireEvent.click(screen.getByRole("button", { name: /add/i }));
 
-    expect(
-      await screen.findByText("Already in this watchlist."),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Already in this watchlist.")).toBeInTheDocument();
   });
 });
 
@@ -127,24 +119,16 @@ describe("WatchlistTable", () => {
       },
     ];
 
-    renderWithProviders(
-      <WatchlistTable items={items} quotes={quotes} onRemove={() => {}} />,
-    );
+    renderWithProviders(<WatchlistTable items={items} quotes={quotes} onRemove={() => {}} />);
 
     const link = screen.getByRole("link", { name: "RELIANCE" });
     expect(link.getAttribute("href")).toContain("/charts?");
-    expect(link.getAttribute("href")).toContain(
-      `key=${encodeURIComponent("NSE_EQ:RELIANCE")}`,
-    );
+    expect(link.getAttribute("href")).toContain(`key=${encodeURIComponent("NSE_EQ:RELIANCE")}`);
     expect(screen.getByText("2,500.00")).toBeInTheDocument();
   });
 
   it("points at the add box when empty", () => {
-    renderWithProviders(
-      <WatchlistTable items={[]} quotes={[]} onRemove={() => {}} />,
-    );
-    expect(
-      screen.getByText(/Search above to add instruments/),
-    ).toBeInTheDocument();
+    renderWithProviders(<WatchlistTable items={[]} quotes={[]} onRemove={() => {}} />);
+    expect(screen.getByText(/Search above to add instruments/)).toBeInTheDocument();
   });
 });

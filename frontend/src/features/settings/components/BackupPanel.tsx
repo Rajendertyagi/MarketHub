@@ -1,5 +1,5 @@
-import { Button } from "@/components/ui";
 import { useState } from "react";
+import { Button } from "@/components/ui";
 import { useBackup } from "../useSettings";
 
 export function BackupPanel() {
@@ -28,7 +28,7 @@ export function BackupPanel() {
         <h2>Backup</h2>
       </div>
       <div className="setting-row">
-        <label>Database Backup</label>
+        <span className="auth-label">Database Backup</span>
         <Button onClick={onBackup} disabled={backup.isPending}>
           {backup.isPending ? "Backing up…" : "Backup Database"}
         </Button>

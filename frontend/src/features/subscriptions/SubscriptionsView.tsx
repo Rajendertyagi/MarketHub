@@ -1,10 +1,7 @@
 import { useState } from "react";
-import { ApiError, type DerivativeRule, type SubscriptionIndex, type SubscriptionStock } from "@/types";
-import {
-  useSubscriptionMutations,
-  useSubscriptions,
-} from "./useSubscriptions";
 import { AsyncStateView, Button, Field, Input, Select, Tabs } from "@/components/ui";
+import type { ApiError, DerivativeRule, SubscriptionIndex, SubscriptionStock } from "@/types";
+import { useSubscriptionMutations, useSubscriptions } from "./useSubscriptions";
 
 type Tab = "indices" | "stocks" | "rules";
 
@@ -177,9 +174,7 @@ export function SubscriptionsView() {
   const [newKey, setNewKey] = useState("");
   const [newLabel, setNewLabel] = useState("");
   const [newRuleUnderlying, setNewRuleUnderlying] = useState("");
-  const [applyMsg, setApplyMsg] = useState<{ ok: boolean; text: string } | null>(
-    null,
-  );
+  const [applyMsg, setApplyMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const query = useSubscriptions();
   const m = useSubscriptionMutations();
@@ -337,8 +332,7 @@ export function SubscriptionsView() {
       <div className="page-header">
         <h1 className="page-title">Subscriptions</h1>
         <span className="muted">
-          DB-backed preferences · backend resolves contracts &amp; reconciles
-          feeds
+          DB-backed preferences · backend resolves contracts &amp; reconciles feeds
         </span>
       </div>
 
@@ -373,11 +367,7 @@ export function SubscriptionsView() {
         >
           Save &amp; Apply (no restart)
         </Button>
-        {applyMsg && (
-          <span className={applyMsg.ok ? "hint ok" : "hint err"}>
-            {applyMsg.text}
-          </span>
-        )}
+        {applyMsg && <span className={applyMsg.ok ? "hint ok" : "hint err"}>{applyMsg.text}</span>}
       </div>
 
       {body}

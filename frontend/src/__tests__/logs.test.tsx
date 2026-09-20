@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, vi, beforeAll } from "vitest";
-import { render, screen, waitFor, fireEvent, cleanup } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 // jsdom has no EventSource; provide a no-op so the live-stream hook mounts.
 beforeAll(() => {
@@ -10,8 +10,11 @@ beforeAll(() => {
     onopen: (() => void) | null = null;
     onmessage: ((e: { data: string }) => void) | null = null;
     onerror: (() => void) | null = null;
+    readonly url: string;
     close() {}
-    constructor(_url: string) {}
+    constructor(url: string) {
+      this.url = url;
+    }
   }
   (globalThis as unknown as { EventSource: unknown }).EventSource = MockEventSource;
 });

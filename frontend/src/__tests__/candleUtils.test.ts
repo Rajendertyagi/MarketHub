@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeCandles, isChronological } from "@/features/charts/candleUtils";
+import { isChronological, normalizeCandles } from "@/features/charts/candleUtils";
 import type { Candle } from "@/types";
 
 function c(ts: string, close: number): Candle {

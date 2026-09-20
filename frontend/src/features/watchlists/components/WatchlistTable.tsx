@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { fmtNum, fmtVol, tone } from "@/utils/format";
-import { quoteKey, type MarketQuote } from "@/features/dashboard/types";
-import type { WatchlistItem } from "../types";
+import { type MarketQuote, quoteKey } from "@/features/dashboard/types";
 import { chartHref } from "@/features/fno/chartNav";
+import { fmtNum, fmtVol, tone } from "@/utils/format";
+import type { WatchlistItem } from "../types";
 
 interface Props {
   items: WatchlistItem[];
@@ -95,35 +95,23 @@ export function WatchlistTable({ items, quotes, onRemove }: Props) {
                   <td>
                     <Link
                       className="link"
-                      to={chartHref(
-                        it.instrument_token,
-                        sym,
-                        it.exchange ?? "",
-                        "EQUITY",
-                      )}
+                      to={chartHref(it.instrument_token, sym, it.exchange ?? "", "EQUITY")}
                       title={`Chart ${sym}`}
                     >
                       {sym}
                     </Link>
                   </td>
                   <td className="num">{q?.ltp != null ? fmtNum(q.ltp) : "—"}</td>
+                  <td className={`num ${t}`}>{q?.change != null ? fmtNum(q.change) : "—"}</td>
                   <td className={`num ${t}`}>
-                    {q?.change != null ? fmtNum(q.change) : "—"}
-                  </td>
-                  <td className={`num ${t}`}>
-                    {q?.change_percent != null
-                      ? `${fmtNum(q.change_percent)}%`
-                      : "—"}
+                    {q?.change_percent != null ? `${fmtNum(q.change_percent)}%` : "—"}
                   </td>
                   <td className="num">{q ? fmtVol(q.volume) : "—"}</td>
-                  <td className="num">
-                    {q?.best_bid != null ? fmtNum(q.best_bid) : "—"}
-                  </td>
-                  <td className="num">
-                    {q?.best_ask != null ? fmtNum(q.best_ask) : "—"}
-                  </td>
+                  <td className="num">{q?.best_bid != null ? fmtNum(q.best_bid) : "—"}</td>
+                  <td className="num">{q?.best_ask != null ? fmtNum(q.best_ask) : "—"}</td>
                   <td>
                     <button
+                      type="button"
                       className="btn btn-compact"
                       aria-label="Remove item"
                       onClick={() => onRemove(it.id)}

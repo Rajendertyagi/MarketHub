@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { echartsMock } = vi.hoisted(() => {
   const instance = {
@@ -131,15 +131,11 @@ describe("BreadthView", () => {
     await screen.findByText("RELIANCE");
     const select = (await screen.findByDisplayValue("NIFTY50")) as HTMLSelectElement;
     fireEvent.change(select, { target: { value: "FNO" } });
-    await waitFor(() =>
-      expect(getBreadth).toHaveBeenLastCalledWith("FNO", expect.anything()),
-    );
+    await waitFor(() => expect(getBreadth).toHaveBeenLastCalledWith("FNO", expect.anything()));
   });
 
   it("shows error state and retry", async () => {
-    (getBreadth as ReturnType<typeof vi.fn>).mockRejectedValue(
-      new Error("breadth failed"),
-    );
+    (getBreadth as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("breadth failed"));
     renderWithProviders(<BreadthView />);
     expect(await screen.findByText(/breadth failed/)).toBeInTheDocument();
     expect(screen.getByText("Retry")).toBeInTheDocument();

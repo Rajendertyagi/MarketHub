@@ -33,9 +33,7 @@ export function SentimentBreakdown({ title, groups }: Props) {
               <td className="num pos">{g.pos}</td>
               <td className="num muted">{g.neu}</td>
               <td className="num neg">{g.neg}</td>
-              <td
-                className={`num ${g.avg > 0 ? "pos" : g.avg < 0 ? "neg" : "muted"}`}
-              >
+              <td className={`num ${g.avg > 0 ? "pos" : g.avg < 0 ? "neg" : "muted"}`}>
                 {g.avg.toFixed(2)}
               </td>
             </tr>

@@ -3,9 +3,9 @@
 // scoring lives in the backend (NewsService).
 export type {
   NewsArticle,
+  NewsFilters,
   NewsSentiment,
   NewsSentimentResponse,
-  NewsFilters,
   NewsSource,
 } from "@/features/news/types";
 

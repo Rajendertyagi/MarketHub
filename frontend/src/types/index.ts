@@ -10,13 +10,7 @@
 //  - IV is a canonical decimal fraction (0.1758 == 17.58%). Only presentation
 //    converts it to a percentage.
 
-export type InstrumentType =
-  | "EQUITY"
-  | "INDEX"
-  | "FUTURE"
-  | "OPTION"
-  | "CURRENCY"
-  | "COMMODITY";
+export type InstrumentType = "EQUITY" | "INDEX" | "FUTURE" | "OPTION" | "CURRENCY" | "COMMODITY";
 
 export interface Instrument {
   instrument_token: string;
@@ -100,13 +94,7 @@ export interface ScannerRunParams {
 // The single canonical universe set (market/market_universe.UNIVERSE_NAMES),
 // which is also the only set accepted by the analytics-coverage owner. The
 // frontend never invents a divergent universe model.
-export const ANALYTICS_UNIVERSES = [
-  "FNO",
-  "NSE_EQ",
-  "NIFTY50",
-  "NIFTYNXT50",
-  "BANKNIFTY",
-] as const;
+export const ANALYTICS_UNIVERSES = ["FNO", "NSE_EQ", "NIFTY50", "NIFTYNXT50", "BANKNIFTY"] as const;
 
 export type AnalyticsUniverse = (typeof ANALYTICS_UNIVERSES)[number];
 
@@ -436,12 +424,7 @@ export interface FutureView {
 }
 
 // Typed error taxonomy produced by the API client (see api/client.ts).
-export type ApiErrorKind =
-  | "network"
-  | "http"
-  | "parse"
-  | "abort"
-  | "unknown";
+export type ApiErrorKind = "network" | "http" | "parse" | "abort" | "unknown";
 
 export class ApiError extends Error {
   readonly kind: ApiErrorKind;

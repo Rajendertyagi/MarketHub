@@ -7,12 +7,7 @@
 
 import type { InstrumentType } from "@/types";
 
-export function chartHref(
-  key: string,
-  sym: string,
-  ex: string,
-  type: InstrumentType,
-): string {
+export function chartHref(key: string, sym: string, ex: string, type: InstrumentType): string {
   const p = new URLSearchParams({ key, sym, ex, type });
   return `/charts?${p.toString()}`;
 }

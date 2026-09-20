@@ -1,10 +1,9 @@
-import { useState } from "react";
-import { Button } from "@/components/ui";
-import { AsyncStateView } from "@/components/ui";
-import { useNewsSources, useNewsSourceMutations } from "../useSettings";
-import { NEWS_SOURCE_TYPES, NEWS_SOURCE_TYPE_LABELS } from "../constants";
+import { useId, useState } from "react";
+import { AsyncStateView, Button, Modal } from "@/components/ui";
 import type { ApiError } from "@/types";
+import { NEWS_SOURCE_TYPE_LABELS, NEWS_SOURCE_TYPES } from "../constants";
 import type { NewsSource, NewsSourceType } from "../types";
+import { useNewsSourceMutations, useNewsSources } from "../useSettings";
 
 const EMPTY: NewsSource = {
   source_id: "",
@@ -24,6 +23,7 @@ export function NewsSourcesPanel() {
   const [isOpen, setIsOpen] = useState(false);
   const [testResult, setTestResult] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const uid = useId();
 
   const sources = data?.sources ?? [];
 
@@ -45,9 +45,7 @@ export function NewsSourcesPanel() {
     return <AsyncStateView status="loading" loadingLabel="Loading news sources…" />;
   }
   if (status === "error") {
-    return (
-      <AsyncStateView status="error" error={error as ApiError} onRetry={() => refetch()} />
-    );
+    return <AsyncStateView status="error" error={error as ApiError} onRetry={() => refetch()} />;
   }
 
   async function onSave() {
@@ -152,7 +150,9 @@ export function NewsSourcesPanel() {
                 <tr key={s.source_id}>
                   <td className="source-id">{s.source_id}</td>
                   <td>{s.name}</td>
-                  <td>{NEWS_SOURCE_TYPE_LABELS[s.source_type as NewsSourceType] ?? s.source_type}</td>
+                  <td>
+                    {NEWS_SOURCE_TYPE_LABELS[s.source_type as NewsSourceType] ?? s.source_type}
+                  </td>
                   <td>{s.category ?? "—"}</td>
                   <td>
                     {s.enabled ? (
@@ -164,21 +164,21 @@ export function NewsSourcesPanel() {
                   <td className="source-id source-summary">
                     {s.source_type === "rss"
                       ? (s.config_json?.url ?? "").slice(0, 50)
-                      : "r/" + (s.config_json?.subreddit ?? "")}
+                      : `r/${s.config_json?.subreddit ?? ""}`}
                   </td>
                   <td>
                     <button
+                      type="button"
                       className="news-action-btn"
-                      onClick={() =>
-                        m.setEnabled({ id: s.source_id, enabled: !s.enabled })
-                      }
+                      onClick={() => m.setEnabled({ id: s.source_id, enabled: !s.enabled })}
                     >
                       {s.enabled ? "Disable" : "Enable"}
                     </button>{" "}
-                    <button className="news-action-btn" onClick={() => openEdit(s)}>
+                    <button type="button" className="news-action-btn" onClick={() => openEdit(s)}>
                       Edit
                     </button>{" "}
                     <button
+                      type="button"
                       className="news-action-btn danger"
                       onClick={() => m.remove(s.source_id)}
                     >
@@ -193,27 +193,22 @@ export function NewsSourcesPanel() {
       </div>
 
       {isOpen && editing ? (
-        <div
-          className="modal-backdrop"
-          onClick={() => setIsOpen(false)}
-          role="presentation"
+        <Modal
+          label={isNew ? "Add news source" : "Edit news source"}
+          onClose={() => setIsOpen(false)}
         >
-          <div
-            className="modal-card"
-            onClick={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-label={isNew ? "Add news source" : "Edit news source"}
-          >
+          <div className="modal-card">
             <div className="modal-header">
               <h3>{isNew ? "Add Source" : "Edit Source"}</h3>
-              <button className="icon-btn" onClick={() => setIsOpen(false)}>
+              <button type="button" className="icon-btn" onClick={() => setIsOpen(false)}>
                 ×
               </button>
             </div>
             <div className="modal-body">
               <div className="form-row">
-                <label>Source ID</label>
+                <label htmlFor={`${uid}-src-id`}>Source ID</label>
                 <input
+                  id={`${uid}-src-id`}
                   className="filter-input"
                   value={editing.source_id}
                   disabled={!isNew}
@@ -221,16 +216,18 @@ export function NewsSourcesPanel() {
                 />
               </div>
               <div className="form-row">
-                <label>Name</label>
+                <label htmlFor={`${uid}-src-name`}>Name</label>
                 <input
+                  id={`${uid}-src-name`}
                   className="filter-input"
                   value={editing.name}
                   onChange={(e) => setEditing({ ...editing, name: e.target.value })}
                 />
               </div>
               <div className="form-row">
-                <label>Type</label>
+                <label htmlFor={`${uid}-src-type`}>Type</label>
                 <select
+                  id={`${uid}-src-type`}
                   className="filter-input"
                   value={type}
                   onChange={(e) =>
@@ -248,8 +245,9 @@ export function NewsSourcesPanel() {
                 </select>
               </div>
               <div className="form-row">
-                <label>Category</label>
+                <label htmlFor={`${uid}-src-cat`}>Category</label>
                 <input
+                  id={`${uid}-src-cat`}
                   className="filter-input"
                   value={editing.category ?? ""}
                   onChange={(e) => setEditing({ ...editing, category: e.target.value })}
@@ -257,8 +255,9 @@ export function NewsSourcesPanel() {
               </div>
               {type === "rss" ? (
                 <div className="form-row">
-                  <label>RSS URL</label>
+                  <label htmlFor={`${uid}-src-url`}>RSS URL</label>
                   <input
+                    id={`${uid}-src-url`}
                     className="filter-input"
                     value={editing.config_json?.url ?? ""}
                     onChange={(e) =>
@@ -271,8 +270,9 @@ export function NewsSourcesPanel() {
                 </div>
               ) : (
                 <div className="form-row">
-                  <label>Subreddit</label>
+                  <label htmlFor={`${uid}-src-sub`}>Subreddit</label>
                   <input
+                    id={`${uid}-src-sub`}
                     className="filter-input"
                     value={editing.config_json?.subreddit ?? ""}
                     onChange={(e) =>
@@ -285,7 +285,7 @@ export function NewsSourcesPanel() {
                 </div>
               )}
               <div className="form-row">
-                <label></label>
+                <span className="auth-label" aria-hidden="true" />
                 <Button onClick={onTest} disabled={busy}>
                   Test Source
                 </Button>
@@ -303,7 +303,7 @@ export function NewsSourcesPanel() {
               </Button>
             </div>
           </div>
-        </div>
+        </Modal>
       ) : null}
     </div>
   );

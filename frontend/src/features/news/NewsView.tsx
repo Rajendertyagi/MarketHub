@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ApiError } from "@/types";
-import { Button } from "@/components/ui";
-import { useNewsMutations, useNewsSentiment, useNewsSources } from "./useNews";
-import type { NewsFilters, NewsSentiment } from "./types";
-import { NewsSourcesPane } from "./components/NewsSourcesPane";
+import { Button, Modal } from "@/components/ui";
+import type { ApiError } from "@/types";
 import { NewsArticleList } from "./components/NewsArticleList";
 import { NewsReader } from "./components/NewsReader";
+import { NewsSourcesPane } from "./components/NewsSourcesPane";
 import { SourcesManager } from "./components/SourcesManager";
+import type { NewsFilters, NewsSentiment } from "./types";
+import { useNewsMutations, useNewsSentiment, useNewsSources } from "./useNews";
 
 // Three-column RSS-reader layout: Sources+filters | Article list | Reader.
 // Reuses the News backend (articles + sentiment from /news/sentiment); React
@@ -25,7 +25,9 @@ export function NewsView() {
   const articles = useMemo(() => news.data?.articles ?? [], [news.data]);
   const sentimentById = useMemo(() => {
     const map = new Map<string, NewsSentiment>();
-    (news.data?.sentiments ?? []).forEach((s) => map.set(s.item_id, s));
+    (news.data?.sentiments ?? []).forEach((s) => {
+      map.set(s.item_id, s);
+    });
     return map;
   }, [news.data]);
 
@@ -42,8 +44,7 @@ export function NewsView() {
     prevIds.current = ids;
   }, [articles]);
 
-  const selected =
-    articles.find((a) => a.item_id === selectedId) ?? articles[0];
+  const selected = articles.find((a) => a.item_id === selectedId) ?? articles[0];
 
   const onRefresh = async () => {
     try {
@@ -54,23 +55,8 @@ export function NewsView() {
     }
   };
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    const tag = (document.activeElement?.tagName ?? "").toUpperCase();
-    if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
-    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-    if (articles.length === 0) return;
-    e.preventDefault();
-    const idx = articles.findIndex((a) => a.item_id === selected?.item_id);
-    const next =
-      e.key === "ArrowDown"
-        ? Math.min(articles.length - 1, idx + 1)
-        : Math.max(0, idx - 1);
-    const target = articles[next];
-    if (target) setSelectedId(target.item_id);
-  };
-
   return (
-    <div className="panel news-reader" onKeyDown={onKeyDown}>
+    <div className="panel news-reader">
       <div className="panel-header">
         <div>
           <h1 className="page-title">News</h1>
@@ -84,6 +70,7 @@ export function NewsView() {
           </Button>
           {newCount > 0 ? (
             <button
+              type="button"
               className="news-new-pill"
               onClick={() => {
                 setNewCount(0);
@@ -120,20 +107,12 @@ export function NewsView() {
       </div>
 
       {showSources ? (
-        <div
-          className="modal-backdrop"
-          onClick={() => setShowSources(false)}
-          role="presentation"
-        >
-          <div
-            className="modal-card"
-            onClick={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-label="Manage news sources"
-          >
+        <Modal label="Manage news sources" onClose={() => setShowSources(false)}>
+          <div className="modal-card">
             <div className="modal-header">
               <h3>Manage News Sources</h3>
               <button
+                type="button"
                 className="icon-btn"
                 aria-label="Close"
                 onClick={() => setShowSources(false)}
@@ -145,7 +124,7 @@ export function NewsView() {
               <SourcesManager />
             </div>
           </div>
-        </div>
+        </Modal>
       ) : null}
     </div>
   );

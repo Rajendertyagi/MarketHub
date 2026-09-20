@@ -13,15 +13,11 @@ describe("buildIdlessUrl (API prefix regression)", () => {
   });
 
   it("does NOT double-prefix an already-correct /api path", () => {
-    expect(buildIdlessUrl("/api/market/breadth")).toBe(
-      "/api/market/breadth",
-    );
+    expect(buildIdlessUrl("/api/market/breadth")).toBe("/api/market/breadth");
   });
 
   it("keeps a deeper feature path under /api", () => {
-    expect(buildIdlessUrl("/options/chain/view")).toBe(
-      "/api/options/chain/view",
-    );
+    expect(buildIdlessUrl("/options/chain/view")).toBe("/api/options/chain/view");
   });
 
   it("appends query parameters", () => {
@@ -44,9 +40,7 @@ describe("buildIdlessUrl (API prefix regression)", () => {
       expiry: "2026-10-30",
       window: 10,
     });
-    expect(url).toBe(
-      "/api/options/chain/view?underlying=NIFTY&expiry=2026-10-30&window=10",
-    );
+    expect(url).toBe("/api/options/chain/view?underlying=NIFTY&expiry=2026-10-30&window=10");
   });
 
   it("returns a same-origin relative path (no host) for production", () => {

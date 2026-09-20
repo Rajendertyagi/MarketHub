@@ -1,10 +1,10 @@
-import { ApiError } from "@/types";
 import { AsyncStateView } from "@/components/ui";
-import { useAlerts } from "./useAlerts";
+import type { ApiError } from "@/types";
 import { AlertForm } from "./components/AlertForm";
+import { AlertHistory } from "./components/AlertHistory";
 import { AlertsTable } from "./components/AlertsTable";
 import { NotificationsPanel } from "./components/NotificationsPanel";
-import { AlertHistory } from "./components/AlertHistory";
+import { useAlerts } from "./useAlerts";
 
 export function AlertsView() {
   const { data, status, error, refetch } = useAlerts();
@@ -23,11 +23,7 @@ export function AlertsView() {
       {status === "pending" ? (
         <AsyncStateView status="loading" loadingLabel="Loading alerts…" />
       ) : status === "error" ? (
-        <AsyncStateView
-          status="error"
-          error={error as ApiError}
-          onRetry={() => refetch()}
-        />
+        <AsyncStateView status="error" error={error as ApiError} onRetry={() => refetch()} />
       ) : (
         <div className="panel">
           <div className="panel-header">

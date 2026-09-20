@@ -1,9 +1,8 @@
-import { useEffect, useState } from "react";
-import { Button, Input } from "@/components/ui";
-import { AsyncStateView } from "@/components/ui";
-import { useChatStatus, useSaveChatConfig } from "../useSettings";
+import { useEffect, useId, useState } from "react";
+import { AsyncStateView, Button, Input } from "@/components/ui";
 import { McpToolsView } from "@/features/mcp-tools/McpToolsView";
 import type { ApiError } from "@/types";
+import { useChatStatus, useSaveChatConfig } from "../useSettings";
 
 export function AiMcpPanel() {
   const { data, status, error, refetch } = useChatStatus();
@@ -12,6 +11,7 @@ export function AiMcpPanel() {
   const [model, setModel] = useState("");
   const [key, setKey] = useState("");
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const uid = useId();
 
   useEffect(() => {
     if (data) {
@@ -24,9 +24,7 @@ export function AiMcpPanel() {
     return <AsyncStateView status="loading" loadingLabel="Loading AI provider…" />;
   }
   if (status === "error") {
-    return (
-      <AsyncStateView status="error" error={error as ApiError} onRetry={() => refetch()} />
-    );
+    return <AsyncStateView status="error" error={error as ApiError} onRetry={() => refetch()} />;
   }
 
   async function onSave() {
@@ -36,7 +34,11 @@ export function AiMcpPanel() {
       return;
     }
     try {
-      await save.mutateAsync({ endpoint: endpoint.trim(), model: model.trim(), api_key: key.trim() });
+      await save.mutateAsync({
+        endpoint: endpoint.trim(),
+        model: model.trim(),
+        api_key: key.trim(),
+      });
       setMsg({ kind: "ok", text: "AI provider saved. Chat is ready." });
       setKey("");
     } catch (e) {
@@ -54,12 +56,12 @@ export function AiMcpPanel() {
       </div>
       <div className="auth-form">
         <p className="form-hint">
-          OpenAI-compatible endpoint for Chat. API key is stored encrypted on this
-          computer only.
+          OpenAI-compatible endpoint for Chat. API key is stored encrypted on this computer only.
         </p>
         <div className="auth-row">
-          <label>Endpoint</label>
+          <label htmlFor={`${uid}-endpoint`}>Endpoint</label>
           <Input
+            id={`${uid}-endpoint`}
             type="text"
             value={endpoint}
             onChange={(e) => setEndpoint(e.target.value)}
@@ -68,8 +70,9 @@ export function AiMcpPanel() {
           />
         </div>
         <div className="auth-row">
-          <label>Model</label>
+          <label htmlFor={`${uid}-model`}>Model</label>
           <Input
+            id={`${uid}-model`}
             type="text"
             value={model}
             onChange={(e) => setModel(e.target.value)}
@@ -78,8 +81,9 @@ export function AiMcpPanel() {
           />
         </div>
         <div className="auth-row">
-          <label>API Key</label>
+          <label htmlFor={`${uid}-key`}>API Key</label>
           <Input
+            id={`${uid}-key`}
             type="password"
             value={key}
             onChange={(e) => setKey(e.target.value)}
@@ -88,7 +92,7 @@ export function AiMcpPanel() {
           />
         </div>
         <div className="auth-row">
-          <label></label>
+          <span className="auth-label" aria-hidden="true" />
           <Button variant="primary" onClick={onSave} disabled={save.isPending}>
             {save.isPending ? "Saving…" : "Save AI Settings"}
           </Button>

@@ -47,16 +47,16 @@ export function WatchlistPicker({
         value={name}
         onChange={(e) => onNameChange(e.target.value)}
       />
-      <button className="btn" onClick={onCreate}>
+      <button type="button" className="btn" onClick={onCreate}>
         Create
       </button>
-      <button className="btn" onClick={onRename}>
+      <button type="button" className="btn" onClick={onRename}>
         Rename
       </button>
-      <button className="btn btn-outline-danger" onClick={onDelete}>
+      <button type="button" className="btn btn-outline-danger" onClick={onDelete}>
         Delete
       </button>
-      <button className="btn" onClick={onExport}>
+      <button type="button" className="btn" onClick={onExport}>
         Export
       </button>
       <label className="btn">

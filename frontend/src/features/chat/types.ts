@@ -2,6 +2,8 @@
 // contract. React only sends the user message + prior history and renders the
 // streamed assistant events; it never evaluates or fabricates responses.
 export interface ChatMessage {
+  /** Client-side stable identity for React keys (never sent to the backend). */
+  id: string;
   role: "user" | "assistant";
   content: string;
 }

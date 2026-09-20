@@ -6,9 +6,7 @@ import type { WatchlistsResponse } from "./types";
 
 const WATCHLISTS = "/watchlists";
 
-export async function getWatchlists(
-  signal?: AbortSignal,
-): Promise<WatchlistsResponse> {
+export async function getWatchlists(signal?: AbortSignal): Promise<WatchlistsResponse> {
   return request<WatchlistsResponse>(WATCHLISTS, {
     schema: watchlistsResponseSchema,
     signal,
@@ -23,11 +21,7 @@ export async function createWatchlist(name: string, signal?: AbortSignal) {
   });
 }
 
-export async function renameWatchlist(
-  id: number,
-  name: string,
-  signal?: AbortSignal,
-) {
+export async function renameWatchlist(id: number, name: string, signal?: AbortSignal) {
   return request(`${WATCHLISTS}/${id}`, {
     method: "PATCH",
     body: { name },

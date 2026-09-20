@@ -1,8 +1,8 @@
-import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { getSectorHeatmap } from "@/api/market";
-import { WidgetCard } from "./WidgetCard";
 import { fmtInt, fmtNum, tone } from "@/utils/format";
+import { WidgetCard } from "./WidgetCard";
 
 // Top sectors by average change %. Mirrors the Sector Analysis page (NIFTY50
 // universe) so the card is a faithful entry point to it.
@@ -17,9 +17,7 @@ export function SectorsWidget() {
     if (!q.data) return [];
     return [...q.data.sectors]
       .sort(
-        (a, b) =>
-          (b.average_change_percent ?? -Infinity) -
-          (a.average_change_percent ?? -Infinity),
+        (a, b) => (b.average_change_percent ?? -Infinity) - (a.average_change_percent ?? -Infinity),
       )
       .slice(0, 6);
   }, [q.data]);
@@ -44,9 +42,7 @@ export function SectorsWidget() {
                 {fmtInt(s.advances)}/{fmtInt(s.declines)}
               </span>
               <span className={`w-chg num ${tone(s.average_change_percent)}`}>
-                {s.average_change_percent != null
-                  ? `${fmtNum(s.average_change_percent)}%`
-                  : "—"}
+                {s.average_change_percent != null ? `${fmtNum(s.average_change_percent)}%` : "—"}
               </span>
             </li>
           ))}

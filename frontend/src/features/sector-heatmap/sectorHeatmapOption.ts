@@ -1,7 +1,7 @@
 import type { EChartsOption } from "echarts";
 import type { SectorHeatmapSnapshot } from "@/types";
-import { themeColors } from "@/utils/cssVar";
 import { changeTileColor, type TileColors } from "@/utils/changeColor";
+import { themeColors } from "@/utils/cssVar";
 
 interface LeafMeta {
   symbol: string;
@@ -28,9 +28,7 @@ export function buildSectorHeatmapOption(s: SectorHeatmapSnapshot): EChartsOptio
     const isUnc = sec.sector === "Unclassified";
     const children = sec.members.map((m) => {
       const color =
-        m.status === "unavailable"
-          ? colors.unavailable
-          : changeTileColor(m.change_percent, colors);
+        m.status === "unavailable" ? colors.unavailable : changeTileColor(m.change_percent, colors);
       const meta: LeafMeta = {
         symbol: m.symbol,
         change: m.change_percent,
@@ -66,8 +64,7 @@ export function buildSectorHeatmapOption(s: SectorHeatmapSnapshot): EChartsOptio
         const d = p as { data?: { _meta?: LeafMeta; name?: string } };
         const meta = d.data?._meta;
         if (meta) {
-          const chg =
-            meta.status === "unavailable" ? "no quote" : fmtChange(meta.change);
+          const chg = meta.status === "unavailable" ? "no quote" : fmtChange(meta.change);
           return `<b>${meta.symbol}</b><br/>${chg}`;
         }
         return `<b>${d.data?.name ?? ""}</b>`;
@@ -88,7 +85,10 @@ export function buildSectorHeatmapOption(s: SectorHeatmapSnapshot): EChartsOptio
         upperLabel: { show: true, height: 20, color: c.textMuted, fontSize: 11 },
         itemStyle: { borderColor: c.surface, borderWidth: 1, gapWidth: 1 },
         levels: [
-          { itemStyle: { borderWidth: 2, gapWidth: 2, borderColor: c.surface }, upperLabel: { show: true } },
+          {
+            itemStyle: { borderWidth: 2, gapWidth: 2, borderColor: c.surface },
+            upperLabel: { show: true },
+          },
           { itemStyle: { borderWidth: 1, gapWidth: 1, borderColorSaturation: 0.3 } },
         ],
       },

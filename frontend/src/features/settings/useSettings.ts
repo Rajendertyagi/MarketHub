@@ -67,8 +67,7 @@ export function useUpstoxTokenLogin() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (accessToken: string) => submitUpstoxToken(accessToken),
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["settings", "upstox-auth"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["settings", "upstox-auth"] }),
   });
 }
 
@@ -76,8 +75,7 @@ export function useForgetUpstoxSession() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => forgetUpstoxSession(),
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["settings", "upstox-auth"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["settings", "upstox-auth"] }),
   });
 }
 
@@ -181,8 +179,7 @@ export interface NewsSourceMutations {
 
 export function useNewsSourceMutations(): NewsSourceMutations {
   const qc = useQueryClient();
-  const invalidate = () =>
-    qc.invalidateQueries({ queryKey: ["settings", "news-sources"] });
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["settings", "news-sources"] });
 
   const createMut = useMutation({
     mutationFn: (source: NewsSource) => createNewsSource(source),
@@ -225,8 +222,7 @@ export function useSourcesStatus() {
 
 export function useSourceControl() {
   const qc = useQueryClient();
-  const invalidate = () =>
-    qc.invalidateQueries({ queryKey: ["settings", "sources"] });
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["settings", "sources"] });
 
   const controlMut = useMutation({
     mutationFn: (args: { name: string; action: "start" | "stop" | "restart" }) =>

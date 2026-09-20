@@ -1,13 +1,17 @@
-import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ApiError, type SectorHeatmapSnapshot, type SectorRow } from "@/types";
+import { useMemo, useState } from "react";
 import { getSectorHeatmap } from "@/api/market";
-import { ANALYTICS_UNIVERSES } from "@/types";
-import { useAnalyticsCoverage } from "@/features/analytics/useAnalyticsCoverage";
-import { buildSectorHeatmapOption } from "./sectorHeatmapOption";
 import { EChart } from "@/components/EChart";
 import { AsyncStateView, Field, Input, Select } from "@/components/ui";
+import { useAnalyticsCoverage } from "@/features/analytics/useAnalyticsCoverage";
+import {
+  ANALYTICS_UNIVERSES,
+  type ApiError,
+  type SectorHeatmapSnapshot,
+  type SectorRow,
+} from "@/types";
 import { fmtInt, fmtPct, tone } from "@/utils/format";
+import { buildSectorHeatmapOption } from "./sectorHeatmapOption";
 
 export function SectorHeatmapView() {
   const [universe, setUniverse] = useState<string>("NIFTY50");
@@ -31,9 +35,7 @@ export function SectorHeatmapView() {
     return [...data.sectors]
       .filter((s) => !q || s.sector.toUpperCase().includes(q))
       .sort(
-        (a, b) =>
-          (b.average_change_percent ?? -Infinity) -
-          (a.average_change_percent ?? -Infinity),
+        (a, b) => (b.average_change_percent ?? -Infinity) - (a.average_change_percent ?? -Infinity),
       );
   }, [data, sectorSearch]);
 
@@ -49,18 +51,13 @@ export function SectorHeatmapView() {
       />
     );
   } else if (!data || data.sector_count === 0) {
-    body = (
-      <AsyncStateView
-        status="empty"
-        emptyLabel={`No sectors for ${universe}.`}
-      />
-    );
+    body = <AsyncStateView status="empty" emptyLabel={`No sectors for ${universe}.`} />;
   } else {
     body = (
       <div className="card">
         <div className="panel-header">
           <h2>Sector Heatmap</h2>
-          <div className="heat-legend" aria-label="Change % color scale">
+          <div className="heat-legend">
             <span className="heat-scale" aria-hidden="true" />
             <span className="heat-scale-labels">
               <span>-5%</span>
@@ -70,9 +67,7 @@ export function SectorHeatmapView() {
             <span className="chip chip-off">n/a</span>
           </div>
         </div>
-        {option ? (
-          <EChart option={option} className="chart-frame chart-frame--tall" />
-        ) : null}
+        {option ? <EChart option={option} className="chart-frame chart-frame--tall" /> : null}
       </div>
     );
   }
@@ -83,9 +78,8 @@ export function SectorHeatmapView() {
         <h1 className="page-title">Sector Analysis</h1>
         {data && (
           <span className="muted">
-            {data.universe} · {data.sector_count} sectors ·{" "}
-            {data.classified_count} classified / {data.unclassified_count} unclassified ·{" "}
-            {data.weighting}-weighted
+            {data.universe} · {data.sector_count} sectors · {data.classified_count} classified /{" "}
+            {data.unclassified_count} unclassified · {data.weighting}-weighted
             {data.stale ? " · stale (last session)" : ""}
           </span>
         )}
@@ -102,11 +96,7 @@ export function SectorHeatmapView() {
           </Select>
         </Field>
         {selected && (
-          <button
-            type="button"
-            className="sector-clear"
-            onClick={() => setSelected(null)}
-          >
+          <button type="button" className="sector-clear" onClick={() => setSelected(null)}>
             Clear selection · {selected}
           </button>
         )}
@@ -149,19 +139,13 @@ export function SectorHeatmapView() {
             />
           </div>
 
-          <div
-            className="sector-grid"
-            role="list"
-            aria-label="Sector performance cards"
-          >
+          <div className="sector-grid">
             {sectorRows.map((s) => (
               <SectorCard
                 key={s.sector}
                 sector={s}
                 selected={selected === s.sector}
-                onSelect={() =>
-                  setSelected((cur) => (cur === s.sector ? null : s.sector))
-                }
+                onSelect={() => setSelected((cur) => (cur === s.sector ? null : s.sector))}
               />
             ))}
           </div>
@@ -189,32 +173,26 @@ function SectorCard({
 
   const advPct =
     sector.advances + sector.declines + sector.unchanged > 0
-      ? (sector.advances /
-          (sector.advances + sector.declines + sector.unchanged)) *
-        100
+      ? (sector.advances / (sector.advances + sector.declines + sector.unchanged)) * 100
       : 0;
   const decPct =
     sector.advances + sector.declines + sector.unchanged > 0
-      ? (sector.declines /
-          (sector.advances + sector.declines + sector.unchanged)) *
-        100
+      ? (sector.declines / (sector.advances + sector.declines + sector.unchanged)) * 100
       : 0;
 
   return (
     <button
       type="button"
-      role="listitem"
       className={`sector-card${selected ? " is-selected" : ""}`}
       onClick={onSelect}
       aria-pressed={selected}
+      aria-label={`${sector.sector} sector${selected ? ", selected" : ""}`}
     >
       <div className="sector-card__head">
         <span className="sector-card__name" title={sector.sector}>
           {sector.sector}
         </span>
-        <span className="sector-card__count muted">
-          {fmtInt(sector.constituent_count)} names
-        </span>
+        <span className="sector-card__count muted">{fmtInt(sector.constituent_count)} names</span>
       </div>
 
       <div className={`sector-card__chg ${chgTone}`}>
@@ -271,22 +249,14 @@ function SectorCard({
   );
 }
 
-function ConstituentBars({
-  members,
-}: {
-  members: SectorRow["members"];
-}) {
+function ConstituentBars({ members }: { members: SectorRow["members"] }) {
   const bars = useMemo(() => {
     const valid = members.filter(
       (m) => typeof m.change_percent === "number",
-    ) as (typeof members[number] & { change_percent: number })[];
-    const maxAbs = valid.reduce(
-      (m, x) => Math.max(m, Math.abs(x.change_percent)),
-      0,
-    );
+    ) as ((typeof members)[number] & { change_percent: number })[];
+    const maxAbs = valid.reduce((m, x) => Math.max(m, Math.abs(x.change_percent)), 0);
     return valid.map((m) => {
-      const mag =
-        maxAbs > 0 ? Math.abs(m.change_percent) / maxAbs : 0;
+      const mag = maxAbs > 0 ? Math.abs(m.change_percent) / maxAbs : 0;
       const height = 12 + mag * 88; // 12%–100% of the track
       return {
         symbol: m.symbol,
@@ -299,9 +269,7 @@ function ConstituentBars({
 
   if (bars.length === 0) {
     return (
-      <div className="sector-card__bars sector-card__bars--empty muted">
-        no quoted constituents
-      </div>
+      <div className="sector-card__bars sector-card__bars--empty muted">no quoted constituents</div>
     );
   }
 

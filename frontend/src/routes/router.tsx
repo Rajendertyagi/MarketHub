@@ -1,23 +1,23 @@
 import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
-import { AppShell } from "@/layouts/AppShell";
-import { ChartsView } from "@/features/charts/ChartsView";
-import { ScannersView } from "@/features/scanners/ScannersView";
+import { AiAlertsView } from "@/features/ai-alerts";
+import { AlertsView } from "@/features/alerts";
 import { BreadthView } from "@/features/breadth/BreadthView";
-import { SectorHeatmapView } from "@/features/sector-heatmap/SectorHeatmapView";
-import { MarketMapView } from "@/features/market-map/MarketMapView";
+import { ChartsView } from "@/features/charts/ChartsView";
+import { ChatView } from "@/features/chat";
+import { DashboardView } from "@/features/dashboard";
+import { DiagnosticsView } from "@/features/diagnostics";
 import { FnoWorkspaceView } from "@/features/fno/FnoWorkspaceView";
 import { OptionChainView } from "@/features/fno/OptionChainView";
-import { SubscriptionsView } from "@/features/subscriptions/SubscriptionsView";
 import { InstrumentsView } from "@/features/instruments/InstrumentsView";
+import { MarketMapView } from "@/features/market-map/MarketMapView";
 import { NewsView } from "@/features/news";
-import { DashboardView } from "@/features/dashboard";
-import { WatchlistsView } from "@/features/watchlists";
-import { AlertsView } from "@/features/alerts";
-import { AiAlertsView } from "@/features/ai-alerts";
-import { DiagnosticsView } from "@/features/diagnostics";
-import { ChatView } from "@/features/chat";
+import { ScannersView } from "@/features/scanners/ScannersView";
+import { SectorHeatmapView } from "@/features/sector-heatmap/SectorHeatmapView";
 import { SentimentView } from "@/features/sentiment";
 import { SettingsView } from "@/features/settings";
+import { SubscriptionsView } from "@/features/subscriptions/SubscriptionsView";
+import { WatchlistsView } from "@/features/watchlists";
+import { AppShell } from "@/layouts/AppShell";
 
 export function AppRouter() {
   return (

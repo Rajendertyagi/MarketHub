@@ -45,9 +45,7 @@ export interface NewsMutations {
   updateSource: (args: { id: string; input: Partial<NewsSourceInput> }) => Promise<unknown>;
   deleteSource: (id: string) => Promise<unknown>;
   setSourceEnabled: (args: { id: string; enabled: boolean }) => Promise<unknown>;
-  testSource: (
-    args: { type: NewsSourceType; config: Record<string, unknown> },
-  ) => Promise<unknown>;
+  testSource: (args: { type: NewsSourceType; config: Record<string, unknown> }) => Promise<unknown>;
 }
 
 export function useNewsMutations(): NewsMutations {
@@ -55,9 +53,7 @@ export function useNewsMutations(): NewsMutations {
   const invalidate = () => qc.invalidateQueries({ queryKey: ["news"] });
 
   const refreshMut = useMutation({
-    mutationFn: (
-      opts?: { source_ids?: string[]; limit_per_source?: number },
-    ) => refreshNews(opts),
+    mutationFn: (opts?: { source_ids?: string[]; limit_per_source?: number }) => refreshNews(opts),
   });
   const createMut = useMutation({
     mutationFn: (input: NewsSourceInput) => createNewsSource(input),
@@ -78,13 +74,8 @@ export function useNewsMutations(): NewsMutations {
     onSuccess: invalidate,
   });
   const testMut = useMutation({
-    mutationFn: ({
-      type,
-      config,
-    }: {
-      type: NewsSourceType;
-      config: Record<string, unknown>;
-    }) => testNewsSource(type, config),
+    mutationFn: ({ type, config }: { type: NewsSourceType; config: Record<string, unknown> }) =>
+      testNewsSource(type, config),
   });
 
   return {
@@ -92,8 +83,7 @@ export function useNewsMutations(): NewsMutations {
     createSource: (input) => createMut.mutateAsync(input),
     updateSource: ({ id, input }) => updateMut.mutateAsync({ id, input }),
     deleteSource: (id) => deleteMut.mutateAsync(id),
-    setSourceEnabled: ({ id, enabled }) =>
-      enableMut.mutateAsync({ id, enabled }),
+    setSourceEnabled: ({ id, enabled }) => enableMut.mutateAsync({ id, enabled }),
     testSource: ({ type, config }) => testMut.mutateAsync({ type, config }),
   };
 }

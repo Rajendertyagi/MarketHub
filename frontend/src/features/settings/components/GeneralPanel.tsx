@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
-import { Button, Field, Input } from "@/components/ui";
-import { AsyncStateView } from "@/components/ui";
-import { useAppSettings, useSaveAppSettings } from "../useSettings";
+import { AsyncStateView, Button, Field, Input } from "@/components/ui";
 import type { ApiError } from "@/types";
+import { useAppSettings, useSaveAppSettings } from "../useSettings";
 
 export function GeneralPanel() {
   const { data, status, error, refetch } = useAppSettings();
@@ -18,13 +17,7 @@ export function GeneralPanel() {
     return <AsyncStateView status="loading" loadingLabel="Loading application settings…" />;
   }
   if (status === "error") {
-    return (
-      <AsyncStateView
-        status="error"
-        error={error as ApiError}
-        onRetry={() => refetch()}
-      />
-    );
+    return <AsyncStateView status="error" error={error as ApiError} onRetry={() => refetch()} />;
   }
 
   async function onSave() {
@@ -63,7 +56,7 @@ export function GeneralPanel() {
           </Button>
         </div>
         <div className="auth-row">
-          <label>Fyers Callback URL</label>
+          <span className="auth-label">Fyers Callback URL</span>
           <span className="setting-val">{data?.fyers_callback_url ?? "—"}</span>
         </div>
         {msg ? <p className={`hint ${msg.kind}`}>{msg.text}</p> : null}

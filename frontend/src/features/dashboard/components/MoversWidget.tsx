@@ -1,10 +1,10 @@
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { runScanner } from "@/api/market";
 import type { ScanRow } from "@/types";
-import { WidgetCard } from "./WidgetCard";
-import { MOVER_CATEGORIES, type MoverCategory } from "../constants";
 import { fmtPct, fmtVol, tone } from "@/utils/format";
+import { MOVER_CATEGORIES, type MoverCategory } from "../constants";
+import { WidgetCard } from "./WidgetCard";
 
 // Dashboard movers: top gainers / losers / volume leaders from the canonical
 // scanner service (backend names: gainers / losers / volume, FNO universe).
@@ -22,23 +22,14 @@ export function MoversWidget() {
   const q = useQuery({
     queryKey: ["dash-movers", SCANNER_BY_CATEGORY[active]],
     queryFn: ({ signal }) =>
-      runScanner(
-        SCANNER_BY_CATEGORY[active],
-        { universe: "FNO", limit: 5 },
-        signal,
-      ),
+      runScanner(SCANNER_BY_CATEGORY[active], { universe: "FNO", limit: 5 }, signal),
     refetchInterval: 15000,
   });
 
   const rows = q.data?.rows.slice(0, 5) ?? [];
 
   return (
-    <WidgetCard
-      title="Movers"
-      to="/scanners"
-      subtitle={active}
-      hint="Open Scanners →"
-    >
+    <WidgetCard title="Movers" to="/scanners" subtitle={active} hint="Open Scanners →">
       <div className="movers-tabs" role="tablist" aria-label="Mover category">
         {MOVER_CATEGORIES.map((c) => (
           <button

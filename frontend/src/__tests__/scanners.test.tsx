@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/api/market", () => ({
   getHistory: vi.fn(),
@@ -12,8 +12,8 @@ vi.mock("@/api/market", () => ({
   resolveInstrument: vi.fn(),
 }));
 
-import * as RR from "react-router-dom";
-import { listScanners, runScanner, resolveInstrument } from "@/api/market";
+import type * as RR from "react-router-dom";
+import { listScanners, resolveInstrument, runScanner } from "@/api/market";
 import { ScannersView } from "@/features/scanners/ScannersView";
 
 const mockNavigate = vi.fn();
@@ -190,16 +190,12 @@ describe("ScannersView", () => {
     const select = (await screen.findByDisplayValue("Top Gainers")) as HTMLSelectElement;
     fireEvent.change(select, { target: { value: "option_iv" } });
     const row = await screen.findByText("NIFTY24xxxCE");
-    fireEvent.click(row.closest("tr")!);
+    const rowEl = row.closest("tr");
+    if (!rowEl) throw new Error("expected scanner row");
+    fireEvent.click(rowEl);
 
-    await waitFor(() =>
-      expect(resolveInstrument).toHaveBeenCalledWith("NIFTY24xxxCE", "OPTION"),
-    );
-    expect(mockNavigate).toHaveBeenCalledWith(
-      expect.stringContaining("key=OPT_NIFTY_CE"),
-    );
-    expect(mockNavigate).toHaveBeenCalledWith(
-      expect.stringContaining("type=OPTION"),
-    );
+    await waitFor(() => expect(resolveInstrument).toHaveBeenCalledWith("NIFTY24xxxCE", "OPTION"));
+    expect(mockNavigate).toHaveBeenCalledWith(expect.stringContaining("key=OPT_NIFTY_CE"));
+    expect(mockNavigate).toHaveBeenCalledWith(expect.stringContaining("type=OPTION"));
   });
 });

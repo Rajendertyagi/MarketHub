@@ -1,24 +1,24 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Button, Input } from "@/components/ui";
+import { loginWithFyers, loginWithUpstox } from "../api";
+import { BROKER_FYERS, BROKER_UPSTOX } from "../constants";
+import { formatOnOffChip, formatTimestamp, formatUpstoxAuthChip } from "../format";
+import type { MarketSource } from "../types";
 import {
   useDeleteUpstoxCredentials,
   useForgetFyersSession,
   useForgetUpstoxSession,
+  useFyersSettings,
   useSaveFyersCredentials,
   useSaveFyersFeedConfig,
   useSaveUpstoxCredentials,
   useSaveUpstoxFeedConfig,
+  useSourcesStatus,
   useUpstoxAuthStatus,
   useUpstoxCredStatus,
   useUpstoxFeedConfig,
-  useFyersSettings,
-  useSourcesStatus,
   useUpstoxTokenLogin,
 } from "../useSettings";
-import { loginWithFyers, loginWithUpstox } from "../api";
-import { formatOnOffChip, formatTimestamp, formatUpstoxAuthChip } from "../format";
-import { BROKER_FYERS, BROKER_UPSTOX } from "../constants";
-import type { MarketSource } from "../types";
 import { SourceDetail } from "./SourceDetail";
 
 function Chip({ label, cls }: { label: string; cls: string }) {
@@ -40,6 +40,7 @@ function UpstoxBroker({ source }: { source?: MarketSource }) {
   const [token, setToken] = useState("");
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const uid = useId();
 
   const status = auth.data ?? {};
   const authed = !!status.authenticated;
@@ -51,9 +52,7 @@ function UpstoxBroker({ source }: { source?: MarketSource }) {
       : "Login with Upstox";
   const sessionNote = authed
     ? `Valid until ${status.expires_at ? formatTimestamp(status.expires_at) : "session active"}${
-        status.session_restored || status.session_persisted
-          ? " · auto-restored on restart"
-          : ""
+        status.session_restored || status.session_persisted ? " · auto-restored on restart" : ""
       }`
     : status.oauth_available
       ? "Login required — Upstox tokens expire 3:30 AM IST (one click per day)"
@@ -79,7 +78,7 @@ function UpstoxBroker({ source }: { source?: MarketSource }) {
       </div>
       <div className="auth-form">
         <div className="auth-row">
-          <label>Status</label>
+          <span className="auth-label">Status</span>
           <div className="state-grid">
             <Chip label={authChip.label} cls={authChip.cls} />
             <Chip
@@ -92,9 +91,7 @@ function UpstoxBroker({ source }: { source?: MarketSource }) {
             />
             <Chip
               label={
-                status.session_restored || status.session_persisted
-                  ? "Session Saved"
-                  : "No Session"
+                status.session_restored || status.session_persisted ? "Session Saved" : "No Session"
               }
               cls={formatOnOffChip(!!status.session_restored || !!status.session_persisted).cls}
             />
@@ -107,8 +104,9 @@ function UpstoxBroker({ source }: { source?: MarketSource }) {
         <p className="hint session-note">{sessionNote}</p>
 
         <div className="auth-row">
-          <label>API Key</label>
+          <label htmlFor={`${uid}-upstox-key`}>API Key</label>
           <Input
+            id={`${uid}-upstox-key`}
             type="text"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
@@ -118,8 +116,9 @@ function UpstoxBroker({ source }: { source?: MarketSource }) {
           />
         </div>
         <div className="auth-row">
-          <label>API Secret</label>
+          <label htmlFor={`${uid}-upstox-secret`}>API Secret</label>
           <Input
+            id={`${uid}-upstox-secret`}
             type="password"
             value={apiSecret}
             onChange={(e) => setApiSecret(e.target.value)}
@@ -129,7 +128,7 @@ function UpstoxBroker({ source }: { source?: MarketSource }) {
           />
         </div>
         <div className="auth-row">
-          <label>Credentials</label>
+          <span className="auth-label">Credentials</span>
           <Button
             className="btn btn-compact"
             onClick={() =>
@@ -157,9 +156,13 @@ function UpstoxBroker({ source }: { source?: MarketSource }) {
         {!authed ? (
           <>
             <div className="auth-row">
-              <label>Login</label>
+              <span className="auth-label">Login</span>
               {status.oauth_available || cred.data?.api_key_configured ? (
-                <Button className="btn btn-compact" onClick={() => loginWithUpstox()} disabled={busy}>
+                <Button
+                  className="btn btn-compact"
+                  onClick={() => loginWithUpstox()}
+                  disabled={busy}
+                >
                   {loginLabel}
                 </Button>
               ) : (
@@ -169,8 +172,9 @@ function UpstoxBroker({ source }: { source?: MarketSource }) {
               )}
             </div>
             <div className="auth-row">
-              <label>Manual Token</label>
+              <label htmlFor={`${uid}-upstox-token`}>Manual Token</label>
               <Input
+                id={`${uid}-upstox-token`}
                 type="password"
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
@@ -194,7 +198,7 @@ function UpstoxBroker({ source }: { source?: MarketSource }) {
           </>
         ) : (
           <div className="auth-row">
-            <label>Session</label>
+            <span className="auth-label">Session</span>
             <Button
               className="btn btn-compact btn-outline-danger"
               onClick={() => setMsgAsync(() => forget.mutateAsync(), "Logged out of Upstox.")}
@@ -208,7 +212,10 @@ function UpstoxBroker({ source }: { source?: MarketSource }) {
         <SourceDetail
           source={source}
           feedEnabled={feed.data?.enabled}
-          onFeedToggle={() => feed.data && setMsgAsync(() => saveFeed.mutateAsync(!feed.data.enabled), "Feed updated.")}
+          onFeedToggle={() =>
+            feed.data &&
+            setMsgAsync(() => saveFeed.mutateAsync(!feed.data.enabled), "Feed updated.")
+          }
           feedBusy={busy}
         />
 
@@ -229,6 +236,7 @@ function FyersBroker({ source }: { source?: MarketSource }) {
   const [pin, setPin] = useState("");
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const uid = useId();
 
   const s = settings.data ?? {};
   const credsOk = !!s.app_id_configured && !!s.secret_configured;
@@ -254,7 +262,7 @@ function FyersBroker({ source }: { source?: MarketSource }) {
       </div>
       <div className="auth-form">
         <div className="auth-row">
-          <label>Status</label>
+          <span className="auth-label">Status</span>
           <div className="state-grid">
             <Chip
               label={credsOk ? "Credentials" : "No Credentials"}
@@ -280,8 +288,9 @@ function FyersBroker({ source }: { source?: MarketSource }) {
         </div>
 
         <div className="auth-row">
-          <label>App ID</label>
+          <label htmlFor={`${uid}-fyers-appid`}>App ID</label>
           <Input
+            id={`${uid}-fyers-appid`}
             type="text"
             value={appId}
             onChange={(e) => setAppId(e.target.value)}
@@ -291,8 +300,9 @@ function FyersBroker({ source }: { source?: MarketSource }) {
           />
         </div>
         <div className="auth-row">
-          <label>Secret Key</label>
+          <label htmlFor={`${uid}-fyers-secret`}>Secret Key</label>
           <Input
+            id={`${uid}-fyers-secret`}
             type="password"
             value={secret}
             onChange={(e) => setSecret(e.target.value)}
@@ -302,8 +312,9 @@ function FyersBroker({ source }: { source?: MarketSource }) {
           />
         </div>
         <div className="auth-row">
-          <label>Account PIN</label>
+          <label htmlFor={`${uid}-fyers-pin`}>Account PIN</label>
           <Input
+            id={`${uid}-fyers-pin`}
             type="password"
             value={pin}
             onChange={(e) => setPin(e.target.value)}
@@ -313,7 +324,7 @@ function FyersBroker({ source }: { source?: MarketSource }) {
           />
         </div>
         <div className="auth-row">
-          <label>Credentials</label>
+          <span className="auth-label">Credentials</span>
           <Button
             className="btn btn-compact"
             onClick={() =>
@@ -334,7 +345,7 @@ function FyersBroker({ source }: { source?: MarketSource }) {
 
         {!loggedIn ? (
           <div className="auth-row">
-            <label>Login</label>
+            <span className="auth-label">Login</span>
             <Button className="btn btn-compact" onClick={() => loginWithFyers()} disabled={busy}>
               Login with Fyers
             </Button>
@@ -346,7 +357,7 @@ function FyersBroker({ source }: { source?: MarketSource }) {
           </div>
         ) : (
           <div className="auth-row">
-            <label>Session</label>
+            <span className="auth-label">Session</span>
             <Button
               className="btn btn-compact btn-outline-danger"
               onClick={() =>
@@ -362,7 +373,9 @@ function FyersBroker({ source }: { source?: MarketSource }) {
         <SourceDetail
           source={source}
           feedEnabled={s.source_enabled}
-          onFeedToggle={() => setMsgAsync(() => saveFeed.mutateAsync(!s.source_enabled), "Feed updated.")}
+          onFeedToggle={() =>
+            setMsgAsync(() => saveFeed.mutateAsync(!s.source_enabled), "Feed updated.")
+          }
           feedBusy={busy}
         />
 

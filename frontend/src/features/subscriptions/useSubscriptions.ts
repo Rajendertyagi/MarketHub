@@ -46,8 +46,7 @@ export function useSubscriptionMutations(): SubscriptionMutations {
     onSuccess: invalidate,
   });
   const addStockMut = useMutation({
-    mutationFn: ({ key, label }: { key: string; label: string }) =>
-      addStock(key, label),
+    mutationFn: ({ key, label }: { key: string; label: string }) => addStock(key, label),
     onSuccess: invalidate,
   });
   const stockMut = useMutation({

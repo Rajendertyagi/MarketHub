@@ -5,8 +5,17 @@
 // pass through. The active-view subscription reuses the existing bounded owner
 // (POST /api/market/fno/view) — no second subscription owner is introduced.
 
-import { useMemo } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+import {
+  type FnoViewParams,
+  getFnoUniverse,
+  getFnoWorkspace,
+  getFutures,
+  getIndexOptionUnderlyings,
+  getOptionChainView,
+  postFnoView,
+} from "@/api/market";
 import type {
   ChainLegView,
   ChainRow,
@@ -16,15 +25,6 @@ import type {
   FnoUnderlyingKind,
   Quote,
 } from "@/types";
-import {
-  getFnoUniverse,
-  getFnoWorkspace,
-  getFutures,
-  getIndexOptionUnderlyings,
-  getOptionChainView,
-  postFnoView,
-  type FnoViewParams,
-} from "@/api/market";
 
 export interface CombinedUnderlying {
   symbol: string;
@@ -82,8 +82,7 @@ export function useEquityWorkspace(symbol: string, windowSize: number) {
   return useQuery({
     queryKey: ["fno-workspace", symbol, windowSize],
     enabled: !!symbol,
-    queryFn: ({ signal }) =>
-      getFnoWorkspace({ symbol, window: windowSize }, signal),
+    queryFn: ({ signal }) => getFnoWorkspace({ symbol, window: windowSize }, signal),
     refetchInterval: 5000,
   });
 }
@@ -97,8 +96,7 @@ export function useIndexChain(
   return useQuery({
     queryKey: ["option-chain", underlying, expiry, windowSize],
     enabled: !!underlying && enabled,
-    queryFn: ({ signal }) =>
-      getOptionChainView({ underlying, expiry, window: windowSize }, signal),
+    queryFn: ({ signal }) => getOptionChainView({ underlying, expiry, window: windowSize }, signal),
     refetchInterval: 5000,
   });
 }
@@ -133,15 +131,10 @@ export function askOf(q?: Quote | null): number | null | undefined {
   return q.ask ?? q.best_ask;
 }
 
-export function normalizeEquityOptions(
-  options: FnoOption[],
-  atm: number | null,
-): ChainRowView[] {
+export function normalizeEquityOptions(options: FnoOption[], atm: number | null): ChainRowView[] {
   const byStrike = new Map<number, ChainRowView>();
   for (const o of options) {
-    const row =
-      byStrike.get(o.strike) ??
-      ({ strike: o.strike, atm: false } as ChainRowView);
+    const row = byStrike.get(o.strike) ?? ({ strike: o.strike, atm: false } as ChainRowView);
     const leg: ChainLegView = {
       key: o.key,
       label: o.label,

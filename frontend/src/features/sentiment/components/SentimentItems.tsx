@@ -25,19 +25,13 @@ export function SentimentItems({ articles, byId }: Props) {
                 ? "neg"
                 : "neutral"
             : "neutral";
-          const href =
-            "link" in a && a.link ? a.link : "url" in a ? a.url : "#";
+          const href = "link" in a && a.link ? a.link : "url" in a ? a.url : "#";
           return (
             <li key={a.item_id} className="sentiment-item">
               <span className={`chip ${cls}`}>
                 {s ? `${s.sentiment} ${s.score.toFixed(2)}` : "—"}
               </span>
-              <a
-                className="sentiment-item-title"
-                href={href}
-                target="_blank"
-                rel="noreferrer"
-              >
+              <a className="sentiment-item-title" href={href} target="_blank" rel="noreferrer">
                 {a.title}
               </a>
               <span className="muted">{a.source_name}</span>

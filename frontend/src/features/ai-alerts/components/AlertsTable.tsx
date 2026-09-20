@@ -1,5 +1,5 @@
 import { AsyncStateView } from "@/components/ui";
-import { ApiError } from "@/types";
+import type { ApiError } from "@/types";
 import { shortId } from "../constants";
 import { enabledLabel, timeAgo } from "../format";
 import { useConditionAlerts } from "../useAiAlerts";
@@ -12,13 +12,7 @@ export function AlertsTable() {
     return <AsyncStateView status="loading" loadingLabel="Loading alerts…" />;
   }
   if (status === "error") {
-    return (
-      <AsyncStateView
-        status="error"
-        error={error as ApiError}
-        onRetry={() => refetch()}
-      />
-    );
+    return <AsyncStateView status="error" error={error as ApiError} onRetry={() => refetch()} />;
   }
 
   const alerts = data?.alerts ?? [];
@@ -64,9 +58,7 @@ export function AlertsTable() {
                 <td>
                   <span
                     className={`ui-badge ${
-                      a.current_state === "triggered"
-                        ? "ui-badge-warning"
-                        : "ui-badge-neutral"
+                      a.current_state === "triggered" ? "ui-badge-warning" : "ui-badge-neutral"
                     }`}
                   >
                     {a.current_state}
@@ -74,9 +66,7 @@ export function AlertsTable() {
                 </td>
                 <td>
                   <span
-                    className={`ui-badge ${
-                      a.enabled ? "ui-badge-success" : "ui-badge-neutral"
-                    }`}
+                    className={`ui-badge ${a.enabled ? "ui-badge-success" : "ui-badge-neutral"}`}
                   >
                     {enabledLabel(a.enabled)}
                   </span>

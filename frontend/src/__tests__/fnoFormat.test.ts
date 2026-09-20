@@ -1,12 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { askOf, bidOf, normalizeChainRows, normalizeEquityOptions } from "@/features/fno/useFno";
+import type { ChainRow, FnoOption } from "@/types";
 import { fmtIv } from "@/utils/format";
-import {
-  bidOf,
-  askOf,
-  normalizeChainRows,
-  normalizeEquityOptions,
-} from "@/features/fno/useFno";
-import type { FnoOption, ChainRow } from "@/types";
 
 describe("fmtIv (canonical IV is a decimal fraction)", () => {
   it("formats a fraction as a percentage", () => {
@@ -64,12 +59,15 @@ describe("option row normalizers", () => {
     ];
     const rows = normalizeEquityOptions(opts, 2500);
     expect(rows).toHaveLength(2);
-    expect(rows[0]!.strike).toBe(2500);
-    expect(rows[0]!.atm).toBe(true);
-    expect(rows[0]!.call?.label).toBe("X2500CE");
-    expect(rows[0]!.put?.label).toBe("X2500PE");
-    expect(rows[1]!.atm).toBe(false);
-    expect(rows[1]!.call?.label).toBe("X2600CE");
+    const r0 = rows[0];
+    const r1 = rows[1];
+    if (!r0 || !r1) throw new Error("expected two rows");
+    expect(r0.strike).toBe(2500);
+    expect(r0.atm).toBe(true);
+    expect(r0.call?.label).toBe("X2500CE");
+    expect(r0.put?.label).toBe("X2500PE");
+    expect(r1.atm).toBe(false);
+    expect(r1.call?.label).toBe("X2600CE");
   });
 
   it("normalizes index chain rows into the shared view model", () => {
@@ -97,8 +95,10 @@ describe("option row normalizers", () => {
     ];
     const view = normalizeChainRows(rows);
     expect(view).toHaveLength(1);
-    expect(view[0]!.call?.key).toBe("NSE:1");
-    expect(view[0]!.put?.key).toBe("NSE:2");
-    expect(view[0]!.atm).toBe(true);
+    const v0 = view[0];
+    if (!v0) throw new Error("expected one view row");
+    expect(v0.call?.key).toBe("NSE:1");
+    expect(v0.put?.key).toBe("NSE:2");
+    expect(v0.atm).toBe(true);
   });
 });

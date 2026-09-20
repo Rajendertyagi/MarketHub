@@ -1,6 +1,5 @@
-import { Button } from "@/components/ui";
-import { AsyncStateView } from "@/components/ui";
-import { ApiError } from "@/types";
+import { AsyncStateView, Button } from "@/components/ui";
+import type { ApiError } from "@/types";
 import { formatCondition, formatTimestamp } from "../format";
 import { useAlertHistory, useAlertMutations } from "../useAlerts";
 
@@ -14,13 +13,7 @@ export function AlertHistory() {
     return <AsyncStateView status="loading" loadingLabel="Loading history…" />;
   }
   if (status === "error") {
-    return (
-      <AsyncStateView
-        status="error"
-        error={error as ApiError}
-        onRetry={() => refetch()}
-      />
-    );
+    return <AsyncStateView status="error" error={error as ApiError} onRetry={() => refetch()} />;
   }
 
   const rows = data?.history ?? [];
@@ -32,11 +25,7 @@ export function AlertHistory() {
         <Button
           className="btn-compact"
           onClick={() => {
-            if (
-              window.confirm(
-                "Clear all alert trigger history? This cannot be undone.",
-              )
-            ) {
+            if (window.confirm("Clear all alert trigger history? This cannot be undone.")) {
               void m.clearHistory();
             }
           }}
@@ -63,9 +52,7 @@ export function AlertHistory() {
                 <tr key={h.id}>
                   <td>{formatTimestamp(h.triggered_at)}</td>
                   <td>{h.tradingsymbol ?? "—"}</td>
-                  <td>
-                    {formatCondition(h.field, h.operator, h.threshold ?? 0)}
-                  </td>
+                  <td>{formatCondition(h.field, h.operator, h.threshold ?? 0)}</td>
                   <td className="num">{h.observed_value ?? "—"}</td>
                   <td>{h.provider ?? "—"}</td>
                 </tr>

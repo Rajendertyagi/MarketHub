@@ -1,14 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ApiError } from "@/types";
+import { useEffect, useMemo, useState } from "react";
+import { StreamStatus } from "@/components/StreamStatus";
 import { AsyncStateView } from "@/components/ui";
 import { useMarketQuotes } from "@/features/dashboard/useMarketQuotes";
-import { useWatchlists, useWatchlistMutations } from "./useWatchlists";
+import type { ApiError } from "@/types";
 import { exportWatchlists, importWatchlists } from "./api";
 import { AddInstrument } from "./components/AddInstrument";
 import { WatchlistPicker } from "./components/WatchlistPicker";
 import { WatchlistTable } from "./components/WatchlistTable";
-import { StreamStatus } from "@/components/StreamStatus";
+import { useWatchlistMutations, useWatchlists } from "./useWatchlists";
 
 export function WatchlistsView() {
   const { data, status, error, refetch } = useWatchlists();
@@ -83,11 +83,7 @@ export function WatchlistsView() {
       {status === "pending" ? (
         <AsyncStateView status="loading" loadingLabel="Loading watchlists…" />
       ) : status === "error" ? (
-        <AsyncStateView
-          status="error"
-          error={error as ApiError}
-          onRetry={() => refetch()}
-        />
+        <AsyncStateView status="error" error={error as ApiError} onRetry={() => refetch()} />
       ) : (
         <div className="panel">
           <div className="panel-header">
@@ -96,9 +92,7 @@ export function WatchlistsView() {
           </div>
           <AddInstrument
             watchlistId={selected?.id ?? null}
-            existingTokens={
-              new Set((selected?.items ?? []).map((it) => it.instrument_token))
-            }
+            existingTokens={new Set((selected?.items ?? []).map((it) => it.instrument_token))}
           />
           <WatchlistTable
             items={selected?.items ?? []}

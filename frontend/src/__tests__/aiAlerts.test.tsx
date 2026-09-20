@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, render, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
   getConditionAlerts: vi.fn(),
@@ -93,9 +93,7 @@ describe("AiAlertsView", () => {
     expect(await screen.findByText("AI Alerts")).toBeTruthy();
     // Consumers tab is default.
     expect(await screen.findByText("consumer-1")).toBeTruthy();
-    expect(
-      await screen.findByText((content) => content.includes("Checkpoint: #9")),
-    ).toBeTruthy();
+    expect(await screen.findByText((content) => content.includes("Checkpoint: #9"))).toBeTruthy();
 
     // Switch to Condition Alerts.
     clickTab("Condition Alerts");

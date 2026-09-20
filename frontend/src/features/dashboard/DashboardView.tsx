@@ -1,11 +1,11 @@
-import { useMarketQuotes } from "./useMarketQuotes";
 import { StreamStatus } from "@/components/StreamStatus";
-import { TickerStrip } from "./components/TickerStrip";
-import { IndicesWidget } from "./components/IndicesWidget";
-import { SectorsWidget } from "./components/SectorsWidget";
-import { FnoWidget } from "./components/FnoWidget";
 import { BreadthWidget } from "./components/BreadthWidget";
+import { FnoWidget } from "./components/FnoWidget";
+import { IndicesWidget } from "./components/IndicesWidget";
 import { MoversWidget } from "./components/MoversWidget";
+import { SectorsWidget } from "./components/SectorsWidget";
+import { TickerStrip } from "./components/TickerStrip";
+import { useMarketQuotes } from "./useMarketQuotes";
 
 export function DashboardView() {
   const { quotes, connected } = useMarketQuotes();

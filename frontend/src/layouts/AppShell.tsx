@@ -10,21 +10,26 @@ import { StatusBar } from "./StatusBar";
 export function AppShell() {
   const { theme, toggleTheme } = useTheme();
   const location = useLocation();
-  const [openIdx, setOpenIdx] = useState<number | null>(null);
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
   const navRef = useRef<HTMLElement>(null);
 
-  // Close any open dropdown on navigation or outside click.
-  useEffect(() => setOpenIdx(null), [location.pathname]);
+  // Close any open dropdown on navigation: adjust state during render
+  // (React's previous-render pattern), so no navigation effect is needed.
+  const [lastPath, setLastPath] = useState(location.pathname);
+  if (location.pathname !== lastPath) {
+    setLastPath(location.pathname);
+    setOpenMenu(null);
+  }
   useEffect(() => {
-    if (openIdx === null) return;
+    if (openMenu === null) return;
     const onDown = (e: MouseEvent) => {
       if (navRef.current && !navRef.current.contains(e.target as Node)) {
-        setOpenIdx(null);
+        setOpenMenu(null);
       }
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [openIdx]);
+  }, [openMenu]);
 
   return (
     <div className="app-shell">
@@ -36,16 +41,19 @@ export function AppShell() {
         </div>
 
         <nav className="app-nav" aria-label="Primary" ref={navRef}>
-          {NAV.map((seg, i) => (
-            <div className="nav-segment" key={i}>
+          {NAV.map((seg) => (
+            <div
+              className="nav-segment"
+              key={
+                seg.kind === "links" ? `links-${seg.items[0]?.to ?? "start"}` : `menu-${seg.label}`
+              }
+            >
               {seg.kind === "links" ? (
                 seg.items.map((it) => (
                   <NavLink
                     key={it.to}
                     to={it.to}
-                    className={({ isActive }) =>
-                      isActive ? "nav-link active" : "nav-link"
-                    }
+                    className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
                   >
                     {it.label}
                   </NavLink>
@@ -54,15 +62,15 @@ export function AppShell() {
                 <div className="nav-dropdown">
                   <button
                     type="button"
-                    className={`nav-dropdown-trigger${openIdx === i ? " open" : ""}`}
-                    aria-expanded={openIdx === i}
+                    className={`nav-dropdown-trigger${openMenu === seg.label ? " open" : ""}`}
+                    aria-expanded={openMenu === seg.label}
                     aria-haspopup="true"
-                    onClick={() => setOpenIdx(openIdx === i ? null : i)}
+                    onClick={() => setOpenMenu(openMenu === seg.label ? null : seg.label)}
                   >
                     {seg.label}
                     <Icon name="chevron-down" size={14} />
                   </button>
-                  {openIdx === i ? (
+                  {openMenu === seg.label ? (
                     <div className="nav-dropdown-menu" role="menu">
                       {seg.items.map((it) => (
                         <NavLink
@@ -70,7 +78,7 @@ export function AppShell() {
                           to={it.to}
                           role="menuitem"
                           className="nav-dropdown-item"
-                          onClick={() => setOpenIdx(null)}
+                          onClick={() => setOpenMenu(null)}
                         >
                           {it.label}
                         </NavLink>

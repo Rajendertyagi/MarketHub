@@ -21,10 +21,8 @@ export function NewsList({ articles }: NewsListProps) {
 
 function NewsItem({ article }: { article: NewsArticle }) {
   const link = article.type === "rss" ? article.link : article.url;
-  const when =
-    article.type === "rss" ? article.published : article.created_utc;
-  const snippet =
-    article.type === "rss" ? article.summary : article.selftext;
+  const when = article.type === "rss" ? article.published : article.created_utc;
+  const snippet = article.type === "rss" ? article.summary : article.selftext;
 
   return (
     <li className="news-item">

@@ -6,5 +6,5 @@
 
 export function ivToPercent(iv: number | null | undefined): string {
   if (iv === null || iv === undefined || Number.isNaN(iv)) return "-";
-  return (iv * 100).toFixed(2) + "%";
+  return `${(iv * 100).toFixed(2)}%`;
 }

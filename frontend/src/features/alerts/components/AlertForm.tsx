@@ -1,14 +1,15 @@
 import { useState } from "react";
 import { Button, Field, Input, Select } from "@/components/ui";
 import {
+  ALERT_FIELD_LABELS,
   ALERT_FIELDS,
+  ALERT_OPERATOR_LABELS,
   ALERT_OPERATORS,
   DEFAULT_ALERT_EXCHANGE,
   NSE_SYMBOLS,
 } from "../constants";
-import { ALERT_FIELD_LABELS, ALERT_OPERATOR_LABELS } from "../constants";
-import { useAlertMutations } from "../useAlerts";
 import type { AlertField, AlertOperator, CreateAlertInput } from "../types";
+import { useAlertMutations } from "../useAlerts";
 
 const EMPTY: CreateAlertInput = {
   exchange: DEFAULT_ALERT_EXCHANGE,
@@ -27,10 +28,8 @@ export function AlertForm() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const update = <K extends keyof CreateAlertInput>(
-    key: K,
-    value: CreateAlertInput[K],
-  ) => setForm((f) => ({ ...f, [key]: value }));
+  const update = <K extends keyof CreateAlertInput>(key: K, value: CreateAlertInput[K]) =>
+    setForm((f) => ({ ...f, [key]: value }));
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();

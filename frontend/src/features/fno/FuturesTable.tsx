@@ -1,8 +1,8 @@
 import { Link } from "react-router-dom";
 import type { FutureView } from "@/types";
-import { bidOf, askOf } from "./useFno";
-import { chartHref } from "./chartNav";
 import { fmtInt, fmtNum, fmtPct, tone } from "@/utils/format";
+import { chartHref } from "./chartNav";
+import { askOf, bidOf } from "./useFno";
 
 interface Props {
   futures: FutureView[];
@@ -19,7 +19,7 @@ export function FuturesTable({ futures }: Props) {
     );
   }
   return (
-      <div className="card fno-table-card">
+    <div className="card fno-table-card">
       <table className="table">
         <thead>
           <tr>

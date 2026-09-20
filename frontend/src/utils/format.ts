@@ -17,10 +17,10 @@ export function fmtInt(value: number | null | undefined): string {
 export function fmtVol(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "-";
   const abs = Math.abs(value);
-  if (abs >= 1e9) return (value / 1e9).toFixed(2) + "B";
-  if (abs >= 1e7) return (value / 1e7).toFixed(2) + "Cr";
-  if (abs >= 1e5) return (value / 1e5).toFixed(2) + "L";
-  if (abs >= 1e3) return (value / 1e3).toFixed(2) + "K";
+  if (abs >= 1e9) return `${(value / 1e9).toFixed(2)}B`;
+  if (abs >= 1e7) return `${(value / 1e7).toFixed(2)}Cr`;
+  if (abs >= 1e5) return `${(value / 1e5).toFixed(2)}L`;
+  if (abs >= 1e3) return `${(value / 1e3).toFixed(2)}K`;
   return String(Math.round(value));
 }
 

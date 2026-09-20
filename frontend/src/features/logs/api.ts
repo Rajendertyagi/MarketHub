@@ -2,9 +2,9 @@
 // helper (owns the /api prefix + Zod validation). The live stream uses the
 // browser EventSource directly (SSE) — see useLogStream.
 import { request } from "@/api/client";
-import type { LogFilters, LogsResponse } from "./types";
-import { logsResponseSchema } from "./schemas";
 import { LOG_HISTORY_LIMIT } from "./constants";
+import { logsResponseSchema } from "./schemas";
+import type { LogFilters, LogsResponse } from "./types";
 
 export async function getLogs(
   filters: LogFilters = {},

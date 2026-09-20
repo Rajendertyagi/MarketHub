@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, fireEvent, cleanup } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
   getAlerts: vi.fn(),
@@ -151,11 +151,9 @@ describe("AlertsView", () => {
     });
     api.setAlertEnabled.mockResolvedValue({ status: "ok" });
     renderWithProviders(<AlertsView />);
-    const toggle = await screen.findByRole("checkbox") as HTMLInputElement;
+    const toggle = (await screen.findByRole("checkbox")) as HTMLInputElement;
     fireEvent.click(toggle);
-    await waitFor(() =>
-      expect(api.setAlertEnabled).toHaveBeenCalledWith(1, false),
-    );
+    await waitFor(() => expect(api.setAlertEnabled).toHaveBeenCalledWith(1, false));
   });
 
   it("renders live trigger notifications", async () => {
@@ -174,9 +172,7 @@ describe("AlertsView", () => {
     expect(
       screen.getByText(
         (content, element) =>
-          element?.tagName === "LI" &&
-          content.includes("RELIANCE") &&
-          content.includes("2600"),
+          element?.tagName === "LI" && content.includes("RELIANCE") && content.includes("2600"),
       ),
     ).toBeTruthy();
   });

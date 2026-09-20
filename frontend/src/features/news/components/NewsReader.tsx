@@ -1,10 +1,6 @@
 import { Button } from "@/components/ui";
+import { articleBody, articleLink, formatRelativeTime } from "../format";
 import type { NewsArticle, NewsSentiment } from "../types";
-import {
-  articleBody,
-  articleLink,
-  formatRelativeTime,
-} from "../format";
 
 interface Props {
   article?: NewsArticle;
@@ -26,9 +22,7 @@ export function NewsReader({ article, sentiment }: Props) {
         <div className="news-pane-header">
           <h2>Reader</h2>
         </div>
-        <p className="muted news-empty">
-          Select an article to read it here.
-        </p>
+        <p className="muted news-empty">Select an article to read it here.</p>
       </div>
     );
   }
@@ -74,10 +68,7 @@ export function NewsReader({ article, sentiment }: Props) {
           </div>
         ) : null}
         <div className="news-reader-actions">
-          <Button
-            variant="primary"
-            onClick={() => window.open(link, "_blank", "noreferrer")}
-          >
+          <Button variant="primary" onClick={() => window.open(link, "_blank", "noreferrer")}>
             Open original
           </Button>
         </div>

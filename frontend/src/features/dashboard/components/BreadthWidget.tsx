@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { getBreadth } from "@/api/market";
-import { WidgetCard } from "./WidgetCard";
 import { fmtInt, fmtPct } from "@/utils/format";
+import { WidgetCard } from "./WidgetCard";
 
 // Market breadth at a glance: an advance/decline split bar plus headline counts.
 // Entry point to the full Breadth page (NIFTY50 universe).
@@ -16,12 +16,7 @@ export function BreadthWidget() {
   const advPct = d?.advance_percent ?? 0;
 
   return (
-    <WidgetCard
-      title="Breadth"
-      to="/breadth"
-      subtitle={d?.universe}
-      hint="Open Breadth →"
-    >
+    <WidgetCard title="Breadth" to="/breadth" subtitle={d?.universe} hint="Open Breadth →">
       {q.isLoading ? (
         <div className="muted">Loading…</div>
       ) : !d ? (

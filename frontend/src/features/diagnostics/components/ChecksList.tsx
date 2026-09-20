@@ -1,5 +1,5 @@
 import { AsyncStateView } from "@/components/ui";
-import { ApiError } from "@/types";
+import type { ApiError } from "@/types";
 import { useDiagnosticsChecks } from "../useDiagnostics";
 
 // Reference list of available diagnostic checks (read-only metadata).
@@ -10,13 +10,7 @@ export function ChecksList() {
     return <AsyncStateView status="loading" loadingLabel="Loading checks…" />;
   }
   if (status === "error") {
-    return (
-      <AsyncStateView
-        status="error"
-        error={error as ApiError}
-        onRetry={() => refetch()}
-      />
-    );
+    return <AsyncStateView status="error" error={error as ApiError} onRetry={() => refetch()} />;
   }
 
   const checks = data?.checks ?? [];

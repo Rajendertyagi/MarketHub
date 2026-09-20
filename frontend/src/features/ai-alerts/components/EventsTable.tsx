@@ -1,5 +1,5 @@
 import { AsyncStateView } from "@/components/ui";
-import { ApiError } from "@/types";
+import type { ApiError } from "@/types";
 import { shortId } from "../constants";
 import { deliveryBadgeClass, deliveryLabel, timeAgo } from "../format";
 import { useTriggeredEvents } from "../useAiAlerts";
@@ -12,13 +12,7 @@ export function EventsTable() {
     return <AsyncStateView status="loading" loadingLabel="Loading events…" />;
   }
   if (status === "error") {
-    return (
-      <AsyncStateView
-        status="error"
-        error={error as ApiError}
-        onRetry={() => refetch()}
-      />
-    );
+    return <AsyncStateView status="error" error={error as ApiError} onRetry={() => refetch()} />;
   }
 
   const events = data?.events ?? [];
