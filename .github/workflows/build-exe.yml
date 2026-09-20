@@ -45,10 +45,19 @@ jobs:
           pip install --upgrade -r requirements.txt
           pip install -U "nuitka>=2.5"
 
-      - name: Build frontend (Node 26 -> frontend/dist)
+      - name: Install frontend dependencies
         working-directory: frontend
         run: |
           npm install
+
+      - name: Lint frontend (Biome gate)
+        working-directory: frontend
+        run: |
+          npm run lint -- --error-on-warnings
+
+      - name: Build frontend (Node 26 -> frontend/dist)
+        working-directory: frontend
+        run: |
           npm run build
 
       - name: Compile standalone EXE with Nuitka
