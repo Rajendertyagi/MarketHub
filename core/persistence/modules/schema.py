@@ -12,7 +12,7 @@ import sqlite3
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 22
 
 
 def get_schema_version(conn: sqlite3.Connection) -> int:
@@ -124,6 +124,12 @@ def create_v7_schema(conn: sqlite3.Connection) -> None:
     # policy rules).
     from core.persistence.modules.subscriptions import create_subscription_tables
     create_subscription_tables(conn)
+    # v19: F&O coverage configuration (canonical selections only).
+    from core.persistence.modules.fno_config import create_fno_config_tables
+    create_fno_config_tables(conn)
+    # v20: previous-session OI snapshots (provider-agnostic baseline).
+    from core.persistence.modules.previous_oi import create_previous_oi_table
+    create_previous_oi_table(conn)
 
 
 def create_alerts_table(conn: sqlite3.Connection) -> None:

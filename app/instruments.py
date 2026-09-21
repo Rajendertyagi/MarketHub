@@ -19,6 +19,12 @@ import logging
 import urllib.request
 from typing import Any
 
+from core.persistence.modules.products import (
+    KNOWN_SEGMENTS as _KNOWN_SEGMENTS,
+    canonical_segment,
+    canonicalize_record,
+)
+
 logger = logging.getLogger("event_server")
 
 UPSTOX_MASTER_URL = ("https://assets.upstox.com/market-quote/"
@@ -158,8 +164,8 @@ def upstox_master_records(payload: bytes | list) -> list[dict[str, Any]]:
             "underlying": _opt_str(e.get("underlying_symbol")),
             "provider_symbol": instrument_key,
         })
-    return [r for r in records if r["instrument_token"]
-            and r["exchange"] and r["tradingsymbol"]]
+    return [canonicalize_record(r) for r in records
+            if r["instrument_token"] and r["exchange"] and r["tradingsymbol"]]
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +236,7 @@ def fyers_master_records(payload: bytes) -> list[dict[str, Any]]:
             rec["option_type"] = None
         if rec["instrument_token"] and rec["exchange"] \
                 and rec["tradingsymbol"]:
-            records.append(rec)
+            records.append(canonicalize_record(rec))
     return records
 
 
@@ -247,40 +253,23 @@ DEFAULT_SEGMENTS: frozenset[str] = frozenset({
     "NSE_EQ", "NSE_FO", "NSE_INDEX", "BSE_INDEX",
 })
 
-# Known provider segments (Upstox native names). GET /segments reports
-# these plus anything newly discovered in a master; never hard-coded in UI.
-_KNOWN_SEGMENTS: tuple[str, ...] = (
-    "NSE_EQ", "NSE_FO", "NSE_INDEX", "NSE_COM",
-    "BSE_EQ", "BSE_FO", "BSE_INDEX",
-    "MCX_FO", "BCD_FO", "NCD_FO", "GLOBAL",
-)
+# Known provider segments. GET /segments reports these plus anything newly
+# discovered in a master; never hard-coded in the UI. The vocabulary itself is
+# owned by the canonical catalog layer (core.persistence.modules.products).
+# (Re-exported as _KNOWN_SEGMENTS for existing callers.)
 
 
 def _derive_segment(row: dict[str, Any]) -> str | None:
-    """MarketHub segment for a canonical record (provider-agnostic).
+    """Canonical MarketHub segment for a parsed record (provider-agnostic).
 
-    Upstox rows carry a native ``segment``. Fyers rows only carry raw
-    master codes (10/11/20) + exchange + instrument_type, so the segment
-    is DERIVED per row: this keeps index rows (which live inside Fyers'
-    cash masters) separable from equities without ever conflating the
-    two — filtering by derived segment is the only way to drop NSE_EQ
-    while keeping NSE_INDEX.
+    Delegates to the single shared rule in the canonical catalog layer:
+    Upstox rows carry a native canonical ``segment``; Fyers rows carry raw
+    master codes (10/11/20) + exchange + instrument_type, so the segment is
+    DERIVED per row — this keeps index rows (which live inside Fyers' cash
+    masters) separable from equities without ever conflating the two.
     """
-    seg = row.get("segment")
-    if seg in _KNOWN_SEGMENTS:
-        return seg
-    exchange = (row.get("exchange") or "").upper()
-    itype = row.get("instrument_type")
-    if exchange in ("NSE", "BSE"):
-        if itype == "INDEX":
-            return f"{exchange}_INDEX"
-        if itype in ("FUTURE", "OPTION"):
-            return f"{exchange}_FO"
-        if itype in ("EQUITY", "ETF"):
-            return f"{exchange}_EQ"
-    if exchange == "MCX":
-        return "MCX_FO"
-    return None
+    return canonical_segment(row.get("exchange"), row.get("instrument_type"),
+                             row.get("segment"))
 
 
 def _filter_by_segments(
@@ -404,9 +393,14 @@ class InstrumentCatalog:
     def search(self, **kw: Any) -> list[dict[str, Any]]:
         return self._store.search_instruments(**kw)
 
-    def derivative_expiries(self, underlying: str,
-                            instrument_type: str) -> list[str]:
-        return self._store.derivative_expiries(underlying, instrument_type)
+    def derivative_expiries(self, underlying: str, instrument_type: str,
+                            exchange: str | None = None) -> list[str]:
+        return self._store.derivative_expiries(underlying, instrument_type,
+                                               exchange=exchange)
+
+    def catalog_epoch(self) -> int:
+        """Monotonic catalog version (changes on every catalog replace)."""
+        return self._store.catalog_epoch()
 
     def fno_universe(self, *, provider: str, today: str,
                      q: str | None = None, limit: int = 500) -> list[dict]:
@@ -414,8 +408,20 @@ class InstrumentCatalog:
         return self._store.fno_universe(provider=provider, today=today,
                                         q=q, limit=limit)
 
-    def option_strikes(self, underlying: str, expiry: str) -> list[dict]:
-        return self._store.option_strikes(underlying, expiry)
+    def fno_underlying_rows(self, *, provider: str, today: str,
+                            limit: int = 2000) -> list[dict]:
+        """Enumeration read model: F&O stock underlyings (no counts)."""
+        return self._store.fno_underlying_rows(provider=provider, today=today,
+                                               limit=limit)
+
+    def list_future_contracts(self, **kw: Any) -> list[dict[str, Any]]:
+        """Bulk future-contract read model (one query, provider-neutral)."""
+        return self._store.list_future_contracts(**kw)
+
+    def option_strikes(self, underlying: str, expiry: str,
+                       exchange: str | None = None) -> list[dict]:
+        return self._store.option_strikes(underlying, expiry,
+                                          exchange=exchange)
 
     def get(self, provider: str, token: str) -> dict[str, Any] | None:
         return self._store.get_instrument(provider, token)

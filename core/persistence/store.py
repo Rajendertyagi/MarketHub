@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -42,12 +43,19 @@ from core.persistence.modules import retention as _retention
 from core.persistence.modules import secrets as _secrets
 from core.persistence.modules import source_state as _source_state
 from core.persistence.modules import subscriptions as _subscriptions
+from core.persistence.modules import fno_config as _fno_config
+from core.persistence.modules import previous_oi as _previous_oi
 from core.persistence.modules.products import migrate_v10_to_v11, migrate_v11_to_v12
+from core.persistence.modules.products import migrate_v20_to_v21
+from core.persistence.modules.products import migrate_v21_to_v22
 from core.persistence.modules.condition_alerts import migrate_v12_to_v13
 from core.persistence.modules.news import migrate_v13_to_v14
 from core.persistence.modules.news import migrate_v14_to_v15
 from core.persistence.modules.news import migrate_v15_to_v16
+from core.persistence.modules.news import migrate_v17_to_v18
 from core.persistence.modules.subscriptions import migrate_v16_to_v17
+from core.persistence.modules.fno_config import migrate_v18_to_v19
+from core.persistence.modules.previous_oi import migrate_v19_to_v20
 from core.persistence.modules.schema import (
     SCHEMA_VERSION,
     create_v7_schema,
@@ -67,6 +75,26 @@ logger = logging.getLogger(__name__)
 
 # Maximum events a single replay/GetPending call can return.
 MAX_REPLAY_LIMIT = 500
+
+# Catalog epoch: incremented whenever the instruments catalog is replaced by a
+# provider sync. Canonical derived read models (e.g. the F&O futures universe)
+# key their caches on this value, so they are invalidated from the catalog-write
+# boundary rather than from an arbitrary request TTL.
+_catalog_epoch = 0
+_catalog_epoch_lock = threading.Lock()
+
+
+def catalog_epoch() -> int:
+    """Monotonic catalog version; changes on every catalog replace."""
+    with _catalog_epoch_lock:
+        return _catalog_epoch
+
+
+def _bump_catalog_epoch() -> int:
+    global _catalog_epoch
+    with _catalog_epoch_lock:
+        _catalog_epoch += 1
+        return _catalog_epoch
 
 
 class EventStore:
@@ -139,6 +167,16 @@ class EventStore:
                         migrate_v15_to_v16(conn)
                     elif current_version == 16:
                         migrate_v16_to_v17(conn)
+                    elif current_version == 17:
+                        migrate_v17_to_v18(conn)
+                    elif current_version == 18:
+                        migrate_v18_to_v19(conn)
+                    elif current_version == 19:
+                        migrate_v19_to_v20(conn)
+                    elif current_version == 20:
+                        migrate_v20_to_v21(conn)
+                    elif current_version == 21:
+                        migrate_v21_to_v22(conn)
                     else:
                         raise RuntimeError(
                             f"unsupported schema version {current_version}; "
@@ -156,6 +194,14 @@ class EventStore:
                 conn.execute("""
                     CREATE INDEX IF NOT EXISTS idxCES_consumer
                     ON consumer_event_state(consumer_id, event_id)
+                """)
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_news_items_source_type
+                    ON news_items(source_type)
+                """)
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_news_items_url
+                    ON news_items(url)
                 """)
                 conn.commit()
                 logger.info("event store ready (v%d): %s", current_version, self._db_path)
@@ -683,10 +729,17 @@ class EventStore:
                                      records: list[dict[str, Any]]) -> int:
         conn = self._open(self._db_path)
         try:
-            return _products.replace_provider_instruments(conn, provider,
-                                                          records)
+            written = _products.replace_provider_instruments(conn, provider,
+                                                             records)
         finally:
             conn.close()
+        # Catalog changed → invalidate every derived read-model cache.
+        _bump_catalog_epoch()
+        return written
+
+    def catalog_epoch(self) -> int:
+        """Monotonic catalog version (bumped on every catalog replace)."""
+        return catalog_epoch()
 
     def search_instruments(self, **kw: Any) -> list[dict[str, Any]]:
         conn = self._open(self._db_path)
@@ -695,22 +748,24 @@ class EventStore:
         finally:
             conn.close()
 
-    def derivative_expiries(self, underlying: str,
-                            instrument_type: str) -> list[str]:
+    def derivative_expiries(self, underlying: str, instrument_type: str,
+                            exchange: str | None = None) -> list[str]:
         """Sorted distinct expiries for one underlying's futures/options."""
         conn = self._open(self._db_path)
         try:
             return _products.derivative_expiries(
-                conn, underlying=underlying, instrument_type=instrument_type)
+                conn, underlying=underlying, instrument_type=instrument_type,
+                exchange=exchange)
         finally:
             conn.close()
 
-    def option_strikes(self, underlying: str, expiry: str) -> list[dict]:
+    def option_strikes(self, underlying: str, expiry: str,
+                       exchange: str | None = None) -> list[dict]:
         """All option contracts for one underlying+expiry, strike-sorted."""
         conn = self._open(self._db_path)
         try:
             return _products.option_strikes(
-                conn, underlying=underlying, expiry=expiry)
+                conn, underlying=underlying, expiry=expiry, exchange=exchange)
         finally:
             conn.close()
 
@@ -741,6 +796,51 @@ class EventStore:
         conn = self._open(self._db_path)
         try:
             return _products.list_watchlists(conn)
+        finally:
+            conn.close()
+
+    # ─── F&O coverage configuration (v19) ─────────────────────────────────
+
+    def get_fno_config(self) -> dict[str, Any]:
+        conn = self._open(self._db_path)
+        try:
+            return _fno_config.get_fno_config(conn)
+        finally:
+            conn.close()
+
+    def set_fno_config(self, **fields: Any) -> dict[str, Any]:
+        conn = self._open(self._db_path)
+        try:
+            return _fno_config.upsert_fno_config(conn, **fields)
+        finally:
+            conn.close()
+
+    # ─── Previous-session OI snapshots (v20) ──────────────────────────────
+
+    def get_previous_oi(self, *, exchange: str, underlying: str, expiry: str,
+                        instrument_type: str = "FUTURE",
+                        before_session: str | None = None) -> float | None:
+        conn = self._open(self._db_path)
+        try:
+            return _previous_oi.get_previous_oi(
+                conn, exchange=exchange, underlying=underlying, expiry=expiry,
+                instrument_type=instrument_type,
+                before_session=before_session)
+        finally:
+            conn.close()
+
+    def upsert_previous_oi_snapshots(
+            self, rows: list[dict[str, Any]]) -> int:
+        conn = self._open(self._db_path)
+        try:
+            return _previous_oi.upsert_oi_snapshots(conn, rows)
+        finally:
+            conn.close()
+
+    def prune_previous_oi(self, *, today: str | None = None) -> int:
+        conn = self._open(self._db_path)
+        try:
+            return _previous_oi.prune_previous_oi(conn, today=today)
         finally:
             conn.close()
 
@@ -1334,6 +1434,24 @@ class EventStore:
         finally:
             conn.close()
 
+    def fno_underlying_rows(self, *, provider: str, today: str,
+                            limit: int = 2000) -> list[dict]:
+        """Enumeration read model: F&O stock underlyings (no counts)."""
+        conn = self._open(self._db_path)
+        try:
+            return _products.fno_underlying_rows(
+                conn, provider=provider, today=today, limit=limit)
+        finally:
+            conn.close()
+
+    def list_future_contracts(self, **kw: Any) -> list[dict[str, Any]]:
+        """Bulk future-contract read model (one query, provider-neutral)."""
+        conn = self._open(self._db_path)
+        try:
+            return _products.list_future_contracts(conn, **kw)
+        finally:
+            conn.close()
+
     def segment_row_counts(self) -> dict[str, int]:
         """Catalog row count per provider segment (read-only projection)."""
         conn = self._open(self._db_path)
@@ -1499,6 +1617,77 @@ class EventStore:
             return _news.query_news_items(
                 conn, source_ids=source_ids, categories=categories,
                 symbols=symbols, newer_than=newer_than, limit=limit)
+        finally:
+            conn.close()
+
+    def get_news_item(self, item_id: str) -> dict[str, Any] | None:
+        """Fetch one persisted news item by primary key (None when unknown)."""
+        conn = self._open(self._db_path)
+        try:
+            return _news.get_news_item(conn, item_id)
+        finally:
+            conn.close()
+
+    def get_news_item_by_public_id(
+        self, public_id: str,
+    ) -> dict[str, Any] | None:
+        """Resolve an MCP-visible item id to its row (None when unknown)."""
+        conn = self._open(self._db_path)
+        try:
+            return _news.get_news_item_by_public_id(conn, public_id)
+        finally:
+            conn.close()
+
+    def latest_news_fetched_at(self) -> str | None:
+        """Newest fetched_at across news_items (None when empty)."""
+        conn = self._open(self._db_path)
+        try:
+            return _news.latest_fetched_at(conn)
+        finally:
+            conn.close()
+
+    def latest_news_published_at(self) -> str | None:
+        """Newest published_at across news_items (None when empty)."""
+        conn = self._open(self._db_path)
+        try:
+            return _news.latest_published_at(conn)
+        finally:
+            conn.close()
+
+    def record_news_source_health(
+        self, *, source_id: str, success: bool,
+        error: str | None = None, seen: int = 0, added: int = 0,
+    ) -> None:
+        """Record one source's fetch attempt (success or failure)."""
+        from datetime import datetime, timezone
+        now_iso = datetime.now(timezone.utc).isoformat()
+        conn = self._open(self._db_path)
+        try:
+            _news.record_source_health(
+                conn, source_id=source_id, success=success,
+                error=error, seen=seen, added=added, now_iso=now_iso)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def get_news_source_health(
+        self, source_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Health rows for one source (or all). Empty list when none."""
+        conn = self._open(self._db_path)
+        try:
+            return _news.get_source_health(conn, source_id)
+        finally:
+            conn.close()
+
+    def last_news_successful_fetch_at(self) -> str | None:
+        """Newest last_success_at across sources (None when never)."""
+        conn = self._open(self._db_path)
+        try:
+            return _news.last_successful_fetch_at(conn)
         finally:
             conn.close()
 
