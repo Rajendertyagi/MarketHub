@@ -23,6 +23,7 @@ from starlette.routing import Route
 import logging
 logger = logging.getLogger("event_server")
 
+from market.derivatives_universe import fno_underlying_rows as _fno_underlying_rows
 from market.market_universe import resolve_universe as _resolve_universe
 from market.scanner import ScannerEngine
 from market.breadth import compute_breadth as _compute_breadth
@@ -296,8 +297,10 @@ def build_market_routes(
         the map still renders (tiles simply mark fno=False).
         """
         try:
-            rows = index_catalog.fno_universe(
-                provider="upstox", today=date.today().isoformat(), limit=2000)
+            # Enumeration only — the contract counts are not needed here.
+            rows = _fno_underlying_rows(
+                index_catalog, provider="upstox",
+                today=date.today().isoformat(), limit=2000)
             return {str(r.get("symbol", "")).upper() for r in (rows or [])}
         except Exception:  # noqa: BLE001
             return set()

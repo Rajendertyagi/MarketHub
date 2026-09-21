@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
+from market.derivatives_universe import fno_underlying_rows
+
 from . import index_constituents as _idx
 
 UNIVERSE_NAMES: tuple[str, ...] = ("FNO", "NSE_EQ", "NIFTY50", "NIFTYNXT50", "BANKNIFTY")
@@ -60,7 +62,9 @@ def resolve_universe(name: str, catalog: Any) -> list[Member]:
 
 def _resolve_fno(catalog: Any) -> list[Member]:
     today = date.today().isoformat()
-    rows = catalog.fno_universe(provider="upstox", today=today, limit=2000)
+    # Enumeration only — no contract counts needed here.
+    rows = fno_underlying_rows(catalog, provider="upstox", today=today,
+                               limit=2000)
     members: list[Member] = []
     for r in rows or []:
         token = r.get("equity_key")
