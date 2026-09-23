@@ -1,7 +1,7 @@
 // Pure presentation helpers for the Settings feature. Kept separate from
 // data/logic so components stay declarative and formatting is unit-testable.
 import { FEED_STATE_LABELS, FEED_STATE_SHORT_LABELS, STOP_REASON_LABELS } from "./constants";
-import type { MarketSource, UpstoxAuthStatus } from "./types";
+import type { FyersSettings, MarketSource, UpstoxAuthStatus } from "./types";
 
 // Friendly, long-form feed-state label (Settings detail tables).
 export function formatFeedState(state?: string): string {
@@ -36,6 +36,27 @@ export function formatUpstoxAuthChip(s: UpstoxAuthStatus): { label: string; cls:
       return { label: "Session expired", cls: "chip chip-off" };
     case "rejected":
       return { label: "Session needs login", cls: "chip chip-off" };
+    default:
+      return { label: "Login required", cls: "chip chip-off" };
+  }
+}
+
+// Fyers auth chip label + css class. Driven ONLY by the backend canonical
+// projection (authenticated/auth_state) — never by token presence. Unknown
+// and loading are never rendered as authenticated.
+export function formatFyersAuthChip(s: FyersSettings): { label: string; cls: string } {
+  if (s.authenticated === true) {
+    return { label: "Connected", cls: "chip chip-on" };
+  }
+  switch (s.auth_state) {
+    case "expired":
+      return { label: "Session expired — re-login", cls: "chip chip-off" };
+    case "missing":
+      return s.login_available
+        ? { label: "Login required", cls: "chip chip-off" }
+        : { label: "Credentials required", cls: "chip chip-off" };
+    case "unknown":
+      return { label: "Status unknown — login available", cls: "chip chip-off" };
     default:
       return { label: "Login required", cls: "chip chip-off" };
   }

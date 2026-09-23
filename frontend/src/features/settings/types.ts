@@ -51,6 +51,13 @@ export interface FyersSettings {
   secret_configured?: boolean;
   store_error?: string | null;
   login_available?: boolean;
+  // Canonical auth projection (backend-owned; mirrors Upstox semantics).
+  authenticated?: boolean;
+  auth_state?: "authenticated" | "expired" | "missing" | "unknown" | string;
+  expired?: boolean | null;
+  expiry_known?: boolean;
+  // Legacy presence signal: a token string exists. NOT a usability claim —
+  // gating must use `authenticated`/`login_required`, never this.
   access_token_active?: boolean;
   source_state?: string;
   source_registered?: boolean;
@@ -60,6 +67,7 @@ export interface FyersSettings {
   login_required?: boolean;
   session_restored?: boolean;
   session_persisted?: boolean;
+  stored_access_present?: boolean;
 }
 
 // ── Generic save/delete credential result ───────────────────────────────────

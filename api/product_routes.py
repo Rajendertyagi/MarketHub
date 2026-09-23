@@ -248,7 +248,8 @@ _UPSTOX_DIAG_AUTH_FIELDS = frozenset({
     "last_auth_status",
 })
 _FYERS_DIAG_AUTH_FIELDS = frozenset({
-    "access_token_active", "login_required", "session_persisted",
+    "access_token_active", "authenticated", "auth_state", "expired",
+    "expiry_known", "login_required", "session_persisted",
     "session_restored", "access_token_expires_at", "last_auth_status",
 })
 
@@ -322,14 +323,23 @@ def build_diagnostics_routes(version: str,
                 _active = bool(_f.get("access_token_active"))
                 auth_out["fyers"] = {
                     k: _f.get(k) for k in _FYERS_DIAG_AUTH_FIELDS}
-                # Normalized contract (Fyers has no expired/rejected states;
-                # never fabricate them): active -> authenticated, else the
-                # login_required flag decides missing vs unknown.
-                auth_out["fyers"]["authenticated"] = _active
-                auth_out["fyers"]["auth_state"] = (
-                    "authenticated" if _active
-                    else ("missing" if _f.get("login_required")
-                          else "unknown"))
+                # Normalized contract: prefer the snapshot's canonical
+                # auth_state/authenticated (same projection the Settings UI
+                # renders, so the two can never disagree). Legacy inputs
+                # without those keys fall back to the presence derivation.
+                _snap_state = _f.get("auth_state")
+                _snap_authed = _f.get("authenticated")
+                if isinstance(_snap_authed, bool):
+                    auth_out["fyers"]["authenticated"] = _snap_authed
+                else:
+                    auth_out["fyers"]["authenticated"] = _active
+                if isinstance(_snap_state, str) and _snap_state:
+                    auth_out["fyers"]["auth_state"] = _snap_state
+                else:
+                    auth_out["fyers"]["auth_state"] = (
+                        "authenticated" if _active
+                        else ("missing" if _f.get("login_required")
+                              else "unknown"))
                 auth_out["fyers"]["feed"] = {
                     "state": (_fsrc.get("state") if _fsrc else None),
                     "task_running": (_fsrc.get("task_running")
@@ -1228,8 +1238,51 @@ def build_fyers_auth_routes(cred_store: Any,
             raise RuntimeError("fyers auth service unavailable")
         return _fyers_auth
 
-    _pending: dict[str, float] = {}
+    _pending: dict[str, tuple[float, str]] = {}
     _TTL = 600
+
+    # Default post-login destination: the Fyers section of Settings —
+    # never the dashboard. A caller-supplied ``next`` may override the
+    # full return location, but only within the approved /ui/ surface
+    # (open redirects are refused and fall back to this default).
+    _DEFAULT_RETURN_TO = "/ui/#/settings/brokers"
+
+    def _safe_return_to(value: Any) -> str:
+        """Validate an operator-supplied return location (anti-open-redirect).
+
+        Only internal ``/ui`` locations are allowed. Anything else —
+        absolute URLs, protocol-relative URLs, backslashes, control
+        characters, over-long values — falls back to the default.
+        """
+        if not isinstance(value, str) or not value:
+            return _DEFAULT_RETURN_TO
+        candidate = value.strip()
+        if len(candidate) > 512:
+            return _DEFAULT_RETURN_TO
+        if not (candidate == "/ui" or candidate.startswith("/ui/") or
+                candidate.startswith("/ui?") or candidate.startswith("/ui#")):
+            return _DEFAULT_RETURN_TO
+        lowered = candidate.lower()
+        if ("://" in lowered or candidate.startswith("//")
+                or "\\" in candidate
+                or any(ord(c) < 32 or ord(c) == 127 for c in candidate)):
+            return _DEFAULT_RETURN_TO
+        return candidate
+
+    def _redirect_with_result(return_to: str, result: str) -> Response:
+        """Return to the initiating location with a safe result flag.
+
+        Only the ``fyers_auth`` result token is appended (ok / rejected /
+        retry / expired / error) — never tokens, secrets, codes, or raw
+        exception detail.
+        """
+        from starlette.responses import RedirectResponse
+        base, sep, frag = return_to.partition("#")
+        joiner = "&" if "?" in base else "?"
+        target = f"{base}{joiner}fyers_auth={result}"
+        if frag:
+            target = f"{target}#{frag}"
+        return RedirectResponse(target, status_code=302)
 
     async def _status(request: Request) -> Response:  # noqa: ARG001
         # Thin adapter: auth facts from the service; source/feed lifecycle
@@ -1294,12 +1347,17 @@ def build_fyers_auth_routes(cred_store: Any,
             return _json({"error": "failed to delete"}, 500)
         return _json({"removed": bool(removed)})
 
-    async def _login(request: Request) -> Response:  # noqa: ARG001
+    async def _login(request: Request) -> Response:
         now = _time.monotonic()
-        for s in [s for s, e in _pending.items() if e <= now]:
+        for s in [s for s, e in _pending.items() if e[0] <= now]:
             del _pending[s]
         state = _secrets.token_urlsafe(32)
-        _pending[state] = now + _TTL
+        # Preserve the initiating Fyers settings/auth location across the
+        # broker round-trip (safe, internal-only; validated above).
+        _pending[state] = (
+            now + _TTL,
+            _safe_return_to(request.query_params.get("next")),
+        )
         # Thin adapter: the service builds the login URL from stored creds.
         try:
             url = await asyncio.to_thread(
@@ -1311,12 +1369,8 @@ def build_fyers_auth_routes(cred_store: Any,
         return RedirectResponse(url, status_code=302)
 
     async def _callback(request: Request) -> Response:
-        from starlette.responses import RedirectResponse
-
-        def _fail(reason):
-            return RedirectResponse(
-                    f"/ui/?fyers_auth={reason}#/settings",
-                    status_code=302)
+        def _fail(reason, return_to=_DEFAULT_RETURN_TO):
+            return _redirect_with_result(return_to, reason)
 
         code = request.query_params.get("auth_code") \
             or request.query_params.get("code")
@@ -1325,16 +1379,20 @@ def build_fyers_auth_routes(cred_store: Any,
             return _fail("retry")
         matched = None
         expiry = -1.0
-        for pending, exp in _pending.items():
+        return_to = _DEFAULT_RETURN_TO
+        for pending, (exp, saved_next) in _pending.items():
             if _hmac.compare_digest(pending, state):
-                matched, expiry = pending, exp
+                matched, expiry, return_to = pending, exp, saved_next
                 break
         if matched is None:
             return _fail("retry")
         if expiry < _time.monotonic():
             del _pending[matched]
-            return _fail("expired")
+            return _fail("expired", return_to)
         del _pending[matched]
+
+        def _fail_here(reason):
+            return _fail(reason, return_to)
 
         # Thin adapter: exchange + persist owned by FyersAuthService.
         # TOKEN POLICY (deliberate, documented):
@@ -1343,19 +1401,21 @@ def build_fyers_auth_routes(cred_store: Any,
         try:
             fyers_auth = _require_fyers()
         except Exception:
-            return _fail("retry")
+            return _fail_here("retry")
         try:
             bundle = await fyers_auth.exchange_auth_code(code.strip())
         except Exception:
-            return _fail("rejected")
+            return _fail_here("rejected")
         try:
             result = await fyers_auth.persist_login(bundle, restart_fn)
         except Exception:
             logger.warning("fyers feed login persist failed")
-            return _fail("error")
+            return _fail_here("error")
         if not result.get("ok"):
-            return _fail("error")
-        return RedirectResponse("/ui/?fyers_auth=ok#/settings", status_code=302)
+            return _fail_here("error")
+        # Success returns to the initiating Fyers settings/auth location —
+        # never the dashboard — with a safe result flag for the UI banner.
+        return _redirect_with_result(return_to, "ok")
 
     async def _forget_session(request: Request) -> Response:  # noqa: ARG001
         """Forget saved Fyers SESSION material (token/PIN/refresh).

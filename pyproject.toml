@@ -27,3 +27,18 @@ include = ["app*", "core*", "mcp_server*", "sources*", "market*", "brokers*", "a
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+
+[tool.ruff]
+# Pinned minimal gate (deliberate: ruff's zero-config default set is
+# version-dependent and currently flags ~2000 pre-existing tree items).
+# These rules stay green on owned/cleaned paths; the rest of the tree is
+# red-but-baselined and cleaned incrementally, never churned for lint.
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["F", "E4", "E7", "E9", "I", "UP", "B", "RUF100"]
+ignore = [
+    # Blind-except is the established error-boundary idiom at
+    # route/service/restore layers (500+ pre-existing sites).
+    "BLE001",
+]

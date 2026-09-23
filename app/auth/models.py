@@ -16,6 +16,7 @@ class AuthState:
     REJECTED = "rejected"
     FORGOTTEN = "forgotten"
     RESTORED = "restored"
+    UNKNOWN = "unknown"
 
 
 @dataclass
@@ -37,8 +38,11 @@ class BrokerSession:
             return True
         if self.expired is True:
             return True
+        # UNKNOWN is never authenticated: login stays available so a stale
+        # or unverifiable session can never hide recovery.
         if self.auth_state in (AuthState.MISSING, AuthState.EXPIRED,
-                               AuthState.REJECTED, AuthState.FORGOTTEN):
+                               AuthState.REJECTED, AuthState.FORGOTTEN,
+                               AuthState.UNKNOWN):
             return True
         return False
 

@@ -12,7 +12,7 @@ import sqlite3
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 
 def get_schema_version(conn: sqlite3.Connection) -> int:
@@ -130,6 +130,9 @@ def create_v7_schema(conn: sqlite3.Connection) -> None:
     # v20: previous-session OI snapshots (provider-agnostic baseline).
     from core.persistence.modules.previous_oi import create_previous_oi_table
     create_previous_oi_table(conn)
+    # v23: X/Twitter feed cache + poll config.
+    from core.persistence.modules.x_twitter import create_x_twitter_tables
+    create_x_twitter_tables(conn)
 
 
 def create_alerts_table(conn: sqlite3.Connection) -> None:

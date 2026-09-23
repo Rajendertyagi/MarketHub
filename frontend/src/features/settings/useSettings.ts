@@ -131,6 +131,7 @@ export function useFyersSettings() {
   return useQuery({
     queryKey: ["settings", "fyers"],
     queryFn: ({ signal }) => getFyersSettings(signal),
+    refetchInterval: SOURCES_REFRESH_MS,
   });
 }
 

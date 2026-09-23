@@ -162,6 +162,20 @@ def migrate_v15_to_v16(conn: Any) -> None:
     logger.info("migrated v15→v16: added news_items")
 
 
+def migrate_v16_to_v17(conn: Any) -> None:
+    """Schema transition v16 → v17 (no news-specific changes)."""
+    conn.execute("PRAGMA user_version = 17")
+    conn.commit()
+    logger.info("migrated v16→v17: no-op news pass-through")
+
+
+def migrate_v17_to_v18(conn: Any) -> None:
+    """Schema transition v17 → v18 (no news-specific changes)."""
+    conn.execute("PRAGMA user_version = 18")
+    conn.commit()
+    logger.info("migrated v17→v18: no-op news pass-through")
+
+
 # ---------------------------------------------------------------------------
 # Source configuration CRUD
 # ---------------------------------------------------------------------------

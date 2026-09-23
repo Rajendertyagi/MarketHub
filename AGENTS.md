@@ -35,6 +35,10 @@ boundaries (Options/News must not reach auth/secrets; config must stay
 secret/adapter-free; canonical market must not depend on transport/UI/adapters;
 core must not depend on app; WebUI must not import broker code). Keep it green.
 Add new edges only when already clean.
+Python lint gate is `ruff check` under the pinned minimal `[tool.ruff]`
+select in `pyproject.toml` (enforced in CI on cleaned paths — see
+`.github/workflows/ruff.yml`; the rest of the tree is red-but-baselined).
+Keep cleaned paths green; never churn unrelated files for lint.
 
 ## FROZEN — Auth/Startup Foundation (read-only)
 

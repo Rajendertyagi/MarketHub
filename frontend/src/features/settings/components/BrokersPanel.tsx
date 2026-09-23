@@ -1,8 +1,19 @@
 import { useId, useState } from "react";
 import { Button, Input } from "@/components/ui";
-import { loginWithFyers, loginWithUpstox } from "../api";
+import {
+  clearFyersLoginResult,
+  loginWithFyers,
+  loginWithUpstox,
+  readFyersLoginResult,
+  type FyersLoginResult,
+} from "../api";
 import { BROKER_FYERS, BROKER_UPSTOX } from "../constants";
-import { formatOnOffChip, formatTimestamp, formatUpstoxAuthChip } from "../format";
+import {
+  formatFyersAuthChip,
+  formatOnOffChip,
+  formatTimestamp,
+  formatUpstoxAuthChip,
+} from "../format";
 import type { MarketSource } from "../types";
 import {
   useDeleteUpstoxCredentials,
@@ -225,6 +236,27 @@ function UpstoxBroker({ source }: { source?: MarketSource }) {
   );
 }
 
+// Safe, static login-result copy (no tokens, secrets, or callback payloads).
+const FYERS_LOGIN_COPY: Record<FyersLoginResult, { kind: "ok" | "err"; text: string }> = {
+  ok: { kind: "ok", text: "Fyers login successful — session connected." },
+  rejected: {
+    kind: "err",
+    text: "Fyers login failed — Fyers rejected the authorization. Check the App ID/secret, use a fresh login (codes are single-use), and retry.",
+  },
+  retry: {
+    kind: "err",
+    text: "Fyers login incomplete — no authorization was received. Please try again.",
+  },
+  expired: {
+    kind: "err",
+    text: "Fyers login session expired before completing — please try again.",
+  },
+  error: {
+    kind: "err",
+    text: "Fyers login failed — the session could not be saved. You can retry directly; no need to forget anything first.",
+  },
+};
+
 function FyersBroker({ source }: { source?: MarketSource }) {
   const settings = useFyersSettings();
   const saveCred = useSaveFyersCredentials();
@@ -236,11 +268,33 @@ function FyersBroker({ source }: { source?: MarketSource }) {
   const [pin, setPin] = useState("");
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  // Login result flag from the backend callback redirect (?fyers_auth=…).
+  const [loginResult, setLoginResult] = useState<FyersLoginResult | null>(() =>
+    readFyersLoginResult(),
+  );
   const uid = useId();
 
   const s = settings.data ?? {};
+  const loading = settings.isLoading;
   const credsOk = !!s.app_id_configured && !!s.secret_configured;
-  const loggedIn = !!s.access_token_active;
+  // Canonical gate: backend auth state, never token presence. Unknown and
+  // loading are never treated as authenticated, so a stale token can never
+  // hide Login/Re-login.
+  const authed = !loading && s.authenticated === true;
+  const loginLabel =
+    s.session_restored || s.session_persisted ? "Re-login with Fyers" : "Login with Fyers";
+  // Forget Session is an independent recovery control: visible whenever
+  // session material exists, and it never gates Login.
+  const sessionExists = !!s.access_token_active || !!s.session_persisted || !!s.restart_recovery;
+  const authChip = loading
+    ? { label: "Checking session…", cls: "chip chip-off" }
+    : formatFyersAuthChip(s);
+  const resultCopy = loginResult ? FYERS_LOGIN_COPY[loginResult] : null;
+
+  function dismissLoginResult() {
+    setLoginResult(null);
+    clearFyersLoginResult();
+  }
 
   async function setMsgAsync(fn: () => Promise<unknown>, okText: string) {
     setMsg(null);
@@ -261,9 +315,21 @@ function FyersBroker({ source }: { source?: MarketSource }) {
         <h2>Fyers</h2>
       </div>
       <div className="auth-form">
+        {resultCopy ? (
+          <div className="auth-row">
+            <span className="auth-label">Login result</span>
+            <p className={`hint ${resultCopy.kind}`}>
+              {resultCopy.text}{" "}
+              <Button className="btn btn-compact" onClick={dismissLoginResult}>
+                Dismiss
+              </Button>
+            </p>
+          </div>
+        ) : null}
         <div className="auth-row">
           <span className="auth-label">Status</span>
           <div className="state-grid">
+            <Chip label={authChip.label} cls={authChip.cls} />
             <Chip
               label={credsOk ? "Credentials" : "No Credentials"}
               cls={formatOnOffChip(credsOk).cls}
@@ -273,15 +339,11 @@ function FyersBroker({ source }: { source?: MarketSource }) {
               cls={formatOnOffChip(!!s.login_available).cls}
             />
             <Chip
-              label={loggedIn ? "Logged In" : "Login Required"}
-              cls={formatOnOffChip(loggedIn).cls}
-            />
-            <Chip
               label={s.session_persisted ? "Session Saved" : "No Session"}
               cls={formatOnOffChip(!!s.session_persisted).cls}
             />
             <Chip
-              label={s.login_required ? "Login Required" : "Logged In"}
+              label={s.login_required ? "Login Required" : "Connected"}
               cls={formatOnOffChip(!s.login_required).cls}
             />
           </div>
@@ -343,11 +405,15 @@ function FyersBroker({ source }: { source?: MarketSource }) {
           </Button>
         </div>
 
-        {!loggedIn ? (
+        {!authed ? (
           <div className="auth-row">
             <span className="auth-label">Login</span>
-            <Button className="btn btn-compact" onClick={() => loginWithFyers()} disabled={busy}>
-              Login with Fyers
+            <Button
+              className="btn btn-compact"
+              onClick={() => loginWithFyers()}
+              disabled={busy || loading}
+            >
+              {loginLabel}
             </Button>
             {!s.login_available ? (
               <span className="hint">
@@ -358,6 +424,19 @@ function FyersBroker({ source }: { source?: MarketSource }) {
         ) : (
           <div className="auth-row">
             <span className="auth-label">Session</span>
+            <span className="hint">
+              Connected
+              {s.access_token_expires_at
+                ? ` · valid until ${formatTimestamp(s.access_token_expires_at)}`
+                : ""}
+              {s.session_restored || s.session_persisted ? " · auto-restored on restart" : ""}
+            </span>
+          </div>
+        )}
+
+        {sessionExists ? (
+          <div className="auth-row">
+            <span className="auth-label">Recovery</span>
             <Button
               className="btn btn-compact btn-outline-danger"
               onClick={() =>
@@ -367,8 +446,11 @@ function FyersBroker({ source }: { source?: MarketSource }) {
             >
               Forget Session
             </Button>
+            <span className="hint">
+              Clears the saved session (keeps credentials). Never required before login.
+            </span>
           </div>
-        )}
+        ) : null}
 
         <SourceDetail
           source={source}

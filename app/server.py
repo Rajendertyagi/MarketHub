@@ -797,6 +797,12 @@ try:
         upstox_restart_fn=lambda: _restart_upstox_source(),
         fyers_runtime_auth=_fyers_runtime_auth,
         fyers_redirect_uri=FYERS_REDIRECT_URI,
+        # Read-only evidence: the Fyers feed's status dict lets the auth
+        # projection observe genuine 401/403 token rejection. Transient
+        # feed problems never read as auth failure (see rejection_evidence).
+        fyers_feed_provider=lambda: (
+            _source_manager.get_status().get("fyers")
+            if _source_manager is not None else None),
     )
 except Exception:
     _app_logger.exception("auth service construction failed")

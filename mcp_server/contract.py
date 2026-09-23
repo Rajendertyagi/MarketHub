@@ -109,6 +109,15 @@ TOOL_PRICE_IRON_CONDOR = "price_iron_condor"
 TOOL_PRICE_LONG_BUTTERFLY = "price_long_butterfly"
 TOOL_ANALYZE_OPTION_CHAIN = "analyze_option_chain"
 
+# ─── X/Twitter read tools (v2.7.0) ────────────────────────────────────────
+TOOL_X_FEED = "twitter_feed"
+TOOL_X_SEARCH = "twitter_search"
+TOOL_X_TWEET = "twitter_tweet"
+TOOL_X_ARTICLE = "twitter_article"
+TOOL_X_BOOKMARKS = "twitter_bookmarks"
+TOOL_X_USER_POSTS = "twitter_user_posts"
+TOOL_X_USER_PROFILE = "twitter_user_profile"
+
 
 def consumer_events_uri(consumer_id: str) -> str:
     """Build the per-consumer inbox resource URI.

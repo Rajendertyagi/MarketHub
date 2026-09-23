@@ -146,8 +146,35 @@ export async function saveUpstoxFeedConfig(
 }
 
 // ── Fyers auth + credentials ─────────────────────────────────────────────────
-export function loginWithFyers(): void {
-  window.location.href = "/api/auth/fyers/login";
+// Plain navigation: hand off to the backend OAuth redirect (no fetch). The
+// current location travels as `next` so the callback can return to the exact
+// Fyers settings/auth section that initiated login (server-validated,
+// internal-only — never the dashboard, never an external URL).
+export function loginWithFyers(next?: string): void {
+  const returnTo =
+    next ??
+    `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  window.location.href = `/api/auth/fyers/login?next=${encodeURIComponent(returnTo)}`;
+}
+
+// Fyers login result flag set by the backend callback redirect
+// (?fyers_auth=ok|rejected|retry|expired|error). Safe result token only —
+// never tokens, secrets, or callback payloads.
+export type FyersLoginResult = "ok" | "rejected" | "retry" | "expired" | "error";
+
+export function readFyersLoginResult(): FyersLoginResult | null {
+  const v = new URLSearchParams(window.location.search).get("fyers_auth");
+  return v === "ok" || v === "rejected" || v === "retry" || v === "expired" || v === "error"
+    ? v
+    : null;
+}
+
+export function clearFyersLoginResult(): void {
+  const url = new URL(window.location.href);
+  if (url.searchParams.has("fyers_auth")) {
+    url.searchParams.delete("fyers_auth");
+    window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+  }
 }
 
 export async function getFyersSettings(signal?: AbortSignal): Promise<FyersSettings> {

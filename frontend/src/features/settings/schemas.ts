@@ -58,6 +58,10 @@ export const fyersSettingsSchema = z
     secret_configured: z.boolean().optional(),
     store_error: z.string().nullable().optional(),
     login_available: z.boolean().optional(),
+    authenticated: z.boolean().optional(),
+    auth_state: z.string().optional(),
+    expired: z.boolean().nullable().optional(),
+    expiry_known: z.boolean().optional(),
     access_token_active: z.boolean().optional(),
     source_state: z.string().optional(),
     source_registered: z.boolean().optional(),
@@ -66,6 +70,7 @@ export const fyersSettingsSchema = z
     restart_recovery: z.boolean().optional(),
     login_required: z.boolean().optional(),
     session_restored: z.boolean().optional(),
+    stored_access_present: z.boolean().optional(),
   })
   .passthrough();
 

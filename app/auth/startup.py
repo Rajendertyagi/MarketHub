@@ -41,6 +41,7 @@ def build_auth_service(
     upstox_restart_fn=None,
     fyers_runtime_auth=None,
     fyers_redirect_uri: str = "",
+    fyers_feed_provider=None,
 ) -> Any:
     """Construct the application AuthService over an encrypted store."""
     from app.auth.fyers import FyersAuthService
@@ -58,5 +59,6 @@ def build_auth_service(
         storage,
         fyers_runtime_auth,
         redirect_uri=fyers_redirect_uri,
+        feed_provider=fyers_feed_provider,
     )
     return AuthService(upstox=upstox, fyers=fyers)

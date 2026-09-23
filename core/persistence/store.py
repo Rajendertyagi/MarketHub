@@ -45,6 +45,7 @@ from core.persistence.modules import source_state as _source_state
 from core.persistence.modules import subscriptions as _subscriptions
 from core.persistence.modules import fno_config as _fno_config
 from core.persistence.modules import previous_oi as _previous_oi
+from core.persistence.modules import x_twitter as _x_twitter
 from core.persistence.modules.products import migrate_v10_to_v11, migrate_v11_to_v12
 from core.persistence.modules.products import migrate_v20_to_v21
 from core.persistence.modules.products import migrate_v21_to_v22
@@ -56,6 +57,7 @@ from core.persistence.modules.news import migrate_v17_to_v18
 from core.persistence.modules.subscriptions import migrate_v16_to_v17
 from core.persistence.modules.fno_config import migrate_v18_to_v19
 from core.persistence.modules.previous_oi import migrate_v19_to_v20
+from core.persistence.modules.x_twitter import migrate_v22_to_v23
 from core.persistence.modules.schema import (
     SCHEMA_VERSION,
     create_v7_schema,
@@ -177,6 +179,8 @@ class EventStore:
                         migrate_v20_to_v21(conn)
                     elif current_version == 21:
                         migrate_v21_to_v22(conn)
+                    elif current_version == 22:
+                        migrate_v22_to_v23(conn)
                     else:
                         raise RuntimeError(
                             f"unsupported schema version {current_version}; "
@@ -812,6 +816,54 @@ class EventStore:
         conn = self._open(self._db_path)
         try:
             return _fno_config.upsert_fno_config(conn, **fields)
+        finally:
+            conn.close()
+
+    # ─── X/Twitter feed cache (v23) ─────────────────────────────────────
+
+    def get_x_config(self) -> dict[str, Any]:
+        conn = self._open(self._db_path)
+        try:
+            return _x_twitter.get_x_config(conn)
+        finally:
+            conn.close()
+
+    def set_x_config(self, **fields: Any) -> dict[str, Any]:
+        conn = self._open(self._db_path)
+        try:
+            return _x_twitter.upsert_x_config(conn, **fields)
+        finally:
+            conn.close()
+
+    def save_x_tweets(self, rows: list[dict[str, Any]]) -> list[str]:
+        conn = self._open(self._db_path)
+        try:
+            return _x_twitter.upsert_x_tweets(conn, rows)
+        finally:
+            conn.close()
+
+    def list_x_tweets(
+        self, *, limit: int = 20, handle: str | None = None,
+        newer_than: str | None = None,
+    ) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _x_twitter.list_x_tweets(
+                conn, limit=limit, handle=handle, newer_than=newer_than)
+        finally:
+            conn.close()
+
+    def get_x_tweet(self, tweet_id: str) -> dict[str, Any] | None:
+        conn = self._open(self._db_path)
+        try:
+            return _x_twitter.get_x_tweet(conn, tweet_id)
+        finally:
+            conn.close()
+
+    def prune_x_tweets(self, max_age_days: int, *, batch: int = 2000) -> int:
+        conn = self._open(self._db_path)
+        try:
+            return _x_twitter.prune_x_tweets(conn, max_age_days, batch=batch)
         finally:
             conn.close()
 
