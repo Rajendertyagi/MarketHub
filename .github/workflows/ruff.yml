@@ -1,0 +1,42 @@
+name: ruff
+
+# Pinned minimal Python gate ([tool.ruff] in pyproject.toml).
+#
+# Scoped to cleaned paths ONLY: the full tree carries ~2000 pre-existing
+# findings under ruff's default rule set and is cleaned incrementally, so a
+# whole-tree gate would fail on unrelated dirt. Extend the path list below
+# as further areas are brought to green — never shrink it.
+#
+# Push + PR triggers. Read-only check; no deploy, publish, release, or
+# repository-setting changes.
+
+on:
+  push: {}
+  pull_request: {}
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install ruff
+        run: python -m pip install "ruff==0.16.5"
+
+      - name: Ruff (cleaned paths)
+        run: >
+          python -m ruff check
+          x_twitter
+          mcp_server/tools/twitter_tools.py
+          api/x_routes.py
+          test/test_x_twitter.py
