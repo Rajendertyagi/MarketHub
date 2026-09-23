@@ -17,6 +17,8 @@ from mcp_server.tools.options_analytics_tools import register_options_analytics_
 
 from mcp_server.tools.condition_alerts import register_condition_alert_tools
 
+from mcp_server.tools.twitter_tools import register_twitter_tools
+
 __all__ = [
     "register_system_tools",
     "register_event_tools",
@@ -25,4 +27,5 @@ __all__ = [
     "register_alert_tools",
     "register_options_analytics_tools",
     "register_condition_alert_tools",
+    "register_twitter_tools",
 ]

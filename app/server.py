@@ -101,6 +101,7 @@ from mcp_server.tools import (
     register_options_analytics_tools,
     register_replay_tools,
     register_system_tools,
+    register_twitter_tools,
 )
 from sources import SourceConfigError, SourceManager, build_source_manager
 
@@ -663,6 +664,7 @@ from api.news_routes import build_news_routes as _build_news_routes
 from api.diagnostics_routes import build_diagnostics_run_routes as _build_diag_routes
 from api.subscription_routes import build_subscription_routes as _build_subscription_routes
 from api.fno_routes import build_fno_routes as _build_fno_routes
+from api.x_routes import build_x_routes as _build_x_routes
 from app.market_data import ProviderMarketData as _ProviderMarketData
 
 
@@ -739,6 +741,15 @@ from app.secrets_store import (
 
 _credential_store = _CredentialStore(
     _store, data_dir=PROJECT_ROOT / DATA_DIR)
+
+# ── X/Twitter service (twitter-cli adapter boundary) ─────────────────────
+# Single owner of the CLI + X rule evaluation input. Credentials resolve
+# server-side from the encrypted store (provider "x"); MCP/React never see
+# them. Poll loop starts in lifespan (BackgroundTaskManager).
+from x_twitter.service import XTwitterService as _XTwitterService
+_x_twitter_service = _XTwitterService(
+    store=_store, cred_store=_credential_store,
+    bus=_subscription_bus, metrics=_metrics)
 
 # --- Fyers source wiring (requires the credential store above) -------------
 # Centralized OAuth callback URL: ONE source of truth, derived from the
@@ -1020,6 +1031,7 @@ if _news_cfg.get("enabled", True):
             _app_logger.warning("news default seed failed", exc_info=True)
 
 _services.news_service = _news_service
+_services.x_twitter = _x_twitter_service
 
 # Chat tool registry: same services, same semantics as REST/MCP.
 _chat_tools = _ChatToolRegistry(
@@ -1070,6 +1082,7 @@ register_market_intel_tools(mcp, _services)
 register_options_analytics_tools(mcp, _services)
 register_market_alert_tools(mcp, _services)
 register_condition_alert_tools(mcp, _services)
+register_twitter_tools(mcp, _services)
 
 # ============================================================
 # ASGI APPLICATION (top-level Starlette + Uvicorn)
@@ -1266,6 +1279,7 @@ app = Starlette(
         auth_service=(_auth_service.fyers if _auth_service is not None
                       else None),
     )
+    + _build_x_routes(_x_twitter_service)
     + _build_app_settings_routes(str(CONFIG_PATH))
     + _build_chat_routes(str(CONFIG_PATH), _credential_store, _chat_tools)
     + _build_diagnostics_routes(
