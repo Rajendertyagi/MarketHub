@@ -15,6 +15,7 @@ import type {
   HistoryResponse,
   IndexOptionUnderlying,
   Instrument,
+  MarketInstrument,
   MarketMapSnapshot,
   OptionChainView,
   OptionExpiriesResponse,
@@ -38,6 +39,7 @@ import {
   historyResponseSchema,
   indexOptionUnderlyingsSchema,
   marketMapSchema,
+  marketSearchResponseSchema,
   optionChainViewSchema,
   optionExpiriesSchema,
   scannersListSchema,
@@ -126,23 +128,87 @@ export async function searchInstruments(
   return data.results;
 }
 
+export interface MarketSearchParams {
+  q: string;
+  /** Canonical classes to keep (EQUITY, INDEX, FUTURE, OPTION, ETF). */
+  types?: string[];
+  exchange?: string;
+  expiry?: string;
+  limit?: number;
+  /** Exact resolver mode: symbol/underlying equality, never substring. */
+  exact?: boolean;
+}
+
+/**
+ * Ranked canonical search (GET /api/market/search).
+ *
+ * The backend dedupes providers and returns cash classes first, so one row is
+ * one real instrument with the provider that owns `provider_token`.
+ */
+export async function searchMarketInstruments(
+  params: MarketSearchParams,
+  signal?: AbortSignal,
+): Promise<MarketInstrument[]> {
+  const data = await request<{ count: number; results: MarketInstrument[] }>("/market/search", {
+    params: {
+      q: params.q,
+      types: params.types?.length ? params.types.join(",") : undefined,
+      exchange: params.exchange,
+      expiry: params.expiry,
+      limit: params.limit ?? 25,
+      exact: params.exact ? 1 : undefined,
+    },
+    schema: marketSearchResponseSchema,
+    signal,
+  });
+  return data.results;
+}
+
+/**
+ * Resolve EXACTLY one canonical instrument (`exact=1`).
+ *
+ * No substring guessing and no `results[0]` substitution: an unknown symbol
+ * returns null instead of a different instrument class.
+ */
+export async function resolveMarketInstrument(
+  symbol: string,
+  opts: { exchange?: string; type?: string } = {},
+  signal?: AbortSignal,
+): Promise<MarketInstrument | null> {
+  const rows = await searchMarketInstruments(
+    { q: symbol, exchange: opts.exchange, exact: true, limit: 20 },
+    signal,
+  );
+  const want = opts.type?.toUpperCase();
+  return rows.find((r) => !want || r.type.toUpperCase() === want) ?? null;
+}
+
+/** Map the canonical search row onto the chart's Instrument shape. */
+export function toInstrument(row: MarketInstrument): Instrument {
+  return {
+    instrument_token: row.provider_token,
+    exchange: row.exchange,
+    tradingsymbol: row.symbol,
+    instrument_type: row.type,
+    provider: row.provider,
+  };
+}
+
 /**
  * Resolve the EXACT canonical instrument for a tradingsymbol + type.
  *
  * Scanner rows expose only the human tradingsymbol (and, for derivatives, the
- * contract tradingsymbol) — never a fabricated token. To open the chart we ask
- * the catalog to resolve the real instrument identity (instrument_token +
- * exchange + tradingsymbol). This mirrors the legacy `openChart` behavior and
- * guarantees we never substitute one instrument class for another.
+ * contract tradingsymbol) — never a fabricated token. Resolution goes through
+ * the canonical exact resolver, so a scanner row can never open a different
+ * instrument class.
  */
 export async function resolveInstrument(
   tradingsymbol: string,
   type: string,
   signal?: AbortSignal,
 ): Promise<Instrument | null> {
-  const results = await searchInstruments({ q: tradingsymbol, type, limit: 10 }, signal);
-  const match = results.find((r) => r.tradingsymbol === tradingsymbol);
-  return match ?? results[0] ?? null;
+  const match = await resolveMarketInstrument(tradingsymbol, { type }, signal);
+  return match ? toInstrument(match) : null;
 }
 
 // ── Market analytics (Breadth / Sector Heatmap / Market Map) ─────────────────

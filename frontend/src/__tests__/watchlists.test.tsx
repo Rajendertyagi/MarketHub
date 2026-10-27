@@ -5,7 +5,9 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/api/market", () => ({
-  searchInstruments: vi.fn(),
+  searchMarketInstruments: vi.fn(),
+  getOptionChainView: vi.fn(),
+  resolveMarketInstrument: vi.fn(),
 }));
 
 vi.mock("@/features/watchlists/api", () => ({
@@ -17,10 +19,11 @@ vi.mock("@/features/watchlists/api", () => ({
   removeWatchlistItem: vi.fn(),
 }));
 
-import { searchInstruments } from "@/api/market";
+import { searchMarketInstruments } from "@/api/market";
 import { addWatchlistItem } from "@/features/watchlists/api";
 import { AddInstrument } from "@/features/watchlists/components/AddInstrument";
 import { WatchlistTable } from "@/features/watchlists/components/WatchlistTable";
+import type { MarketInstrument } from "@/types";
 import { ApiError } from "@/types";
 
 function renderWithProviders(ui: ReactNode) {
@@ -34,12 +37,17 @@ function renderWithProviders(ui: ReactNode) {
   );
 }
 
-const RELIANCE = {
-  instrument_token: "NSE_EQ:RELIANCE",
+const RELIANCE: MarketInstrument = {
+  instrument_key: "NSE:NSE_EQ|INE002A01018",
+  provider: "upstox",
+  provider_token: "NSE_EQ|INE002A01018",
+  symbol: "RELIANCE",
   exchange: "NSE",
-  tradingsymbol: "RELIANCE",
-  instrument_type: "EQUITY",
+  type: "EQUITY",
 };
+
+const mockSearch = searchMarketInstruments as ReturnType<typeof vi.fn>;
+const mockAdd = addWatchlistItem as ReturnType<typeof vi.fn>;
 
 afterEach(() => {
   cleanup();
@@ -48,10 +56,8 @@ afterEach(() => {
 
 describe("AddInstrument", () => {
   it("searches the catalog and adds the picked instrument", async () => {
-    (searchInstruments as ReturnType<typeof vi.fn>).mockResolvedValue([RELIANCE]);
-    (addWatchlistItem as ReturnType<typeof vi.fn>).mockResolvedValue({
-      status: "ok",
-    });
+    mockSearch.mockResolvedValue([RELIANCE]);
+    mockAdd.mockResolvedValue({ status: "ok" });
 
     renderWithProviders(<AddInstrument watchlistId={7} existingTokens={new Set()} />);
 
@@ -59,16 +65,15 @@ describe("AddInstrument", () => {
       target: { value: "RELI" },
     });
 
-    const opt = await screen.findByRole("button", { name: /RELIANCE/ });
-    expect(opt).toHaveTextContent("RELIANCE");
+    const opt = await screen.findByRole("option", { name: /RELIANCE/ });
     fireEvent.click(opt);
 
     fireEvent.click(screen.getByRole("button", { name: /add/i }));
 
     await waitFor(() =>
-      expect(addWatchlistItem).toHaveBeenCalledWith(7, {
+      expect(mockAdd).toHaveBeenCalledWith(7, {
         exchange: "NSE",
-        instrument_token: "NSE_EQ:RELIANCE",
+        instrument_token: "NSE_EQ|INE002A01018",
         tradingsymbol: "RELIANCE",
       }),
     );
@@ -76,20 +81,35 @@ describe("AddInstrument", () => {
   });
 
   it("surfaces an already-in-watchlist duplicate as a note, not an error", async () => {
-    (searchInstruments as ReturnType<typeof vi.fn>).mockResolvedValue([RELIANCE]);
-    (addWatchlistItem as ReturnType<typeof vi.fn>).mockRejectedValue(
-      new ApiError("http", "already in watchlist", { status: 409 }),
-    );
+    mockSearch.mockResolvedValue([RELIANCE]);
+    mockAdd.mockRejectedValue(new ApiError("http", "already in watchlist", { status: 409 }));
 
     renderWithProviders(<AddInstrument watchlistId={7} existingTokens={new Set()} />);
 
     fireEvent.change(screen.getByLabelText("Search instruments to add to watchlist"), {
       target: { value: "RELI" },
     });
-    fireEvent.click(await screen.findByRole("button", { name: /RELIANCE/ }));
+    fireEvent.click(await screen.findByRole("option", { name: /RELIANCE/ }));
     fireEvent.click(screen.getByRole("button", { name: /add/i }));
 
     expect(await screen.findByText("Already in this watchlist.")).toBeInTheDocument();
+  });
+
+  it("suppresses a client-side duplicate without calling the API", async () => {
+    mockSearch.mockResolvedValue([RELIANCE]);
+
+    renderWithProviders(
+      <AddInstrument watchlistId={7} existingTokens={new Set([RELIANCE.provider_token])} />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Search instruments to add to watchlist"), {
+      target: { value: "RELI" },
+    });
+    fireEvent.click(await screen.findByRole("option", { name: /RELIANCE/ }));
+    fireEvent.click(screen.getByRole("button", { name: /add/i }));
+
+    expect(await screen.findByText("Already in this watchlist.")).toBeInTheDocument();
+    expect(mockAdd).not.toHaveBeenCalled();
   });
 });
 

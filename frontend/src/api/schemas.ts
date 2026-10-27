@@ -21,6 +21,34 @@ export const instrumentSchema = z.object({
   instrument_type: instrumentTypeSchema,
 });
 
+// Compact canonical search row (GET /api/market/search). `type` stays a plain
+// string so a future canonical class parses instead of breaking the picker.
+export const marketInstrumentSchema = z
+  .object({
+    instrument_key: z.string(),
+    provider: z.string(),
+    provider_token: z.string(),
+    native_key: z.string().nullable().optional(),
+    canonical_id: z.string().nullable().optional(),
+    symbol: z.string(),
+    display_name: z.string().optional(),
+    exchange: z.string(),
+    type: z.string(),
+    underlying: z.string().nullable().optional(),
+    expiry: z.string().nullable().optional(),
+    strike: z.number().nullable().optional(),
+    option_type: z.enum(["CE", "PE"]).nullable().optional(),
+    lot_size: z.number().nullable().optional(),
+  })
+  .passthrough();
+
+export const marketSearchResponseSchema = z.object({
+  query: z.string(),
+  parsed: z.record(z.string(), z.unknown()).optional(),
+  count: z.number(),
+  results: z.array(marketInstrumentSchema),
+});
+
 export const candleSchema = z.object({
   timestamp: z.string(),
   open: z.number(),

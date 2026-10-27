@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
-import { searchInstruments } from "@/api/market";
-import { Button, Input } from "@/components/ui";
-import type { Instrument } from "@/types";
+import { useState } from "react";
+import { InstrumentPicker } from "@/components/InstrumentPicker";
+import { Button } from "@/components/ui";
+import type { MarketInstrument } from "@/types";
 import { ApiError } from "@/types";
 import { useWatchlistMutations } from "../useWatchlists";
 
@@ -11,66 +11,29 @@ interface Props {
   onAdded?: () => void;
 }
 
-// Search-and-add box for a watchlist. Search resolves the canonical
-// instrument identity via /instruments/search (never fabricated client-side);
+// Search-and-add box for a watchlist. The shared InstrumentPicker resolves the
+// exact canonical identity (bare `provider_token`, never a fabricated token);
 // Add persists through POST /watchlists/{id}/items. A 409 from the backend
 // ("already in watchlist") and client-side duplicates both surface as a
 // friendly note instead of an error.
 export function AddInstrument({ watchlistId, existingTokens, onAdded }: Props) {
   const mutations = useWatchlistMutations();
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<Instrument[]>([]);
-  const [selected, setSelected] = useState<Instrument | null>(null);
-  const [listOpen, setListOpen] = useState(false);
+  const [selected, setSelected] = useState<MarketInstrument | null>(null);
   const [pending, setPending] = useState(false);
   const [note, setNote] = useState<{ text: string; kind: "ok" | "err" }>({
     text: "",
     kind: "ok",
   });
-  const boxRef = useRef<HTMLDivElement | null>(null);
 
-  // Debounced catalog search with abort — same contract as Charts.
-  useEffect(() => {
-    const q = query.trim();
-    if (!q) {
-      setResults([]);
-      return;
-    }
-    const ctrl = new AbortController();
-    const t = setTimeout(async () => {
-      try {
-        setResults(await searchInstruments({ q, limit: 10 }, ctrl.signal));
-      } catch {
-        if (!ctrl.signal.aborted) setResults([]);
-      }
-    }, 300);
-    return () => {
-      clearTimeout(t);
-      ctrl.abort();
-    };
-  }, [query]);
-
-  useEffect(() => {
-    function onDocMouseDown(e: MouseEvent) {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) {
-        setListOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", onDocMouseDown);
-    return () => document.removeEventListener("mousedown", onDocMouseDown);
-  }, []);
-
-  const pick = (inst: Instrument) => {
-    setSelected(inst);
-    setQuery(inst.tradingsymbol);
-    setResults([]);
-    setListOpen(false);
+  const pick = (row: MarketInstrument) => {
+    setSelected(row);
     setNote({ text: "", kind: "ok" });
   };
 
   const add = async () => {
     if (watchlistId == null || !selected || pending) return;
-    if (existingTokens.has(selected.instrument_token)) {
+    if (existingTokens.has(selected.provider_token)) {
       setNote({ text: "Already in this watchlist.", kind: "ok" });
       return;
     }
@@ -80,12 +43,12 @@ export function AddInstrument({ watchlistId, existingTokens, onAdded }: Props) {
       await mutations.addItem({
         watchlistId,
         exchange: selected.exchange,
-        instrument_token: selected.instrument_token,
-        tradingsymbol: selected.tradingsymbol,
+        instrument_token: selected.provider_token,
+        tradingsymbol: selected.symbol,
       });
       setSelected(null);
       setQuery("");
-      setNote({ text: `Added ${selected.tradingsymbol}.`, kind: "ok" });
+      setNote({ text: `Added ${selected.symbol}.`, kind: "ok" });
       onAdded?.();
     } catch (e) {
       const dup =
@@ -106,48 +69,22 @@ export function AddInstrument({ watchlistId, existingTokens, onAdded }: Props) {
   return (
     <div className="watchlist-add">
       <div className="watchlist-add-row">
-        <div className="watchlist-add-search" ref={boxRef}>
-          <Input
-            className="filter-input"
-            placeholder="Search catalog to add (RELIANCE, NIFTY)…"
-            aria-label="Search instruments to add to watchlist"
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setSelected(null);
-              setListOpen(true);
-            }}
-            onFocus={() => setListOpen(true)}
-          />
-          {listOpen && results.length > 0 && (
-            <ul className="watchlist-add-list">
-              {results.map((r) => (
-                <li key={`${r.exchange}:${r.instrument_token}`}>
-                  <button
-                    type="button"
-                    className="watchlist-add-opt"
-                    aria-label={`Add ${r.tradingsymbol}, ${r.exchange}`}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      pick(r);
-                    }}
-                    onClick={() => pick(r)}
-                  >
-                    <span className="watchlist-add-opt-name">{r.tradingsymbol}</span>
-                    <span className="muted">
-                      {r.exchange} · {r.instrument_type}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+        <InstrumentPicker
+          value={query}
+          onChange={(next) => {
+            setQuery(next);
+            setSelected(null);
+          }}
+          onSelect={pick}
+          placeholder="Search catalog to add (RELIANCE, NIFTY)…"
+          ariaLabel="Search instruments to add to watchlist"
+          limit={10}
+        />
         <Button
           variant="primary"
           onClick={add}
           disabled={watchlistId == null || !selected || pending}
-          title={selected ? `Add ${selected.tradingsymbol}` : "Search and pick an instrument first"}
+          title={selected ? `Add ${selected.symbol}` : "Search and pick an instrument first"}
         >
           {pending ? "Adding…" : "Add"}
         </Button>

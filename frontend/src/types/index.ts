@@ -10,13 +10,44 @@
 //  - IV is a canonical decimal fraction (0.1758 == 17.58%). Only presentation
 //    converts it to a percentage.
 
-export type InstrumentType = "EQUITY" | "INDEX" | "FUTURE" | "OPTION" | "CURRENCY" | "COMMODITY";
+export type InstrumentType =
+  | "EQUITY"
+  | "INDEX"
+  | "ETF"
+  | "FUTURE"
+  | "OPTION"
+  | "CURRENCY"
+  | "COMMODITY";
 
 export interface Instrument {
   instrument_token: string;
   exchange: string;
   tradingsymbol: string;
   instrument_type: InstrumentType;
+  /** Catalogue provider that owns `instrument_token` (additive). */
+  provider?: string;
+}
+
+// Compact canonical identity returned by GET /api/market/search (and its
+// `exact=1` mode). The backend dedupes providers, so one row is one real
+// instrument. `provider_token` is the BARE token the bars API expects;
+// `instrument_key` is the composite EXCHANGE:TOKEN display key and must never
+// be sent to /market/bars.
+export interface MarketInstrument {
+  instrument_key: string;
+  provider: string;
+  provider_token: string;
+  native_key?: string | null;
+  canonical_id?: string | null;
+  symbol: string;
+  display_name?: string;
+  exchange: string;
+  type: InstrumentType;
+  underlying?: string | null;
+  expiry?: string | null;
+  strike?: number | null;
+  option_type?: "CE" | "PE" | null;
+  lot_size?: number | null;
 }
 
 export interface Candle {
