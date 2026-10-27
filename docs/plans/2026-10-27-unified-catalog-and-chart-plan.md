@@ -5,10 +5,10 @@
 | **Plan ID** | `MH-UCP-2026-10-27` |
 | **Status** | Draft for owner review — collection complete, **no code implemented** |
 | **Prepared** | 2026-10-27 |
-| **Revision** | v1.4 (adds Phase 1.5 — catalog page) |
+| **Revision** | v1.5 (merges the remote official SDK/API review into v1.4) |
 | **Branch** | `fno-provider-agnostic` |
 | **Scope** | Chart experience, bars backend, unified instrument catalog, unified indicator catalog |
-| **Verified against** | The live working tree, a read-only query of the live catalog (`data/events.db`), the Vela 0.9.0 documentation set and the installed `@luxalgo/vela` type definitions and bundle |
+| **Verified against** | Branch code and read-only catalog evidence recorded in v1.2; official Vela, Fyers and Upstox docs reviewed in v1.3; the Vela 0.9.0 documentation set and the installed `@luxalgo/vela` type definitions and bundle reviewed in v1.4 |
 
 This document is the persisted version of the change list collected on 2026-10-27. It
 supersedes the chat-only list. Nothing here authorizes code changes; each phase below
@@ -122,7 +122,7 @@ Verified against the Vela 0.9.0 documentation (`docs.luxalgo.com/vela`,
 |---|---|
 | Native symbol index is built **once** at provider registration; no refresh API | `ProviderRegistry.buildIndex()` in `node_modules/@luxalgo/vela/dist/chunk-XIRSR3D6.js` |
 | Native symbol slot cannot be overridden; `indicators` and `screenshot` can | `OVERRIDABLE_TOPBAR_IDS` — [contributions-BjefWpxQ.d.ts:2220](file:///D:/Temp/MarketHub/frontend/node_modules/@luxalgo/vela/dist/contributions-BjefWpxQ.d.ts#L2220) |
-| Contributed topbar actions: `align`, `order`, `iconOnly`, `mobile`, a **static** `label`, `when(ctx)` | `WidgetActionDescriptor` — [contributions-BjefWpxQ.d.ts:2082](file:///D:/Temp/MarketHub/frontend/node_modules/@luxalgo/vela/dist/contributions-BjefWpxQ.d.ts#L2082) |
+| Contributed topbar actions: `align`, `order`, `iconOnly`, `mobile`, a **static** `label`, `when(ctx)` | `WidgetActionDescriptor` — [contributions-BjefWpxQ.d.ts:2082](file:///D:/Temp/MarketHub/frontend/node_modules/@luxalgo/vela/dist/contributions-BjefWpxQ.d.ts#L2082); official SDK docs clarify `align`/`order` are suggestions and the host's topbar composition controls final placement |
 | Topbar composition is a per-side **complete contract** and freezes that side; naming a contributed id pins it at that position (overriding `align`/`order`); unpinned actions need the `'actions'` flow slot | `TopbarComposition` / `resolveTopbarComposition` — [statusline-model-C3yIY9WE.d.ts:218](file:///D:/Temp/MarketHub/frontend/node_modules/@luxalgo/vela/dist/statusline-model-C3yIY9WE.d.ts#L218); shell option at `:273`; `user/workspace#composing-the-topbar` |
 | Default composition | left `["symbol","timeframes","style","layout","indicators","actions","undo-redo"]`, right `["actions","alerts","panels","screenshot"]` — declared at [statusline-model-C3yIY9WE.d.ts:229](file:///D:/Temp/MarketHub/frontend/node_modules/@luxalgo/vela/dist/statusline-model-C3yIY9WE.d.ts#L229), values in `chunk-YRCL3WMD.js` |
 | Overriding `'indicators'` also suppresses the native picker's construction and takes over its mobile stop and `/` chord | [contributions-BjefWpxQ.d.ts:2221](file:///D:/Temp/MarketHub/frontend/node_modules/@luxalgo/vela/dist/contributions-BjefWpxQ.d.ts#L2221) |
@@ -158,6 +158,17 @@ core Vela UX that should stay true — with MarketHub's picker behind it.
 
 There is **no** indicator concept in the backend today (no definitions, no evaluation,
 no persistence). Indicators exist only as Vela natives in the browser.
+
+### 2.6 Official API / SDK review (2026-10-27)
+
+Reviewed official documentation before implementation. These checks refine the plan; they do not prove that MarketHub's adapters are currently correct or that live broker calls have been exercised.
+
+| Area | Official documentation finding | Plan impact |
+|---|---|---|
+| Vela plugin SDK | `registerWidgetAction` contributes a topbar action; `registerWidgetAttachment` mounts once per widget and returns a disposer. `align`/`order` are suggestions: host `topbar.left` / `topbar.right` composition can pin the final position. Late registrations require `widget.refreshActions()`. | Keep the attachment + action design and mount the picker once. Do not assume `align: 'left'` alone fixes placement; configure the host slot/position and test desktop/mobile behavior. Register at module import time where possible. |
+| Fyers historical data | Official v3 docs explicitly list 240-minute resolution (`resolution: "240"`) and document per-request history windows/rate-plan constraints. | The W4 statement that Fyers lacks 240-minute candles is incorrect as a provider API claim. First inspect MarketHub's adapter normalization and tests; fix adapter mapping if that is the actual gap. Do not add client-side aggregation until direct API behavior is verified. |
+| Upstox historical candles | Official Historical Candle V3 supports minute intervals 1–300 and hour intervals 1–5, with interval-dependent history limits. V2 historical candles are marked deprecated in the official docs. | For Upstox, evaluate V3 in the existing adapter before implementing additional timeframe work. Respect provider-specific maximum ranges and response semantics. Do not assume identical interval support or history windows across providers. |
+| Dependencies | The reviewed picker and chart integration APIs are already available through the existing React/Vela stack; the search plan's measured single-pass query does not justify FTS5 or a fuzzy-search package for v1. | No new package is approved by this review. Add one only if a documented, tested requirement cannot be met with the existing stack. |
 
 ---
 
@@ -622,7 +633,7 @@ Grouped for later scheduling; all were verified during the 2026-10-27 chart work
 | W1 | Real market calendar / status badge | FE+BE | Vela `getCalendar`; currently "(inferred)" |
 | W2 | Push updates (`subscribe`) | FE+BE | Currently 3 s polling, `limit:2` |
 | W3 | Subscribe the charted instrument | BE | Feed lifecycle — protected, separate approval |
-| W4 | Provider-aware timeframes | FE+BE | `240` hardcoded; Fyers lacks it |
+| W4 | Provider-aware timeframes | FE+BE | `240` is supported by official Fyers Historical Data docs; verify MarketHub adapter mapping and Upstox V3 interval/range limits before changing the normalized timeframe contract |
 | W5 | Verify all drawing tools | FE | Only two-click trendline verified |
 | W6 | Indicator coverage in the catalog | FE | Volume + Bollinger verified only |
 | W7 | Range-button semantics | FE | Timeframe+limit switch, not a true window |
@@ -770,3 +781,14 @@ be mistaken for regressions.
   real host, placed after search correctness and before the Vela attachment work; a
   separate `/catalog` route because `/instruments` is catalog admin, not a browser.
   Phase 2 now builds on the picker proven on that page.
+- 2026-10-27 (v1.3, remote `19868da`) — Official SDK/API review:
+  - confirmed the Vela action/attachment lifecycle and that `align`/`order` are
+    suggestions with the host's topbar composition controlling final placement;
+  - corrected the Fyers 240-minute assumption: official v3 docs support
+    `resolution: "240"`, so any gap is in adapter normalization, not the provider API;
+  - documented Upstox Historical Candle V3 intervals (1–300 min, 1–5 h) and
+    history-window limits, with V2 deprecated;
+  - retained the no-new-dependency decision.
+- 2026-10-27 (v1.5) — Merge of remote `19868da` into v1.4: added §2.6, reworded the
+  front-matter evidence line and the `WidgetActionDescriptor` row, and re-scoped W4
+  from "Fyers lacks 240" to adapter verification plus Upstox V3 limits.
