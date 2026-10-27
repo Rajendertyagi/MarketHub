@@ -5,9 +5,10 @@
 | **Plan ID** | `MH-UCP-2026-10-27` |
 | **Status** | Draft for owner review — collection complete, **no code implemented** |
 | **Prepared** | 2026-10-27 |
+| **Revision** | v1.4 (adds Phase 1.5 — catalog page) |
 | **Branch** | `fno-provider-agnostic` |
 | **Scope** | Chart experience, bars backend, unified instrument catalog, unified indicator catalog |
-| **Verified against** | The live working tree and a read-only query of the live catalog (`data/events.db`) |
+| **Verified against** | The live working tree, a read-only query of the live catalog (`data/events.db`), the Vela 0.9.0 documentation set and the installed `@luxalgo/vela` type definitions and bundle |
 
 This document is the persisted version of the change list collected on 2026-10-27. It
 supersedes the chat-only list. Nothing here authorizes code changes; each phase below
@@ -99,24 +100,59 @@ phases below require touching them. **Login must not regress.**
 | Chart picker is a host toolbar **above** the Vela workspace | [frontend/src/features/chart/ChartView.tsx:201](file:///D:/Temp/MarketHub/frontend/src/features/chart/ChartView.tsx#L201) |
 | A second, visually different picker in watchlists | [frontend/src/features/watchlists/components/AddInstrument.tsx:42](file:///D:/Temp/MarketHub/frontend/src/features/watchlists/components/AddInstrument.tsx#L42) |
 | A third, client-side list filter for F&O underlyings — a specialized universe table, not a generic symbol chooser | [frontend/src/features/fno/UnderlyingPicker.tsx](file:///D:/Temp/MarketHub/frontend/src/features/fno/UnderlyingPicker.tsx) |
+| The existing `/instruments` route is catalog **admin** (segment enablement + master re-sync), not a symbol browser | [frontend/src/features/instruments/InstrumentsView.tsx:59](file:///D:/Temp/MarketHub/frontend/src/features/instruments/InstrumentsView.tsx#L59); [router.tsx:59](file:///D:/Temp/MarketHub/frontend/src/routes/router.tsx#L59) |
+| Navigation is data-driven, one line per entry | [frontend/src/layouts/nav.ts:14](file:///D:/Temp/MarketHub/frontend/src/layouts/nav.ts#L14) |
 | Shared UI primitives exist (Button/Input/Select/Modal/Tabs) | [frontend/src/components/ui.tsx](file:///D:/Temp/MarketHub/frontend/src/components/ui.tsx) |
 | Client search wrappers | `searchInstruments`, `resolveInstrument` — [frontend/src/api/market.ts:152](file:///D:/Temp/MarketHub/frontend/src/api/market.ts#L152) |
 | Chart provider declares `enumerate:false`, `stream:false` | [frontend/src/features/chart/chartData.ts:141](file:///D:/Temp/MarketHub/frontend/src/features/chart/chartData.ts#L141) |
 | Vela topbar configured without a symbol slot | [frontend/src/features/chart/VelaChart.tsx:51](file:///D:/Temp/MarketHub/frontend/src/features/chart/VelaChart.tsx#L51) |
+| Only the left side is declared; the right side keeps Vela's defaults (`actions`, `alerts`, `panels`, `screenshot`) | same line; `TOPBAR_DEFAULT_RIGHT` — [statusline-model-C3yIY9WE.d.ts:231](file:///D:/Temp/MarketHub/frontend/node_modules/@luxalgo/vela/dist/statusline-model-C3yIY9WE.d.ts#L231) |
+| The host does not handle Vela's typed-letter chord, so today a typed letter opens Vela's own symbol dialog with an empty pool | §2.4, "Typing chord" rows |
 | Persistence keyed per instrument token | [frontend/src/features/chart/VelaChart.tsx:53](file:///D:/Temp/MarketHub/frontend/src/features/chart/VelaChart.tsx#L53) |
 | Dependencies | React 19, TanStack Query, zod, Vela 0.9.0; no combobox/virtualization/fuzzy library |
 
 ### 2.4 Vela capabilities and limits
 
+Verified against the Vela 0.9.0 documentation (`docs.luxalgo.com/vela`,
+`architecture/modules`, `contributing/plugin-sdk`, `contributing/adding-a-data-provider`,
+`user/workspace`, `user/data-providers`, `user/options`) and the installed
+`frontend/node_modules/@luxalgo/vela` type definitions and bundle.
+
 | Fact | Evidence |
 |---|---|
 | Native symbol index is built **once** at provider registration; no refresh API | `ProviderRegistry.buildIndex()` in `node_modules/@luxalgo/vela/dist/chunk-XIRSR3D6.js` |
-| Native symbol slot cannot be overridden; `indicators` and `screenshot` can | `OVERRIDABLE_TOPBAR_IDS` — `node_modules/@luxalgo/vela/dist/contributions-BjefWpxQ.d.ts:2216` |
-| Contributed topbar actions support `align:'left'`, `run(ctx)` | `WidgetActionDescriptor` — `contributions-BjefWpxQ.d.ts:2081` |
-| Action context exposes `host`, `setSymbol`, `openSymbolSearch`, `addNativeIndicator`, `toast`, `i18n` | `WidgetContext` — `contributions-BjefWpxQ.d.ts:1986` |
+| Native symbol slot cannot be overridden; `indicators` and `screenshot` can | `OVERRIDABLE_TOPBAR_IDS` — [contributions-BjefWpxQ.d.ts:2220](file:///D:/Temp/MarketHub/frontend/node_modules/@luxalgo/vela/dist/contributions-BjefWpxQ.d.ts#L2220) |
+| Contributed topbar actions: `align`, `order`, `iconOnly`, `mobile`, a **static** `label`, `when(ctx)` | `WidgetActionDescriptor` — [contributions-BjefWpxQ.d.ts:2082](file:///D:/Temp/MarketHub/frontend/node_modules/@luxalgo/vela/dist/contributions-BjefWpxQ.d.ts#L2082) |
+| Topbar composition is a per-side **complete contract** and freezes that side; naming a contributed id pins it at that position (overriding `align`/`order`); unpinned actions need the `'actions'` flow slot | `TopbarComposition` / `resolveTopbarComposition` — [statusline-model-C3yIY9WE.d.ts:218](file:///D:/Temp/MarketHub/frontend/node_modules/@luxalgo/vela/dist/statusline-model-C3yIY9WE.d.ts#L218); shell option at `:273`; `user/workspace#composing-the-topbar` |
+| Default composition | left `["symbol","timeframes","style","layout","indicators","actions","undo-redo"]`, right `["actions","alerts","panels","screenshot"]` — declared at [statusline-model-C3yIY9WE.d.ts:229](file:///D:/Temp/MarketHub/frontend/node_modules/@luxalgo/vela/dist/statusline-model-C3yIY9WE.d.ts#L229), values in `chunk-YRCL3WMD.js` |
+| Overriding `'indicators'` also suppresses the native picker's construction and takes over its mobile stop and `/` chord | [contributions-BjefWpxQ.d.ts:2221](file:///D:/Temp/MarketHub/frontend/node_modules/@luxalgo/vela/dist/contributions-BjefWpxQ.d.ts#L2221) |
+| Attachments mount **once per widget/workspace** at construction (late registrations on `refreshActions()`); `ctx.host` is the workspace root | `WidgetAttachment` — [contributions-BjefWpxQ.d.ts:2127](file:///D:/Temp/MarketHub/frontend/node_modules/@luxalgo/vela/dist/contributions-BjefWpxQ.d.ts#L2127); `mountAttachments()` in `chunk-4WAHYL7Y.js` |
+| `WidgetContext` exposes live getters plus `openSymbolSearch`, `togglePanel`, `dockStrip`, `stateChanged`, `i18n`, `host`, `pointer` | [contributions-BjefWpxQ.d.ts:1986](file:///D:/Temp/MarketHub/frontend/node_modules/@luxalgo/vela/dist/contributions-BjefWpxQ.d.ts#L1986) |
+| **Typing chord is unconditional**: a letter or `0` opens the native symbol picker seeded with it; digits 1–9 open the timeframe entry. Topbar composition does **not** gate this chord (unlike `'screenshot'`) | `routeTyping` / `resolveTyping` in `chunk-4WAHYL7Y.js`; `user/workspace#keyboard` |
+| The native picker's pool is the aggregated provider index (`feed.symbols()`); with `enumerate:false` the pool is empty | `this.symbolPicker.setSource(() => this.feed.symbols())`; `buildIndex` runs only with `listSymbols` |
+| `registerSymbolRanking` only reorders/injects rows in that aggregated pool, cached per pool change — never per keystroke, never a remote query | `SymbolRankingHook` — [contributions-BjefWpxQ.d.ts:2401](file:///D:/Temp/MarketHub/frontend/node_modules/@luxalgo/vela/dist/contributions-BjefWpxQ.d.ts#L2401); `contributing/plugin-sdk#symbol-ranking` |
+| Symbol resolution: an explicit `PROVIDER:` prefix must name a registered provider (or a declared descriptor `prefix`); bare tickers need an index | `ProviderRegistry.resolve` in `chunk-XIRSR3D6.js` |
+| Our provider's tickers are composite (`NSE:RELIANCE`), wrapped as `markethub:NSE:RELIANCE`; they do not fit a native descriptor without a registered provider prefix | [frontend/src/features/chart/chartData.ts](file:///D:/Temp/MarketHub/frontend/src/features/chart/chartData.ts) `chartSymbol` |
+| `registerStatePersistence`: `scope:'cell'` → per-chart `charts[i].ext`; `scope:'global'` → **document root** `state.ext`; only keys present in the document are restored; payloads are untrusted | [contributions-BjefWpxQ.d.ts:2364](file:///D:/Temp/MarketHub/frontend/node_modules/@luxalgo/vela/dist/contributions-BjefWpxQ.d.ts#L2364); `contributing/plugin-sdk#state-persistence` |
+| Side panels are dockable contributed columns (`registerSidePanel`), toggled from `'panels'` and via `ctx.togglePanel`; width persists | [contributions-BjefWpxQ.d.ts:2172](file:///D:/Temp/MarketHub/frontend/node_modules/@luxalgo/vela/dist/contributions-BjefWpxQ.d.ts#L2172) |
+| Optional provider ports: `listSymbols`, `getSymbolInfo`, `resolveSymbolIcon`, `subscribe`, `getCalendar`, `capabilitiesFor` | [DataProvider-BGlB1zSc.d.ts:145](file:///D:/Temp/MarketHub/frontend/node_modules/@luxalgo/vela/dist/DataProvider-BGlB1zSc.d.ts#L145) |
+| Shell `timezone` accepts an IANA zone or `'exchange'` (default `Etc/UTC`) | [statusline-model-C3yIY9WE.d.ts:266](file:///D:/Temp/MarketHub/frontend/node_modules/@luxalgo/vela/dist/statusline-model-C3yIY9WE.d.ts#L266) |
+| Kit components must receive `host: ctx.host`, or they portal to `<body>` outside the theme's CSS variables | `contributing/plugin-sdk` — "Two rules keep actions portable" |
+| Extension seams are the plugin/contribution registries, the provider port, renderer features and the state document; core/render internals are not an extension surface | `architecture/modules`, `architecture/boundaries` — the plan uses only these seams |
 | Vela ships Popover/Menu/Dialog/Tooltip/Select primitives | `node_modules/@luxalgo/vela/dist/ui.d.ts` |
 | Indicator type metadata is enumerable | `nativeIndicatorDescriptors()`, `chart.availableNativeIndicators()` |
-| Indicator slot can be replaced and indicators added through the shell | `contributions-BjefWpxQ.d.ts:2029` |
+| Indicator slot can be replaced and indicators added through the shell | [contributions-BjefWpxQ.d.ts:2029](file:///D:/Temp/MarketHub/frontend/node_modules/@luxalgo/vela/dist/contributions-BjefWpxQ.d.ts#L2029) |
+
+**Typing-chord defect (code-derived, browser check in Phase 2).** The chart hides
+`'symbol'` from `topbar.left`, which removes the button and its mobile entry but **not**
+the typing chord. `VelaWorkspace` attaches `routeTyping` to the root unconditionally,
+and the native picker's source is the provider index, which is empty because our
+provider declares `enumerate:false`. Consequence: with the chart focused, typing any
+letter opens Vela's symbol dialog with no rows. This cannot be fixed by `registerSymbolRanking`
+(which only reorders the same empty pool) or by `listSymbols` (one-shot 151k index;
+composite tickers do not fit native descriptors). It is fixed in Phase 2 by bridging
+the chord to the shared picker (W32), because "typing a letter opens symbol search" is
+core Vela UX that should stay true — with MarketHub's picker behind it.
 
 ### 2.5 Backend indicators
 
@@ -135,6 +171,7 @@ no persistence). Indicators exist only as Vela natives in the browser.
 | **D4** | No new packages for v1. Reuse React, TanStack Query, zod, Vela's kit and the existing UI primitives. |
 | **D5** | One picker component, one search contract, one identity/dedupe rule; no per-feature search implementations. |
 | **D6** | The instrument picker searches everything (equity, index, ETF, F&O) with type filters; F&O uses a structured mode instead of a flat option list. |
+| **D7** | Vela's typed-letter chord must open the **shared** picker, never Vela's native symbol dialog. The host bridges the chord; the native picker stays unused in every surface (no `listSymbols`, no `registerSymbolRanking`, no `ctx.openSymbolSearch`). Digits 1–9 stay Vela's timeframe entry. |
 
 ---
 
@@ -154,7 +191,8 @@ GET /api/market/search  ── picker contract (limit <= 50)
         │
         ▼
 InstrumentPicker (React, src/components)
-        ├── chart  (inside Vela topbar, Phase 2)
+        ├── catalog page (/catalog, Phase 1.5 — first host)
+        ├── chart  (pinned topbar action + typed-letter bridge, Phase 2)
         ├── watchlist add (replaces AddInstrument's private search)
         └── F&O structured mode (underlying → expiry → strike → CE/PE)
 
@@ -182,6 +220,9 @@ indicatorCatalog (one module) ── categories, params, chart-only/backend-read
 | Exact symbol / deep-link resolution | New matcher | `find_by_exact_symbol` + `find_canonical_rows` (already implemented; needs an HTTP surface) |
 | F&O selection | New tables/queries | `fno_underlying_rows`, `derivative_expiries`, `option_strikes`, `futures_contracts` |
 | Chart picker UI | New dropdown primitives | `src/components/ui.tsx` + Vela `Popover`/`Menu` + `ctx.host` |
+| Topbar placement | Custom toolbar chrome | An id-pinned contributed action in `topbar.left` (the `'symbol'` slot cannot be overridden) |
+| Typing-to-search | Keyboard shim library | One capture-phase listener in the chart attachment, mirroring Vela's own guard |
+| Picker container | Docked side panel | Dialog mounted in `ctx.host` (side panel evaluated and deferred — §4.2 item 16) |
 | Indicator list | Hand-maintained list | `nativeIndicatorDescriptors()` + per-chart `availableNativeIndicators()` |
 | Chart indicator add | Custom indicator creation | `ctx.addNativeIndicator(type)` (undo/redo + persistence aware) |
 | Fuzzy matching | `fuse.js`/`cmdk` | Server-side ranked SQL; no fuzzy library and no FTS5 at current volumes (W28 dropped) |
@@ -226,8 +267,8 @@ indicatorCatalog (one module) ── categories, params, chart-only/backend-read
    catalog but is not exposed over HTTP, so Phase 0 adds `exact=1` to
    `/api/market/search`; Phase 1 switches the client to it.
 10. **Do not create React roots per click.** Vela's `registerWidgetAttachment`
-    mounts a contributed UI once per widget and returns a disposer; the topbar action
-    should toggle that mounted picker, not rebuild it.
+    mounts a contributed UI once per workspace/widget (at construction) and returns a
+    disposer; the topbar action opens that mounted picker, not a rebuilt one.
 11. **Do not change what existing catalog readers get.** Add the ranked query as an
     optional read-model mode used by `/api/market/search`; leave the default
     `search_instruments` ordering (alphabetical) untouched for `find_canonical_rows`,
@@ -246,6 +287,36 @@ indicatorCatalog (one module) ── categories, params, chart-only/backend-read
     forwards kwargs to the read model, so new optional query arguments (for example
     a cash-type scope and a rank query) need no edit to the red-zone
     [core/persistence/store.py](file:///D:/Temp/MarketHub/core/persistence/store.py).
+15. **Do bridge the typed-letter chord; do not leave Vela's native picker reachable.**
+    The chord is core Vela UX and cannot be disabled by composition. The attachment
+    adds a capture-phase `keydown` listener on `ctx.host`, mirrors Vela's guard
+    (no ctrl/meta/alt, not composing, not an editable target, no open dialog), matches
+    Vela's letter/`0` predicate, then `preventDefault()` + `stopPropagation()` and
+    opens the shared picker seeded uppercase. Digits 1–9 pass through untouched.
+    Never call `ctx.openSymbolSearch()`.
+16. **Do not dock the picker as a side panel in v1.** `registerSidePanel` works and
+    is attractive for a future watchlist panel, but a permanently docked column
+    costs plot width; the reference UX is a modal picker. The dialog is mounted in
+    `ctx.host` so Vela theme variables apply (kit components portal to `<body>`
+    without an explicit host).
+17. **Do not persist app-owned picker state through `registerStatePersistence`.**
+    `scope:'global'` writes into the **document** root, and the chart's document is
+    keyed per instrument (`persist: markethub-chart:<token>`), so a hot set would be
+    duplicated and diverge across instruments. Hot set, recents and filters stay in
+    MarketHub's own `localStorage` key. A `scope:'cell'` handler is reserved for
+    state that genuinely belongs to one chart cell.
+18. **Do not build a dynamic topbar label in v1.** `WidgetActionDescriptor.label` is
+    static; showing the ticker there needs re-registration plus
+    `workspace.refreshActions()` on every switch. The statusline and watermark already
+    show the current ticker, so the action stays "Symbol" (see open question 3).
+19. **Do pin the action id explicitly.** The shell resolves composition at
+    construction and freezes a declared side; naming our action id in `topbar.left`
+    places it exactly and overrides `align`/`order`. `'indicators'` stays in the list
+    for Phase 3, and the undeclared right side keeps Vela's defaults.
+20. **Do not grow the admin `/instruments` page into the symbol browser.** That page
+    owns segment enablement and master re-sync (a destructive action); a read-only
+    browse surface there mixes audiences. The browser is its own `/catalog` route
+    (Phase 1.5), and `/instruments` stays untouched.
 
 ---
 
@@ -358,29 +429,96 @@ Broker adapters, auth, feed lifecycle, canonical market models.
 
 ---
 
+### Phase 1.5 — Instrument catalog page (picker proving ground)
+
+**Goal:** give the shared picker a real, app-wide home and prove it against the full
+catalog before it enters Vela. This is deliberately thin: one page, one route, one
+nav entry, no new backend.
+
+**Changes**
+- New `frontend/src/features/catalog/CatalogView.tsx` at `/catalog`, registered in
+  `src/routes/router.tsx` and in `src/layouts/nav.ts` (one entry under "More",
+  label "Catalog"; the owner can move that one line to "Markets").
+- Uses the Phase 1 `InstrumentPicker` as its search surface (no second search
+  implementation, no page-local debounce/abort) and consumes the same
+  `GET /api/market/search` contract (plus `exact=1` for "Open chart"). The committed
+  result renders in the page's own table from the compact fields (symbol, name, type,
+  exchange, provider badge, derivative fields) at the picker's `limit <= 50`. Type and
+  exchange filters come from the picker's controls; the F&O structured mode is the
+  Phase 1 component, not a page-specific copy.
+- "Open chart" navigates to the existing chart route with the exact identity from the
+  result (bare `provider_token` + `provider`, per the Phase 1 contract trap); a
+  "Details" surface shows only the compact fields — no new read model.
+- Leave the existing `/instruments` admin page (segments + master sync) untouched; it
+  is not a symbol browser and is not renamed.
+- No virtualization or fuzzy library (D4); the contract caps result size.
+- Empty state until a query is typed; the hot set (W29) may populate suggestions.
+
+**Allowed surface**
+`frontend/src/features/catalog/*` (new), `frontend/src/routes/router.tsx` (one
+route), `frontend/src/layouts/nav.ts` (one entry), `frontend/src/styles/features/catalog.css`,
+tests.
+
+**Zone**
+`WEBUI FEATURES` + `WEBUI SHELL` (route and nav registration only).
+
+**Out of scope / protected**
+No backend edits, no new API, no chart/Vela files, no watchlist mutation changes, no
+persistence schema.
+
+**Acceptance**
+- `/catalog` exists and is reachable from the nav; `/instruments` still renders its
+  admin controls unchanged.
+- `REL`, `NIFTY`, `RELIANCE` behave as the Phase 0 acceptance (cash before option
+  noise, index before derivatives, one deduped row with provider attribution).
+- Keyboard: ArrowUp/Down, Enter, Escape; focus returns to the search input on close.
+- "Open chart" lands on the exact instrument; no `results[0]` substitution.
+- Requests abort on a new keystroke and on unmount; loading, empty and error states
+  are visible and distinct.
+- `vitest` covers result rendering and the navigate-with-exact-identity wiring;
+  browser pass at 1440x900 and mobile width, zero console errors and failed requests.
+
+---
+
 ### Phase 2 — Chart selector inside the chart layout
 
 **Goal:** remove the host toolbar row; select symbols from the chart topbar.
 
 **Changes**
-- Reuse the Phase 1 component **unchanged**: only the mount container and trigger
-  move. This phase adds no search code.
-- Register a widget **attachment** that mounts the shared picker once per widget into
-  `ctx.host` and returns a disposer (no React root per click).
-- Register a contributed topbar action (`align: 'left'`) whose `run(ctx)` toggles the
-  mounted picker, anchored under the topbar. Contributed actions are resolved by the
-  shell at construction, so both registrations happen at module import time.
+- Reuse the picker proven in Phases 1 and 1.5 **unchanged**: only the mount container
+  and trigger move. This phase adds no search code.
+- One module (`frontend/src/features/chart/chartSymbolPicker.tsx`) registers, at
+  import time:
+  - a contributed topbar action with a stable exported id (`MARKETHUB_SYMBOL_ACTION_ID`,
+    `align:'left'`, static label "Symbol") that calls the picker controller;
+  - a widget **attachment** that mounts once per workspace into `ctx.host` and returns
+    a disposer. It creates **one** React root hosting the shared picker (no root per
+    click), passes `host` to Vela kit components, and exposes `open(seed?)` through the
+    module controller. `ChartView` registers the `onSelect`/`onClose` handlers with that
+    controller on mount, so URL updates and remounts stay in React. The controller is
+    keyed by `ctx.host`, so a second mounted workspace cannot cross-open the wrong
+    picker.
+- Pin `MARKETHUB_SYMBOL_ACTION_ID` in `topbar.left` (for example after
+  `'timeframes'`, before `'style'`) and keep `'indicators'` for Phase 3. The stateful
+  `'symbol'` slot cannot be overridden; an id-pinned contributed action is the
+  supported seam. The undeclared right side keeps its defaults.
+- **Typing bridge (W32):** the attachment also adds a capture-phase `keydown`
+  listener on `ctx.host`. It mirrors Vela's own guard (no ctrl/meta/alt, not
+  composing, not an editable target, no open dialog), matches Vela's letter/`0`
+  predicate, then `preventDefault()` + `stopPropagation()` and opens the shared
+  picker seeded uppercase. Digits 1–9 stay Vela's timeframe entry. No call to
+  `ctx.openSymbolSearch()`.
 - On selection: update URL (`key/sym/ex/type`), remount the chart with the new
   per-instrument persistence key.
 - Remove the `.chart-toolbar` row and its search state from `ChartView.tsx`; keep
   the error banner and empty state.
-- Place the action so the current symbol remains visible (watermark/legend);
-  mobile uses the action's `mobile` behavior.
-- Keep `capabilities.enumerate: false`; no `listSymbols()`.
+- Keep `capabilities.enumerate: false`; no `listSymbols()`, no
+  `registerSymbolRanking`, no native symbol dialog in any path.
 
 **Allowed surface**
-`frontend/src/features/chart/*`, `src/styles/features/chart.css`, `src/routes/*`
-only if the route contract changes, chart tests.
+`frontend/src/features/chart/*` (including the new attachment/bridge module),
+`src/styles/features/chart.css`, `src/routes/*` only if the route contract changes,
+chart tests.
 
 **Zone**
 `WEBUI FEATURES` + `WEBUI SHELL` (if the layout changes).
@@ -390,10 +528,18 @@ Vela provider `getBars` contract, bars API, auth, feeds.
 
 **Acceptance (real browser)**
 - Picker opens from inside the chart topbar; host toolbar row is gone.
+- Typing `r` on the chart opens the **shared** picker seeded `R`; Vela's native
+  symbol dialog never appears (assert no `.vela-sp` dialog); typing `2` still opens
+  Vela's timeframe entry.
+- Selecting from the picker works with mouse and keyboard; Escape closes it.
+- The picker is themed (mounted under `ctx.host`, not portaled to `<body>`), and
+  exactly one React root exists for the workspace lifetime.
 - Search → RELIANCE and INFY updates URL, chart and watermark; reload restores.
 - Drawings/indicators persist per instrument across switches.
 - The chart imports the shared picker; no search/debounce code remains in
   `frontend/src/features/chart/`.
+- Mobile: the left-aligned action gets its bottom-bar stop; verify placement with
+  `'symbol'` hidden.
 - Zero console errors and zero failed requests.
 
 ---
@@ -409,7 +555,10 @@ Vela provider `getBars` contract, bars API, auth, feeds.
 - Override the `indicators` topbar slot with a catalog-driven picker (registered at
   import time, because the shell resolves slot overrides at construction); add
   selected types via `ctx.addNativeIndicator(type)` so undo/redo, indicator count and
-  persistence stay correct.
+  persistence stay correct. The override also owns the slot's mobile stop and the `/`
+  chord, and stops the native picker from being constructed — so the catalog menu
+  becomes the only indicator entry point. `'indicators'` must stay in `topbar.left`
+  for the override to render.
 - Mark catalog entries that are chart-only.
 
 **Allowed surface**
@@ -425,6 +574,8 @@ Backend evaluation (Phase 4), persistence schema.
 - Menu entries come only from the catalog.
 - Adding an indicator survives reload under the existing persistence document.
 - Unknown/unsupported types are not offered; `isSupported` is honored.
+- The `/` chord opens the catalog menu; Vela's native indicator dialog is never
+  constructed.
 - Tests cover catalog mapping and menu behavior.
 
 ---
@@ -503,9 +654,11 @@ Grouped for later scheduling; all were verified during the 2026-10-27 chart work
 | W26 | Read-only `/api/indicators` projection | 4 | Decided |
 | W27 | Fix search relevance (single-pass ranked read model + canonical-id dedupe) | 0 | New |
 | W28 | Optional FTS5 trigram index | — | Dropped from v1: ranked cash-type query measures 34–53 ms |
-| W29 | Local hot set for instant suggestions | 1 | New |
+| W29 | Local hot set for instant suggestions | 1 | New (MarketHub `localStorage`, not Vela persist — §4.2 item 17) |
 | W30 | Catalog hygiene: 7,121 NULL-type Upstox `NSE_EQ` rows | 0 (exclude) / later (classify) | New |
 | W31 | Structured F&O selection mode | 1 | New |
+| W32 | Bridge Vela's typed-letter chord to the shared picker (native dialog unused) | 2 | New (D7) |
+| W33 | Instrument catalog page `/catalog` — shared picker's first host | 1.5 | New |
 
 ---
 
@@ -516,9 +669,13 @@ Grouped for later scheduling; all were verified during the 2026-10-27 chart work
 | Search changes regress chart deep links | Exact mode (`find_by_exact_symbol`) is authoritative; router tests unchanged |
 | Ranked cash-only search hides derivatives | Derivative intent still parsed (`nifty 25000 ce`, `reliance future`); tests keep those paths green; structured F&O mode covers discovery |
 | Dedupe picks a provider that cannot serve bars | Rank only enabled providers; prefer a provider with an active session when tokens are absent (Fyers restore can fail); keep the provider token in the result; the picker passes `provider` to the bars API explicitly |
+| Catalog page grows its own search | Phase 1.5 acceptance: no debounce/abort/fetch of its own; it imports the picker and the shared API wrappers |
 | New read-model kwargs change existing callers | Defaults preserve alphabetical ordering and current filters; only the ranked mode opts in |
 | Chart picker remount loses layout | Persistence key remains per instrument; acceptance test switches A→B→A |
 | Overriding the indicator slot loses built-ins | Build menu from `nativeIndicatorDescriptors()`; test the full type list |
+| Typing bridge depends on Vela's DOM listener ordering | Pin the exact `@luxalgo/vela` version; guard test asserts no native picker after a typed letter; if a future release exposes an option or capture hook, switch to it |
+| Vela's native picker leaks back into the app | D7: no `listSymbols`, no `registerSymbolRanking`, no `ctx.openSymbolSearch`; browser assertion on `.vela-sp` |
+| Static action label disappoints | Statusline and watermark already show the ticker; re-registration via `refreshActions()` is the documented escape hatch |
 | Indicator evaluation diverges from Vela | Parity fixtures; chart-only flag until parity passes |
 | Bar feed subscription change | Protected feed lifecycle; not part of this plan |
 | Auth regression | No auth file in any allowed surface; login smoke test remains mandatory |
@@ -531,14 +688,22 @@ Grouped for later scheduling; all were verified during the 2026-10-27 chart work
    or keep it as the raw-row endpoint for non-picker consumers? Exact resolution now
    lives on `/api/market/search?exact=1`.
 2. Phase 1: should the hot set be per-user (server) or per-browser (localStorage)?
+   Evaluated: per-browser. Vela persistence cannot host it (global entries live in the
+   per-instrument document), and a server store belongs with the future
+   favorites/watchlist work, not v1.
 3. Phase 2: topbar action label — static "Symbol" plus watermark, or a dynamic label
-   that shows the current ticker (requires re-registration on symbol change)?
+   that shows the current ticker? Verified: `label` is static, so a dynamic label
+   requires re-registration plus `refreshActions()` on every switch. Recommendation:
+   static label in v1; the statusline and watermark carry the ticker.
 4. Phase 3: which indicator set ships in v1 of the catalog?
 5. Phase 4: which surface gets backend indicators first — scanners or condition
    alerts?
 6. Phase 0/1: for short prefixes (`REL`), accept alphabetical tie-breaks
    (`RELAXO` before `RELIANCE`) or boost a curated index/underlying list in the
    client hot set? The server has no popularity signal.
+7. Phase 2: with `'symbol'` hidden, a left-aligned contributed action takes the
+   mobile bottom-bar stop. Confirm that is the desired mobile entry point, or move the
+   action to the three-dots sheet with `mobile:'menu'`.
 
 ---
 
@@ -585,3 +750,23 @@ be mistaken for regressions.
     deferred until a live master check;
   - acceptance reworded to "cash before option noise" because the catalog has no
     popularity signal.
+- 2026-10-27 (v1.3) — Vela full-docs and installed-API study:
+  - verified the topbar contract: defaults, per-side completeness/freeze, id pinning
+    for contributed actions, and the `'actions'` flow slot;
+  - confirmed only `'indicators'`/`'screenshot'` are overridable, and that the
+    `indicators` override also owns the mobile stop and `/` chord;
+  - found the **typing-chord defect** (letters open Vela's native picker even with
+    `'symbol'` hidden, and the pool is empty without `listSymbols`), and added D7 +
+    W32: a capture-phase bridge to the shared picker, with a guard test;
+  - rejected `listSymbols`/`registerSymbolRanking` as fixes (one-shot 151k index,
+    composite tickers, pool-only reorder, no remote search);
+  - added attachment facts (once per workspace, `ctx.host`, late `refreshActions()`);
+  - resolved open question 2 (hot set stays in MarketHub localStorage, not Vela
+    persistence) and documented the mechanism for question 3 (static label v1);
+  - evaluated and deferred a docked side-panel picker; dialog stays;
+  - recorded provider ports (`getCalendar`, `subscribe`, `resolveSymbolIcon`,
+    `capabilitiesFor`) against W1/W2 and the `'exchange'` timezone option.
+- 2026-10-27 (v1.4) — Catalog page added as Phase 1.5 (W33): the shared picker's first
+  real host, placed after search correctness and before the Vela attachment work; a
+  separate `/catalog` route because `/instruments` is catalog admin, not a browser.
+  Phase 2 now builds on the picker proven on that page.
