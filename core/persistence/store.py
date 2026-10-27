@@ -752,6 +752,18 @@ class EventStore:
         finally:
             conn.close()
 
+    def find_by_exact_symbol(self, symbol: str, *, provider: str | None = None,
+                             instrument_type: str | None = None,
+                             exchange: str | None = None) -> list[dict]:
+        """Rows whose canonical symbol matches EXACTLY (case-insensitive)."""
+        conn = self._open(self._db_path)
+        try:
+            return _products.find_by_exact_symbol(
+                conn, symbol=symbol, provider=provider,
+                instrument_type=instrument_type, exchange=exchange)
+        finally:
+            conn.close()
+
     def derivative_expiries(self, underlying: str, instrument_type: str,
                             exchange: str | None = None) -> list[str]:
         """Sorted distinct expiries for one underlying's futures/options."""
