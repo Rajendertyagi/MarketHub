@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any
 
@@ -331,19 +332,43 @@ def search_instruments(
     expiry: str | None = None,
     option_type: str | None = None,
     strike: float | None = None,
+    isin: str | None = None,
     limit: int = 25,
+    types: Sequence[str] | None = None,
+    rank: str | None = None,
 ) -> list[dict[str, Any]]:
+    """Substring search over the catalog.
+
+    ``types`` scopes one query to several canonical types at once. Passing
+    ``rank`` additionally enables the picker's ranked mode: a single pass
+    scored by relevance (exact symbol -> exact underlying -> symbol prefix ->
+    symbol contains -> name contains), then NSE preference, then
+    length/alphabet, capped at 50 rows and scoped to cash classes
+    (INDEX/EQUITY/ETF) unless an explicit type scope is given.
+
+    The unranked mode is unchanged — alphabetical, cap 100 — for every
+    existing caller.
+    """
+    ranked = rank is not None
+    scope: list[str] = [instrument_type] if instrument_type else list(types or ())
+    if ranked and not scope:
+        scope = ["INDEX", "EQUITY", "ETF"]
     sql = f"SELECT {', '.join(_INSTRUMENT_COLUMNS)} FROM instruments WHERE 1=1"
     args: list[Any] = []
     if q:
-        sql += " AND (tradingsymbol LIKE ? OR name LIKE ?)"
-        args += [f"%{q}%", f"%{q}%"]
+        match = "tradingsymbol LIKE ? OR name LIKE ?"
+        if ranked:
+            # A canonical underlying key ("banknifty") need not appear in
+            # the display symbol; the ranked scan scores it separately.
+            match += " OR underlying LIKE ?"
+        sql += f" AND ({match})"
+        args += [f"%{q}%"] * (3 if ranked else 2)
     if exchange:
         sql += " AND exchange = ?"
         args.append(exchange)
-    if instrument_type:
-        sql += " AND instrument_type = ?"
-        args.append(instrument_type)
+    if scope:
+        sql += f" AND instrument_type IN ({', '.join('?' for _ in scope)})"
+        args += scope
     if provider:
         sql += " AND provider = ?"
         args.append(provider)
@@ -359,8 +384,75 @@ def search_instruments(
     if strike is not None:
         sql += " AND strike = ?"
         args.append(strike)
-    sql += " ORDER BY tradingsymbol LIMIT ?"
-    args.append(max(1, min(int(limit), 100)))
+    if isin:
+        sql += " AND isin = ?"
+        args.append(isin)
+    rank_q = (rank or "").strip().upper()
+    if rank_q:
+        sql += (
+            " ORDER BY CASE"
+            " WHEN UPPER(tradingsymbol) = ? THEN 0"
+            " WHEN UPPER(underlying) = ? THEN 1"
+            " WHEN UPPER(tradingsymbol) LIKE ? THEN 2"
+            " WHEN UPPER(tradingsymbol) LIKE ? THEN 3"
+            " WHEN UPPER(name) LIKE ? THEN 4"
+            " ELSE 5 END,"
+            " CASE WHEN exchange = 'NSE' THEN 0 ELSE 1 END,"
+            " LENGTH(tradingsymbol), tradingsymbol")
+        args += [rank_q, rank_q, f"{rank_q}%", f"%{rank_q}%",
+                 f"%{rank_q}%"]
+    elif ranked:
+        sql += (" ORDER BY CASE WHEN exchange = 'NSE' THEN 0 ELSE 1 END,"
+                " LENGTH(tradingsymbol), tradingsymbol")
+    else:
+        sql += " ORDER BY tradingsymbol"
+    sql += " LIMIT ?"
+    args.append(max(1, min(int(limit), 50 if ranked else 100)))
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(sql, args)]
+    finally:
+        conn.row_factory = None
+
+
+def find_by_exact_symbol(
+    conn: sqlite3.Connection,
+    *,
+    symbol: str,
+    provider: str | None = None,
+    instrument_type: str | None = None,
+    exchange: str | None = None,
+) -> list[dict[str, Any]]:
+    """Rows whose canonical symbol matches EXACTLY (case-insensitive).
+
+    The general ``search_instruments`` is a substring LIKE with a LIMIT, so
+    a short symbol (e.g. "LT") can match an unrelated instrument
+    ("20MICRONS", "3BBLACKBIO", ...) or fall outside the limit window
+    entirely. This read model matches the canonical symbol exactly, on
+    ``tradingsymbol`` OR the canonicalized ``underlying``.
+    """
+    want = (symbol or "").strip().upper()
+    if not want:
+        return []
+    sql = (f"SELECT {', '.join(_INSTRUMENT_COLUMNS)} FROM instruments "
+           "WHERE (UPPER(tradingsymbol) = ? OR UPPER(underlying) = ?) "
+           "AND instrument_type IS NOT NULL")
+    args: list[Any] = [want, want]
+    if provider:
+        sql += " AND provider = ?"
+        args.append(provider)
+    if instrument_type:
+        sql += " AND instrument_type = ?"
+        args.append(instrument_type)
+    if exchange:
+        sql += " AND exchange = ?"
+        args.append(exchange)
+    # Cash before derivatives, then provider preference, so an exact
+    # resolution is never truncated down to option noise.
+    sql += (" ORDER BY CASE instrument_type"
+            " WHEN 'INDEX' THEN 0 WHEN 'EQUITY' THEN 1 WHEN 'ETF' THEN 2"
+            " WHEN 'FUTURE' THEN 3 WHEN 'OPTION' THEN 4 ELSE 5 END,"
+            " provider, tradingsymbol LIMIT 20")
     conn.row_factory = sqlite3.Row
     try:
         return [dict(r) for r in conn.execute(sql, args)]

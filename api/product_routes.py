@@ -453,6 +453,11 @@ def build_intel_routes(market_intel: Any,
             return _json({"error": "q is required"}, 400)
         if len(q) > 64:
             return _json({"error": "q too long (max 64)"}, 400)
+        if qp.get("exact") in ("1", "true", "yes"):
+            result = await asyncio.to_thread(
+                market_intel.search_exact, q,
+                exchange=qp.get("exchange") or None)
+            return _json(result)
         types = [t for t in (qp.get("types") or "").split(",") if t]
         try:
             limit = min(int(qp.get("limit", 20)), 50)

@@ -29,7 +29,30 @@ def _seed(store):
     rows.append(dict(provider="fyers", instrument_token="200EQ",
                      exchange="NSE", tradingsymbol="NSE:RELIANCE-EQ",
                      name="Reliance Industries", instrument_type="EQUITY",
-                     segment="10", underlying="RELIANCE", lot_size=1))
+                     segment="10", underlying="RELIANCE", lot_size=1,
+                     isin="INE002A01018"))
+    # Same real instrument, second provider (cash duplicate for dedupe) and
+    # two near-miss symbols for the substring/ranking checks.
+    rows.append(dict(provider="upstox", instrument_token="NSE_EQ|INE002A01018",
+                     exchange="NSE", tradingsymbol="RELIANCE",
+                     name="Reliance Industries Ltd", instrument_type="EQUITY",
+                     segment="NSE_EQ", underlying="RELIANCE", lot_size=1,
+                     isin="INE002A01018"))
+    rows.append(dict(provider="fyers", instrument_token="201EQ",
+                     exchange="NSE", tradingsymbol="NSE:RELIABLE-EQ",
+                     name="Reliable Data Service", instrument_type="EQUITY",
+                     segment="10", underlying="RELIABLE", lot_size=1,
+                     isin="INE000000002"))
+    rows.append(dict(provider="fyers", instrument_token="202EQ",
+                     exchange="BSE", tradingsymbol="BSE:RELINFRA-EQ",
+                     name="Reliance Infrastructure", instrument_type="EQUITY",
+                     segment="10", underlying="RELINFRA", lot_size=1,
+                     isin="INE000000003"))
+    # Untyped Upstox index row: the picker must exclude it, not classify it.
+    rows.append(dict(provider="upstox", instrument_token="NSE_INDEX|Nifty 50",
+                     exchange="NSE", tradingsymbol="NIFTY",
+                     name="Nifty 50", instrument_type=None,
+                     segment="NSE_INDEX"))
     for i, exp in enumerate(("2026-09-29", "2026-10-30")):
         rows.append(dict(provider="fyers",
                          instrument_token=f"300FUT{i}",
@@ -58,14 +81,17 @@ def _seed(store):
                     name="NIFTY OPT", instrument_type="OPTION",
                     segment="11", underlying="NIFTY", expiry=exp,
                     strike=float(s), option_type=ot, lot_size=75))
-    store.replace_provider_instruments("fyers", rows)
+    upstox = [r for r in rows if r["provider"] == "upstox"]
+    fyers = [r for r in rows if r["provider"] != "upstox"]
+    store.replace_provider_instruments("fyers", fyers)
+    store.replace_provider_instruments("upstox", upstox)
     return len(rows)
 
 
 def _mk_intel(quotes=None):
-    from core.persistence.store import EventStore
     from app.instruments import InstrumentCatalog
     from app.market_intel import MarketIntel
+    from core.persistence.store import EventStore
 
     store = EventStore(os.path.join(tempfile.mkdtemp(), "e.db"))
     n = _seed(store)
@@ -87,7 +113,7 @@ def test_mi1_search(runner: R) -> None:
 
     r = intel.search("reliance")
     runner.assert_true("MI1-equity-found",
-                       any(x["symbol"] == "NSE:RELIANCE-EQ"
+                       any(x["symbol"] in ("NSE:RELIANCE-EQ", "RELIANCE")
                            for x in r["results"]))
 
     r = intel.search("reliance future")
@@ -208,6 +234,140 @@ def test_mi5_snapshot_freshness(runner: R) -> None:
     runner.assert_true("MI5-stale-flagged", snap2["freshness"]["stale"])
 
 
+def test_mi6_ranked_cash_scope(runner: R) -> None:
+    """Phase 0: the generic fallback is ONE ranked cash-class pass."""
+    intel, _n = _mk_intel()
+
+    r = intel.search("rel", limit=20)
+    runner.assert_true("MI6-has-results", r["count"] > 0)
+    runner.assert_true(
+        "MI6-cash-only",
+        all(x["type"] in ("INDEX", "EQUITY", "ETF") for x in r["results"]))
+    runner.assert_false(
+        "MI6-no-derivative-noise",
+        any(x["type"] in ("FUTURE", "OPTION") for x in r["results"]))
+
+    symbols = [x["symbol"] for x in r["results"]]
+    runner.assert_true("MI6-nse-before-bse",
+                       symbols.index("BSE:RELINFRA-EQ")
+                       > symbols.index("NSE:RELIABLE-EQ"))
+
+    typed = intel.search("nifty", types=["OPTION"], limit=5)
+    runner.assert_true("MI6-explicit-type-kept",
+                       typed["count"] > 0 and
+                       all(x["type"] == "OPTION" for x in typed["results"]))
+
+
+def test_mi7_canonical_dedupe(runner: R) -> None:
+    """Phase 0: one row per canonical instrument, winning provider kept."""
+    from app.instruments import InstrumentCatalog
+    from app.market_intel import MarketIntel
+    from core.persistence.store import EventStore
+
+    store = EventStore(os.path.join(tempfile.mkdtemp(), "dedupe.db"))
+    _seed(store)
+    catalog = InstrumentCatalog(store)
+    intel = MarketIntel(catalog)
+
+    r = intel.search("reliance", limit=20)
+    cash = [x for x in r["results"]
+            if x["symbol"] in ("NSE:RELIANCE-EQ", "RELIANCE")]
+    runner.assert_eq("MI7-one-row", len(cash), 1)
+    runner.assert_in("MI7-provider-attribution", cash[0]["provider"],
+                     ("fyers", "upstox"))
+    runner.assert_true("MI7-provider-token", bool(cash[0]["provider_token"]))
+
+    # The unranked read model is unchanged for every legacy caller.
+    legacy = catalog.search(q="RELIANCE", limit=20)
+    providers = {x["provider"] for x in legacy
+                 if x["isin"] == "INE002A01018"}
+    runner.assert_eq("MI7-legacy-both-providers", len(providers), 2)
+
+
+def test_mi8_exact_mode(runner: R) -> None:
+    """Phase 0: exact resolution never guesses (no results[0] fallback)."""
+    intel, _n = _mk_intel()
+
+    exact = intel.search_exact("RELIANCE")
+    runner.assert_true("MI8-has-result", exact["count"] > 0)
+    runner.assert_eq("MI8-cash-first",
+                     exact["results"][0]["type"], "EQUITY")
+    runner.assert_eq("MI8-one-equity",
+                     len([x for x in exact["results"]
+                          if x["type"] == "EQUITY"]), 1)
+
+    runner.assert_eq("MI8-no-substring-guess",
+                     intel.search_exact("REL")["count"], 0)
+
+    nifty = intel.search_exact("NIFTY")
+    runner.assert_true("MI8-index-result", nifty["count"] > 0)
+    runner.assert_eq("MI8-index-first",
+                     nifty["results"][0]["type"], "INDEX")
+    runner.assert_eq("MI8-index-symbol",
+                     nifty["results"][0]["symbol"], "NSE:NIFTY50-INDEX")
+    # The untyped Upstox NIFTY row is excluded, not classified.
+    runner.assert_true(
+        "MI8-only-canonical-types",
+        all(x["type"] in ("INDEX", "EQUITY", "ETF", "FUTURE", "OPTION")
+            for x in nifty["results"]))
+
+
+def test_mi9_limit_caps(runner: R) -> None:
+    """Ranked queries cap at 50; the legacy read model keeps its cap of 100."""
+    from app.instruments import InstrumentCatalog
+    from core.persistence.store import EventStore
+
+    rows = [dict(provider="fyers", instrument_token=f"A{i}",
+                 exchange="NSE", tradingsymbol=f"ANCHOR{i:03d}",
+                 name=f"Anchor {i}", instrument_type="EQUITY",
+                 segment="10") for i in range(120)]
+    store = EventStore(os.path.join(tempfile.mkdtemp(), "caps.db"))
+    store.replace_provider_instruments("fyers", rows)
+    catalog = InstrumentCatalog(store)
+
+    runner.assert_eq("MI9-ranked-cap",
+                     len(catalog.search(q="ANCHOR", rank="anchor",
+                                        limit=1000)), 50)
+    runner.assert_eq("MI9-legacy-cap",
+                     len(catalog.search(q="ANCHOR", limit=1000)), 100)
+
+
+def test_mi10_route_exact_and_ranked(runner: R) -> None:
+    """/api/market/search: exact=1 resolves exactly; ranked stays cash-first."""
+    import asyncio
+    import json
+
+    from api.product_routes import build_intel_routes
+
+    intel, _n = _mk_intel()
+    routes = build_intel_routes(intel, None)
+    target = next(r for r in routes if r.path == "/api/market/search")
+
+    class _Req:
+        def __init__(self, params):
+            self.query_params = params
+
+    def call(params):
+        resp = asyncio.run(target.endpoint(_Req(params)))
+        return json.loads(resp.body)
+
+    runner.assert_eq("MI10-exact-no-substring",
+                     call({"q": "REL", "exact": "1"})["count"], 0)
+
+    exact = call({"q": "RELIANCE", "exact": "1"})
+    runner.assert_eq("MI10-exact-first-type",
+                     exact["results"][0]["type"], "EQUITY")
+    runner.assert_eq("MI10-exact-one-equity",
+                     len([x for x in exact["results"]
+                          if x["type"] == "EQUITY"]), 1)
+
+    ranked = call({"q": "REL", "limit": "5"})
+    runner.assert_true("MI10-ranked-cash-only",
+                       all(x["type"] in ("INDEX", "EQUITY", "ETF")
+                           for x in ranked["results"]))
+    runner.assert_true("MI10-ranked-has-results", ranked["count"] > 0)
+
+
 if __name__ == "__main__":
     runner = R()
     test_mi1_search(runner)
@@ -215,4 +375,9 @@ if __name__ == "__main__":
     test_mi3_chain_atm_window(runner)
     test_mi4_chain_spot_fallback_and_errors(runner)
     test_mi5_snapshot_freshness(runner)
+    test_mi6_ranked_cash_scope(runner)
+    test_mi7_canonical_dedupe(runner)
+    test_mi8_exact_mode(runner)
+    test_mi9_limit_caps(runner)
+    test_mi10_route_exact_and_ranked(runner)
     sys.exit(0 if runner.summary() else 1)

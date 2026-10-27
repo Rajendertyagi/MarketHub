@@ -393,6 +393,18 @@ class InstrumentCatalog:
     def search(self, **kw: Any) -> list[dict[str, Any]]:
         return self._store.search_instruments(**kw)
 
+    def find_exact_rows(self, symbol: str, *, exchange: str | None = None,
+                        instrument_type: str | None = None,
+                        ) -> list[dict[str, Any]]:
+        """Rows whose canonical symbol/underlying matches EXACTLY.
+
+        The substring search can match an unrelated instrument or fall
+        outside its LIMIT window; exact resolution never guesses.
+        """
+        return list(self._store.find_by_exact_symbol(
+            symbol, instrument_type=instrument_type,
+            exchange=exchange) or [])
+
     def derivative_expiries(self, underlying: str, instrument_type: str,
                             exchange: str | None = None) -> list[str]:
         return self._store.derivative_expiries(underlying, instrument_type,

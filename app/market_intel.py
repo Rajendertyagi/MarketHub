@@ -81,21 +81,6 @@ class MarketIntel:
     def _norm(value: str | None) -> str:
         return re.sub(r"[^a-z0-9]", "", (value or "").lower())
 
-    def _row_score(self, row: dict[str, Any], norm_q: str) -> int:
-        """Lower is better relevance for a fallback substring match."""
-        if not norm_q:
-            return 9
-        if self._norm(row.get("underlying")) == norm_q:
-            return 0                      # canonical underlying key match
-        sym = self._norm(row.get("tradingsymbol"))
-        # Strip the exchange prefix and series suffix for a "core symbol".
-        core = re.sub(r"^(nse|bse|mcx|cde)", "", sym)
-        core = re.sub(r"(eq|index|etf)$", "", core)
-        if core.startswith(norm_q):
-            return 1
-        if norm_q in sym:
-            return 2
-        return 3                          # name-only match
 
     def _find_underlying(self, name: str) -> dict[str, Any] | None:
         """Resolve an underlying name ('NIFTY', 'RELIANCE', 'NIFTY50') to
@@ -120,12 +105,88 @@ class MarketIntel:
         return None
 
     @staticmethod
+    def _provider_rank(row: dict[str, Any]) -> int:
+        """Provider preference rank for a catalogue row (lower wins).
+
+        The provider ORDER is the project's configured preference; the
+        enabled set is honoured. A row from a disabled provider ranks last
+        (it can never be routed to).
+        """
+        provider = str(row.get("provider") or "")
+        try:
+            from providers.registry import get_registry
+            reg = get_registry()
+            order = list(reg.preference_order())
+            enabled = set(reg.enabled_ids())
+        except Exception:
+            order, enabled = [], set()
+        if provider not in enabled:
+            return len(order) + 2
+        try:
+            return order.index(provider)
+        except ValueError:
+            return len(order) + 1
+
+    def _dedupe_rows(self, rows: list[dict[str, Any]]
+                     ) -> list[dict[str, Any]]:
+        """Keep ONE row per canonical instrument, from the routed provider.
+
+        Cash instruments are listed by both providers, so the same real
+        instrument can arrive twice. Identity is canonical (never a string
+        heuristic); rows whose canonical id cannot be derived are kept as-is
+        in input order, and the first-seen order is preserved for the rest.
+        """
+        from app.canonical_identity import canonical_id_for_row
+        ranks: dict[str, int] = {}
+        order: list[str] = []
+        best: dict[str, dict[str, Any]] = {}
+        unkeyed: list[dict[str, Any]] = []
+        for row in rows or []:
+            try:
+                cid = canonical_id_for_row(row)
+            except Exception:
+                cid = None
+            if not cid:
+                unkeyed.append(row)
+                continue
+            if cid not in best:
+                order.append(cid)
+                best[cid] = row
+                continue
+            provider = str(row.get("provider") or "")
+            current = str(best[cid].get("provider") or "")
+            if provider not in ranks:
+                ranks[provider] = self._provider_rank(row)
+            if current not in ranks:
+                ranks[current] = self._provider_rank(best[cid])
+            if ranks[provider] < ranks[current]:
+                best[cid] = row
+        return [best[cid] for cid in order] + unkeyed
+
+    @staticmethod
     def _compact(row: dict[str, Any]) -> dict[str, Any]:
-        """Canonical compact identity for tool/API output."""
+        """Canonical compact identity for tool/API output.
+
+        Carries the provider attribution AND the provider-native key, so a
+        consumer can tell WHICH provider's contract a row is — and never
+        mistake one provider's leg for another's.
+        """
+        try:
+            from app.canonical_identity import (
+                canonical_id_for_row,
+                provider_quote_key,
+            )
+            native_key = provider_quote_key(row)
+            canonical_id = canonical_id_for_row(row)
+        except Exception:
+            native_key = row.get("provider_symbol") or row.get("instrument_token")
+            canonical_id = None
         out = {
             "instrument_key": f"{row['exchange']}:{row['instrument_token']}",
             "provider": row.get("provider"),
             "provider_token": row.get("instrument_token"),
+            "native_key": native_key,
+            "canonical_id": canonical_id,
             "symbol": row.get("tradingsymbol"),
             "display_name": row.get("name") or row.get("tradingsymbol"),
             "exchange": row.get("exchange"),
@@ -212,55 +273,70 @@ class MarketIntel:
                             "count": len(results),
                             "results": results[:limit]}
 
-        # Generic fallback: substring search (normalized space-insensitive
-        # match happens client-side against compact symbols).
-        kw: dict[str, Any] = {"q": remainder or None, "limit": max(limit, 50)}
-        if exchange:
-            kw["exchange"] = exchange
-        if expiry:
-            kw["expiry"] = expiry
-        if len(want_types) == 1:
-            kw["instrument_type"] = want_types[0]
-        # Generic fallback: substring search per canonical type, in
-        # product-relevance order (index/equity before derivatives), so
-        # SQL LIMITs cannot bury the obvious match under derivative noise.
-        norm_q = self._norm(remainder)
-        type_rank = {"INDEX": 0, "EQUITY": 1, "FUTURE": 2, "OPTION": 3,
-                     "ETF": 4}
-        order = want_types or ["INDEX", "EQUITY", "FUTURE", "OPTION", "ETF"]
-        seen_keys: set[str] = set()
-        for wt in order:
-            # Two probes: symbol/name substring AND canonical underlying
-            # key (e.g. query 'banknifty' must find NIFTYBANK-INDEX whose
-            # underlying column is BANKNIFTY).
-            rows = self._catalog.search(
-                q=remainder or None, instrument_type=wt,
-                exchange=exchange, expiry=expiry, limit=max(limit, 25))
-            if remainder:
-                rows = rows + [
-                    r for r in self._catalog.search(
-                        underlying=remainder.upper(), instrument_type=wt,
-                        exchange=exchange, expiry=expiry, limit=limit)
-                    if r not in rows]
-            ranked = []
-            for row in rows:
-                if norm_q and \
-                        norm_q not in self._norm(row.get("tradingsymbol")) \
-                        and norm_q not in self._norm(row.get("name")) \
-                        and norm_q != self._norm(row.get("underlying")):
-                    continue
-                ranked.append((self._row_score(row, norm_q),
-                               0 if row.get("exchange") == "NSE" else 1,
-                               len(self._norm(row.get("tradingsymbol"))),
-                               self._compact(row)))
-            ranked.sort(key=lambda t: (t[0], t[1], t[2]))
-            results.extend(r for *_pref, r in ranked)
-            if len(results) >= limit:
-                break
+        # Generic fallback: ONE ranked pass over the cash classes. The read
+        # model scores relevance (exact -> prefix -> contains) and prefers
+        # NSE, so a SQL LIMIT can no longer bury the obvious match under
+        # derivative noise; derivatives are reached through parsed intent or
+        # an explicit type filter. An expiry filter is explicit derivative
+        # intent, so it widens the scope instead of matching no cash row.
+        ranked_types = list(want_types) or None
+        if ranked_types is None and expiry:
+            ranked_types = list(_CANONICAL_TYPES)
+        rows = self._catalog.search(
+            q=remainder or None, types=ranked_types,
+            exchange=exchange, expiry=expiry,
+            limit=max(limit, 25), rank=remainder or None)
+        results.extend(self._compact(r) for r in self._dedupe_rows(rows))
+        results = results[:limit]
         return {"query": query, "parsed": parsed,
-                "count": len(results), "results": results[:limit]}
+                "count": len(results), "results": results}
+
+    def search_exact(self, symbol: str, *, exchange: str | None = None,
+                     limit: int = 20) -> dict[str, Any]:
+        """Resolve EXACT symbol/underlying matches only.
+
+        The picker's "open this instrument" path: no substring guessing and
+        no ``results[0]`` substitution, so a caller that asks for one
+        instrument can never land on a different instrument class.
+        Untyped rows are excluded, and provider duplicates merge to the
+        routed provider's row.
+        """
+        result: dict[str, Any] = {
+            "query": symbol,
+            "parsed": {"raw": symbol, "exact": True},
+            "count": 0,
+            "results": [],
+        }
+        want = (symbol or "").strip().upper()
+        if not want:
+            return result
+        rows = [
+            row for row in self._catalog.find_exact_rows(
+                want, exchange=exchange)
+            if str(row.get("instrument_type") or "").upper()
+            in _CANONICAL_TYPES
+        ]
+        results = [self._compact(r) for r in self._dedupe_rows(rows)]
+        result["results"] = results[:max(1, min(limit, 20))]
+        result["count"] = len(result["results"])
+        return result
 
     # -- Package 20: futures discovery ---------------------------------------
+
+    @staticmethod
+    def _derivative_exchange(under_row: dict[str, Any]) -> str | None:
+        """The exchange an underlying's derivatives are listed on.
+
+        A contract is listed by the exchange that lists its underlying
+        (SENSEX -> BSE, NIFTY -> NSE), and the catalogue carries that
+        exchange on the underlying's own row. Scoping the derivative reads
+        by it is what makes the BSE leg resolvable at all: an unscoped
+        lookup would work, but the pre-existing hardcoded ``NSE`` returned
+        an empty SENSEX chain. ``None`` (unknown) stays unscoped rather
+        than guessing an exchange.
+        """
+        exchange = str(under_row.get("exchange") or "").strip().upper()
+        return exchange or None
 
     def futures_contracts(self, underlying: str,
                           expiry: str | None = None) -> dict[str, Any]:
