@@ -135,8 +135,11 @@
   }
 
   /* Only trim the change % on genuinely tiny tiles so the symbol stays the
-     readable focal point; the symbol is never shrunk below its clamp floor. */
-  @container tile (max-height: 28px), tile (max-width: 40px) {
+     readable focal point; the symbol is never shrunk below its clamp floor.
+     Note: @container takes a single <container-condition>; comma-separated
+     query lists are only valid in @media/@supports, so the alternatives are
+     expressed with `or`. */
+  @container tile ((max-height: 28px) or (max-width: 40px)) {
     .mk-chg {
       display: none;
     }

@@ -11,7 +11,7 @@ export const diagnosticResultSchema = z
     status: z.string(),
     message: z.string(),
     duration_ms: z.number(),
-    data: z.record(z.unknown()).nullable().optional(),
+    data: z.record(z.string(), z.unknown()).nullable().optional(),
     classification_reason: z.string().optional(),
   })
   .passthrough();
@@ -20,7 +20,7 @@ export const diagnosticRunResultSchema = z
   .object({
     run_at: z.string(),
     duration_ms: z.number(),
-    summary: z.record(z.number()),
+    summary: z.record(z.string(), z.number()),
     failures: z.array(z.string()),
     warnings: z.array(z.string()),
     results: z.array(diagnosticResultSchema),

@@ -152,8 +152,7 @@ export async function saveUpstoxFeedConfig(
 // internal-only — never the dashboard, never an external URL).
 export function loginWithFyers(next?: string): void {
   const returnTo =
-    next ??
-    `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    next ?? `${window.location.pathname}${window.location.search}${window.location.hash}`;
   window.location.href = `/api/auth/fyers/login?next=${encodeURIComponent(returnTo)}`;
 }
 

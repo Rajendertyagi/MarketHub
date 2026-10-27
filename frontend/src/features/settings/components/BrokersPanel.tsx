@@ -2,10 +2,10 @@ import { useId, useState } from "react";
 import { Button, Input } from "@/components/ui";
 import {
   clearFyersLoginResult,
+  type FyersLoginResult,
   loginWithFyers,
   loginWithUpstox,
   readFyersLoginResult,
-  type FyersLoginResult,
 } from "../api";
 import { BROKER_FYERS, BROKER_UPSTOX } from "../constants";
 import {

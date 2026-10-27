@@ -15,7 +15,7 @@ export const logRecordSchema = z
     event_id: z.string().nullable().optional(),
     broker: z.string().nullable().optional(),
     exception: z.string().nullable().optional(),
-    extra: z.record(z.unknown()).nullable().optional(),
+    extra: z.record(z.string(), z.unknown()).nullable().optional(),
   })
   .passthrough();
 

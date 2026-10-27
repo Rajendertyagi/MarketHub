@@ -10,13 +10,13 @@ const conditionAlertSchema = z.object({
   enabled: z.boolean(),
   trigger_mode: z.string(),
   condition_summary: z.string(),
-  condition_json: z.record(z.unknown()).nullable(),
+  condition_json: z.record(z.string(), z.unknown()).nullable(),
   instrument: z.string().nullable(),
   created_at: z.string().nullable(),
   updated_at: z.string().nullable(),
   last_triggered_at: z.string().nullable(),
   trigger_count: z.number(),
-  metadata: z.record(z.unknown()).nullable(),
+  metadata: z.record(z.string(), z.unknown()).nullable(),
   current_state: z.string(),
   crossing_side: z.string(),
   state_updated_at: z.string().nullable(),
@@ -57,7 +57,7 @@ const mcpToolSchema = z.object({
   title: z.string(),
   description: z.string(),
   category: z.string(),
-  input_schema: z.record(z.unknown()),
+  input_schema: z.record(z.string(), z.unknown()),
 });
 
 export const aiAlertsResponseSchema = z.object({

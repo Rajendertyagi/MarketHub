@@ -22,10 +22,23 @@ export default defineConfig({
     sourcemap: true,
     rollupOptions: {
       output: {
-        manualChunks: {
-          echarts: ["echarts"],
-          react: ["react", "react-dom", "react-router-dom"],
-          query: ["@tanstack/react-query"],
+        // Vite 8 bundles with rolldown, which requires the function form of
+        // `manualChunks`; the object form Rollup accepted is no longer valid.
+        manualChunks(id: string) {
+          if (!id.includes("node_modules")) return;
+          const path = id.split("\\").join("/");
+          if (path.includes("/echarts/") || path.includes("/zrender/")) {
+            return "echarts";
+          }
+          if (
+            path.includes("/react/") ||
+            path.includes("/react-dom/") ||
+            path.includes("/react-router/") ||
+            path.includes("/react-router-dom/")
+          ) {
+            return "react";
+          }
+          if (path.includes("/@tanstack/")) return "query";
         },
       },
     },

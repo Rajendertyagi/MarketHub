@@ -47,7 +47,7 @@ export const newsSourceSchema = z.object({
   source_type: z.enum(["rss", "reddit"]),
   category: z.string(),
   enabled: z.boolean(),
-  config_json: z.record(z.unknown()),
+  config_json: z.record(z.string(), z.unknown()),
   created_at: z.string().nullable(),
   updated_at: z.string().nullable(),
 });

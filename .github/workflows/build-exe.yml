@@ -4,7 +4,7 @@ name: Build Windows EXE (Nuitka)
 # downloadable zip containing: the EXE + its runtime, the built frontend
 # (frontend/dist), and an initialized data/ directory (the app's database).
 #
-# Toolchain: Node.js 26 (frontend) + Python 3.14 (Nuitka), latest packages.
+# Toolchain: Bun 1.4.4 (frontend) + Python 3.14 (Nuitka), latest packages.
 # Published to a GitHub Release (one release per run, marked "Latest") for easy download.
 #
 # Triggers: push to the production-hardening branch, or manual dispatch.
@@ -27,12 +27,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Set up Node.js 26
-        uses: actions/setup-node@v5
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: "26"
-          cache: "npm"
-          cache-dependency-path: frontend/package.json
+          bun-version: "1.4.4"
+
+      - name: Cache Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('frontend/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
 
       - name: Set up Python 3.14
         uses: actions/setup-python@v5
@@ -48,17 +54,17 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: |
-          npm install
+          bun install --frozen-lockfile
 
       - name: Lint frontend (Biome gate)
         working-directory: frontend
         run: |
-          npm run lint -- --error-on-warnings
+          bun run lint -- --error-on-warnings
 
-      - name: Build frontend (Node 26 -> frontend/dist)
+      - name: Build frontend (bun -> frontend/dist)
         working-directory: frontend
         run: |
-          npm run build
+          bun run build
 
       - name: Compile standalone EXE with Nuitka
         run: |

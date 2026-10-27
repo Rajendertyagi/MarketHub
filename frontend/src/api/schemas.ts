@@ -140,8 +140,8 @@ export const sectorRowSchema = z.object({
   average_change_percent: z.number().nullable(),
   median_change_percent: z.number().nullable(),
   net_advances: z.number(),
-  top_gainer: z.record(z.unknown()).nullable(),
-  top_loser: z.record(z.unknown()).nullable(),
+  top_gainer: z.record(z.string(), z.unknown()).nullable(),
+  top_loser: z.record(z.string(), z.unknown()).nullable(),
   weighting: z.string(),
   members: z.array(sectorMemberSchema),
 });
@@ -161,7 +161,7 @@ export const sectorHeatmapSchema = z.object({
   weighting: z.string(),
   stale: z.boolean(),
   sectors: z.array(sectorRowSchema),
-  reconciliation: z.record(z.unknown()),
+  reconciliation: z.record(z.string(), z.unknown()),
 });
 
 // ── Market Map (GET /api/market/map) ────────────────────────────────────────
@@ -201,7 +201,7 @@ export const marketMapSchema = z.object({
   as_of: z.string().nullable(),
   stale: z.boolean(),
   sectors: z.array(marketMapSectorSchema),
-  reconciliation: z.record(z.unknown()),
+  reconciliation: z.record(z.string(), z.unknown()),
 });
 
 export type HistoryResponseParsed = z.infer<typeof historyResponseSchema>;
@@ -296,9 +296,9 @@ export const fnoWorkspaceSchema = z.object({
 export const fnoViewSchema = z.object({
   status: z.string(),
   symbol: z.string(),
-  active_view: z.record(z.number()),
+  active_view: z.record(z.string(), z.number()),
   resolved_count: z.number(),
-  apply: z.record(z.unknown()),
+  apply: z.record(z.string(), z.unknown()),
 });
 
 // ── Option Chain view (GET /api/options/chain/view) ───────────────────────────
@@ -332,7 +332,7 @@ export const chainAnalyticsSchema = z
 
 export const optionChainViewSchema = z.object({
   underlying: z.string(),
-  underlying_instrument: z.record(z.unknown()).nullable().optional(),
+  underlying_instrument: z.record(z.string(), z.unknown()).nullable().optional(),
   expiry: z.string(),
   expiries_available: z.array(z.string()),
   spot: z.number().nullable(),
@@ -378,7 +378,7 @@ export const futureContractSchema = z
 
 export const futuresResponseSchema = z.object({
   underlying: z.string(),
-  underlying_instrument: z.record(z.unknown()).nullable().optional(),
+  underlying_instrument: z.record(z.string(), z.unknown()).nullable().optional(),
   expiries: z.array(z.string()).optional(),
   contracts: z.array(futureContractSchema),
 });
@@ -427,7 +427,7 @@ export const applyResultSchema = z
   .object({
     status: z.string(),
     resolved_count: z.number().optional(),
-    by_provider: z.record(z.number()).optional(),
+    by_provider: z.record(z.string(), z.number()).optional(),
     apply: z.unknown().optional(),
   })
   .passthrough();
@@ -449,6 +449,6 @@ export const segmentsResponseSchema = z.object({
 
 export const syncStateSchema = z
   .object({
-    providers: z.array(z.record(z.unknown())),
+    providers: z.array(z.record(z.string(), z.unknown())),
   })
   .passthrough();

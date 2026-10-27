@@ -6,7 +6,7 @@ export const mcpToolSchema = z.object({
   title: z.string(),
   description: z.string(),
   category: z.string(),
-  input_schema: z.record(z.unknown()),
+  input_schema: z.record(z.string(), z.unknown()),
 });
 
 export const mcpToolsResponseSchema = z.object({
