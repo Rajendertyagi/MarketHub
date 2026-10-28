@@ -246,6 +246,9 @@ class UpstoxFeed:
         # MarketService is accepted now (stable constructor) but is
         # intentionally UNUSED until D3.2 wires market-data processing.
         self._market_service = market_service
+        # Optional live-bar sink (composition root attaches one so chart
+        # timeframes persist; the feed itself never owns chart storage).
+        self._bar_sink: Any = None
 
         # Canonical identity metadata: {instrument_key: (exchange, tradingsymbol)}.
         # Seeds from the caller and GROWS via add_instruments(): runtime
@@ -773,6 +776,22 @@ class UpstoxFeed:
                 logger.warning(
                     "upstox feed %s: quote/depth application failed (%s) - "
                     "isolated", self._name, type(exc).__name__)
+
+            if outcome.bars and self._bar_sink is not None:
+                try:
+                    self._bar_sink.observe(outcome.instrument_key, outcome.bars)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    key = "bar_sink_errors"
+                    self._counters[key] = self._counters.get(key, 0) + 1
+                    logger.warning(
+                        "upstox feed %s: bar sink failed (%s) - isolated",
+                        self._name, type(exc).__name__)
+
+    def set_bar_sink(self, sink: Any) -> None:
+        """Attach the live OHLCV sink (composition root); None detaches it."""
+        self._bar_sink = sink
 
     # -- public API ------------------------------------------------------------
 

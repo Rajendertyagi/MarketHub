@@ -658,6 +658,9 @@ _condition_alert_engine = _ConditionAlertEngine(
 from api.product_routes import (
     build_market_data_routes as _build_market_data_routes,
 )
+from api.market_bars_routes import (
+    build_market_bars_routes as _build_market_bars_routes,
+)
 from api.ai_alert_routes import build_ai_alert_routes as _build_ai_alert_routes
 from api.log_routes import build_log_routes as _build_log_routes
 from api.news_routes import build_news_routes as _build_news_routes
@@ -779,6 +782,32 @@ except Exception:
     _broker_restore["upstox_last_status"] = "restore_error"
 
 _source_manager = _build_source_manager()
+
+# Live OHLCV recorder (chart history): feeds that can surface bars get a
+# provider-scoped sink. Attaching here keeps bar storage out of the feed and
+# the storage module independent of any transport.
+from market.bars import BarRecorder as _BarRecorder
+
+_bar_recorders: dict[str, Any] = {}
+for _src_name, _src in _source_manager.enabled_sources.items():
+    _attach_sink = getattr(_src, "set_bar_sink", None)
+    if not callable(_attach_sink):
+        continue
+    _bar_recorders[_src_name] = _BarRecorder(_store, provider=_src_name)
+    _attach_sink(_bar_recorders[_src_name])
+
+# Chart bars: served from the v24 store, backfilled through the canonical
+# provider REST adapters, with the live feed's forming bar folded in.
+# Fyers backfill is deferred: BarService is constructed without a Fyers
+# adapter, so Fyers instruments serve stored bars only.
+from app.market_bars import BarService as _BarService
+
+_bar_service = _BarService(
+    _store,
+    auth_context_fn=_upstox_auth_context,
+    catalog=_instrument_catalog,
+    live=_bar_recorders.get("upstox"),
+)
 
 # Hold a reference to the Upstox feed for runtime auth management.
 _feed_ref: dict[str, Any] = {"feed": None}
@@ -1258,6 +1287,7 @@ app = Starlette(
     + _build_alert_routes(_store, _alert_engine)
     + _build_alert_history_routes(_store)
     + _build_market_data_routes(_provider_market_data)
+    + _build_market_bars_routes(_bar_service)
     + _build_subscription_routes(
         _subscription_service, _feed_for_provider)
     + _build_fno_routes(

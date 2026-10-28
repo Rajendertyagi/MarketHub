@@ -39,6 +39,7 @@ from market.service import QuotePatch
 __all__ = [
     "FrameResult",
     "InstrumentOutcome",
+    "extract_market_ohlc_bars",
     "process_binary_frame",
     "extract_segment_status",
 ]
@@ -57,6 +58,7 @@ class InstrumentOutcome:
     patch: QuotePatch | None = None
     depth: Any | None = None            # market.models.Depth when present
     error: str | None = None            # 'normalize' | 'unsupported' | 'unknown_instrument'
+    bars: tuple[dict[str, Any], ...] = ()   # marketOHLC bars (charting data)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +73,50 @@ class FrameResult:
 # ---------------------------------------------------------------------------
 # Per-instrument normalization
 # ---------------------------------------------------------------------------
+
+
+# The only intervals the V3 market-data feed documents in marketOHLC.
+_OHLC_INTERVAL_MINUTES = {"I1": 1, "1d": 1440}
+
+
+def extract_market_ohlc_bars(
+    feed: dict[str, Any],
+) -> tuple[dict[str, Any], ...]:
+    """Extract wire-present OHLC bars (``I1`` 1-minute, ``1d`` daily).
+
+    ``ts`` is the bar OPEN time in epoch milliseconds, as delivered. Bars
+    that are incomplete or inconsistent on the wire are dropped — nothing is
+    repaired or interpolated here.
+    """
+    ohlc = (feed.get("marketOHLC") or {}).get("ohlc") or []
+    bars: list[dict[str, Any]] = []
+    for candle in ohlc:
+        if not isinstance(candle, dict):
+            continue
+        minutes = _OHLC_INTERVAL_MINUTES.get(candle.get("interval"))
+        if minutes is None:
+            continue
+        try:
+            ts = int(candle.get("ts") or 0)
+            open_ = float(candle["open"])
+            high = float(candle["high"])
+            low = float(candle["low"])
+            close = float(candle["close"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if ts <= 0 or min(open_, low, close) <= 0 or high < low:
+            continue
+        volume = candle.get("vol")
+        try:
+            volume = float(volume) if volume is not None else None
+        except (TypeError, ValueError):
+            continue
+        bars.append({
+            "interval_minutes": minutes, "ts": ts,
+            "open": open_, "high": high, "low": low, "close": close,
+            "volume": volume,
+        })
+    return tuple(bars)
 
 
 def _build_patch(fields: dict[str, Any]) -> QuotePatch:
@@ -140,7 +186,7 @@ def _normalize_full_market(
 
     patch = _build_patch(fields)
     return InstrumentOutcome(instrument_key=instrument_key, patch=patch,
-                             depth=depth)
+                             depth=depth, bars=extract_market_ohlc_bars(market_ff))
 
 
 def _normalize_instrument(

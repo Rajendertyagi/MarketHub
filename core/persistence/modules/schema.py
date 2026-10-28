@@ -12,7 +12,7 @@ import sqlite3
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 
 
 def get_schema_version(conn: sqlite3.Connection) -> int:
@@ -133,6 +133,9 @@ def create_v7_schema(conn: sqlite3.Connection) -> None:
     # v23: X/Twitter feed cache + poll config.
     from core.persistence.modules.x_twitter import create_x_twitter_tables
     create_x_twitter_tables(conn)
+    # v24: OHLCV bar store (1-minute intraday base + daily).
+    from core.persistence.modules.market_bars import create_market_bars_table
+    create_market_bars_table(conn)
 
 
 def create_alerts_table(conn: sqlite3.Connection) -> None:

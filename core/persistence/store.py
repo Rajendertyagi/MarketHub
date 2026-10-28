@@ -35,6 +35,7 @@ from core.persistence.modules import condition_alerts as _condition_alerts
 from core.persistence.modules import consumers as _consumers
 from core.persistence.modules import delivery as _delivery
 from core.persistence.modules import events as _events
+from core.persistence.modules import market_bars as _market_bars
 from core.persistence.modules import news as _news
 from core.persistence.modules import products as _products
 from core.persistence.modules import recent_events as _recent_events
@@ -56,6 +57,7 @@ from core.persistence.modules.news import migrate_v15_to_v16
 from core.persistence.modules.news import migrate_v17_to_v18
 from core.persistence.modules.subscriptions import migrate_v16_to_v17
 from core.persistence.modules.fno_config import migrate_v18_to_v19
+from core.persistence.modules.market_bars import migrate_v23_to_v24
 from core.persistence.modules.previous_oi import migrate_v19_to_v20
 from core.persistence.modules.x_twitter import migrate_v22_to_v23
 from core.persistence.modules.schema import (
@@ -181,6 +183,8 @@ class EventStore:
                         migrate_v21_to_v22(conn)
                     elif current_version == 22:
                         migrate_v22_to_v23(conn)
+                    elif current_version == 23:
+                        migrate_v23_to_v24(conn)
                     else:
                         raise RuntimeError(
                             f"unsupported schema version {current_version}; "
@@ -905,6 +909,58 @@ class EventStore:
         conn = self._open(self._db_path)
         try:
             return _previous_oi.prune_previous_oi(conn, today=today)
+        finally:
+            conn.close()
+
+    # ─── OHLCV bars (v24) ──────────────────────────────────────────────
+
+    def upsert_bars(self, rows: list[dict[str, Any]]) -> int:
+        """Batched bar upsert (live beats backfill at the same bar)."""
+        conn = self._open(self._db_path)
+        try:
+            return _market_bars.upsert_bars(conn, rows)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def query_bars(self, **kw: Any) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _market_bars.query_bars(conn, **kw)
+        finally:
+            conn.close()
+
+    def bar_bounds(self, **kw: Any) -> tuple[int | None, int | None, int]:
+        conn = self._open(self._db_path)
+        try:
+            return _market_bars.bar_bounds(conn, **kw)
+        finally:
+            conn.close()
+
+    def prune_bars(self, *, cutoff_ts: int,
+                   interval_minutes: int | None = None) -> int:
+        conn = self._open(self._db_path)
+        try:
+            return _market_bars.prune_bars(
+                conn, cutoff_ts=cutoff_ts,
+                interval_minutes=interval_minutes)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def prune_intraday_bars(self, *, sessions: int = 30,
+                            interval_minutes: int = 1) -> int:
+        conn = self._open(self._db_path)
+        try:
+            return _market_bars.prune_intraday_sessions(
+                conn, sessions=sessions, interval_minutes=interval_minutes)
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 
