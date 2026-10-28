@@ -257,7 +257,7 @@ export function MarketMapView() {
     q.set("sym", st.symbol);
     q.set("ex", st.exchange);
     q.set("type", "EQUITY");
-    navigate(`/charts?${q.toString()}`);
+    navigate(`/chart?${q.toString()}`);
   };
 
   let body: React.ReactNode;

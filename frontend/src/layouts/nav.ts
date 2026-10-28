@@ -33,7 +33,7 @@ export const NAV: NavEntry[] = [
   {
     kind: "links",
     items: [
-      { to: "/charts", label: "Charts" },
+      { to: "/chart", label: "Chart" },
       { to: "/scanners", label: "Scanners" },
       { to: "/fno", label: "F&O" },
       { to: "/option-chain", label: "Option Chain" },
@@ -51,6 +51,7 @@ export const NAV: NavEntry[] = [
     kind: "dropdown",
     label: "More",
     items: [
+      { to: "/catalog", label: "Catalog" },
       { to: "/chat", label: "Chat" },
       { to: "/subscriptions", label: "Subscriptions" },
       { to: "/diagnostics", label: "Test Center" },

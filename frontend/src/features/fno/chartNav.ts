@@ -1,4 +1,4 @@
-// Exact instrument-identity navigation to Charts.
+// Exact instrument-identity navigation to the chart.
 //
 // Preserves the canonical identity (instrument_key + exchange + tradingsymbol +
 // instrument type) so Charts never guesses or substitutes one instrument class
@@ -9,5 +9,5 @@ import type { InstrumentType } from "@/types";
 
 export function chartHref(key: string, sym: string, ex: string, type: InstrumentType): string {
   const p = new URLSearchParams({ key, sym, ex, type });
-  return `/charts?${p.toString()}`;
+  return `/chart?${p.toString()}`;
 }

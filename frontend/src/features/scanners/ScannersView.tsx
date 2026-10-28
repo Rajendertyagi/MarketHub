@@ -80,7 +80,7 @@ function ScannerCard({
     const inst = await resolveInstrument(nav.tradingsymbol, nav.type);
     if (!inst) return;
     navigate(
-      `/charts?key=${encodeURIComponent(inst.instrument_token)}` +
+      `/chart?key=${encodeURIComponent(inst.instrument_token)}` +
         `&sym=${encodeURIComponent(inst.tradingsymbol)}` +
         `&ex=${encodeURIComponent(inst.exchange)}` +
         `&type=${encodeURIComponent(inst.instrument_type)}`,

@@ -64,6 +64,27 @@ export interface HistoryResponse {
   candles: Candle[];
 }
 
+// Persisted OHLCV bar (GET /api/market/bars). `ts` is the bar OPEN time in
+// epoch milliseconds; `source` records provenance (live feed vs backfill) and
+// is null for derived (week/month) and live-merged bars.
+export interface MarketBar {
+  ts: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number | null;
+  oi: number | null;
+  source: string | null;
+}
+
+export interface BarsResponse {
+  provider: string;
+  instrument_key: string;
+  timeframe: number;
+  bars: MarketBar[];
+}
+
 // Scanner metadata returned by GET /api/market/scanners.
 export interface ScannerDef {
   name: string;

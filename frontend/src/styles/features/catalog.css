@@ -1,0 +1,85 @@
+/* Catalog: canonical instrument browser (shared InstrumentPicker host). */
+
+@layer features {
+  .catalog-view {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    min-width: 0;
+  }
+  .catalog-header h1 {
+    margin: 0 0 var(--space-1);
+    font-size: var(--font-size-xl);
+  }
+  .catalog-header p {
+    margin: 0;
+    max-width: 72ch;
+    font-size: var(--font-size-sm);
+  }
+  .catalog-search {
+    max-width: 640px;
+  }
+
+  .catalog-detail {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    max-width: 820px;
+  }
+  .catalog-detail-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+  }
+  .catalog-symbol {
+    margin: 0 0 var(--space-1);
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+  }
+  .catalog-provider {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .catalog-actions {
+    display: flex;
+    gap: var(--space-2);
+    flex: 0 0 auto;
+  }
+
+  .catalog-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+  }
+  .catalog-table th,
+  .catalog-table td {
+    text-align: left;
+    padding: var(--space-1) var(--space-2);
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  .catalog-table th {
+    width: 180px;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+  .catalog-table td {
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+
+  .catalog-empty {
+    max-width: 820px;
+  }
+
+  @media (max-width: 760px) {
+    .catalog-actions {
+      width: 100%;
+    }
+    .catalog-table th {
+      width: 120px;
+    }
+  }
+}

@@ -211,6 +211,18 @@ export function InstrumentPicker({
     document.getElementById(`${uid}-opt-${active}`)?.scrollIntoView({ block: "nearest" });
   }, [open, active, uid]);
 
+  // Closing by picking must hand focus back to the search field: the results
+  // are buttons, so the click lands focus inside the popover, which unmounts.
+  // The input's focus handler would reopen the popover, so the programmatic
+  // focus is flagged to be ignored once.
+  const suppressOpenRef = useRef(false);
+  const focusInput = () => {
+    const input = rootRef.current?.querySelector<HTMLInputElement>(".instrument-picker-input");
+    if (!input || document.activeElement === input) return;
+    suppressOpenRef.current = true;
+    input.focus();
+  };
+
   const pickRow = (row: MarketInstrument) => {
     setActive(-1);
     if (mode === "fno") {
@@ -226,6 +238,7 @@ export function InstrumentPicker({
     setResults([]);
     onChange(row.symbol);
     onSelect(row);
+    focusInput();
   };
 
   const pickLeg = async (leg: OptionLeg) => {
@@ -244,6 +257,7 @@ export function InstrumentPicker({
       setOpen(false);
       onChange(row.symbol);
       onSelect(row);
+      focusInput();
     } catch (err) {
       setChainError(errorText(err));
     } finally {
@@ -312,7 +326,13 @@ export function InstrumentPicker({
             setOpen(true);
             setActive(-1);
           }}
-          onFocus={() => setOpen(true)}
+          onFocus={() => {
+            if (suppressOpenRef.current) {
+              suppressOpenRef.current = false;
+              return;
+            }
+            setOpen(true);
+          }}
           onKeyDown={onKeyDown}
         />
         {fno && (

@@ -3,11 +3,11 @@
 | | |
 |---|---|
 | **Plan ID** | `MH-UCP-2026-10-27` |
-| **Status** | Draft for owner review — collection complete, **no code implemented** |
+| **Status** | Phases 0–1 committed (`329edd0`, `2025f1b`, `df98203`); Phase 1.5–3 implemented and uncommitted with the chart work; **Phase 4 (backend indicator catalog for scanners/alerts) deferred 2026-10-28**; Phase 5 is a backlog awaiting scheduling |
 | **Prepared** | 2026-10-27 |
-| **Revision** | v1.5 (merges the remote official SDK/API review into v1.4) |
+| **Revision** | v2.0 (Phase 4 deferred; indicator catalog scoped chart-only) |
 | **Branch** | `fno-provider-agnostic` |
-| **Scope** | Chart experience, bars backend, unified instrument catalog, unified indicator catalog |
+| **Scope** | Chart experience, bars backend, unified instrument catalog, **chart-only** indicator catalog |
 | **Verified against** | Branch code and read-only catalog evidence recorded in v1.2; official Vela, Fyers and Upstox docs reviewed in v1.3; the Vela 0.9.0 documentation set and the installed `@luxalgo/vela` type definitions and bundle reviewed in v1.4 |
 
 This document is the persisted version of the change list collected on 2026-10-27. It
@@ -41,8 +41,10 @@ phases below require touching them. **Login must not regress.**
 1. One instrument catalog and one chooser UI for the whole application, used by the
    chart as well (the picker must live inside the chart layout, not in a separate
    host toolbar row).
-2. One indicator catalog, centrally defined, used by the chart now and by
-   scanners/alerts later.
+2. One **chart-only** indicator catalog, centrally defined in the frontend, used by
+   the chart's indicator menu. Backend indicator evaluation — for scanners or
+   condition alerts — is **deferred** (Phase 4) and is not part of the catalog's
+   contract in v1.
 3. Keep the chart and bars foundation correct and observable while doing so.
 
 **Non-goals**
@@ -159,6 +161,15 @@ core Vela UX that should stay true — with MarketHub's picker behind it.
 There is **no** indicator concept in the backend today (no definitions, no evaluation,
 no persistence). Indicators exist only as Vela natives in the browser.
 
+**2026-10-28 scoping decision.** The backend stays that way. Indicator-based
+condition alerts and indicator-based scanners are **deferred** to a separately
+approved project. No Python indicator evaluator, alert/scanner integration,
+bar-close scheduler, indicator-specific persistence, indicator-definition database
+table, shared JSON indicator spec or `/api/indicators` route is authorized by this
+plan. The chart's indicator catalog remains a frontend module over Vela's native
+descriptors; backend alerts and scanners keep their existing quote-metric behavior
+unchanged.
+
 ### 2.6 Official API / SDK review (2026-10-27)
 
 Reviewed official documentation before implementation. These checks refine the plan; they do not prove that MarketHub's adapters are currently correct or that live broker calls have been exercised.
@@ -177,7 +188,7 @@ Reviewed official documentation before implementation. These checks refine the p
 | ID | Decision |
 |---|---|
 | **D1** | One **code-first** indicator catalog. Definitions, categories, parameter schema and formulas live in versioned code; the database stores only per-user state (favorites, defaults, templates). |
-| **D2** | The catalog must serve the **whole application** — chart first, then scanners and condition alerts; backend evaluation comes after the catalog exists. |
+| **D2** | The **instrument** catalog serves the whole application. The **indicator** catalog serves the chart only; extending it to scanners and condition alerts requires backend evaluation, which is deferred (Phase 4, 2026-10-28). |
 | **D3** | The chart symbol chooser moves **inside the Vela layout** as a contributed topbar action with remote search. Vela's native symbol index is not enabled (151k instruments, one-shot index). |
 | **D4** | No new packages for v1. Reuse React, TanStack Query, zod, Vela's kit and the existing UI primitives. |
 | **D5** | One picker component, one search contract, one identity/dedupe rule; no per-feature search implementations. |
@@ -213,10 +224,11 @@ F&O underlying universe table ── shared search input; backend read models; n
 Vela nativeIndicatorDescriptors()
         │
         ▼
-indicatorCatalog (one module) ── categories, params, chart-only/backend-ready flags
+indicatorCatalog (one frontend module) ── categories, params, chart-only flags
         │
-        ├── chart indicator menu (override the `indicators` topbar slot)
-        └── GET /api/indicators (read-only, generated) ── scanners/alerts later
+        └── chart indicator menu (override the `indicators` topbar slot)
+            (chart-only: no backend evaluator, no `/api/indicators`,
+             no indicator DB table — Phase 4 deferred 2026-10-28)
 ```
 
 ### 4.1 Build vs reuse
@@ -260,7 +272,9 @@ indicatorCatalog (one module) ── categories, params, chart-only/backend-read
 4. **Do not enumerate symbols into Vela.** 151k rows and a one-shot index make that
    both slow and permanently stale.
 5. **Do not build indicator metadata twice.** Vela already exposes descriptor
-   metadata; the app catalog adds only product metadata and backend capability flags.
+   metadata; the app catalog adds only chart-side product metadata (category,
+   aliases, order, inputs, chart-only flag). It carries no backend capability
+   contract, because backend indicator evaluation is deferred.
 6. **Do not introduce a new picker per feature.** The real duplication is the
    search box itself: the chart toolbar's dropdown (`ChartView`) and the
    watchlist `AddInstrument` each re-implement debounce, abort, ranking and
@@ -337,6 +351,9 @@ Each phase is independently approvable and verifiable.
 
 ### Phase 0 — Search correctness and catalog hygiene
 
+**Status:** implemented 2026-10-27; committed as `329edd0` (plus `2025f1b` for the
+exact-symbol read model).
+
 **Goal:** make the existing search usable as the single picker contract.
 
 **Changes**
@@ -386,9 +403,28 @@ No schema change, no migration, no auth, no ingestion/type-mapping change.
   (single-pass measurement: 34–53 ms for `REL`/`NIFTY`/`RELIANCE`).
 - Backend tests cover ranking, dedupe, NULL-type exclusion, exact mode, limit caps.
 
+**Implemented (2026-10-27)** — `types` + `rank` on
+`products.search_instruments` (ranked mode: cash scope by default, `CASE` score,
+NSE, length/alphabet, cap 50; unranked path unchanged at cap 100);
+`MarketIntel.search` generic fallback replaced by that single pass;
+`_dedupe_rows` keeps one row per `canonical_id_for_row` (lowest
+`_provider_rank`); `MarketIntel.search_exact` + `InstrumentCatalog.find_exact_rows`
+expose the exact resolver; `GET /api/market/search?exact=1` wired;
+`find_by_exact_symbol` now excludes untyped rows and orders cash before
+derivatives. Live-catalog read-only measurement (limit 25): `REL` p95 49.0 ms,
+`NIFTY` 50.2 ms, `RELIANCE` 46.5 ms, `BANKNIFTY` 45.7 ms. Tests: MI6–MI10;
+`ruff check` clean; catalog/identity/F&O suites 77 passed; boundary + auth-freeze
+35 passed. Pre-existing full-suite failures remain in the uncommitted
+`app/auth/*` work (not touched by this phase).
+
 ---
 
 ### Phase 1 — Shared instrument picker
+
+**Status:** committed 2026-10-28 as `df98203` (after the toolchain commit `028b47e`).
+The committed host is watchlists (`AddInstrument`); the chart host is part of the
+still-uncommitted Vela chart work, and the F&O underlying table keeps its universe
+table (owner decision pending).
 
 **Goal:** one component, one behavior, used everywhere a symbol is chosen.
 
@@ -438,9 +474,30 @@ Broker adapters, auth, feed lifecycle, canonical market models.
 - A scanner/market-map symbol link opens the exact instrument or shows a visible
   "not found" error — never a different class.
 
+**Implemented (2026-10-28)** — `frontend/src/components/InstrumentPicker.tsx` is the
+single search surface: 250 ms debounce + abort, ArrowUp/Down/Enter/Escape/Home/End,
+ARIA combobox/listbox with `aria-activedescendant`, type/exchange filters, provider
+badge, canonical-id title, and F&O mode (underlying → expiry → strike → CE/PE) that
+exact-resolves the clicked leg. The chart toolbar and `AddInstrument` use it; the old
+`searchInstruments` path is gone. `resolveInstrument` is exact-only
+(`resolveMarketInstrument`, `null` on no match) and `getMarketBars` carries
+`provider`. `hot` stays an unused optional prop (Phase 2 owns the consumer). Two
+items are deliberately not converted: the F&O underlying view still filters its
+preloaded universe table locally (it selects an exact symbol + kind from an
+authoritative read model, and the shared picker's F&O mode owns chain interaction,
+so reusing it there needs an owner decision), and no call site passes `hot` yet.
+Verified
+with `tsc`, biome, 8 picker tests plus updated chart/watchlist/router/chartData tests,
+and a live browser pass on `/chart` (exact `key/sym/ex/type/prov` URL, bars with
+`provider=upstox`, `< 505 px` layout) and `/watchlists` (search, select, F&O chain,
+leg exact resolution); no browser console errors.
+
 ---
 
 ### Phase 1.5 — Instrument catalog page (picker proving ground)
+
+**Status:** implemented 2026-10-28 (uncommitted; its "Open chart" target `/chart`
+is part of the same uncommitted chart work, so it cannot be committed before it).
 
 **Goal:** give the shared picker a real, app-wide home and prove it against the full
 catalog before it enters Vela. This is deliberately thin: one page, one route, one
@@ -492,6 +549,8 @@ persistence schema.
 ---
 
 ### Phase 2 — Chart selector inside the chart layout
+
+**Status:** implemented 2026-10-28 (uncommitted with the chart work; browser-verified).
 
 **Goal:** remove the host toolbar row; select symbols from the chart topbar.
 
@@ -557,12 +616,15 @@ Vela provider `getBars` contract, bars API, auth, feeds.
 
 ### Phase 3 — Indicator catalog (chart)
 
+**Status:** implemented 2026-10-28 (uncommitted with the chart work; browser-verified).
+
 **Goal:** one indicator catalog, one menu, no duplicated list.
 
 **Changes**
 - New `frontend/src/features/chart/indicatorCatalog.ts` that reads
   `nativeIndicatorDescriptors()` and adds product metadata: category, search aliases,
-  display order, params/defaults, and `backendReady` flag.
+  display order, params/defaults, and a chart-only flag (the `backendReady` field
+  exists as an always-false placeholder, since backend evaluation is deferred).
 - Override the `indicators` topbar slot with a catalog-driven picker (registered at
   import time, because the shell resolves slot overrides at construction); add
   selected types via `ctx.addNativeIndicator(type)` so undo/redo, indicator count and
@@ -579,7 +641,8 @@ Vela provider `getBars` contract, bars API, auth, feeds.
 `WEBUI FEATURES`.
 
 **Out of scope / protected**
-Backend evaluation (Phase 4), persistence schema.
+Backend evaluation — deferred (Phase 4). No indicator evaluator, alert/scanner
+integration, bar-close scheduler, indicator persistence or persistence-schema change.
 
 **Acceptance**
 - Menu entries come only from the catalog.
@@ -591,36 +654,58 @@ Backend evaluation (Phase 4), persistence schema.
 
 ---
 
-### Phase 4 — App-wide indicator catalog (scanners/alerts)
+### Phase 4 — Backend indicator catalog for scanners/alerts — DEFERRED (2026-10-28)
 
-**Goal:** the same catalog ids drive backend evaluation.
+**Status:** Deferred. This is a record of the decision, not an active phase. No step
+below authorizes work in this plan.
 
-**Changes**
-- Shared catalog spec (JSON) validated in TS and Python at startup.
-- `GET /api/indicators` read-only projection of the spec.
-- Backend evaluators keyed by catalog id; only entries with evaluators are
-  selectable outside the chart.
-- User preferences in the database (favorites, defaults, last used); never formulas.
-- Parity fixtures: fixed bars → expected values, run against both the Vela native and
-  the backend evaluator.
-- Scanners/condition alerts integrate by catalog id only.
+**Decision.** Indicator-based condition alerts are **deferred**. Indicator-based
+scanners are **deferred**. Existing quote-based alert and scanner behavior is
+preserved unchanged and remains the only supported path.
 
-**Allowed surface**
-New indicator module, indicator route, catalog spec, tests; scanners/alerts changes
-in their own zones.
+**Not authorized by this plan.** No Python indicator evaluator or indicator
+calculation of any kind; no integration with `app/condition_alerts.py` or with
+scanner evaluation; no bar-close scheduler or bar-completion event; no
+indicator-specific persistence; no indicator-definition database table; no shared
+JSON indicator specification validated in both TypeScript and Python; no
+`GET /api/indicators` route. These are all out of scope until a separate project is
+approved.
 
-**Zone**
-New module (to be assigned) + `TRANSPORT/API` + `ALERTS` (red-zone
-`app/condition_alerts.py` requires its own approval) + `WEBUI FEATURES`.
+**Why deferred.**
+- Alert evaluation is quote-tick driven (`evaluate(quote)` on a metric-agnostic
+  leaf state machine), and scanners rank quote metrics only. Neither surface has a
+  bar stream, a bar-close signal or an indicator engine to hook into.
+- Vela computes natives in the browser and exposes no values API for a host: there
+  is no runtime numeric output that could be forwarded, and re-implementing Vela's
+  formulas in Python risks silent divergence with no cheap way to detect it.
+- Adding an indicator path would require persistence (a definition/evaluator table
+  and a schema migration), a scheduler, and access to the `ALERTS` red zone — that
+  is a project, not a phase of a chart task.
 
-**Out of scope / protected**
-Chart-side math stays Vela; no formula execution from untrusted input.
+**Current implementation state (as built, uncommitted).**
+`frontend/src/features/chart/indicatorCatalog.ts` carries a `backendReady` flag and
+an empty `BACKEND_READY` set. The flag is a placeholder that is always `false`
+today; it is not a backend contract and nothing consumes it outside the chart.
+The catalog's ids are Vela native type names, which is sufficient for the chart menu
+and says nothing about evaluability.
 
-**Acceptance**
-- Catalog entry without an evaluator is rejected by scanners/alerts with a clear
-  message.
-- Parity fixtures pass within tolerance.
-- No indicator name is accepted as free text by APIs.
+**Preserved behavior.**
+- Condition alerts keep their documented metric set (quote metrics plus analytics)
+  and their v1 leaf / v2 group evaluation, trigger, cooldown and delivery paths.
+- Scanners keep ranking quote metrics; no indicator id is accepted anywhere.
+- The chart indicator menu keeps adding Vela natives through
+  `ctx.addNativeIndicator(type)`; persistence stays Vela's per-instrument document.
+
+**If this is ever revived** it starts as a separately approved project with its own
+zone declaration, and at minimum: a bar-close contract, a persistence schema
+migration, parity fixtures that pin each indicator's expected values against the
+Vela native implementation, and an explicit decision on which surface (scanners or
+condition alerts) goes first.
+
+**Original outline (historical, not authorized).** The earlier draft of this section
+proposed a shared JSON spec, evaluators keyed by catalog id, user-preference tables,
+parity fixtures and scanner/alert integration. It is retained here only as context
+for a future proposal; nothing in it is approved.
 
 ---
 
@@ -658,11 +743,11 @@ Grouped for later scheduling; all were verified during the 2026-10-27 chart work
 | W19 | Central instrument catalog contract (all classes) | 0/1 | Decided |
 | W20 | Chart picker inside Vela topbar via contributed action + remote search | 2 | Decided |
 | W21 | Central indicator catalog + catalog-driven chart menu | 3 | Decided |
-| W22 | Catalog feeds scanners/alerts (backend evaluation) | 4 | Decided, phased last |
-| W23 | Code-first catalog; DB for user state only | 3/4 | Decided |
+| W22 | Catalog feeds scanners/alerts (backend evaluation) | — | **Deferred 2026-10-28** — separate approved project |
+| W23 | Code-first catalog; DB for user state only | 3 | Decided (chart catalog is code-first; no DB user state in v1) |
 | W24 | Shared picker behavior spec + tests | 1 | Decided |
-| W25 | Indicator parity fixtures | 4 | Decided |
-| W26 | Read-only `/api/indicators` projection | 4 | Decided |
+| W25 | Indicator parity fixtures | — | **Deferred** with Phase 4 |
+| W26 | Read-only `/api/indicators` projection | — | **Deferred** with Phase 4 |
 | W27 | Fix search relevance (single-pass ranked read model + canonical-id dedupe) | 0 | New |
 | W28 | Optional FTS5 trigram index | — | Dropped from v1: ranked cash-type query measures 34–53 ms |
 | W29 | Local hot set for instant suggestions | 1 | New (MarketHub `localStorage`, not Vela persist — §4.2 item 17) |
@@ -687,7 +772,7 @@ Grouped for later scheduling; all were verified during the 2026-10-27 chart work
 | Typing bridge depends on Vela's DOM listener ordering | Pin the exact `@luxalgo/vela` version; guard test asserts no native picker after a typed letter; if a future release exposes an option or capture hook, switch to it |
 | Vela's native picker leaks back into the app | D7: no `listSymbols`, no `registerSymbolRanking`, no `ctx.openSymbolSearch`; browser assertion on `.vela-sp` |
 | Static action label disappoints | Statusline and watermark already show the ticker; re-registration via `refreshActions()` is the documented escape hatch |
-| Indicator evaluation diverges from Vela | Parity fixtures; chart-only flag until parity passes |
+| Indicator evaluation diverges from Vela | No backend indicator evaluation: Phase 4 is deferred, so no second implementation of Vela's formulas exists to diverge |
 | Bar feed subscription change | Protected feed lifecycle; not part of this plan |
 | Auth regression | No auth file in any allowed surface; login smoke test remains mandatory |
 
@@ -706,9 +791,12 @@ Grouped for later scheduling; all were verified during the 2026-10-27 chart work
    that shows the current ticker? Verified: `label` is static, so a dynamic label
    requires re-registration plus `refreshActions()` on every switch. Recommendation:
    static label in v1; the statusline and watermark carry the ticker.
-4. Phase 3: which indicator set ships in v1 of the catalog?
+4. Phase 3: which indicator set ships in v1 of the chart catalog? **Resolved:** the
+   menu offers every supported Vela native the chart reports, grouped by the
+   catalog's categories; entries are not curated down to a subset.
 5. Phase 4: which surface gets backend indicators first — scanners or condition
-   alerts?
+   alerts? **Deferred 2026-10-28.** No backend indicator surface is in scope; the
+   question moves to a future approved project.
 6. Phase 0/1: for short prefixes (`REL`), accept alphabetical tie-breaks
    (`RELAXO` before `RELIANCE`) or boost a curated index/underlying list in the
    client hot set? The server has no popularity signal.
@@ -792,3 +880,88 @@ be mistaken for regressions.
 - 2026-10-27 (v1.5) — Merge of remote `19868da` into v1.4: added §2.6, reworded the
   front-matter evidence line and the `WidgetActionDescriptor` row, and re-scoped W4
   from "Fyers lacks 240" to adapter verification plus Upstox V3 limits.
+- 2026-10-27 (v1.6) — Phase 0 implemented and recorded: ranked read model, canonical
+  dedupe, exact resolver and `exact=1` route, with live-catalog latency evidence.
+- 2026-10-28 (v1.7) — Phase 1 implemented and recorded: shared `InstrumentPicker`
+  replaces both private search UIs; exact-only resolver; provider carried to bars;
+  structured F&O mode exact-resolves option legs. Deferred with rationale: the F&O
+  underlying table keeps local filtering (owner decision needed), and `hot` has no
+  consumer until Phase 2.
+- 2026-10-28 (v1.8) — Two scoped commits plus Phase 1.5 implemented:
+  - `028b47e` `build(frontend)`: React 19 / Vite 8 / vitest 5 / TS 7 / zod 4 /
+    biome 2.6 toolchain, `tsconfig.test.json`, rolldown `manualChunks` function,
+    lightningcss-compatible `@container`, removal of the stray `latest` dependency
+    (it required npm 2 and shipped an `npm.exe`), and `build-exe.yml` migrated to
+    bun 1.4.4 + `bun.lock` cache. Verified in a clean LF worktree: typecheck, lint,
+    build green; vitest fails exactly the pre-existing 8 files / 21 tests.
+  - `df98203` `feat(search)`: `InstrumentPicker` (debounced abortable ranked search,
+    filters, keyboard listbox, provider attribution, structured F&O mode), the
+    watchlists host, `searchMarketInstruments` + exact `resolveMarketInstrument`
+    (no `results[0]` fallback), `MarketInstrument` type/schema. `searchInstruments`
+    stays exported because the legacy `ChartsView` at that commit still uses it;
+    the chart host and its toolbar swap stay in the uncommitted chart work.
+  - Phase 1.5: `features/catalog/CatalogView.tsx` at `/catalog`, one route, one
+    "More → Catalog" nav entry, `styles/features/catalog.css`, and
+    `__tests__/catalog.test.tsx` (5 tests). Picker gained focus-return on
+    mouse/keyboard selection (flagged programmatic focus so the popover does not
+    reopen). "Open chart" sends the bare `provider_token` + `prov`, never the
+    composite `instrument_key`.
+  - Evidence: typecheck 0; lint clean except the three pre-existing files
+    (`fnoViewEffectDeps.test.ts`, `fnoViewStorm.test.tsx`, `IndicesWidget.tsx`);
+    catalog/picker/watchlists 18/18; full suite keeps its worktree baseline
+    failures (alerts, fnoFormat, marketMap, news, scanners, sectorHeatmap).
+    Browser pass on the production bundle (4180, base `/ui/`) at 1440x900 and
+    390x844: catalog + admin + mobile, zero console errors, zero page errors,
+    zero failed requests, zero HTTP >= 400. Dev-mode StrictMode still shows one
+    aborted `/api/alerts` per mount (dev-only double-invoke; absent in the build).
+- 2026-10-28 (v1.9) — Phases 2 and 3 implemented (uncommitted, with the chart work):
+  - Phase 2 — `features/chart/chartSymbolPicker.tsx` contributes the pinned
+    `markethub-symbol` topbar action and one attachment that mounts the shared
+    picker inside `ctx.host`; the capture-phase bridge mirrors Vela's guards and
+    calls `stopImmediatePropagation()` (Vela's typing router listens on the same
+    node, so `stopPropagation` is not enough); the mobile native stop is hidden
+    with the `hidden` attribute (Vela's own `.vela-mb-item[hidden]` rule) rather
+    than a cascade-layer override. `ChartView.tsx` dropped the toolbar row and
+    keeps URL identity (`key/sym/ex/type/prov`); the empty state hosts the same
+    picker so `/chart` stays reachable without an instrument. Overlay CSS lives
+    in `styles/features/chart.css`.
+  - Phase 3 — `features/chart/indicatorCatalog.ts` maps
+    `nativeIndicatorDescriptors()` to the product catalog (category, aliases,
+    display order, inputs/defaults, `chartOnly`/`backendReady`) and is built
+    lazily on menu open because the native registry is empty until a chart
+    exists. `features/chart/indicatorPicker.tsx` overrides the `indicators`
+    slot: the shell never constructs its native picker, and the slot's mobile
+    stop and `/` chord open the catalog menu. Adds go through
+    `ctx.addNativeIndicator`; on-chart rows follow `chart.indicators()` plus
+    `indicator:added`/`indicator:removed` (defaults materialize and shell adds
+    apply asynchronously). Unsupported types are never offered; single-instance
+    types disable once present. The On-chart section is deliberately unfiltered
+    by the search needle so the row just added stays visible.
+  - Tests: `chartSymbolPicker.test.tsx` (10), `indicatorPicker.test.tsx` (8),
+    `indicatorCatalog.test.ts` (5).
+  - Evidence: `bun run typecheck` 0; biome clean on `src/features/chart` and the
+    three new test files (worktree lint still reports only the pre-existing
+    `fnoViewEffectDeps.test.ts`, `fnoViewStorm.test.tsx`, `IndicesWidget.tsx`);
+    `bun run build` green; 23/23 new chart tests; chart/picker/catalog/router/
+    EChart 25/25; full suite 151 passed / 18 failed, all failures confined to
+    six files of the unrelated uncommitted WIP (alerts, fnoFormat, marketMap,
+    news, scanners, sectorHeatmap). `pytest test/test_architecture_boundaries.py`
+    17 passed. Production-bundle browser pass (7070, base `/ui/`, hash route) at
+    1440x900 and 390x844: 22/22 checks — topbar picker, seeded `R` from the
+    typing chord, Escape, `2` still opens the timeframe entry, `/` opens the
+    catalog, add survives reload, both mobile stops, zero console errors and
+    zero failed requests.
+- 2026-10-28 (v2.0) — **Phase 4 deferred.** Indicator-based condition alerts and
+  indicator-based scanners are deferred to a separately approved project; Phase 4
+  is rewritten as a deferral record with no implementation steps. Recorded the
+  scope guardrails (no Python evaluators, alert/scanner integration, bar-close
+  scheduler, indicator persistence, indicator-definition table, shared JSON spec or
+  `/api/indicators`), the reasons (quote-tick alert/scanner model, no bar-close
+  signal, no host-visible numeric output from Vela natives, red-zone and schema
+  cost), and the preserved existing behavior. Updated front matter, §1 purpose,
+  §2.5, D2, the architecture diagram, §4.2 item 5, Phase 3's out-of-scope line,
+  W22/W23/W25/W26, the divergence risk row and open questions 4–5. Corrected the
+  Phase 0 status to its commit (`329edd0` + `2025f1b`). The chart indicator catalog
+  remains a chart-only frontend module; its `backendReady` flag is an always-false
+  placeholder expected to be removed or wired only if the deferred project is
+  approved.

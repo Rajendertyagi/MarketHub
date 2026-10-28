@@ -28,7 +28,8 @@
 @import "./features/sentiment.css";
 @import "./features/settings.css";
 @import "./features/breadth.css";
-@import "./features/charts.css";
+@import "./features/catalog.css";
+@import "./features/chart.css";
 @import "./features/market-map.css";
 @import "./features/scanners.css";
 @import "./features/sector-heatmap.css";

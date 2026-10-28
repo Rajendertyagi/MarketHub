@@ -63,6 +63,26 @@ export const historyResponseSchema = z.object({
   candles: z.array(candleSchema),
 });
 
+export const marketBarSchema = z.object({
+  ts: z.number(),
+  open: z.number(),
+  high: z.number(),
+  low: z.number(),
+  close: z.number(),
+  volume: z.number().nullable(),
+  oi: z.number().nullable(),
+  // Null for derived (week/month) and live-merged bars, which have no single
+  // stored provenance.
+  source: z.string().nullable(),
+});
+
+export const barsResponseSchema = z.object({
+  provider: z.string(),
+  instrument_key: z.string(),
+  timeframe: z.number(),
+  bars: z.array(marketBarSchema),
+});
+
 export const scannerDefSchema = z.object({
   name: z.string(),
   title: z.string(),

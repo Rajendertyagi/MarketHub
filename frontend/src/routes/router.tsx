@@ -1,8 +1,9 @@
+import { lazy, Suspense } from "react";
 import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AiAlertsView } from "@/features/ai-alerts";
 import { AlertsView } from "@/features/alerts";
 import { BreadthView } from "@/features/breadth/BreadthView";
-import { ChartsView } from "@/features/charts/ChartsView";
+import { CatalogView } from "@/features/catalog/CatalogView";
 import { ChatView } from "@/features/chat";
 import { DashboardView } from "@/features/dashboard";
 import { DiagnosticsView } from "@/features/diagnostics";
@@ -19,13 +20,32 @@ import { SubscriptionsView } from "@/features/subscriptions/SubscriptionsView";
 import { WatchlistsView } from "@/features/watchlists";
 import { AppShell } from "@/layouts/AppShell";
 
+// The chart is the heaviest feature (Vela + renderer); keep it in its own chunk.
+const ChartView = lazy(() =>
+  import("@/features/chart/ChartView").then((m) => ({ default: m.ChartView })),
+);
+
 export function AppRouter() {
   return (
     <HashRouter>
       <Routes>
         <Route element={<AppShell />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
-          <Route path="/charts" element={<ChartsView />} />
+          <Route
+            path="/chart"
+            element={
+              <Suspense
+                fallback={
+                  <div className="state">
+                    <div className="spinner" />
+                    <span className="muted">Loading chart…</span>
+                  </div>
+                }
+              >
+                <ChartView />
+              </Suspense>
+            }
+          />
           <Route path="/scanners" element={<ScannersView />} />
           <Route path="/market-map" element={<MarketMapView />} />
           <Route path="/breadth" element={<BreadthView />} />
@@ -34,6 +54,7 @@ export function AppRouter() {
           <Route path="/option-chain" element={<OptionChainView />} />
           <Route path="/subscriptions" element={<SubscriptionsView />} />
           <Route path="/instruments" element={<InstrumentsView />} />
+          <Route path="/catalog" element={<CatalogView />} />
           <Route path="/news" element={<NewsView />} />
           <Route path="/dashboard" element={<DashboardView />} />
           <Route path="/watchlists" element={<WatchlistsView />} />

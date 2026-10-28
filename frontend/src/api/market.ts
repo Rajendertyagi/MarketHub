@@ -5,6 +5,7 @@
 
 import type {
   ApplyResult,
+  BarsResponse,
   BreadthSnapshot,
   Candle,
   DerivativeRule,
@@ -31,6 +32,7 @@ import type {
 import { request } from "./client";
 import {
   applyResultSchema,
+  barsResponseSchema,
   breadthSchema,
   fnoUniverseSchema,
   fnoViewSchema,
@@ -77,6 +79,35 @@ export async function getHistory(
   });
 }
 
+export interface MarketBarsParams {
+  instrument_key: string;
+  /** Timeframe in minutes (bare integer string contract used by the chart). */
+  timeframe: number | string;
+  provider?: string;
+  /** Bar-open bounds, epoch milliseconds. */
+  from?: number;
+  to?: number;
+  limit?: number;
+}
+
+export async function getMarketBars(
+  params: MarketBarsParams,
+  signal?: AbortSignal,
+): Promise<BarsResponse> {
+  return request<BarsResponse>("/market/bars", {
+    params: {
+      instrument_key: params.instrument_key,
+      timeframe: String(params.timeframe),
+      provider: params.provider ?? "",
+      from: params.from,
+      to: params.to,
+      limit: params.limit,
+    },
+    schema: barsResponseSchema,
+    signal,
+  });
+}
+
 export async function listScanners(signal?: AbortSignal): Promise<ScannerDef[]> {
   const data = await request<{ status: string; scanners: ScannerDef[] }>("/market/scanners", {
     schema: scannersListSchema,
@@ -101,31 +132,6 @@ export async function runScanner(
     schema: scanResultSchema,
     signal,
   });
-}
-
-export interface InstrumentSearchParams {
-  q: string;
-  exchange?: string;
-  type?: string;
-  provider?: string;
-  limit?: number;
-}
-
-export async function searchInstruments(
-  params: InstrumentSearchParams,
-  signal?: AbortSignal,
-): Promise<Instrument[]> {
-  const data = await request<{ results: Instrument[]; count: number }>("/instruments/search", {
-    params: {
-      q: params.q,
-      exchange: params.exchange ?? "",
-      type: params.type ?? "",
-      provider: params.provider ?? "",
-      limit: params.limit ?? 25,
-    },
-    signal,
-  });
-  return data.results;
 }
 
 export interface MarketSearchParams {

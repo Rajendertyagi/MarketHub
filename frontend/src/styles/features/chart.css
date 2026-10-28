@@ -1,0 +1,243 @@
+/* Chart: full-bleed Vela workspace; symbol and indicator selection are
+   MarketHub overlays mounted inside the workspace (ctx.host) so Vela's theme
+   variables and stacking context both apply. */
+
+@layer features {
+  /* Cancel the app-main padding so the chart owns the viewport. */
+  .chart-view {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    height: 100%;
+    min-height: 100%;
+    overflow: hidden;
+    margin: calc(-1 * var(--space-3));
+    padding: var(--space-2) var(--space-3) var(--space-3);
+  }
+
+  .chart-banner {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    background: color-mix(in oklch, var(--danger) 14%, var(--surface-1));
+  }
+
+  /* Elevated surface that owns the workspace; Vela fills it exactly. */
+  .chart-surface {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    background: var(--surface-1);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+  }
+  .chart-vela {
+    width: 100%;
+    height: 100%;
+  }
+  .chart-empty {
+    height: 100%;
+  }
+  .chart-empty-picker {
+    width: min(560px, 100%);
+    margin-top: var(--space-2);
+  }
+
+  /* ── Chart overlays (symbol + indicators) ─────────────────────── */
+  .chart-symbol-root,
+  .chart-indicator-root {
+    position: absolute;
+    inset: 0;
+    z-index: 60;
+    pointer-events: none;
+  }
+  .chart-overlay-root {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .chart-overlay-scrim {
+    position: absolute;
+    inset: 0;
+    pointer-events: auto;
+    background: color-mix(in oklch, var(--bg) 45%, transparent);
+  }
+  .chart-overlay-panel {
+    position: absolute;
+    top: 7%;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    width: min(620px, calc(100% - var(--space-4)));
+    padding: var(--space-3);
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-float);
+    pointer-events: auto;
+  }
+  .chart-overlay-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+  .chart-overlay-title {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+  }
+  .chart-overlay-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--font-size-lg);
+    line-height: 1;
+    cursor: pointer;
+  }
+  .chart-overlay-close:hover {
+    color: var(--text);
+    border-color: var(--border);
+    background: var(--surface-2);
+  }
+
+  /* The shared picker fills the symbol panel; its results drop below it. */
+  .chart-symbol-panel .instrument-picker {
+    width: 100%;
+  }
+
+  /* ── Indicator menu ──────────────────────────────────────────── */
+  .chart-indicator-panel {
+    top: 5%;
+    max-height: 80%;
+  }
+  .chart-indicator-search {
+    width: 100%;
+    height: var(--control-height);
+    padding: 0 var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+  }
+  .chart-indicator-search:focus-visible {
+    outline: 2px solid var(--focus-ring-color, var(--accent));
+    outline-offset: 1px;
+  }
+  .chart-indicator-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    overflow: auto;
+    min-height: 0;
+  }
+  .chart-indicator-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .chart-indicator-group-title {
+    margin: 0;
+    padding: 0 var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .chart-indicator-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-sm);
+  }
+  .chart-indicator-row:hover {
+    background: var(--surface-2);
+  }
+  .chart-indicator-add {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    padding: var(--space-2) 0;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .chart-indicator-add:disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
+  .chart-indicator-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .chart-indicator-alias,
+  .chart-indicator-badge {
+    flex: 0 0 auto;
+    padding: 0 var(--space-1);
+    border-radius: var(--radius-sm);
+    background: var(--surface-3, var(--surface-2));
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .chart-indicator-badge.on {
+    color: var(--accent);
+  }
+  .chart-indicator-remove {
+    flex: 0 0 auto;
+    width: 24px;
+    height: 24px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--font-size-md);
+    line-height: 1;
+    cursor: pointer;
+  }
+  .chart-indicator-remove:hover {
+    color: var(--danger);
+    background: var(--surface-3, var(--surface-2));
+  }
+  .chart-indicator-note {
+    padding: var(--space-2);
+    font-size: var(--font-size-sm);
+  }
+  .chart-indicator-note.err {
+    color: var(--danger);
+  }
+
+  @media (max-width: 760px) {
+    .chart-overlay-panel {
+      top: 3%;
+      width: calc(100% - var(--space-2));
+      padding: var(--space-2);
+    }
+    .chart-indicator-panel {
+      max-height: 88%;
+    }
+  }
+}

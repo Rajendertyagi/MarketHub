@@ -2,15 +2,30 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "@/app/App";
 
-vi.mock("@/api/market", () => ({
-  getHistory: vi.fn(),
-  listScanners: vi.fn(),
-  runScanner: vi.fn(),
-  searchInstruments: vi.fn(),
-  resolveInstrument: vi.fn(),
+vi.mock("@/api/market", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/market")>();
+  return {
+    ...actual,
+    getHistory: vi.fn(),
+    listScanners: vi.fn(),
+    runScanner: vi.fn(),
+    resolveMarketInstrument: vi.fn(),
+  };
+});
+
+// The Vela workspace needs a real rendering host; these route tests exercise
+// identity hydration, so stand in for the chart itself.
+vi.mock("@/features/chart/VelaChart", () => ({
+  VelaChart: ({ instrument }: { instrument: { tradingsymbol: string } }) => (
+    <div>{`chart:${instrument.tradingsymbol}`}</div>
+  ),
 }));
 
-import { getHistory, listScanners, runScanner } from "@/api/market";
+vi.mock("@/features/dashboard", () => ({
+  DashboardView: () => <div>Dashboard home</div>,
+}));
+
+import { listScanners, resolveMarketInstrument, runScanner } from "@/api/market";
 
 afterEach(() => {
   cleanup();
@@ -19,21 +34,31 @@ afterEach(() => {
 });
 
 describe("Router deep-link behavior", () => {
-  it("deep-links to Charts with an exact instrument from the URL hash", async () => {
-    (getHistory as ReturnType<typeof vi.fn>).mockResolvedValue({
-      candles: [
-        {
-          timestamp: "2024-01-01T00:00:00Z",
-          open: 1,
-          high: 2,
-          low: 0,
-          close: 1.5,
-        },
-      ],
-    });
-    window.location.hash = "#/charts?key=NSE_HDFC&sym=HDFCBANK&ex=NSE&type=EQUITY";
+  it("deep-links to the chart with an exact instrument from the URL hash", async () => {
+    window.location.hash = "#/chart?key=NSE_HDFC&sym=HDFCBANK&ex=NSE&type=EQUITY";
     render(<App />);
-    await waitFor(() => expect(screen.getByText(/HDFCBANK/)).toBeInTheDocument());
+    expect(await screen.findByText("chart:HDFCBANK")).toBeInTheDocument();
+    // Exact identity in the URL must not be re-resolved through the catalogue.
+    expect(resolveMarketInstrument).not.toHaveBeenCalled();
+  });
+
+  it("resolves a symbol-only chart link through the canonical exact resolver", async () => {
+    (resolveMarketInstrument as ReturnType<typeof vi.fn>).mockResolvedValue({
+      instrument_key: "NSE:NSE:NSE:HDFCBANK-EQ",
+      provider: "fyers",
+      provider_token: "NSE:NSE:HDFCBANK-EQ",
+      symbol: "HDFCBANK",
+      exchange: "NSE",
+      type: "EQUITY",
+    });
+    window.location.hash = "#/chart?sym=HDFCBANK&ex=NSE&type=EQUITY";
+    render(<App />);
+    expect(await screen.findByText("chart:HDFCBANK")).toBeInTheDocument();
+    expect(resolveMarketInstrument).toHaveBeenCalledWith(
+      "HDFCBANK",
+      expect.objectContaining({ exchange: "NSE", type: "EQUITY" }),
+      expect.anything(),
+    );
   });
 
   it("deep-links to Scanners", async () => {
@@ -65,10 +90,9 @@ describe("Router deep-link behavior", () => {
     );
   });
 
-  it("redirects the index route to Charts", async () => {
-    (getHistory as ReturnType<typeof vi.fn>).mockResolvedValue({ candles: [] });
+  it("redirects the index route to the dashboard", async () => {
     window.location.hash = "#/";
     render(<App />);
-    await waitFor(() => expect(screen.getByText(/Historical Charts/)).toBeInTheDocument());
+    expect(await screen.findByText("Dashboard home")).toBeInTheDocument();
   });
 });
