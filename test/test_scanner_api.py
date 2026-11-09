@@ -349,6 +349,47 @@ def test_cancellation_keeps_permit_until_worker_finishes():
     asyncio.run(_run())
 
 
+def test_cancellation_never_releases_permit_before_worker_completion():
+    """Regression: no timeout/watcher path may release while worker runs.
+
+    The worker blocks well beyond a short window; permit must remain held the
+    entire time and be released only after actual completion.
+    """
+
+    async def _run():
+        _SlowEngine.reset()
+        _SlowEngine.release.clear()
+        with _app(engine_cls=_SlowEngine) as app:
+            sem = _get_sem(app)
+            from httpx import ASGITransport, AsyncClient
+
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+                task = asyncio.create_task(ac.get("/api/market/scanner/gainers"))
+                for _ in range(100):
+                    if _SlowEngine.started.is_set():
+                        break
+                    await asyncio.sleep(0.01)
+                assert _SlowEngine.started.is_set()
+                task.cancel()
+                with pytest.raises((asyncio.CancelledError, Exception)):
+                    await task
+                # Probe repeatedly: worker still blocked, permit must stay held.
+                for _ in range(20):
+                    await asyncio.sleep(0.05)
+                    with _SlowEngine.lock:
+                        assert _SlowEngine.active == 1
+                    assert sem._value == 1, "permit released while worker still running"
+                _SlowEngine.release.set()
+                deadline = time.time() + 3
+                while time.time() < deadline and sem._value != 2:
+                    await asyncio.sleep(0.01)
+                assert sem._value == 2
+                with _SlowEngine.lock:
+                    assert _SlowEngine.active == 0
+
+    asyncio.run(_run())
+
+
 # ---------------------------------------------------------------------------
 # QuoteService cache safety under concurrent scanner-like access
 # ---------------------------------------------------------------------------
@@ -404,3 +445,65 @@ def test_quote_service_cache_safe_under_concurrent_access():
     assert not errors, errors
     # Sanity: still returns a quote.
     assert svc.quote_now("TOK1", "NSE") is not None
+
+
+def test_quote_service_epoch_refresh_never_regresses():
+    """Regression: stale concurrent epoch read must not revert a newer epoch."""
+    from app.quote_service import QuoteService
+
+    class _Cat:
+        def __init__(self):
+            self.a_read = threading.Event()
+            self.b_done = threading.Event()
+            self.calls = 0
+            self.lock = threading.Lock()
+
+        def catalog_epoch(self):
+            with self.lock:
+                self.calls += 1
+                c = self.calls
+            if c == 1:
+                # Thread A reads stale epoch, then pauses so B can advance.
+                self.a_read.set()
+                self.b_done.wait(timeout=3)
+                return 10
+            return 11
+
+        def get_by_key(self, ref):
+            return None
+
+        def find_canonical_rows(self, cid):
+            return []
+
+        def search(self, **kw):
+            return []
+
+    svc = QuoteService(market_service=None, catalog=_Cat())
+    svc._catalog_epoch = 10  # establish baseline
+
+    errors = []
+
+    def thread_a():
+        try:
+            svc._refresh_catalog_cache()
+        except Exception as exc:
+            errors.append(exc)
+
+    def thread_b():
+        try:
+            assert _Cat  # silence lint; uses svc._catalog
+            svc._catalog.a_read.wait(timeout=3)
+            svc._refresh_catalog_cache()
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            svc._catalog.b_done.set()
+
+    ta = threading.Thread(target=thread_a)
+    tb = threading.Thread(target=thread_b)
+    ta.start()
+    tb.start()
+    ta.join(timeout=5)
+    tb.join(timeout=5)
+    assert not errors, errors
+    assert svc._catalog_epoch == 11, f"epoch regressed to {svc._catalog_epoch}"

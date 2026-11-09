@@ -172,18 +172,31 @@ class QuoteService:
         self._cache_lock = threading.RLock()
         self._catalog_epoch: Any = None
 
-    def _refresh_catalog_cache(self) -> None:
-        """Drop the catalogue read models when the catalogue changed."""
+    def _refresh_catalog_cache(self) -> int | None:
+        """Drop the catalogue read models when the catalogue changed.
+
+        Epoch is read outside the lock; the transition is applied under the lock
+        and never regresses (a stale concurrent read cannot revert a newer epoch).
+        """
         epoch = None
         try:
             epoch = self._catalog.catalog_epoch() if self._catalog else None
         except Exception:
             epoch = None
         with self._cache_lock:
-            if epoch != self._catalog_epoch:
+            cur = self._catalog_epoch
+            if epoch is None:
+                return cur
+            if isinstance(epoch, int) and isinstance(cur, int):
+                if epoch > cur:
+                    self._catalog_epoch = epoch
+                    self._row_cache.clear()
+                    self._keys_cache.clear()
+            elif epoch != cur:
                 self._catalog_epoch = epoch
                 self._row_cache.clear()
                 self._keys_cache.clear()
+            return self._catalog_epoch
 
     # -- freshness policy ----------------------------------------------------
 
@@ -245,6 +258,7 @@ class QuoteService:
             return None
         self._refresh_catalog_cache()
         with self._cache_lock:
+            epoch_snapshot = self._catalog_epoch
             cached = self._row_cache.get(ref)
         if cached is not None:
             return cached or None
@@ -262,11 +276,7 @@ class QuoteService:
             except Exception:
                 row = None
         with self._cache_lock:
-            try:
-                epoch = int(self._catalog.catalog_epoch()) if self._catalog else 0
-            except Exception:
-                epoch = 0
-            if epoch == self._catalog_epoch:
+            if self._catalog_epoch == epoch_snapshot:
                 if len(self._row_cache) > 4096:
                     self._row_cache.clear()
                 self._row_cache[ref] = row or {}
@@ -366,6 +376,7 @@ class QuoteService:
             return out
         self._refresh_catalog_cache()
         with self._cache_lock:
+            epoch_snapshot = self._catalog_epoch
             cached = self._keys_cache.get(ref)
         if cached is not None:
             return list(cached)
@@ -403,11 +414,7 @@ class QuoteService:
         if resolved:
             _add(None, resolved)
         with self._cache_lock:
-            try:
-                epoch = int(self._catalog.catalog_epoch()) if self._catalog else 0
-            except Exception:
-                epoch = 0
-            if epoch == self._catalog_epoch:
+            if self._catalog_epoch == epoch_snapshot:
                 if len(self._keys_cache) > 4096:
                     self._keys_cache.clear()
                 self._keys_cache[ref] = list(out)

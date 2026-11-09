@@ -14,7 +14,6 @@ import asyncio
 import gzip
 import json
 import logging
-import threading
 import time
 from collections.abc import Callable
 from datetime import date
@@ -365,45 +364,26 @@ def build_market_routes(
         released = False
         try:
             loop = asyncio.get_running_loop()
-            # Track actual worker-thread completion with a threading event.
-            # The asyncio Future from run_in_executor is marked cancelled
-            # immediately if the awaiter is cancelled, but the worker thread
-            # may still be running; the permit must stay held until it finishes.
-            done_evt = threading.Event()
-            scan_result: dict[str, Any] = {}
-            scan_error: list[BaseException] = []
-
-            def _run() -> None:
-                try:
-                    scan_result["value"] = engine.scan(
-                        name, universe, reader, limit=limit,
-                        expiry=expiry, atm_range=atm_range, option_type=option_type)
-                except BaseException as exc:
-                    scan_error.append(exc)
-                finally:
-                    done_evt.set()
-
-            fut = loop.run_in_executor(None, _run)
+            fut = loop.run_in_executor(
+                None,
+                lambda: engine.scan(
+                    name, universe, reader, limit=limit,
+                    expiry=expiry, atm_range=atm_range, option_type=option_type),
+            )
             try:
-                await fut
+                # Shield keeps the executor future alive if the request is
+                # cancelled; the worker thread cannot be interrupted, so the
+                # concurrency permit must remain held until it actually finishes.
+                result = await asyncio.shield(fut)
             except asyncio.CancelledError:
-                # Worker thread may still be running; keep permit until it
-                # actually finishes.
-                def _wait_and_release() -> None:
-                    done_evt.wait(timeout=300)
+                def _release(_fut: Any) -> None:
                     try:
-                        loop.call_soon_threadsafe(_scanner_sem.release)
+                        _scanner_sem.release()
                     except Exception:
                         pass
-                threading.Thread(target=_wait_and_release, daemon=True).start()
+                fut.add_done_callback(_release)
                 released = True
                 raise
-            if scan_error:
-                err = scan_error[0]
-                if isinstance(err, ValueError):
-                    raise err
-                raise err
-            result = scan_result["value"]
         except ValueError as exc:
             return _json({"error": str(exc)}, 400)
         finally:
