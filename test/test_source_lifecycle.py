@@ -41,22 +41,20 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from core.persistence import store as store_mod  # noqa: E402
-from core.persistence.store import EventStore  # noqa: E402
-from core.runtime import BackgroundTaskManager  # noqa: E402
-from sources import build_source_manager  # noqa: E402
-
-from helpers.lifecycle import (  # noqa: E402
+from helpers.lifecycle import (
+    restore_environment,
     start_server,
     stop_server,
-    restore_environment,
 )
-from helpers.mcp_client import call, publish_event  # noqa: E402
-from helpers.mock_http import MockHandler, start_mock  # noqa: E402
-from helpers.runner import R  # noqa: E402
-from helpers.wait import wait_for_value, wait_until  # noqa: E402
-from mcp_result import safe_teardown  # noqa: E402
+from helpers.mcp_client import call, publish_event
+from helpers.mock_http import MockHandler, start_mock
+from helpers.runner import R
+from helpers.wait import wait_for_value, wait_until
+from mcp_result import safe_teardown
 
+from core.persistence.store import EventStore
+from core.runtime import BackgroundTaskManager
+from sources import build_source_manager
 
 # ---------------------------------------------------------------------------
 # Direct (B-level) source harness — no MCP server

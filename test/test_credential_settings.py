@@ -52,7 +52,7 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 KEY = "SYNTHETIC-APP-KEY-AAA"
 SECRET = "SYNTHETIC-APP-SECRET-BBB"
@@ -66,17 +66,17 @@ class _Env:
     def __init__(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.base = Path(self._tmp.name)
-        from core.persistence.store import EventStore
         from app.secrets_store import CredentialStore
+        from core.persistence.store import EventStore
         self.db_path = str(self.base / "events.db")
         self.event_store = EventStore(self.db_path)
         self.cred_store = CredentialStore(self.event_store,
                                           data_dir=self.base)
 
-    def reopen(self) -> "tuple":
+    def reopen(self) -> tuple:
         """Simulate application restart: fresh store instances, same files."""
-        from core.persistence.store import EventStore
         from app.secrets_store import CredentialStore
+        from core.persistence.store import EventStore
         es = EventStore(self.db_path)
         cs = CredentialStore(es, data_dir=self.base)
         return es, cs
@@ -437,10 +437,6 @@ def test_cs25_route_surface(runner: R) -> None:
 def test_cs26_imports(runner: R) -> None:
     """CS26: schema v10 + crypto modules import cleanly."""
     from core.persistence.modules.schema import SCHEMA_VERSION
-    from core.persistence.modules import secrets as _sec  # noqa: F401
-    from app.secrets_store import (  # noqa: F401
-        CredentialStore, EncryptionService, CredentialDecryptError,
-    )
     runner.assert_eq("CS26-schema-at-least-v11", SCHEMA_VERSION >= 11, True)
 
 

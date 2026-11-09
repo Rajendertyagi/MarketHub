@@ -35,8 +35,10 @@ from core.persistence.modules import condition_alerts as _condition_alerts
 from core.persistence.modules import consumers as _consumers
 from core.persistence.modules import delivery as _delivery
 from core.persistence.modules import events as _events
+from core.persistence.modules import fno_config as _fno_config
 from core.persistence.modules import market_bars as _market_bars
 from core.persistence.modules import news as _news
+from core.persistence.modules import previous_oi as _previous_oi
 from core.persistence.modules import products as _products
 from core.persistence.modules import recent_events as _recent_events
 from core.persistence.modules import replay as _replay
@@ -44,22 +46,23 @@ from core.persistence.modules import retention as _retention
 from core.persistence.modules import secrets as _secrets
 from core.persistence.modules import source_state as _source_state
 from core.persistence.modules import subscriptions as _subscriptions
-from core.persistence.modules import fno_config as _fno_config
-from core.persistence.modules import previous_oi as _previous_oi
 from core.persistence.modules import x_twitter as _x_twitter
-from core.persistence.modules.products import migrate_v10_to_v11, migrate_v11_to_v12
-from core.persistence.modules.products import migrate_v20_to_v21
-from core.persistence.modules.products import migrate_v21_to_v22
 from core.persistence.modules.condition_alerts import migrate_v12_to_v13
-from core.persistence.modules.news import migrate_v13_to_v14
-from core.persistence.modules.news import migrate_v14_to_v15
-from core.persistence.modules.news import migrate_v15_to_v16
-from core.persistence.modules.news import migrate_v17_to_v18
-from core.persistence.modules.subscriptions import migrate_v16_to_v17
 from core.persistence.modules.fno_config import migrate_v18_to_v19
 from core.persistence.modules.market_bars import migrate_v23_to_v24
+from core.persistence.modules.news import (
+    migrate_v13_to_v14,
+    migrate_v14_to_v15,
+    migrate_v15_to_v16,
+    migrate_v17_to_v18,
+)
 from core.persistence.modules.previous_oi import migrate_v19_to_v20
-from core.persistence.modules.x_twitter import migrate_v22_to_v23
+from core.persistence.modules.products import (
+    migrate_v10_to_v11,
+    migrate_v11_to_v12,
+    migrate_v20_to_v21,
+    migrate_v21_to_v22,
+)
 from core.persistence.modules.schema import (
     SCHEMA_VERSION,
     create_v7_schema,
@@ -74,6 +77,8 @@ from core.persistence.modules.schema import (
     migrate_v8_to_v9,
 )
 from core.persistence.modules.secrets import migrate_v9_to_v10
+from core.persistence.modules.subscriptions import migrate_v16_to_v17
+from core.persistence.modules.x_twitter import migrate_v22_to_v23
 
 logger = logging.getLogger(__name__)
 
@@ -239,7 +244,6 @@ class EventStore:
         Persist a single event and materialize per-consumer state rows.
         Returns the assigned SQLite sequence number.
         """
-        created_at = datetime.now(timezone.utc).isoformat()
         conn = self._open(self._db_path)
         try:
             return _events.save(
@@ -812,6 +816,20 @@ class EventStore:
         finally:
             conn.close()
 
+    def browse_instruments(self, **kw: Any) -> dict[str, Any]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.browse_instruments(conn, **kw)
+        finally:
+            conn.close()
+
+    def instrument_pool(self, **kw: Any) -> list[dict[str, Any]]:
+        conn = self._open(self._db_path)
+        try:
+            return _products.instrument_pool(conn, **kw)
+        finally:
+            conn.close()
+
     def list_watchlists(self) -> list[dict[str, Any]]:
         conn = self._open(self._db_path)
         try:
@@ -912,7 +930,7 @@ class EventStore:
         finally:
             conn.close()
 
-    # ─── OHLCV bars (v24) ──────────────────────────────────────────────
+    # ─── OHLCV bars (v24) ─────────────────────────────────────────────────
 
     def upsert_bars(self, rows: list[dict[str, Any]]) -> int:
         """Batched bar upsert (live beats backfill at the same bar)."""

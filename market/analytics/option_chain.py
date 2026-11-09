@@ -27,6 +27,17 @@ BUILDUP_COLORS: dict[str, str] = {
     NEUTRAL_BUILDUP: "#6b7280",
 }
 
+# Analytics scope tiers (locked). A result's scope states exactly what input
+# it was computed from — never a broader claim than the data supports.
+SCOPE_WINDOW = "window"
+SCOPE_AGGREGATE_UNVERIFIED = "aggregate-unverified"
+SCOPE_WHOLE_EXPIRY = "whole-expiry"
+
+
+def _scope_of(snapshot: OptionChainSnapshot) -> str:
+    """Scope carried by the snapshot (defaults to window-scoped)."""
+    return getattr(snapshot, "scope", SCOPE_WINDOW) or SCOPE_WINDOW
+
 
 def _num(value: float | None, default: float = 0.0) -> float:
     return value if value is not None else default
@@ -103,14 +114,17 @@ def compute_pcr(snapshot: OptionChainSnapshot) -> dict[str, Any]:
     """Put-Call Ratio from total open interest. >1 = put-heavy (bearish bias).
 
     Returns None (not 0.0) when the call OI denominator is zero or missing,
-    signalling UNKNOWN rather than a false numeric value.
+    signalling UNKNOWN rather than a false numeric value. The result carries
+    the snapshot's ``scope`` (window / whole-expiry).
     """
     rows = _rows(snapshot)
+    scope = _scope_of(snapshot)
     ce_oi = sum(r["call_leg"]["open_interest"] for r in rows if r["call_leg"])
     pe_oi = sum(r["put_leg"]["open_interest"] for r in rows if r["put_leg"])
     if ce_oi == 0:
         return {"pcr": None, "total_call_oi": ce_oi,
-                "total_put_oi": pe_oi, "interpretation": "Unknown — no call OI"}
+                "total_put_oi": pe_oi, "scope": scope,
+                "interpretation": "Unknown — no call OI"}
     pcr = pe_oi / ce_oi
     if pcr >= 1.2:
         interp = "Put-heavy — bearish sentiment / possible oversold"
@@ -119,16 +133,54 @@ def compute_pcr(snapshot: OptionChainSnapshot) -> dict[str, Any]:
     else:
         interp = "Balanced sentiment"
     return {"pcr": round(pcr, 4), "total_call_oi": ce_oi,
-            "total_put_oi": pe_oi, "interpretation": interp}
+            "total_put_oi": pe_oi, "scope": scope, "interpretation": interp}
+
+
+def compute_pcr_aggregate(*, call_oi: float | None,
+                         put_oi: float | None,
+                         scope: str = SCOPE_AGGREGATE_UNVERIFIED) -> dict[str, Any]:
+    """PCR from provider-reported aggregate OI.
+
+    The scope of a provider aggregate is a property of the PROVIDER and
+    must be established by evidence, not assumed. Two scopes are
+    recognised:
+
+    * ``whole-expiry`` - the provider's aggregate provably covers the
+      FULL expiry (verified for Fyers: the aggregate is CONSTANT across
+      every ``strikecount`` while the returned leg-sum varies, and it
+      exceeds the widest window, whose strike range is narrower than the
+      expiry's full listed strike set).
+    * ``aggregate-unverified`` - the default for any aggregate whose
+      scope has NOT been established. Never presented as whole-expiry.
+
+    The scope is passed in explicitly so a caller can only claim
+    ``whole-expiry`` when it has the evidence to do so.
+    """
+    if scope not in (SCOPE_WHOLE_EXPIRY, SCOPE_AGGREGATE_UNVERIFIED):
+        raise ValueError(f"unsupported aggregate scope: {scope!r}")
+    if call_oi is None or put_oi is None or call_oi == 0:
+        return {"pcr": None, "total_call_oi": call_oi,
+                "total_put_oi": put_oi, "scope": scope,
+                "interpretation": "Unknown — no call OI"}
+    pcr = put_oi / call_oi
+    if pcr >= 1.2:
+        interp = "Put-heavy — bearish sentiment / possible oversold"
+    elif pcr <= 0.8:
+        interp = "Call-heavy — bullish sentiment / possible overbought"
+    else:
+        interp = "Balanced sentiment"
+    return {"pcr": round(pcr, 4), "total_call_oi": call_oi,
+            "total_put_oi": put_oi, "scope": scope, "interpretation": interp}
 
 
 def compute_pcr_volume(snapshot: OptionChainSnapshot) -> dict[str, Any]:
     """Put-Call Ratio from total volume. >1 = put-volume heavy.
 
     Returns None when call volume denominator is zero or missing.
-    Skips legs with missing volume.
+    Skips legs with missing volume. Carries the snapshot's ``scope``.
     """
     rows = _rows(snapshot)
+    scope = _scope_of(snapshot)
     ce_vol = 0.0
     pe_vol = 0.0
     for r in rows:
@@ -142,10 +194,10 @@ def compute_pcr_volume(snapshot: OptionChainSnapshot) -> dict[str, Any]:
                 pe_vol += float(v)
     if ce_vol == 0:
         return {"pcr_volume": None, "total_call_volume": ce_vol,
-                "total_put_volume": pe_vol}
+                "total_put_volume": pe_vol, "scope": scope}
     pcr = pe_vol / ce_vol
     return {"pcr_volume": round(pcr, 4), "total_call_volume": ce_vol,
-            "total_put_volume": pe_vol}
+            "total_put_volume": pe_vol, "scope": scope}
 
 
 def compute_max_pain(snapshot: OptionChainSnapshot) -> dict[str, Any]:
@@ -156,11 +208,17 @@ def compute_max_pain(snapshot: OptionChainSnapshot) -> dict[str, Any]:
     For ties (equal minimum payout), the LOWEST strike is selected.
 
     Returns None max_pain when there is no usable OI data across the chain.
+    The result carries the snapshot's ``scope`` and a ``bounded`` flag that
+    is True only for window-scoped (Fyers) chains — never labelled
+    whole-expiry.
     """
     rows = _rows(snapshot)
+    scope = _scope_of(snapshot)
+    bounded = scope == SCOPE_WINDOW
     strikes = sorted(set(r["strike"] for r in rows))
     if not strikes:
-        return {"max_pain": None, "underlying_value": _num(snapshot.spot_price)}
+        return {"max_pain": None, "underlying_value": _num(snapshot.spot_price),
+                "scope": scope, "bounded": bounded}
 
     best_strike: float | None = None
     best_loss: float | None = None
@@ -192,8 +250,10 @@ def compute_max_pain(snapshot: OptionChainSnapshot) -> dict[str, Any]:
         # Tie-break: lowest strike wins (already iterating sorted, so first match)
 
     if best_strike is None:
-        return {"max_pain": None, "underlying_value": _num(snapshot.spot_price)}
-    return {"max_pain": best_strike, "underlying_value": _num(snapshot.spot_price)}
+        return {"max_pain": None, "underlying_value": _num(snapshot.spot_price),
+                "scope": scope, "bounded": bounded}
+    return {"max_pain": best_strike, "underlying_value": _num(snapshot.spot_price),
+            "scope": scope, "bounded": bounded}
 
 
 def compute_top_oi_strikes(snapshot: OptionChainSnapshot, n: int = 5) -> dict[str, Any]:
@@ -334,12 +394,12 @@ def compute_futures_basis(futures_legs: list[dict[str, Any]], spot: float) -> di
     quotes). Provider-agnostic.
     """
     contracts = []
-    for l in futures_legs:
-        fut = float(l.get("last_price") or 0)
+    for leg in futures_legs:
+        fut = float(leg.get("last_price") or 0)
         basis = fut - spot
         pct = (basis / spot * 100) if spot else 0.0
         contracts.append({
-            "expiry": l.get("expiry"),
+            "expiry": leg.get("expiry"),
             "future_price": round(fut, 2),
             "spot": round(spot, 2),
             "basis": round(basis, 2),
@@ -354,9 +414,19 @@ def analyze_option_chain(snapshot: OptionChainSnapshot) -> dict[str, Any]:
 
     Mirrors the analytics block of TBMCP's ``analyze_option_chain`` tool so an
     AI client gets the same derived view. Returns ``{source, ...}`` dict.
+
+    The provenance of the chain (which provider served it, WHICH underlying
+    it describes and WHEN it was received) travels with the result: a
+    derived number without its provenance is not actionable.
     """
+    received = getattr(snapshot, "received_at", None)
     return {
         "source": "derived",
+        "provider": getattr(snapshot, "provider", None),
+        "canonical_underlying_id": getattr(
+            snapshot, "canonical_underlying_id", None),
+        "as_of": received.isoformat() if hasattr(received, "isoformat")
+        else received,
         "pcr": compute_pcr(snapshot),
         "max_pain": compute_max_pain(snapshot),
         "atm": compute_atm(snapshot),

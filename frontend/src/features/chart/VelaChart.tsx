@@ -4,14 +4,49 @@
 //
 // The two chart contributions are imported for their import-time registration:
 // the symbol action/attachment and the catalog-driven indicator slot override.
+//
+// Phase 3: the curated pool (GET /api/instruments/pool) feeds Vela's native
+// symbol picker via listSymbols(). Pool load is async/non-blocking and cached
+// (never re-fetched on instrument changes); failure/empty never breaks the chart
+// (MarketHub catalog remains the fallback). Native-picker selections sync back
+// to React state through market:changed, resolving to the exact pre-seeded
+// identity (never a same-ticker substitution).
 
 import { VelaWorkspace } from "@luxalgo/vela/workspace";
 import { useEffect, useRef } from "react";
 import type { ThemeMode } from "@/app/ThemeProvider";
-import type { Instrument } from "@/types";
+import { getInstrumentPool } from "@/api/market";
+import type { Instrument, PoolSymbol } from "@/types";
 import { bindChartSymbolHandlers, MARKETHUB_SYMBOL_ACTION_ID } from "./chartSymbolPicker";
 import "./indicatorPicker";
 import { CHART_TIMEFRAMES, chartSymbol, MarketHubDataProvider, VELA_PROVIDER } from "./chartData";
+
+let poolCache: Promise<PoolSymbol[]> | null = null;
+
+function loadPoolOnce(): Promise<PoolSymbol[]> {
+  if (!poolCache) {
+    poolCache = getInstrumentPool({ limit: 1000 })
+      .then((r) => r.symbols ?? [])
+      .catch(() => {
+        poolCache = null; // allow retry on next mount
+        return [] as PoolSymbol[];
+      });
+  }
+  return poolCache;
+}
+
+function stripProviderPrefix(symbol: string): string {
+  const prefix = `${VELA_PROVIDER}:`;
+  return symbol.startsWith(prefix) ? symbol.slice(prefix.length) : symbol;
+}
+
+function sameInstrument(a: Instrument, b: Instrument): boolean {
+  return (
+    a.instrument_token === b.instrument_token &&
+    a.exchange === b.exchange &&
+    (a.provider ?? "") === (b.provider ?? "")
+  );
+}
 
 export function VelaChart({
   instrument,
@@ -30,6 +65,8 @@ export function VelaChart({
   onErrorRef.current = onError;
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  const instrumentRef = useRef(instrument);
+  instrumentRef.current = instrument;
   const themeRef = useRef(theme);
   themeRef.current = theme;
 
@@ -54,8 +91,9 @@ export function VelaChart({
         autofocus: true,
         timeframes: CHART_TIMEFRAMES,
         providers: { [VELA_PROVIDER]: () => provider },
-        // Symbol selection is a MarketHub contribution (the provider index is
-        // server-side), so Vela's stateful symbol slot stays out of the topbar.
+        // Single catalog across the app: the MarketHub symbol action opens the
+        // shared InstrumentPicker (full catalog + structured F&O). Vela's native
+        // symbol slot is not shown to avoid duplicate catalog UIs.
         topbar: {
           left: ["timeframes", MARKETHUB_SYMBOL_ACTION_ID, "style", "indicators", "undo-redo"],
         },
@@ -70,7 +108,37 @@ export function VelaChart({
     const unbind = bindChartSymbolHandlers(host, {
       onSelect: (next) => onSelectRef.current(next),
     });
+
+    // Sync Vela's native picker selections back to React state. The provider's
+    // known map (seeded from the pool) resolves the ticker to the exact identity.
+    const chart = workspace.active.chart;
+    const offMarket = chart.on("market:changed", ({ symbol }) => {
+      const raw = stripProviderPrefix(symbol);
+      const resolved = provider.resolveKnown(raw) ?? provider.resolveKnown(raw.toUpperCase());
+      if (!resolved) return;
+      if (sameInstrument(resolved, instrumentRef.current)) return;
+      onSelectRef.current(resolved);
+    });
+
+    // Seed cached pool immediately if available; otherwise fetch async.
+    let cancelled = false;
+    void (async () => {
+      const symbols = await loadPoolOnce();
+      if (cancelled || !workspaceRef.current) return;
+      const changed = provider.setPool(symbols);
+      if (changed) {
+        try {
+          // Re-register to rebuild Vela's eager symbol index from listSymbols().
+          workspaceRef.current.active.chart.data.registerProvider(VELA_PROVIDER, provider);
+        } catch {
+          // Index rebuild failure must not break the chart.
+        }
+      }
+    })();
+
     return () => {
+      cancelled = true;
+      offMarket();
       unbind();
       workspaceRef.current = null;
       workspace.destroy();

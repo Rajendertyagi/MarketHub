@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 MCP-2B.4C — Live + Offline Fallback End-to-End Acceptance.
 
@@ -64,7 +64,6 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers import lifecycle
 from helpers.lifecycle import (
     get_server_url,
     restart_server,
@@ -129,8 +128,8 @@ def _uid(suffix: str = "") -> str:
 
 def _db_path() -> str:
     """Absolute path to the current server's SQLite DB (same file the server uses)."""
-    data_dir = getattr(lifecycle, "_server_data_dir", "") or "data_test"
-    return os.path.join(_PROJECT_DIR, data_dir, "events.db")
+    from app.runtime_paths import runtime_db_path
+    return str(runtime_db_path())
 
 
 def _seed_catalog() -> None:
@@ -838,7 +837,7 @@ async def scenario_l(runner: R) -> None:
         first = await _collect_updates([c1_uri], 8)
         runner.assert_ge(name + "-e1-wake", _count_for(first, c1_uri), 1)
         pending1 = await _pending(cid)
-        e1 = _alert_triggered(pending1.get("events", []))[0]
+        _alert_triggered(pending1.get("events", []))[0]
 
         # E2 triggers while disconnected.
         count = await _wait_alert_count(cid, 2)
@@ -854,7 +853,7 @@ async def scenario_l(runner: R) -> None:
         runner.assert_ge(name + "-all-present", len(evts), 3)
         seqs = [e["sequence"] for e in evts]
         runner.assert_true(name + "-ordered",
-                           all(b > a for a, b in zip(seqs, seqs[1:])),
+                           all(b > a for a, b in zip(seqs, seqs[1:], strict=False)),
                            "replay not ordered by sequence")
     except Exception as exc:
         runner.fail(name, str(exc))
@@ -890,7 +889,7 @@ async def scenario_m(runner: R) -> None:
         runner.assert_eq(name + "-unique-ids", len(set(ids)), len(ids))
         seqs = [e["sequence"] for e in evts]
         runner.assert_true(name + "-seq-asc",
-                           all(b > a for a, b in zip(seqs, seqs[1:])),
+                           all(b > a for a, b in zip(seqs, seqs[1:], strict=False)),
                            "sequences not strictly ascending")
     except Exception as exc:
         runner.fail(name, str(exc))

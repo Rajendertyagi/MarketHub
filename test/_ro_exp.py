@@ -1,4 +1,7 @@
-import sys, os, sqlite3, subprocess, time, json
+import os
+import sqlite3
+import sys
+
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_DIR = os.path.dirname(_SCRIPT_DIR)
 sys.path.insert(0, _PROJECT_DIR)

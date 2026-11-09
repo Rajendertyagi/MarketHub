@@ -1,0 +1,21 @@
+{
+  "captured_at": "2026-10-21T17:40:52+00:00",
+  "symbol": "NSE:NIFTY50-INDEX",
+  "hsm_topic": "if|nse_cm|Nifty 50",
+  "index_topic_map_entry": "Nifty 50",
+  "frame": {
+    "topic": "if|nse_cm|Nifty 50",
+    "raw_hex": "0054060000000100015300001269667c6e73655f636d7c4e69667479203530060022ceaf0022ecff6ad894270023479a00228f9e00231ea0001c000102066e73655f636d084e69667479203530084e69667479203530",
+    "raw_len": 86,
+    "captured_at": "2026-10-21T17:40:51+00:00"
+  },
+  "reference": {
+    "source": "FYERS REST GET /data/quotes",
+    "symbol": "NSE:NIFTY50-INDEX",
+    "ltp": 22811.35,
+    "prev_close": 22888.95,
+    "exch_feed_time": null,
+    "fetched_at": "2026-10-21T17:40:52+00:00"
+  },
+  "provider": "fyers"
+}

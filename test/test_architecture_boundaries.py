@@ -144,6 +144,35 @@ FORBIDDEN_EDGES = [
         "forbid": ("brokers",),
         "why": "Product routes must call services, never broker code.",
     },
+    # YAHOO RESEARCH must stay isolated: no broker/auth/canonical-market
+    # reach-through. It is an independent AI research source, not a feed.
+    {
+        "within": "yfinance_service",
+        "forbid": (
+            "brokers",
+            "app.auth",
+            "app.secrets_store",
+            "app.fyers_runtime_auth",
+            "api.routes",
+            "api.product_routes",
+            "app.server",
+            "market",
+            "core.persistence",
+        ),
+        "why": "Yahoo research must not reach broker sessions, auth, "
+               "canonical market models, or persistence.",
+    },
+    # The MCP tool adapter for Yahoo must not reach into broker internals.
+    {
+        "within": "mcp_server/tools/yahoo_tools.py",
+        "forbid": (
+            "brokers",
+            "app.auth",
+            "app.secrets_store",
+            "app.fyers_runtime_auth",
+        ),
+        "why": "Yahoo MCP tools serve research only, never broker sessions.",
+    },
 ]
 
 
@@ -244,6 +273,20 @@ def test_product_routes_never_import_brokers():
     edge = _edge("api/product_routes.py")
     v = _violations(edge)
     assert not v, f"Product routes must not import brokers ({edge['why']}): {v}"
+
+
+def test_yahoo_research_stays_isolated():
+    edge = _edge("yfinance_service")
+    v = _violations(edge)
+    assert not v, (
+        f"Yahoo research must stay isolated ({edge['why']}): {v}")
+
+
+def test_yahoo_tools_never_touch_broker_sessions():
+    edge = _edge("mcp_server/tools/yahoo_tools.py")
+    v = _violations(edge)
+    assert not v, (
+        f"Yahoo MCP tools must not touch broker sessions ({edge['why']}): {v}")
 
 
 def test_config_is_non_secret_and_adapter_free():

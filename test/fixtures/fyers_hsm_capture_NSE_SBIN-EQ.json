@@ -1,0 +1,21 @@
+{
+  "captured_at": "2026-10-21T17:34:50+00:00",
+  "symbol": "NSE:SBIN-EQ",
+  "hsm_topic": "sf|nse_cm|3045",
+  "index_topic_map_entry": null,
+  "frame": {
+    "topic": "sf|nse_cm|3045",
+    "raw_hex": "008b060000000100015300000e73667c6e73655f636d7c33303435150001782c009c70c66ad893f66ad8940100000267000000000001782c0000000000000001000002670000000000017b8e80000000000177a0000180240001e24e000158b500016d0a0001839e00017f8e00017c5a001b000102066e73655f636d04333034350b4e53453a5342494e2d4551",
+    "raw_len": 141,
+    "captured_at": "2026-10-21T17:34:49+00:00"
+  },
+  "reference": {
+    "source": "FYERS REST GET /data/quotes",
+    "symbol": "NSE:SBIN-EQ",
+    "ltp": 963,
+    "prev_close": 973.7,
+    "exch_feed_time": null,
+    "fetched_at": "2026-10-21T17:34:50+00:00"
+  },
+  "provider": "fyers"
+}

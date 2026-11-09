@@ -4,11 +4,10 @@ These prove Market Breadth and Sector Heatmap share ONE universe, ONE quote
 reader, and ONE sector classifier, so their totals reconcile by construction.
 """
 
-import pytest
 
 from market.breadth import compute_breadth
-from market.sector_heatmap import compute_sector_heatmap
 from market.market_universe import resolve_universe
+from market.sector_heatmap import compute_sector_heatmap
 from test.helpers.market_breadth_fakes import (
     FakeCatalog,
     FakeQuoteReader,

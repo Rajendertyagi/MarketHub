@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """MCP-2B.3E — Reconnect/Restart Acceptance + Durable Delivery Proof.
 
 Proves the finalized 42-tool MCP contract across disconnect/reconnect and
@@ -50,26 +50,24 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from mcp import ClientSession  # noqa: E402
-from mcp.client.streamable_http import (  # noqa: E402
-    streamable_http_client as streamablehttp_client,
-)
-
-from app.alerts import AlertEngine  # noqa: E402
-from core.persistence.store import EventStore  # noqa: E402
-from market.models import Quote  # noqa: E402
-
-from helpers import lifecycle  # noqa: E402
-from helpers.lifecycle import (  # noqa: E402
+from helpers.lifecycle import (
     get_server_url,
     restart_server,
     restore_environment,
     start_server,
     stop_server,
 )
-from helpers.mcp_client import call, call_session, wait_source_ready  # noqa: E402
-from helpers.runner import R  # noqa: E402
-from mcp_result import safe_teardown  # noqa: E402
+from helpers.mcp_client import call, call_session, wait_source_ready
+from helpers.runner import R
+from mcp import ClientSession
+from mcp.client.streamable_http import (
+    streamable_http_client as streamablehttp_client,
+)
+from mcp_result import safe_teardown
+
+from app.alerts import AlertEngine
+from core.persistence.store import EventStore
+from market.models import Quote
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -81,9 +79,13 @@ def _uid(suffix: str = "") -> str:
 
 
 def _db_path() -> str:
-    """Absolute path to the current server's SQLite DB (same file the server uses)."""
-    data_dir = getattr(lifecycle, "_server_data_dir", "") or "data_test"
-    return os.path.join(_PROJECT_DIR, data_dir, "events.db")
+    """Absolute path to the current server's SQLite DB (same file the server uses).
+
+    The effective runtime directory is resolved through the app's own
+    resolver, so an isolated run (MARKETHUB_DATA_DIR) is honoured.
+    """
+    from app.runtime_paths import runtime_db_path
+    return str(runtime_db_path())
 
 
 def _seed_catalog() -> None:
@@ -495,7 +497,7 @@ async def scenario_f(runner: R) -> None:
         runner.assert_eq(name + "-unique-ids", len(set(ids)), len(ids))
         seqs = [e["sequence"] for e in evts]
         runner.assert_true(name + "-strictly-increasing",
-                           all(b > a for a, b in zip(seqs, seqs[1:])),
+                           all(b > a for a, b in zip(seqs, seqs[1:], strict=False)),
                            "sequences not strictly increasing")
         for e in evts:
             runner.assert_eq(name + "-owner", e["data"].get("consumer_id"), cid)

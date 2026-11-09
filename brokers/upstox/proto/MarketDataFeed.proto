@@ -6,6 +6,7 @@ message LTPC {
   int64 ltt = 2;
   int64 ltq = 3;
   double cp = 4;
+  double iep = 5;  // indicative equilibrium price (CAS)
 }
 
 message MarketLevel {
@@ -58,6 +59,12 @@ message MarketFullFeed{
   double iv = 8; //implied volatility
   double tbq =9; //total buy quantity
   double tsq = 10; //total sell quantity
+  // CAS (Closing Auction Session) fields
+  string rp = 11;       // reference price
+  double ieq = 12;      // indicative equilibrium quantity
+  double iiqTotal = 13; // total indicative imbalance quantity
+  double iiqM = 14;     // market indicative imbalance quantity
+  bool casEligible = 15; // CAS eligible
 }
 
 message IndexFullFeed{

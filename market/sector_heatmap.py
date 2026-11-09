@@ -19,9 +19,10 @@ weighting is fabricated. ``weighting`` is always reported as ``"equal"``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from statistics import median
-from typing import Any, Callable
+from typing import Any
 
 from .breadth import effective_change
 from .sector_classification import UNCLASSIFIED, sector_for_symbol
@@ -133,6 +134,7 @@ def compute_sector_heatmap(
     classified = 0
     unclassified = 0
     newest_ts = None
+    oldest_ts = None
 
     for sector, group in groups.items():
         if sector == UNCLASSIFIED:
@@ -188,6 +190,8 @@ def compute_sector_heatmap(
             if received is not None and isinstance(received, datetime):
                 if newest_ts is None or received > newest_ts:
                     newest_ts = received
+                if oldest_ts is None or received < oldest_ts:
+                    oldest_ts = received
 
         quoted = advances + declines + unchanged
         avg = _round(sum(pcts) / len(pcts), 2) if pcts else None
@@ -222,7 +226,9 @@ def compute_sector_heatmap(
     stale = False
     if newest_ts is not None:
         as_of_iso = newest_ts.isoformat()
-        age = (datetime.now(timezone.utc) - newest_ts).total_seconds() / 60.0
+        # The universe is only fresh when EVERY member is fresh: one fresh
+        # quote must not make a universe of hours-old values read as live.
+        age = (datetime.now(timezone.utc) - oldest_ts).total_seconds() / 60.0
         stale = age > stale_minutes
     if as_of_iso is None:
         as_of_iso = datetime.now(timezone.utc).isoformat()

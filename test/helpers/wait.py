@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 DEFAULT_TIMEOUT = 15.0
 DEFAULT_INTERVAL = 0.1
@@ -115,7 +116,7 @@ async def wait_for_event(
     raise TimeoutError(f"wait_for_event timed out after {timeout:.1f}s: {description}")
 
 
-class wait_for:  # noqa: N801  (intentional lowercase to read like a keyword)
+class wait_for:
     """Context-manager / coroutine wrapper that bounds any awaitable.
 
     Usage::

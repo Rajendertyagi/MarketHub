@@ -20,7 +20,6 @@ import os
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_DIR = os.path.dirname(_SCRIPT_DIR)
@@ -28,7 +27,7 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 UTC = timezone.utc
 
@@ -123,8 +122,8 @@ async def test_ar3_reconnect_no_double_trigger(runner: R) -> None:
 async def test_ar4_triggered_state_persists(runner: R) -> None:
     """record_trigger persists; a restarted engine sees state=triggered."""
     env_tmp = tempfile.TemporaryDirectory()
-    from core.persistence.store import EventStore
     from app.alerts import AlertEngine
+    from core.persistence.store import EventStore
 
     db = os.path.join(env_tmp.name, "t.db")
     store = EventStore(db)
@@ -146,8 +145,8 @@ async def test_ar4_triggered_state_persists(runner: R) -> None:
 
 async def test_ar5_rearm_allows_one_fire(runner: R) -> None:
     env_tmp = tempfile.TemporaryDirectory()
-    from core.persistence.store import EventStore
     from app.alerts import AlertEngine
+    from core.persistence.store import EventStore
 
     store = EventStore(os.path.join(env_tmp.name, "t.db"))
     a = store.create_market_alert(exchange="NSE", instrument_token="T1",
@@ -197,7 +196,7 @@ async def test_ar7_ar8_backpressure(runner: R) -> None:
     async def run():
         broker = EventBroker(queue_size=3)
         ctx_slow = broker.subscribe()
-        gen_slow = await ctx_slow.__aenter__()
+        await ctx_slow.__aenter__()
         ctx_fast = broker.subscribe()
         gen_fast = await ctx_fast.__aenter__()
 

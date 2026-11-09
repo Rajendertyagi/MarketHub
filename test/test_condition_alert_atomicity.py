@@ -24,6 +24,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+from datetime import datetime, timezone
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_DIR = os.path.dirname(_SCRIPT_DIR)
@@ -99,8 +100,8 @@ async def test_at1_materialize_failure_rollback(runner: R) -> None:
         # Fault-inject: materialize_fn raises AFTER the event insert. We
         # exercise the module-level atomic function directly (the store
         # facade wraps it with the production materializer).
+
         from core.persistence.modules import condition_alerts as ca
-        import sqlite3 as _sqlite3
         conn = store._open(store._db_path)
         try:
             def boom(conn, event_id, seq, routing):
@@ -129,7 +130,7 @@ async def test_at2_event_insert_failure_rollback(runner: R) -> None:
     store, tmp = _mk_store()
     try:
         alert_id = _create(store)
-        before = _snapshot(store, alert_id)
+        _snapshot(store, alert_id)
         # Fault-inject: the persistent_events insert fails (duplicate id).
         store.save_condition_trigger(
             **_trigger_kwargs(alert_id, event_id="dup-event"))
@@ -155,8 +156,8 @@ async def test_at3_engine_no_double_fire_after_failure(runner: R) -> None:
     store, tmp = _mk_store()
     try:
         alert_id = _create(store)
-        from app.market_identity import MarketInstrumentIdentityResolver
         from app.condition_alerts import ConditionAlertEngine
+        from app.market_identity import MarketInstrumentIdentityResolver
         store.replace_provider_instruments("upstox", [
             {"exchange": "NSE", "instrument_token": "2885",
              "tradingsymbol": "RELIANCE", "name": "Reliance Industries",
@@ -173,6 +174,8 @@ async def test_at3_engine_no_double_fire_after_failure(runner: R) -> None:
             tradingsymbol = "RELIANCE"
             ltp = 101
             provider = "upstox"
+            # The canonical quote model REQUIRES a receipt timestamp.
+            received_ts = datetime.now(timezone.utc)
 
         # Sabotage the store's atomic method so the FIRST trigger fails.
         original = store.save_condition_trigger

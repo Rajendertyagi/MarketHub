@@ -8,18 +8,16 @@ MaxPainData, PCRData objects.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from market.models import (
-    OIStrikeRow,
-    OISnapshot,
-    OIChangeStrikeRow,
-    OIChangeSnapshot,
     MaxPainData,
+    OIChangeSnapshot,
+    OIChangeStrikeRow,
+    OISnapshot,
+    OIStrikeRow,
     PCRData,
 )
-
 
 # ---------------------------------------------------------------------------
 # OI API normalizer

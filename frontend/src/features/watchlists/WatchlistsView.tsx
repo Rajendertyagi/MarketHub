@@ -13,7 +13,7 @@ import { useWatchlistMutations, useWatchlists } from "./useWatchlists";
 export function WatchlistsView() {
   const { data, status, error, refetch } = useWatchlists();
   const mutations = useWatchlistMutations();
-  const { quotes, connected } = useMarketQuotes();
+  const { quotes, byCanonical, connected } = useMarketQuotes();
   const qc = useQueryClient();
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -97,6 +97,7 @@ export function WatchlistsView() {
           <WatchlistTable
             items={selected?.items ?? []}
             quotes={quotes}
+            byCanonical={byCanonical}
             onRemove={(itemId) => mutations.removeItem(itemId)}
           />
         </div>

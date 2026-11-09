@@ -32,10 +32,9 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
 
 from helpers.runner import R
 
-from core.persistence.store import EventStore
 from app.condition_alerts import ConditionAlertEngine
 from app.market_identity import MarketInstrumentIdentityResolver
-
+from core.persistence.store import EventStore
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -48,13 +47,22 @@ BANKNIFTY = "NSE:INDEX:BANKNIFTY"
 
 
 class _FakeQuote:
+    """A canonical quote double.
+
+    ``received_ts`` is REQUIRED by the canonical quote model, so the
+    double carries a fresh one (the freshness guard is exercised on the
+    real path, not skipped).
+    """
+
     def __init__(self, ltp, token="2885", tsym="RELIANCE"):
+        from datetime import datetime, timezone
         self.ltp = ltp
         self.volume = ltp * 100
         self.exchange = "NSE"
         self.instrument_token = token
         self.tradingsymbol = tsym
         self.provider = "upstox"
+        self.received_ts = datetime.now(timezone.utc)
 
 
 class _FakeAnalyticsSnapshot:
@@ -78,13 +86,11 @@ class _FakeAnalyticsSnapshot:
         self.pcr_volume = pcr_volume
         self.max_pain = max_pain
         self.iv_skew = iv_skew
-        from datetime import datetime, timezone
         self.received_ts = received_ts or datetime.now(timezone.utc)
         self.stale_after_seconds = stale_after_seconds
 
     @property
     def age_seconds(self):
-        from datetime import datetime, timezone
         if self.received_ts is None:
             return None
         return (datetime.now(timezone.utc) - self.received_ts).total_seconds()
@@ -458,7 +464,7 @@ async def test_bt6_same_dep_multiple_leaves(runner: R) -> None:
         # Verify both leaves are true
         alert = store.get_condition_alert(aid)
         from core.persistence.modules.condition_alerts import validate_condition_tree
-        cond = validate_condition_tree(alert["condition"])
+        validate_condition_tree(alert["condition"])
         state = engine._state.get(aid)
         runner.assert_eq("BT6-c1-true", state["leaves"]["c1"]["last_result"], "true")
         runner.assert_eq("BT6-c2-true", state["leaves"]["c2"]["last_result"], "true")
@@ -503,7 +509,7 @@ async def test_bt7_restart_persistence(runner: R) -> None:
         # Both still true after reload
         from core.persistence.modules.condition_alerts import validate_condition_tree
         alert = store.get_condition_alert(aid)
-        cond = validate_condition_tree(alert["condition"])
+        validate_condition_tree(alert["condition"])
         state = engine._state.get(aid)
         runner.assert_eq("BT7-c1-after-reload", state["leaves"]["c1"]["last_result"], "true")
         runner.assert_eq("BT7-c2-after-reload", state["leaves"]["c2"]["last_result"], "true")
@@ -682,7 +688,6 @@ async def test_bt11_analytics_crossing(runner: R) -> None:
 
         # Build analytics service with controllable snapshots.
         from app.condition_alerts import ConditionAlertEngine
-        from app.market_identity import MarketInstrumentIdentityResolver
         resolver = _mk_resolver(store)
         analytics = _FakeAnalyticsService()
         engine = ConditionAlertEngine(store, resolver=resolver,
@@ -897,8 +902,9 @@ async def test_bt14_shared_chain_rest_count(runner: R) -> None:
     """BT14: 100 alerts on same analytics chain → 1 option_chain call."""
     store, tmp = _mk_store()
     try:
+        from unittest.mock import MagicMock
+
         from app.market_analytics import MarketAnalyticsService
-        from unittest.mock import MagicMock, AsyncMock
 
         # Create 100 alerts all depending on NIFTY Sep pcr_oi.
         for i in range(100):
@@ -917,7 +923,9 @@ async def test_bt14_shared_chain_rest_count(runner: R) -> None:
                 })
 
         # Build a real MarketAnalyticsService with mocked MarketService.
-        from market.models import OptionChainSnapshot, OptionStrikeRow, OptionContractData
+        from market.models import (
+            OptionChainSnapshot,
+        )
         _empty_snapshot = OptionChainSnapshot(
             instrument_token="NSE_INDEX|NIFTY", exchange="NSE",
             tradingsymbol="NIFTY", expiry="2026-09-25",
@@ -970,8 +978,9 @@ async def test_bt15_multi_chain_lifecycle(runner: R) -> None:
     """BT15: enable/disable/delete with shared analytics chains."""
     store, tmp = _mk_store()
     try:
-        from app.market_analytics import MarketAnalyticsService
         from unittest.mock import MagicMock
+
+        from app.market_analytics import MarketAnalyticsService
 
         # Create alert A with 3 chains: NIFTY Sep, BANKNIFTY Sep, NIFTY Oct.
         aid_a = store.create_condition_alert(
@@ -1293,7 +1302,7 @@ async def test_bt19_analytics_crossing_lost_before_quote(runner: R) -> None:
             ],
         }
         normalized = _normalize_public_condition(services, condition)
-        aid = store.create_condition_alert(
+        store.create_condition_alert(
             consumer_id="consumer-1", name="bt19-analytics-ephemeral",
             trigger_mode="repeat", condition_json=normalized)
         resolver = _mk_resolver(store)
@@ -1457,7 +1466,7 @@ async def test_bt22_analytics_crosses_below(runner: R) -> None:
             ],
         }
         normalized = _normalize_public_condition(services, condition)
-        aid = store.create_condition_alert(
+        store.create_condition_alert(
             consumer_id="consumer-1", name="bt22-crosses-below",
             trigger_mode="repeat", condition_json=normalized)
         resolver = _mk_resolver(store)
@@ -1512,7 +1521,7 @@ async def test_bt23_multichain_analytics_crossing(runner: R) -> None:
             ],
         }
         normalized = _normalize_public_condition(services, condition)
-        aid = store.create_condition_alert(
+        store.create_condition_alert(
             consumer_id="consumer-1", name="bt23-multichain",
             trigger_mode="repeat", condition_json=normalized)
         resolver = _mk_resolver(store)
@@ -1574,7 +1583,7 @@ async def test_bt24_same_chain_multiple_analytics_leaves(runner: R) -> None:
             ],
         }
         normalized = _normalize_public_condition(services, condition)
-        aid = store.create_condition_alert(
+        store.create_condition_alert(
             consumer_id="consumer-1", name="bt24-same-chain",
             trigger_mode="repeat", condition_json=normalized)
         resolver = _mk_resolver(store)
@@ -1629,7 +1638,7 @@ async def test_bt25_subgroup_analytics_crossing(runner: R) -> None:
             ],
         }
         normalized = _normalize_public_condition(services, condition)
-        aid = store.create_condition_alert(
+        store.create_condition_alert(
             consumer_id="consumer-1", name="bt25-subgroup",
             trigger_mode="repeat", condition_json=normalized)
         resolver = _mk_resolver(store)
@@ -1669,9 +1678,9 @@ async def test_bt25_subgroup_analytics_crossing(runner: R) -> None:
 # B7 crossing semantic fix - targeted regression tests (TEST 1-8)
 # ---------------------------------------------------------------------------
 
-from app.condition_alerts import (CROSSING_ABOVE as _CA,
-                                  CROSSING_BELOW_OR_EQUAL as _CBE,
-                                  LAST_RESULT_UNKNOWN as _LR_UNKNOWN)
+from app.condition_alerts import CROSSING_ABOVE as _CA
+from app.condition_alerts import CROSSING_BELOW_OR_EQUAL as _CBE
+from app.condition_alerts import LAST_RESULT_UNKNOWN as _LR_UNKNOWN
 from market.condition_metrics import METRIC_SOURCE as _METRIC_SOURCE
 
 

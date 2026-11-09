@@ -27,9 +27,10 @@ canonical state exists (works when the market is closed).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any
 
 from .sector_classification import UNCLASSIFIED, sector_for_symbol
 
@@ -98,6 +99,9 @@ class BreadthRow:
     status: str
     sector: str
     received_ts: str | None = None
+    #: True when this row's data is older than the freshness window (the
+    #: last known value is kept, but it is NOT live).
+    stale: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -111,6 +115,7 @@ class BreadthRow:
             "status": self.status,
             "sector": self.sector,
             "received_ts": self.received_ts,
+            "stale": self.stale,
         }
 
 
@@ -187,8 +192,10 @@ def compute_breadth(
     unclassified = 0
     vol_adv = vol_dec = 0
     highs = lows = 0
-    any_live = False
     newest_ts: datetime | None = None
+    oldest_ts: datetime | None = None
+    stale_rows = 0
+    now = datetime.now(timezone.utc)
 
     for m in members:
         token = m.instrument_token
@@ -201,13 +208,22 @@ def compute_breadth(
 
         received = _field(quote, "received_ts")
         received_iso: str | None = None
+        row_stale = False
         if received is not None:
             if isinstance(received, datetime):
                 received_iso = received.isoformat()
                 if newest_ts is None or received > newest_ts:
                     newest_ts = received
+                if oldest_ts is None or received < oldest_ts:
+                    oldest_ts = received
+                # Per-row freshness: a row whose data is older than the
+                # window is stale (the value is kept, but it is not live).
+                row_stale = (now - received).total_seconds() / 60.0 \
+                    > stale_minutes
             else:
                 received_iso = str(received)
+        if row_stale:
+            stale_rows += 1
 
         ltp = _field(quote, "ltp")
         volume = _field(quote, "volume")
@@ -239,6 +255,7 @@ def compute_breadth(
             symbol=m.symbol, name=m.name, exchange=m.exchange,
             instrument_token=token, ltp=ltp, change=ch, change_percent=pct,
             status=status, sector=sector, received_ts=received_iso,
+            stale=row_stale,
         ))
 
     quoted = advances + declines + unchanged
@@ -249,10 +266,14 @@ def compute_breadth(
     net_advances = advances - declines
 
     as_of_iso = as_of or (newest_ts.isoformat() if newest_ts is not None else _now_iso())
+    # The universe is only fresh when EVERY member is fresh: one fresh
+    # quote must not make a universe of hours-old values read as live.
     stale = False
-    if newest_ts is not None:
-        age = (datetime.now(timezone.utc) - newest_ts).total_seconds() / 60.0
+    if oldest_ts is not None:
+        age = (now - oldest_ts).total_seconds() / 60.0
         stale = age > stale_minutes
+    elif stale_rows:
+        stale = True
 
     return BreadthSnapshot(
         universe=universe,

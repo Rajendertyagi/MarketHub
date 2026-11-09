@@ -7,15 +7,16 @@ from __future__ import annotations
 import asyncio
 from typing import Annotated, Any
 
-from core.errors import ValidationError
 from pydantic import Field, StrictInt
+
+from app.lifecycle import run_with_timeout
+from core.errors import ValidationError
 from mcp_server.contract import (
-    TOOL_CONSUMER_EVENT_PENDING_LIST,
-    TOOL_CONSUMER_EVENT_ACKNOWLEDGE,
     TOOL_CONSUMER_CHECKPOINT_GET,
+    TOOL_CONSUMER_EVENT_ACKNOWLEDGE,
+    TOOL_CONSUMER_EVENT_PENDING_LIST,
 )
 from mcp_server.registry import get_tool_description
-from app.lifecycle import run_with_timeout
 
 
 def register_replay_tools(mcp, services, **kwargs) -> None:
@@ -86,7 +87,7 @@ def register_replay_tools(mcp, services, **kwargs) -> None:
         if not event_id:
             raise ValidationError("event_id must not be empty after trimming")
 
-        acknowledged = await run_with_timeout(
+        await run_with_timeout(
             asyncio.to_thread(services.store.acknowledge_event, consumer_id=consumer_id, event_id=event_id),
             operation=f"acknowledge_event({consumer_id},{event_id[:8]}...)",
             timeout_seconds=services.timeouts["database_seconds"],

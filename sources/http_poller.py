@@ -28,7 +28,6 @@ import hashlib
 import json
 import logging
 import os
-import time
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any

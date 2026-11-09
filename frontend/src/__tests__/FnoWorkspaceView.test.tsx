@@ -127,7 +127,7 @@ const INDEX_CHAIN = {
       },
     },
   ],
-  analytics: { scope: "loaded_window", pcr_by_oi: 1.1, total_call_oi: 1000, total_put_oi: 1100 },
+  analytics: { scope: "window", pcr_by_oi: 1.1, total_call_oi: 1000, total_put_oi: 1100 },
 };
 
 function makeFetch() {

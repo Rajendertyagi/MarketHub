@@ -37,6 +37,11 @@ def register_market_intel_tools(mcp, services, **kwargs) -> None:
         window controls how many strikes above/below ATM to include
         (default 10). Analytics are computed over the loaded window only.
         Expiry defaults to the nearest available expiry if not specified.
+
+        The chain is built from ONE provider per logical contract: when
+        both providers list the same contract, only the routed provider's
+        contract is returned — a logical contract is never duplicated and
+        its data is never attributed to the wrong provider.
         """
         if intel is None:
             return {"error": "market intelligence service not available"}

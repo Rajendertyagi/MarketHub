@@ -281,6 +281,44 @@ _INSTRUMENT_COLUMNS = (
 )
 
 
+class ScopedReplaceConflict(RuntimeError):
+    """A scoped replacement would overwrite a row outside its declared scope.
+
+    Raised BEFORE any delete: the transaction rolls back, so the catalogue
+    is left exactly as it was.
+    """
+
+
+def _instrument_row(
+    provider: str, record: dict[str, Any], now: str,
+) -> tuple[Any, ...] | None:
+    """One INSERT row for a catalog record; None when identity is missing."""
+    if not record.get("instrument_token") or not record.get("exchange") \
+            or not record.get("tradingsymbol"):
+        return None
+    return (
+        provider, record["instrument_token"], record["exchange"],
+        record["tradingsymbol"], record.get("name"),
+        record.get("instrument_type"), record.get("segment"),
+        record.get("expiry"), record.get("strike"), record.get("option_type"),
+        record.get("lot_size"), record.get("tick_size"), record.get("isin"),
+        record.get("underlying"), record.get("provider_symbol"), now,
+    )
+
+
+def _insert_instrument_rows(
+    conn: sqlite3.Connection, rows: Sequence[tuple[Any, ...]],
+) -> None:
+    if not rows:
+        return
+    conn.executemany(
+        f"INSERT INTO instruments ({', '.join(_INSTRUMENT_COLUMNS)}, "
+        "updated_at) VALUES "
+        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+
+
 def replace_provider_instruments(
     conn: sqlite3.Connection,
     provider: str,
@@ -292,28 +330,209 @@ def replace_provider_instruments(
     malformed by the caller via return-value comparison).
     """
     now = _now()
+    rows = [row for r in records if (row := _instrument_row(provider, r, now))]
     try:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("DELETE FROM instruments WHERE provider = ?", (provider,))
-        rows = []
-        for r in records:
-            if not r.get("instrument_token") or not r.get("exchange") \
-                    or not r.get("tradingsymbol"):
-                continue
-            rows.append((
-                provider, r["instrument_token"], r["exchange"],
-                r["tradingsymbol"], r.get("name"), r.get("instrument_type"),
-                r.get("segment"), r.get("expiry"), r.get("strike"),
-                r.get("option_type"), r.get("lot_size"), r.get("tick_size"),
-                r.get("isin"), r.get("underlying"),
-                r.get("provider_symbol"), now,
-            ))
-        conn.executemany(
-            f"INSERT INTO instruments ({', '.join(_INSTRUMENT_COLUMNS)}, "
-            "updated_at) VALUES "
-            "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            rows,
+        _insert_instrument_rows(conn, rows)
+        conn.commit()
+        return len(rows)
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def open_instrument_connection(db_path: str) -> sqlite3.Connection:
+    """Open the instrument database with the store's connection settings."""
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA busy_timeout = 5000")
+    return conn
+
+
+def replace_provider_instruments_segmented_at(
+    db_path: str,
+    provider: str,
+    records: list[dict[str, Any]],
+    segments: Sequence[str],
+) -> int:
+    """Segment-scoped replace addressed by DATABASE PATH.
+
+    The catalogue synchronisation needs a write that touches only the
+    segments it refreshed. It lives here - in the persistence module that
+    owns the table - and is addressed by path, so the event store's
+    public API (and the protected store module) stays untouched.
+
+    The transaction, the rollback behaviour and the segment scope are
+    identical to the connection-based variant below.
+    """
+    conn = open_instrument_connection(db_path)
+    try:
+        return replace_provider_instruments_segmented(
+            conn, provider, records, segments)
+    finally:
+        conn.close()
+
+
+def replace_provider_instruments_segmented(
+    conn: sqlite3.Connection,
+    provider: str,
+    records: list[dict[str, Any]],
+    segments: Sequence[str],
+) -> int:
+    """Transactionally replace ONLY the given segments of one provider.
+
+    Rows of the same provider in OTHER segments are preserved, so a
+    provider whose master files are downloaded segment by segment can
+    refresh the segments that validated cleanly without touching (or
+    deleting) the segments whose download failed.
+
+    Rows whose segment is NULL are replaced together with the requested
+    segments: they carry no segment ownership and would otherwise be
+    orphaned by a segment-scoped delete.
+    """
+    now = _now()
+    segs = [str(s) for s in segments if s]
+    if not segs:
+        return 0
+    placeholders = ", ".join("?" for _ in segs)
+    rows = []
+    for r in records:
+        if str(r.get("segment") or "") not in segs:
+            continue
+        row = _instrument_row(provider, r, now)
+        if row is not None:
+            rows.append(row)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            f"DELETE FROM instruments WHERE provider = ? "
+            f"AND (segment IN ({placeholders}) OR segment IS NULL)",
+            (provider, *segs),
         )
+        _insert_instrument_rows(conn, rows)
+        conn.commit()
+        return len(rows)
+    except Exception:
+        conn.rollback()
+        raise
+
+
+# Kept outside the writers so the scope is validated once, before any SQL.
+_SCOPE_TEMP_TABLE = "_instruments_scope_tokens"
+
+
+def replace_provider_instruments_scoped_at(
+    db_path: str,
+    provider: str,
+    records: list[dict[str, Any]],
+    *,
+    segment: str,
+    scope_column: str,
+    scope_values: Sequence[str],
+) -> int:
+    """Predicate-scoped replace addressed by DATABASE PATH.
+
+    Same transaction/rollback guarantees as the connection-based variant.
+    """
+    conn = open_instrument_connection(db_path)
+    try:
+        return replace_provider_instruments_scoped(
+            conn, provider, records, segment=segment,
+            scope_column=scope_column, scope_values=scope_values)
+    finally:
+        conn.close()
+
+
+def replace_provider_instruments_scoped(
+    conn: sqlite3.Connection,
+    provider: str,
+    records: list[dict[str, Any]],
+    *,
+    segment: str,
+    scope_column: str,
+    scope_values: Sequence[str],
+) -> int:
+    """Transactionally replace ONE provider's rows inside a declared scope.
+
+    Only rows that satisfy ``segment = ? AND <scope_column> IN (...)`` are
+    deleted and re-inserted; every other row of the provider is preserved.
+    This is the write used when a provider master is filtered before
+    ingestion (e.g. FYERS BSE_FO -> SENSEX only): a segment-wide delete
+    would destroy the other underlyings that live in the same segment.
+
+    Safety rules, enforced before the delete:
+
+    * ``scope_column`` must be a real catalog column (allowlist - the value
+      is interpolated into SQL);
+    * ``segment`` and ``scope_values`` must be non-empty - an empty scope
+      would degenerate into a segment-wide delete;
+    * every record must belong to the declared segment;
+    * a token that already exists OUTSIDE the scope is a conflict: the
+      scoped delete would not remove it and the insert would overwrite it.
+      The transaction rolls back and :class:`ScopedReplaceConflict` is
+      raised, leaving the catalogue untouched.
+    """
+    if scope_column not in _INSTRUMENT_COLUMNS:
+        raise ValueError(f"invalid scope column: {scope_column!r}")
+    if not segment:
+        raise ValueError("segment is required")
+    values = [str(v) for v in scope_values if str(v)]
+    if not values:
+        raise ValueError("scope_values must be non-empty")
+    now = _now()
+    rows: list[tuple[Any, ...]] = []
+    for r in records:
+        if str(r.get("segment") or "") != segment:
+            raise ValueError(
+                f"record outside scoped segment {segment!r}: "
+                f"{r.get('segment')!r}")
+        row = _instrument_row(provider, r, now)
+        if row is not None:
+            rows.append(row)
+    if not rows:
+        raise ValueError("scoped replace received no valid records")
+
+    placeholders = ", ".join("?" for _ in values)
+    scope_pred = f"segment = ? AND {scope_column} IN ({placeholders})"
+    scope_args: tuple[Any, ...] = (segment, *values)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            f"CREATE TEMP TABLE IF NOT EXISTS {_SCOPE_TEMP_TABLE} "
+            "(instrument_token TEXT PRIMARY KEY)")
+        conn.execute(f"DELETE FROM {_SCOPE_TEMP_TABLE}")
+        try:
+            conn.executemany(
+                f"INSERT INTO {_SCOPE_TEMP_TABLE} (instrument_token) "
+                "VALUES (?)",
+                [(str(row[1]),) for row in rows],
+            )
+        except sqlite3.IntegrityError as exc:
+            raise ScopedReplaceConflict(
+                "duplicate instrument_token in scoped batch") from exc
+        conflict = conn.execute(
+            f"SELECT i.instrument_token FROM instruments i "
+            f"JOIN {_SCOPE_TEMP_TABLE} t "
+            "ON t.instrument_token = i.instrument_token "
+            "WHERE i.provider = ? AND ("
+            "i.segment IS NULL OR i.segment <> ? OR "
+            f"i.{scope_column} IS NULL OR "
+            f"i.{scope_column} NOT IN ({placeholders})) LIMIT 1",
+            (provider, segment, *values),
+        ).fetchone()
+        if conflict is not None:
+            raise ScopedReplaceConflict(
+                f"{provider}: token {conflict[0]} already exists outside "
+                f"{segment}/{scope_column}={values}")
+        conn.execute(
+            f"DELETE FROM instruments WHERE provider = ? AND {scope_pred}",
+            (provider, *scope_args),
+        )
+        _insert_instrument_rows(conn, rows)
+        conn.execute(f"DELETE FROM {_SCOPE_TEMP_TABLE}")
         conn.commit()
         return len(rows)
     except Exception:
@@ -573,6 +792,39 @@ def instruments_sync_state(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         return [dict(r) for r in conn.execute(
             "SELECT provider, COUNT(*) AS instruments, MAX(updated_at) "
             "AS last_sync FROM instruments GROUP BY provider")]
+    finally:
+        conn.row_factory = None
+
+
+def segment_underlying_summary(
+    conn: sqlite3.Connection, *, provider: str, segment: str,
+) -> list[dict[str, Any]]:
+    """Per-underlying instrument summary inside ONE provider segment.
+
+    Read-only projection of what a provider's catalogue ALREADY holds —
+    used to audit coverage (e.g. which BSE F&O underlyings were imported)
+    without loading contract rows. One grouped query, no N+1.
+    """
+    sql = """
+        SELECT COALESCE(underlying, '<missing>') AS underlying,
+               COUNT(*) AS instruments,
+               SUM(instrument_type = 'FUTURE') AS futures,
+               SUM(instrument_type = 'OPTION') AS options,
+               SUM(instrument_type = 'OPTION' AND option_type = 'CE')
+                   AS calls,
+               SUM(instrument_type = 'OPTION' AND option_type = 'PE')
+                   AS puts,
+               COUNT(DISTINCT expiry) AS expiries,
+               MIN(expiry) AS nearest_expiry,
+               MAX(expiry) AS farthest_expiry
+        FROM instruments
+        WHERE provider = ? AND segment = ?
+        GROUP BY underlying
+        ORDER BY underlying
+    """
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(sql, (provider, segment))]
     finally:
         conn.row_factory = None
 
@@ -1051,6 +1303,264 @@ def list_future_contracts(
     conn.row_factory = sqlite3.Row
     try:
         return [dict(r) for r in conn.execute(sql, args)]
+    finally:
+        conn.row_factory = None
+
+
+# ---------------------------------------------------------------------------
+# Browse + navigation pool read models (Phase 1, unified catalog)
+# ---------------------------------------------------------------------------
+#
+# Both read models dedupe provider rows to ONE row per canonical instrument,
+# using the SAME derivation as app.canonical_identity.canonical_id_for_row.
+# Core must not import app, so the symbol alias map is a parameter supplied by
+# the app layer; the normalization itself (lowercase, strip non-alphanumerics,
+# EXCH: prefix stripping, alias resolution) is mirrored in SQL here.
+
+_BROWSE_ALNUM = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+
+def _sql_normalize(expr: str) -> str:
+    """SQL mirror of canonical_identity._normalize_symbol for the catalog's
+    actual symbol alphabet: lowercase + strip the five non-alphanumeric
+    characters present in provider symbols (space, '-', ':', '.', '&').
+    A short REPLACE chain keeps the dedupe query inside the latency budget;
+    any other character would be preserved, so this mirror is exact for
+    every row the catalog can hold today.
+    """
+    out = f"LOWER({expr})"
+    for ch in (" ", "-", ":", ".", "&"):
+        out = f"REPLACE({out}, '{ch}', '')"
+    return out
+
+
+def _sql_canonical_symbol(
+    expr: str, aliases: dict[str, str] | None,
+) -> tuple[str, list[Any]]:
+    """SQL mirror of canonical_identity._canonical_symbol.
+
+    Normalizes (lowercase, strip non-alphanumerics — which also removes any
+    ``EXCH:`` prefix separator), then resolves the alias map (passed in by
+    the app layer) and upper-cases the remainder.
+    """
+    norm = _sql_normalize(expr)
+    args: list[Any] = []
+    if aliases:
+        whens = []
+        for key, value in aliases.items():
+            whens.append("WHEN ? THEN ?")
+            args += [key, value]
+        norm = f"CASE {norm} {' '.join(whens)} ELSE UPPER({norm}) END"
+    else:
+        norm = f"UPPER({norm})"
+    return norm, args
+
+
+def _sql_canonical_key(
+    aliases: dict[str, str] | None,
+) -> tuple[str, list[Any]]:
+    """SQL expression for the canonical identity key, mirroring
+    canonical_id_for_row. Partition key = exchange-base : type : key parts.
+    Rows whose canonical id cannot be derived get a NULL key (kept as-is by
+    the app layer; excluded from SQL dedupe only when the key is NULL).
+    """
+    exch = ("CASE WHEN INSTR(exchange, '_') > 0 THEN "
+            "SUBSTR(exchange, 1, INSTR(exchange, '_') - 1) "
+            "ELSE UPPER(TRIM(exchange)) END")
+    sym, sym_args = _sql_canonical_symbol("tradingsymbol", aliases)
+    und, und_args = _sql_canonical_symbol(
+        "COALESCE(NULLIF(underlying, ''), tradingsymbol)", aliases)
+    # Mirror _normalize_strike: integral strikes render without ".0".
+    strike = (
+        "CASE WHEN strike = CAST(strike AS INTEGER) "
+        "THEN CAST(CAST(strike AS INTEGER) AS TEXT) "
+        "ELSE CAST(strike AS TEXT) END"
+    )
+    key = (
+        f"CASE instrument_type "
+        f"WHEN 'EQUITY' THEN {exch} || ':EQUITY:' || "
+        f"COALESCE(NULLIF(TRIM(isin), ''), {sym}) "
+        f"WHEN 'ETF' THEN {exch} || ':ETF:' || "
+        f"COALESCE(NULLIF(TRIM(isin), ''), {sym}) "
+        f"WHEN 'INDEX' THEN {exch} || ':INDEX:' || {und} "
+        f"WHEN 'FUTURE' THEN {exch} || ':FUTURE:' || {und} || ':' || expiry "
+        f"WHEN 'OPTION' THEN {exch} || ':OPTION:' || {und} || ':' || expiry "
+        f"|| ':' || {strike} || ':' || UPPER(option_type) "
+        f"ELSE NULL END"
+    )
+    return key, sym_args * 2 + und_args * 3
+
+
+def _provider_order_sql(provider_order: Sequence[str]) -> tuple[str, list[Any]]:
+    """ORDER BY expression: configured preference first, unknown last."""
+    if not provider_order:
+        return "provider", []
+    whens = " ".join("WHEN ? THEN ?" for _ in provider_order)
+    args: list[Any] = []
+    for i, p in enumerate(provider_order):
+        args += [p, i]
+    return f"CASE provider {whens} ELSE {len(provider_order)} END", args
+
+
+def browse_instruments(
+    conn: sqlite3.Connection,
+    *,
+    types: Sequence[str] | None = None,
+    exchange: str | None = None,
+    segment: str | None = None,
+    underlying: str | None = None,
+    expiry: str | None = None,
+    option_type: str | None = None,
+    strike: float | None = None,
+    include_expired: bool = False,
+    after: tuple[str, str, str] | None = None,
+    limit: int = 50,
+    provider_order: Sequence[str] = (),
+    symbol_aliases: dict[str, str] | None = None,
+    today: str | None = None,
+) -> dict[str, Any]:
+    """Paginated, provider-deduped browse over the canonical catalog.
+
+    One row per canonical instrument (SQL mirror of canonical_id_for_row);
+    the preferred provider's row wins. Keyset pagination on
+    (tradingsymbol, provider, instrument_token) — stable under catalog
+    syncs, no OFFSET drift. ``total`` is computed only on the first page.
+
+    Derivative rows with expiry < ``today`` are excluded unless
+    ``include_expired``. Untyped rows (instrument_type NULL/'') are never
+    browsable. OPTION browse without an ``underlying`` scope is rejected by
+    the app layer (unscoped option dedupe exceeds the latency budget).
+    """
+    where = ["instrument_type IS NOT NULL", "instrument_type != ''"]
+    args: list[Any] = []
+    if types:
+        where.append(
+            f"instrument_type IN ({', '.join('?' for _ in types)})")
+        args += list(types)
+    if exchange:
+        where.append("exchange = ?")
+        args.append(exchange)
+    if segment:
+        where.append("segment = ?")
+        args.append(segment)
+    if underlying:
+        where.append("underlying = ?")
+        args.append(underlying)
+    if expiry:
+        where.append("expiry = ?")
+        args.append(expiry)
+    if option_type:
+        where.append("option_type = ?")
+        args.append(option_type)
+    if strike is not None:
+        where.append("strike = ?")
+        args.append(float(strike))
+    if not include_expired and today:
+        where.append(
+            "(instrument_type NOT IN ('FUTURE', 'OPTION') "
+            "OR (expiry IS NOT NULL AND expiry >= ?))")
+        args.append(today)
+    key, key_args = _sql_canonical_key(symbol_aliases)
+    rank, rank_args = _provider_order_sql(provider_order)
+    # Narrow projection through the window (rowid + dedupe/sort keys only),
+    # then join back for the page columns — keeps the temp B-tree small.
+    narrow = (
+        f"SELECT rowid AS _rid, ({key}) AS _cid, provider, tradingsymbol, "
+        f"instrument_token FROM instruments WHERE {' AND '.join(where)}"
+    )
+    ranked = (
+        f"SELECT _rid, ROW_NUMBER() OVER ("
+        f"PARTITION BY _cid ORDER BY {rank}, provider, tradingsymbol, "
+        f"instrument_token) AS _rn FROM narrow"
+    )
+    page_where = ""
+    page_args: list[Any] = []
+    if after is not None:
+        page_where = ("WHERE (i.tradingsymbol, i.provider, i.instrument_token) "
+                      "> (?, ?, ?) ")
+        page_args += list(after)
+    icols = ", ".join(f"i.{c}" for c in _INSTRUMENT_COLUMNS)
+    # COUNT(*) OVER () on the first page rides the same pass — a second
+    # COUNT query would double the first-page latency.
+    total_col = ", COUNT(*) OVER () AS _total" if after is None else ""
+    page_sql = (
+        f"WITH narrow AS ({narrow}), ranked AS ({ranked}), "
+        f"winners AS (SELECT _rid FROM ranked WHERE _rn = 1) "
+        f"SELECT {icols}{total_col} FROM winners w "
+        f"JOIN instruments i ON i.rowid = w._rid {page_where}"
+        f"ORDER BY i.tradingsymbol, i.provider, i.instrument_token LIMIT ?"
+    )
+    fetch = max(1, min(int(limit), 200)) + 1
+    conn.row_factory = sqlite3.Row
+    try:
+        raw = [dict(r) for r in conn.execute(
+            page_sql, key_args + args + rank_args + page_args + [fetch])]
+    finally:
+        conn.row_factory = None
+    total = raw[0].get("_total") if raw and after is None else None
+    for r in raw:
+        r.pop("_total", None)
+    rows = raw
+    next_after = None
+    if len(rows) > fetch - 1:
+        rows = rows[:fetch - 1]
+        last = rows[-1]
+        next_after = (last["tradingsymbol"], last["provider"],
+                      last["instrument_token"])
+    return {"rows": rows, "next_after": next_after, "total": total}
+
+
+def instrument_pool(
+    conn: sqlite3.Connection,
+    *,
+    provider_order: Sequence[str] = (),
+    enabled: Sequence[str] | None = None,
+    symbol_aliases: dict[str, str] | None = None,
+    today: str | None = None,
+    limit: int = 1000,
+) -> list[dict[str, Any]]:
+    """Curated navigation pool for the native Vela symbol picker.
+
+    Members: every INDEX, every ETF, and the EQUITY cash row of every
+    underlying that has at least one live (expiry >= today) F&O contract.
+    Provider-deduped by canonical identity (preferred provider wins);
+    disabled providers are excluded BEFORE dedupe so a disabled provider's
+    row can never shadow an enabled one. Ordered by the app layer; this
+    read model returns the deduped rows in symbol order.
+    """
+    where = ["instrument_type IN ('INDEX', 'ETF', 'EQUITY')"]
+    args: list[Any] = []
+    if enabled is not None:
+        if not enabled:
+            return []
+        where.append(f"provider IN ({', '.join('?' for _ in enabled)})")
+        args += list(enabled)
+    live_underlyings = ""
+    if today:
+        live_underlyings = (
+            " AND (instrument_type != 'EQUITY' OR EXISTS ("
+            "SELECT 1 FROM instruments f "
+            "WHERE f.segment IN ('NSE_FO', 'BSE_FO', 'MCX_FO') "
+            "AND f.instrument_type IN ('FUTURE', 'OPTION') "
+            "AND f.expiry >= ? AND f.underlying = instruments.underlying))")
+        args.append(today)
+    key, key_args = _sql_canonical_key(symbol_aliases)
+    rank, rank_args = _provider_order_sql(provider_order)
+    cols = ", ".join(_INSTRUMENT_COLUMNS)
+    sql = (
+        f"WITH filtered AS ("
+        f"SELECT {cols}, ({key}) AS _cid FROM instruments "
+        f"WHERE {' AND '.join(where)}{live_underlyings}), "
+        f"ranked AS (SELECT *, ROW_NUMBER() OVER ("
+        f"PARTITION BY _cid ORDER BY {rank}, provider, tradingsymbol, "
+        f"instrument_token) AS _rn FROM filtered) "
+        f"SELECT {cols} FROM ranked WHERE _rn = 1 "
+        f"ORDER BY tradingsymbol LIMIT ?"
+    )
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(
+            sql, key_args + args + rank_args + [max(1, min(int(limit), 5000))])]
     finally:
         conn.row_factory = None
 

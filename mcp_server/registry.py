@@ -5,8 +5,8 @@ descriptions/schemas from this module. The WebUI API serves this data
 to the browser. No description is duplicated outside this file.
 """
 from __future__ import annotations
-from typing import Any
 
+from typing import Any
 
 TOOLS: list[dict[str, Any]] = [
     {
@@ -779,6 +779,131 @@ TOOLS: list[dict[str, Any]] = [
         ],
         "examples": [{'handle': 'elonmusk'}],
         "notes": 'Profile read only. No posts included.',
+        "status": "active",
+    },
+    {
+        "name": "yahoo_search",
+        "display": "Yahoo Search",
+        "category": "Yahoo Finance",
+        "description": "READ ONLY. Find Yahoo Finance symbols from a company name, ticker fragment, or natural-language query ('Reliance Industries' -> RELIANCE.NS; 'bitcoin' -> BTC-USD; 'gold' -> GC=F). Returns the best-matching Yahoo symbols with exchange, sector, and instrument type. Use this FIRST when the user names a company but not a symbol.",
+        "params": [
+            {"name": "query", "type": "str", "required": True, "default": None, "description": "Company name, ticker, or natural-language query, e.g. 'Reliance Industries', 'TCS', 'bitcoin'."},
+            {"name": "limit", "type": "int", "required": False, "default": 10, "description": "Max symbol matches 1-20 (default 10)."},
+            {"name": "include_news", "type": "bool", "required": False, "default": False, "description": "Also return up to 5 related Yahoo news items. Default false (symbol matches only)."},
+        ],
+        "examples": [{'query': 'Reliance Industries'}, {'query': 'bitcoin'}, {'query': 'gold futures'}],
+        "notes": 'Yahoo/yfinance research source. Symbols are Yahoo-format and include suffixes: .NS/.BO (India), ^ for indices, -USD (crypto), =F (futures), =X (forex).',
+        "status": "active",
+    },
+    {
+        "name": "yahoo_quote",
+        "display": "Yahoo Quote",
+        "category": "Yahoo Finance",
+        "description": "READ ONLY. Current Yahoo Finance quote snapshot for ANY Yahoo-listed instrument: US/Indian equities (AAPL, RELIANCE.NS), crypto (BTC-USD), commodities (GC=F), forex (EURUSD=X), ETFs (SPY), indices (^NSEI), international stocks (0700.HK). Returns price, previous close, day range, volume, bid/ask, market cap, plus quote_type so you know the asset class, and an honest freshness classification. NOT the broker-authoritative MarketHub quote.",
+        "params": [
+            {"name": "symbol", "type": "str", "required": True, "default": None, "description": "Yahoo symbol, e.g. 'AAPL', 'RELIANCE.NS', 'BTC-USD', 'GC=F', 'EURUSD=X', '^NSEI'. Use yahoo_search first if unsure."},
+            {"name": "fields", "type": "list[str]", "required": False, "default": None, "description": "Optional projection of specific Yahoo field names to return. Omit for the full standard quote."},
+        ],
+        "examples": [{'symbol': 'RELIANCE.NS'}, {'symbol': 'BTC-USD'}, {'symbol': '^NSEI'}],
+        "notes": "freshness is LIVE_STREAM / SNAPSHOT / DELAYED / UNKNOWN based on Yahoo's own evidence (exchangeDataDelayedBy + quoteSourceName). Indian NSE quotes are typically 15-min DELAYED. Never call it real-time unless freshness says LIVE_STREAM.",
+        "status": "active",
+    },
+    {
+        "name": "yahoo_history",
+        "display": "Yahoo History",
+        "category": "Yahoo Finance",
+        "description": "READ ONLY. Historical OHLCV candles from Yahoo Finance with configurable period or explicit date range and any yfinance-supported interval (1m, 5m, 15m, 30m, 60m, 1h, 1d, 5d, 1wk, 1mo, 3mo). Includes dividend and split columns when present. Use for 'show the last 30 days', 'daily closes for a year', or intraday bars.",
+        "params": [
+            {"name": "symbol", "type": "str", "required": True, "default": None, "description": "Yahoo symbol, e.g. 'AAPL' or 'RELIANCE.NS'."},
+            {"name": "period", "type": "str", "required": False, "default": "1mo", "description": "Lookback: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max. Mutually exclusive with start/end."},
+            {"name": "interval", "type": "str", "required": False, "default": "1d", "description": "Bar size: 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo."},
+            {"name": "start", "type": "str", "required": False, "default": None, "description": "Start date YYYY-MM-DD. Use instead of period."},
+            {"name": "end", "type": "str", "required": False, "default": None, "description": "End date YYYY-MM-DD. Use instead of period."},
+            {"name": "limit", "type": "int", "required": False, "default": None, "description": "Max candles to return (capped server-side)."},
+        ],
+        "examples": [{'symbol': 'AAPL', 'period': '1mo'}, {'symbol': 'RELIANCE.NS', 'interval': '1h', 'period': '5d'}],
+        "notes": "Do not pass period together with start/end — that combination is rejected. Intraday (1m/2m) history is limited by Yahoo to roughly the last 7-30 days.",
+        "status": "active",
+    },
+    {
+        "name": "yahoo_company",
+        "display": "Yahoo Company",
+        "category": "Yahoo Finance",
+        "description": "READ ONLY. Yahoo Finance company/instrument profile: long and short name, sector, industry, website, address, employee count, and the business summary. Use for 'what does this company do', 'which sector is it in', or instrument metadata.",
+        "params": [
+            {"name": "symbol", "type": "str", "required": True, "default": None, "description": "Yahoo symbol, e.g. 'AAPL', 'TCS.NS'."},
+        ],
+        "examples": [{'symbol': 'MSFT'}, {'symbol': 'TCS.NS'}],
+        "notes": "Business summary is truncated for token efficiency. Some non-equity instruments (indices, forex) expose little or no company metadata; that returns an empty-but-successful result, not an error.",
+        "status": "active",
+    },
+    {
+        "name": "yahoo_financials",
+        "display": "Yahoo Financials",
+        "category": "Yahoo Finance",
+        "description": "READ ONLY. Yahoo Finance financial statements as structured rows: income statement, balance sheet, and cash flow, each annual or quarterly. Use for 'revenue growth', 'latest quarterly income statement', margins, balance-sheet strength, or free cash flow.",
+        "params": [
+            {"name": "symbol", "type": "str", "required": True, "default": None, "description": "Yahoo symbol, e.g. 'AAPL'."},
+            {"name": "period", "type": "str", "required": False, "default": "annual", "description": "Exactly 'annual' or 'quarterly'."},
+            {"name": "statement", "type": "str", "required": False, "default": "income", "description": "Exactly one of: income, balance, cashflow, all."},
+            {"name": "limit", "type": "int", "required": False, "default": None, "description": "Max line items to return (capped server-side)."},
+        ],
+        "examples": [{'symbol': 'AAPL', 'statement': 'income'}, {'symbol': 'TCS.NS', 'period': 'quarterly', 'statement': 'all'}],
+        "notes": "Equities/ETFs only — Yahoo does not publish statements for indices, crypto, forex, or futures, which return a clear unavailable_for_asset result. Rows are per-line-item with period columns; values are as-reported, not adjusted.",
+        "status": "active",
+    },
+    {
+        "name": "yahoo_corporate_actions",
+        "display": "Yahoo Corporate Actions",
+        "category": "Yahoo Finance",
+        "description": "READ ONLY. Yahoo Finance corporate-action history: dividend payments (amount and ex-date) and stock splits (ratio and ex-date). Use for 'dividend history', 'has this stock split', or 'what did they pay last year'.",
+        "params": [
+            {"name": "symbol", "type": "str", "required": True, "default": None, "description": "Yahoo symbol, e.g. 'KO', 'RELIANCE.NS'."},
+            {"name": "limit", "type": "int", "required": False, "default": None, "description": "Max rows per action type (capped server-side)."},
+        ],
+        "examples": [{'symbol': 'KO'}, {'symbol': 'RELIANCE.NS'}],
+        "notes": "Instruments with no dividend/split history return a successful result with empty lists plus a warning, not an error.",
+        "status": "active",
+    },
+    {
+        "name": "yahoo_holders",
+        "display": "Yahoo Holders",
+        "category": "Yahoo Finance",
+        "description": "READ ONLY. Yahoo Finance ownership data: major-holder percentages, institutional holders (name, % held, shares, value), and insider transactions. Use for 'who owns this', 'institutional ownership', or 'insider buying/selling'.",
+        "params": [
+            {"name": "symbol", "type": "str", "required": True, "default": None, "description": "Yahoo symbol, e.g. 'AAPL'."},
+            {"name": "holder_type", "type": "str", "required": False, "default": "all", "description": "Exactly one of: all, major, institutional, insider."},
+            {"name": "limit", "type": "int", "required": False, "default": None, "description": "Max rows per holder group (capped server-side)."},
+        ],
+        "examples": [{'symbol': 'AAPL'}, {'symbol': 'MSFT', 'holder_type': 'institutional'}],
+        "notes": "Equities/ETFs only. Where Yahoo exposes no rows for a group, that group returns empty plus a warning rather than failing the whole call.",
+        "status": "active",
+    },
+    {
+        "name": "yahoo_options",
+        "display": "Yahoo Options",
+        "category": "Yahoo Finance",
+        "description": "READ ONLY. Yahoo Finance option chain: available expiries plus calls and puts (strike, last, bid, ask, volume, open interest, implied volatility, in-the-money) for one expiry. RESEARCH ONLY — clearly identified as Yahoo data and NOT the broker-authoritative MarketHub F&O chain; for Indian index/stock options prefer option_chain or analyze_option_chain.",
+        "params": [
+            {"name": "symbol", "type": "str", "required": True, "default": None, "description": "Yahoo symbol with listed options, e.g. 'AAPL' or 'SPY'."},
+            {"name": "date", "type": "str", "required": False, "default": None, "description": "Expiry YYYY-MM-DD. Omit for the nearest Yahoo-listed expiry. Must be one Yahoo actually lists."},
+            {"name": "limit", "type": "int", "required": False, "default": None, "description": "Max contracts per side (capped server-side)."},
+        ],
+        "examples": [{'symbol': 'AAPL'}, {'symbol': 'SPY', 'date': '2026-10-16'}],
+        "notes": "Yahoo lists options mainly for US equities/ETFs — Indian NSE symbols and indices usually have none, which returns unavailable_for_asset. This never feeds the canonical F&O path.",
+        "status": "active",
+    },
+    {
+        "name": "yahoo_live_quote",
+        "display": "Yahoo Live Tick",
+        "category": "Yahoo Finance",
+        "description": "READ ONLY. Collect exactly ONE bounded Yahoo WebSocket tick for a symbol — the most current price evidence Yahoo offers, with the exchange-provided timestamp when available. Opens a short-lived connection, takes one tick, and closes. Not a continuous stream; do not poll it in a loop.",
+        "params": [
+            {"name": "symbol", "type": "str", "required": True, "default": None, "description": "Yahoo-format symbol, e.g. 'AAPL' or '^NSEI'."},
+            {"name": "timeout", "type": "float", "required": False, "default": None, "description": "Seconds to wait for the tick (bounded server-side, max 30)."},
+        ],
+        "examples": [{'symbol': 'AAPL'}, {'symbol': '^NSEI', 'timeout': 5}],
+        "notes": "Stream entitlement is not guaranteed for every symbol/exchange; unavailable returns stream_unavailable, which is correct behavior, not a failure. Fall back to yahoo_quote when no tick arrives. This is the only tool whose freshness may be LIVE_STREAM.",
         "status": "active",
     },
 ]

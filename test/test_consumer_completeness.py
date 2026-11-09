@@ -38,10 +38,15 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 UTC = timezone.utc
-NOW = datetime(2026, 8, 24, 10, 0, tzinfo=UTC)
+NOW = datetime.now(UTC)
+
+
+def _now():
+    "A FRESH timestamp (the alert engine refuses a stale quote)."
+    return datetime.now(UTC)
 KEY = "NSE_EQ|INE002A01018"
 TS = "RELIANCE"
 
@@ -70,16 +75,16 @@ def _rich_quote():
     from market.models import OptionGreeks, Quote
     return Quote(
         instrument_token=KEY, exchange="NSE", tradingsymbol=TS,
-        received_ts=NOW,
+        received_ts=_now(),
         ltp=100.5, open=99.2, high=101.0, low=98.7, close=99.0,
         volume=500000, change=1.5, change_percent=1.515,
         best_bid=100.45, best_ask=100.55,
         open_interest=1250000.0, avg_trade_price=100.25,
         last_traded_qty=25, total_buy_qty=450000, total_sell_qty=380000,
-        exchange_ts=NOW,
+        exchange_ts=_now(),
         upper_circuit=110.0, lower_circuit=90.0,
         oi_change=50000.0, oi_change_percent=4.17, previous_oi=1200000.0,
-        last_trade_time=NOW,
+        last_trade_time=_now(),
         greeks=OptionGreeks(delta=0.52, gamma=0.001, theta=-6.25,
                             vega=11.4, rho=None, iv=18.5),
     )
@@ -89,7 +94,7 @@ def _rich_depth():
     from market.models import Depth, DepthLevel
     return Depth(
         instrument_token=KEY, exchange="NSE", tradingsymbol=TS,
-        received_ts=NOW,
+        received_ts=_now(),
         bids=(DepthLevel(price=100.45, quantity=500, orders=12),
               DepthLevel(price=100.40, quantity=700, orders=None)),
         asks=(DepthLevel(price=100.55, quantity=300, orders=8),),
@@ -121,6 +126,7 @@ def _find(routes, path):
 
 async def _call(route, method="GET"):
     import re
+
     from starlette.requests import Request
 
     # Populate path_params from the route template + a canonical example.
@@ -192,10 +198,10 @@ async def _setup_service_with_depth():
     from market.service import QuotePatch
     await svc.apply_quote(QuotePatch(
         exchange="NSE", instrument_token=KEY, tradingsymbol=TS,
-        received_ts=NOW, reported_fields={"ltp": 100.5}))
+        received_ts=_now(), reported_fields={"ltp": 100.5}))
     await svc.apply_depth(Depth(
         instrument_token=KEY, exchange="NSE", tradingsymbol=TS,
-        received_ts=NOW,
+        received_ts=_now(),
         bids=(DepthLevel(price=100.45, quantity=500, orders=12),
               DepthLevel(price=100.40, quantity=700, orders=None)),
         asks=(DepthLevel(price=100.55, quantity=300, orders=8),),
@@ -219,10 +225,10 @@ async def test_ce1_to_ce5_end_to_end(runner: R) -> None:
               for f in type(q).__dataclass_fields__.values()
               if f.name not in ("instrument_token", "exchange",
                                 "tradingsymbol", "received_ts",
-                                "exchange_ts")}
+                                "exchange_ts", "canonical_id")}
     await svc.apply_quote(QuotePatch(
         exchange="NSE", instrument_token=KEY, tradingsymbol=TS,
-        received_ts=NOW, exchange_ts=NOW, reported_fields=fields))
+        received_ts=_now(), exchange_ts=_now(), reported_fields=fields))
     await svc.apply_depth(_rich_depth())
 
     # CE1: serializer carries every canonical key incl. nested greeks.
@@ -236,7 +242,17 @@ async def test_ce1_to_ce5_end_to_end(runner: R) -> None:
     routes = _build_routes(svc)
     rest = await _call(_find(routes, "/api/market/quotes"))
     rq = rest["quotes"][0]
-    runner.assert_eq("CE2-rest-keys", set(rq.keys()), set(d.keys()))
+    # The REST payload is the CANONICAL payload: it carries every
+    # canonical field of the store PLUS the documented provenance
+    # (provider, as_of, stale/live, the storage key). A canonical field
+    # must never be DROPPED on the way to the consumer.
+    runner.assert_eq("CE2-rest-keys-missing",
+                     sorted(set(d.keys()) - set(rq.keys())), [])
+    for provenance in ("provider", "as_of", "stale", "live", "state",
+                       "canonical_id"):
+        runner.assert_true(f"CE2-rest-has-{provenance}",
+                           provenance in rq,
+                           f"the canonical payload must carry {provenance}")
 
     single = await _call(_find(
         routes, f"/api/market/quote/NSE/{KEY}"))
@@ -284,16 +300,16 @@ async def test_ce6_cross_provider(runner: R) -> None:
         svc = MarketService()
         await svc.apply_quote(QuotePatch(
             exchange="X", instrument_token="T|1", tradingsymbol="SYM",
-            received_ts=NOW, reported_fields=fields))
+            received_ts=_now(), reported_fields=fields))
         from market import serialization
         return serialization.quote_to_dict(
             await svc.get_quote("X", "T|1"))
 
     up = quote_fields_from_ws_full(
         {"ltpc": {"ltp": 123.45, "cp": 120.0}},
-        instrument_key="T|1", received_ts=NOW, tradingsymbol="SYM")
+        instrument_key="T|1", received_ts=_now(), tradingsymbol="SYM")
     fy_q = quote_from_quotes_rest({"lp": 123.45, "prev_close_price": 120.0},
-                                  symbol="X:SYM-EQ", received_ts=NOW)
+                                  symbol="X:SYM-EQ", received_ts=_now())
     identity = {"instrument_token", "exchange", "tradingsymbol",
                 "received_ts"}
     up_fields = {k: v for k, v in up.items() if k not in identity}
@@ -320,7 +336,7 @@ def test_ce8_nulls_preserved(runner: R) -> None:
     from market.models import OptionGreeks, Quote
 
     q = Quote(instrument_token=KEY, exchange="NSE", tradingsymbol=TS,
-              received_ts=NOW, ltp=10.0,
+              received_ts=_now(), ltp=10.0,
               greeks=OptionGreeks(delta=0.4))  # rho/iv/gamma/theta/vega None
     d = serialization.quote_to_dict(q)
     runner.assert_eq("CE8-rho-null-stays-null", d["greeks"]["rho"], None)
@@ -337,7 +353,7 @@ async def test_ce9_snapshot_sse_consistency(runner: R) -> None:
         svc = MarketService()
         await svc.apply_quote(QuotePatch(
             exchange="NSE", instrument_token=KEY, tradingsymbol=TS,
-            received_ts=NOW, reported_fields={"ltp": 1.0}))
+            received_ts=_now(), reported_fields={"ltp": 1.0}))
         return svc
 
     svc = await run()

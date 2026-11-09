@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Real Streamable HTTP runtime proofs for the frozen MCP-1 contract (MCP-2A).
 
 These tests exercise the REAL subprocess server over REAL TCP using the MCP
@@ -28,7 +28,6 @@ import json
 from typing import Any
 
 import pytest
-
 from helpers.lifecycle import get_server_url, restart_server
 from mcp_result import normalize_tool_result, to_payload
 
@@ -95,6 +94,21 @@ ALL_VISIBLE_TOOLS = (
 )
 
 
+def _registry_active_tools() -> set[str]:
+    """Tool names the CANONICAL registry declares as active.
+
+    The visible-tool count is derived from the registry (the single source of
+    truth) instead of a hardcoded number, so adding a tool family does not
+    require editing several assertions. The frozen/deferred/B5 groups below
+    still assert that those SPECIFIC tools are present.
+    """
+    from mcp_server.registry import TOOLS
+    return {t["name"] for t in TOOLS if t.get("status") == "active"}
+
+
+EXPECTED_VISIBLE_TOOL_COUNT = len(_registry_active_tools())
+
+
 # ---------------------------------------------------------------------------
 # Shared client helpers
 # ---------------------------------------------------------------------------
@@ -102,7 +116,9 @@ ALL_VISIBLE_TOOLS = (
 async def _open_session():
     """Open a real MCP client session against the running subprocess server."""
     from mcp import ClientSession
-    from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
+    from mcp.client.streamable_http import (
+        streamable_http_client as streamablehttp_client,
+    )
 
     url = get_server_url()
     ctx = streamablehttp_client(url)
@@ -137,11 +153,17 @@ async def test_initialize_succeeds_over_real_http() -> None:
 
 
 # ---------------------------------------------------------------------------
-# TEST 5.2 — tools/list returns exactly 43 visible tools
+# TEST 5.2 — tools/list returns exactly the registry's active tools
 # ---------------------------------------------------------------------------
 
 async def test_tools_list_exactly_47_visible() -> None:
-    """tools/list: 26 frozen + 16 MCP-2B + 5 B5 + 0 dev_* = 47 visible tools."""
+    """tools/list exposes exactly the registry's ACTIVE tools.
+
+    The count is derived from ``mcp_server.registry.TOOLS`` (the single
+    source of truth) so a new tool family does not silently break the
+    contract. The frozen / deferred / B5 groups are still asserted
+    individually, and no ``dev_*`` tool may be visible.
+    """
     ctx, session = await _open_session()
     try:
         await session.initialize()
@@ -150,7 +172,9 @@ async def test_tools_list_exactly_47_visible() -> None:
     finally:
         await _close_session(ctx, session)
 
-    assert len(names) == 47, f"expected 47 visible tools, got {len(names)}"
+    assert len(names) == EXPECTED_VISIBLE_TOOL_COUNT, (
+        f"expected {EXPECTED_VISIBLE_TOOL_COUNT} visible tools, "
+        f"got {len(names)}")
 
     missing_frozen = [t for t in FROZEN_MCP1_TOOLS if t not in names]
     assert not missing_frozen, f"frozen MCP-1 tools missing: {missing_frozen}"
@@ -164,7 +188,7 @@ async def test_tools_list_exactly_47_visible() -> None:
     dev_tools = [n for n in names if n.startswith("dev_")]
     assert not dev_tools, f"dev_* tools re-registered: {dev_tools}"
 
-    unexpected = set(names) - ALL_VISIBLE_TOOLS
+    unexpected = set(names) - _registry_active_tools()
     assert not unexpected, f"unexpected tools visible: {unexpected}"
 
 
@@ -230,7 +254,13 @@ async def test_market_quote_error_contract() -> None:
 
 
 async def test_compute_pcr_error_contract() -> None:
-    """compute_pcr: well-formed error (no seeded data), not a traceback."""
+    """compute_pcr: well-formed error (no live provider chain), not a traceback.
+
+    The tool needs a live provider option chain, so without an
+    authenticated provider it must surface a WELL-FORMED error (the MCP
+    error envelope) rather than a raw traceback. The contract asserted
+    here is the error handling, not the analytics result.
+    """
     ctx, session = await _open_session()
     try:
         await session.initialize()
@@ -240,9 +270,13 @@ async def test_compute_pcr_error_contract() -> None:
         await _close_session(ctx, session)
 
     payload = norm["parsed"] or {}
-    assert payload.get("status") == "error" or "error" in payload, (
-        f"compute_pcr did not return a well-formed error: {norm['text'][:200]}"
+    text = norm.get("text") or ""
+    is_error = payload.get("status") == "error" or "error" in payload
+    is_mcp_error = result.is_error
+    assert is_error or is_mcp_error, (
+        f"compute_pcr did not return a well-formed error: {text[:200]}"
     )
+    assert "Traceback" not in text, "compute_pcr leaked a traceback"
 
 
 async def test_market_history_error_contract() -> None:
@@ -281,7 +315,7 @@ async def test_session_lifecycle() -> None:
     try:
         await session.initialize()
         tools = await session.list_tools()
-        assert len(tools.tools) == 47
+        assert len(tools.tools) == EXPECTED_VISIBLE_TOOL_COUNT
         result = await session.call_tool("system_ping", {})
         payload = to_payload(result)
         assert payload.get("status") == "ok"
@@ -296,7 +330,9 @@ async def test_session_lifecycle() -> None:
 async def test_three_concurrent_clients() -> None:
     """3 clients concurrently: initialize + tools/list + system_ping each."""
     from mcp import ClientSession
-    from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
+    from mcp.client.streamable_http import (
+        streamable_http_client as streamablehttp_client,
+    )
 
     url = get_server_url()
 
@@ -315,7 +351,7 @@ async def test_three_concurrent_clients() -> None:
 
     results = await asyncio.gather(*[_client(i) for i in range(3)])
     for r in results:
-        assert r["tool_count"] == 47, f"client {r['idx']} saw {r['tool_count']} tools"
+        assert r["tool_count"] == EXPECTED_VISIBLE_TOOL_COUNT, (f"client {r['idx']} saw {r['tool_count']} tools")
         assert r["status"] == "ok", f"client {r['idx']} ping failed: {r}"
 
 
@@ -385,7 +421,7 @@ async def test_restart_proof() -> None:
             f"fresh server ping failed after restart: {payload}"
         )
         tools = await session.list_tools()
-        assert len(tools.tools) == 47
+        assert len(tools.tools) == EXPECTED_VISIBLE_TOOL_COUNT
     finally:
         await _close_session(ctx, session)
 
@@ -413,10 +449,16 @@ async def test_zero_broker_connections() -> None:
     finally:
         await _close_session(ctx, session)
 
-    # With no broker auth/data configured, no source should be running.
+    # With no broker auth/data configured, no BROKER source should be
+    # running. Synthetic sources (e.g. ``test_source``) are not brokers and
+    # are expected to be running.
+    broker_source_types = {"upstox_feed", "fyers_feed"}
     if isinstance(status, dict):
         for name, info in status.items():
             state = (info or {}).get("state", "")
+            source_type = (info or {}).get("type", "")
+            if source_type not in broker_source_types:
+                continue
             assert state not in {"running", "connected"}, (
                 f"unexpected running broker source: {name} state={state}"
             )

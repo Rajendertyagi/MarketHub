@@ -9,7 +9,9 @@ import { DashboardView } from "@/features/dashboard";
 import { DiagnosticsView } from "@/features/diagnostics";
 import { FnoWorkspaceView } from "@/features/fno/FnoWorkspaceView";
 import { OptionChainView } from "@/features/fno/OptionChainView";
+import { FuturesHeatmapView } from "@/features/futures-heatmap/FuturesHeatmapView";
 import { InstrumentsView } from "@/features/instruments/InstrumentsView";
+import { MarketDataView } from "@/features/market-data/MarketDataView";
 import { MarketMapView } from "@/features/market-map/MarketMapView";
 import { NewsView } from "@/features/news";
 import { ScannersView } from "@/features/scanners/ScannersView";
@@ -50,9 +52,11 @@ export function AppRouter() {
           <Route path="/market-map" element={<MarketMapView />} />
           <Route path="/breadth" element={<BreadthView />} />
           <Route path="/sector-heatmap" element={<SectorHeatmapView />} />
+          <Route path="/futures-heatmap" element={<FuturesHeatmapView />} />
           <Route path="/fno" element={<FnoWorkspaceView />} />
           <Route path="/option-chain" element={<OptionChainView />} />
           <Route path="/subscriptions" element={<SubscriptionsView />} />
+          <Route path="/market-data" element={<MarketDataView />} />
           <Route path="/instruments" element={<InstrumentsView />} />
           <Route path="/catalog" element={<CatalogView />} />
           <Route path="/news" element={<NewsView />} />

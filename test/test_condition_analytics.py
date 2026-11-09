@@ -14,7 +14,6 @@ import asyncio
 import os
 import sys
 import tempfile
-from datetime import datetime, timezone
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_DIR = os.path.dirname(_SCRIPT_DIR)
@@ -26,13 +25,6 @@ from helpers.runner import R
 
 from core.errors import ConditionValidationError, ValidationError
 from core.persistence.store import EventStore
-from market.models import (
-    OptionChainAnalyticsSnapshot,
-    OptionChainSnapshot,
-    OptionContractData,
-    OptionStrikeRow,
-)
-
 
 # ---------------------------------------------------------------------------
 # Fake MCP server
@@ -163,7 +155,7 @@ async def test_ba_m1_expire_preserved(runner: R) -> None:
         runner.assert_true("BA-M1b-stored", stored is not None)
         cond = stored.get("condition")
         runner.assert_true("BA-M1b-has-cond", isinstance(cond, dict))
-        inst = cond.get("instrument", {})
+        cond.get("instrument", {})
         # Expiry may or may not be in the stored condition depending on
         # serialization; the key check is that creation succeeded.
         runner.assert_eq("BA-M1b-metric", cond.get("metric"), "pcr_oi")

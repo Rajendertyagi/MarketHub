@@ -36,6 +36,11 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
 from helpers.runner import R
 
 from core.errors import ConditionValidationError, ConsumerNotFoundError
+
+# The schema version moves with every migration.
+from core.persistence.modules.schema import (
+    SCHEMA_VERSION as _CURRENT_SCHEMA_VERSION,
+)
 from core.persistence.store import EventStore
 
 RELIANCE = "NSE:EQUITY:INE002A01018"
@@ -58,7 +63,8 @@ def _condition(**over) -> dict:
 def test_ca1_fresh_schema(runner: R) -> None:
     store, tmp = _mk_store()
     try:
-        runner.assert_eq("CA1-version", store.schema_version(), 13)
+        runner.assert_eq("CA1-version", store.schema_version(),
+                         _CURRENT_SCHEMA_VERSION)
         conn = sqlite3.connect(store._db_path)
         tables = {r[0] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
@@ -279,7 +285,8 @@ def test_ca9_migration_preserves(runner: R) -> None:
         conn.close()
         # Reopen -> migrates v12->v13.
         store2 = EventStore(store._db_path)
-        runner.assert_eq("CA9-version", store2.schema_version(), 13)
+        runner.assert_eq("CA9-version", store2.schema_version(),
+                         _CURRENT_SCHEMA_VERSION)
         # Existing content preserved.
         alerts = store2.list_alerts("consumer-1")
         runner.assert_eq("CA9-legacy-preserved", len(alerts), 1)
@@ -303,7 +310,8 @@ def test_ca10_repeated_startup(runner: R) -> None:
         # Reopen the same DB repeatedly — no migration re-run errors.
         for i in range(3):
             s = EventStore(store._db_path)
-            runner.assert_eq(f"CA10-reopen-{i}", s.schema_version(), 13)
+            runner.assert_eq(f"CA10-reopen-{i}", s.schema_version(),
+                             _CURRENT_SCHEMA_VERSION)
             runner.assert_eq(f"CA10-alerts-{i}",
                              len(s.list_condition_alerts()), 1)
     finally:

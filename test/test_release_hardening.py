@@ -24,6 +24,10 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
 
 from helpers.runner import R
 
+# The schema version moves with every migration: the assertions compare
+# against the CURRENT version instead of a frozen number.
+from core.persistence.modules.schema import SCHEMA_VERSION as _CURRENT_SCHEMA_VERSION
+
 # ---------------------------------------------------------------------------
 # P6: public_base_url / OAuth callback edge cases
 # ---------------------------------------------------------------------------
@@ -47,7 +51,7 @@ def test_public_base_url_edge_cases(runner: R) -> None:
     ]
     for _i, (_raw, _expected) in enumerate(_cases):
         _cfg = {} if _raw is None else {"public_base_url": _raw}
-        runner.assert_eq("BU-base-%d" % _i,
+        runner.assert_eq(f"BU-base-{_i}",
                          get_public_base_url(_cfg), _expected)
 
     # Both providers consume the SAME helper correctly.
@@ -93,7 +97,7 @@ def _downgrade(db_path, target_version):
             for t in ("instruments", "watchlist_items", "watchlists",
                       "market_alerts"):
                 conn.execute("DROP TABLE IF EXISTS " + t)
-        conn.execute("PRAGMA user_version = %d" % target_version)
+        conn.execute(f"PRAGMA user_version = {target_version}")
         conn.commit()
     finally:
         conn.close()
@@ -116,7 +120,7 @@ def test_migration_matrix(runner: R) -> None:
     _tables = {r[0] for r in _conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}
     _conn.close()
-    runner.assert_eq("MM-fresh-version", _ver, 13)
+    runner.assert_eq("MM-fresh-version", _ver, _CURRENT_SCHEMA_VERSION)
     for _t in ("alert_trigger_history", "watchlists", "market_alerts",
                "instruments", "consumer_event_state"):
         runner.assert_true("MM-fresh-table:" + _t, _t in _tables)
@@ -131,7 +135,7 @@ def test_migration_matrix(runner: R) -> None:
     _names = [r[0] for r in _conn.execute(
         "SELECT name FROM watchlists")]
     _conn.close()
-    runner.assert_eq("MM-v11-version", _ver, 13)
+    runner.assert_eq("MM-v11-version", _ver, _CURRENT_SCHEMA_VERSION)
     runner.assert_in("MM-v11-watchlist-preserved", "hardening-wl", _names)
 
     # realistic v10 -> v12 (product tables rebuilt empty, no data loss error)
@@ -144,7 +148,7 @@ def test_migration_matrix(runner: R) -> None:
     _tables = {r[0] for r in _conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}
     _conn.close()
-    runner.assert_eq("MM-v10-version", _ver, 13)
+    runner.assert_eq("MM-v10-version", _ver, _CURRENT_SCHEMA_VERSION)
     for _t in ("watchlists", "instruments", "alert_trigger_history"):
         runner.assert_true("MM-v10-table:" + _t, _t in _tables)
 
@@ -194,7 +198,7 @@ def test_migration_failure_safety(runner: R) -> None:
     _conn = sqlite3.connect(_db)
     _ver = _conn.execute("PRAGMA user_version").fetchone()[0]
     _conn.close()
-    runner.assert_eq("MF-recovers", _ver, 13)
+    runner.assert_eq("MF-recovers", _ver, _CURRENT_SCHEMA_VERSION)
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +247,7 @@ def test_backup_from_v12(runner: R) -> None:
     _hist = _bconn.execute(
         "SELECT COUNT(*) FROM alert_trigger_history").fetchone()[0]
     _bconn.close()
-    runner.assert_eq("BK-schema-version", _ver, 13)
+    runner.assert_eq("BK-schema-version", _ver, _CURRENT_SCHEMA_VERSION)
     runner.assert_in("BK-watchlist-present", "hardening-wl", _wl_names)
     runner.assert_eq("BK-history-present", _hist, 1)
 
@@ -477,6 +481,7 @@ def test_diagnostics_endpoint(runner: R) -> None:
         lambda: "http://localhost:7070"))
     _body = TestClient(_app).get("/api/diagnostics").json()
     runner.assert_eq("DG-version", _body["version"], "0.0.0-test")
+    # The endpoint reports the STORE's schema version (the stub returns 13).
     runner.assert_eq("DG-schema", _body["schema_version"], 13)
     runner.assert_eq("DG-base",
                      _body["public_base_url"], "http://localhost:7070")

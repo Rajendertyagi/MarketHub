@@ -19,8 +19,8 @@ from helpers.runner import R
 
 
 def test_pin1_store_roundtrip(runner: R) -> None:
-    from core.persistence.store import EventStore
     from app.secrets_store import CredentialStore
+    from core.persistence.store import EventStore
     tmp = tempfile.mkdtemp()
     store = CredentialStore(EventStore(os.path.join(tmp, "e.db")),
                             data_dir=tmp)
@@ -51,9 +51,9 @@ def test_pin3_restore_uses_stored_pin(runner: R) -> None:
     """Full startup-restore path: stored creds + refresh + PIN in the
     credential store -> runtime token set without any manual login."""
     import app.server as srv
-    from core.persistence.store import EventStore
-    from app.secrets_store import CredentialStore
     import brokers.fyers.auth as fauth
+    from app.secrets_store import CredentialStore
+    from core.persistence.store import EventStore
 
     tmp = tempfile.mkdtemp()
     cstore = CredentialStore(EventStore(os.path.join(tmp, "e.db")),
@@ -94,9 +94,9 @@ def test_pin3_restore_uses_stored_pin(runner: R) -> None:
 def test_pin4_no_pin_still_safe_fallback(runner: R) -> None:
     """Without a stored PIN the restore fails safely (Login Required)."""
     import app.server as srv
-    from core.persistence.store import EventStore
-    from app.secrets_store import CredentialStore
     import brokers.fyers.auth as fauth
+    from app.secrets_store import CredentialStore
+    from core.persistence.store import EventStore
 
     tmp = tempfile.mkdtemp()
     cstore = CredentialStore(EventStore(os.path.join(tmp, "e.db")),

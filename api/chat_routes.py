@@ -31,10 +31,9 @@ def build_chat_routes(config_path: str, credential_store: Any,
 
     def _ai_config() -> dict[str, Any]:
         """Read endpoint/model from config.json; key from encrypted store."""
-        import os
         cfg: dict[str, Any] = {}
         try:
-            with open(config_path, "r", encoding="utf-8") as f:
+            with open(config_path, encoding="utf-8") as f:
                 cfg = json.load(f)
         except Exception:
             cfg = {}
@@ -74,7 +73,7 @@ def build_chat_routes(config_path: str, credential_store: Any,
         def _write() -> None:
             cfg: dict[str, Any] = {}
             try:
-                with open(config_path, "r", encoding="utf-8") as f:
+                with open(config_path, encoding="utf-8") as f:
                     cfg = json.load(f)
             except Exception:
                 cfg = {}

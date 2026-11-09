@@ -27,7 +27,6 @@ import json
 import os
 import sys
 import tempfile
-from datetime import datetime, timezone
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_DIR = os.path.dirname(_SCRIPT_DIR)
@@ -38,7 +37,6 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
 from helpers.runner import R
 
 from core.persistence.store import EventStore
-from market.models import Quote
 
 RELIANCE = "NSE:EQUITY:INE002A01018"
 RELIANCE_ISIN = "INE002A01018"
@@ -73,12 +71,16 @@ class _RecordingBus:
 
 
 class _FakeQuote:
+    """A canonical quote double (it carries the REQUIRED received_ts)."""
+
     def __init__(self, ltp, token="2885", tsym="RELIANCE"):
+        from datetime import datetime, timezone
         self.exchange = "NSE"
         self.instrument_token = token
         self.tradingsymbol = tsym
         self.ltp = ltp
         self.provider = "upstox"
+        self.received_ts = datetime.now(timezone.utc)
 
 
 def _mk_store() -> tuple[EventStore, tempfile.TemporaryDirectory]:

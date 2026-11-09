@@ -7,10 +7,8 @@ Read-only verification — no production code edits.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import re
-import sqlite3
 import stat
 import subprocess
 import sys
@@ -24,8 +22,14 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
 
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
-from test.helpers.lifecycle import start_server, stop_server, restore_environment, get_server_url
-from test.mcp_result import to_payload, normalize_tool_result
+
+from test.helpers.lifecycle import (
+    get_server_url,
+    restore_environment,
+    start_server,
+    stop_server,
+)
+from test.mcp_result import to_payload
 
 RUNTIME = r"D:\IT\Script\python\python.exe"
 VERIFY_DATA_DIR = "data_verify_replay_fix"
@@ -103,7 +107,7 @@ async def step4_pagination(cid: str, seqs: list):
         })
         assert not r2.get("is_error", False), f"page2 failed: {r2!r}"
         events2 = r2.get("events", [])
-        next2 = r2.get("next_after_sequence")
+        r2.get("next_after_sequence")
         cp2 = r2.get("checkpoint")
 
         assert len(events1) == 2, f"page1 expected 2 events, got {len(events1)}"
@@ -181,7 +185,7 @@ async def step9_strict_after_sequence():
     """Section 9: Strict after_sequence control."""
     name = "step9-strict-after-seq"
     try:
-        r = await mcp_call("consumer_event_pending_list", {"consumer_id": "verify-cid-start", "after_sequence": 1})
+        await mcp_call("consumer_event_pending_list", {"consumer_id": "verify-cid-start", "after_sequence": 1})
         ok(name + "-int-accepted", "after_sequence=1 accepted")
 
         r2 = await mcp_call("consumer_event_pending_list", {"consumer_id": "verify-cid-start", "after_sequence": True})
@@ -205,7 +209,7 @@ def step10_anti_pattern_search():
                 continue
             path = os.path.join(root, f)
             try:
-                with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                with open(path, encoding="utf-8", errors="replace") as fh:
                     for i, line in enumerate(fh, 1):
                         for pat in patterns:
                             if pat in line:
@@ -260,7 +264,7 @@ async def main():
     # -- Step 1: Static fix confirmation --
     print("\n[1] STATIC FIX CONFIRMATION")
     store_path = os.path.join(PROJECT_DIR, "store.py")
-    with open(store_path, "r") as f:
+    with open(store_path) as f:
         store_src = f.read()
     if 'return {"status": "error"' in store_src or 'return {\"status\": \"error\"' in store_src:
         fail("step1-static-fix", "replay error-return still present in store.py")

@@ -14,7 +14,6 @@ from helpers.runner import R
 
 from app.fyers_runtime_auth import FyersRuntimeAuth
 
-
 # ---------------------------------------------------------------------------
 # 1. config.example.json contains NO secret fields
 # ---------------------------------------------------------------------------
@@ -22,7 +21,7 @@ from app.fyers_runtime_auth import FyersRuntimeAuth
 def test_config_example_has_no_secrets(runner: R) -> None:
     _path = os.path.join(_PROJECT_DIR, "config.example.json")
     runner.assert_true("CE-exists", os.path.isfile(_path))
-    with open(_path, "r", encoding="utf-8") as _f:
+    with open(_path, encoding="utf-8") as _f:
         _cfg = json.load(_f)
 
     def _collect(obj):
@@ -72,8 +71,8 @@ def test_oauth_callback_url_single_source(runner: R) -> None:
 # ---------------------------------------------------------------------------
 
 def test_credential_store_fyers_model(runner: R) -> None:
-    from core.persistence.store import EventStore
     from app.secrets_store import CredentialStore
+    from core.persistence.store import EventStore
     _tmp = tempfile.mkdtemp()
     _db = os.path.join(_tmp, "events.db")
     _store = CredentialStore(EventStore(_db))
@@ -131,9 +130,10 @@ def test_fyers_feed_no_config_secret(runner: R) -> None:
 def test_oauth_and_feed_share_store(runner: R) -> None:
     from starlette.applications import Starlette
     from starlette.testclient import TestClient
-    from core.persistence.store import EventStore
-    from app.secrets_store import CredentialStore
+
     from api.product_routes import build_fyers_auth_routes
+    from app.secrets_store import CredentialStore
+    from core.persistence.store import EventStore
     from sources.registry import _create_fyers_feed
 
     _tmp = tempfile.mkdtemp()
@@ -166,10 +166,11 @@ def test_oauth_and_feed_share_store(runner: R) -> None:
 def test_login_route_uses_configured_redirect(runner: R) -> None:
     from starlette.applications import Starlette
     from starlette.testclient import TestClient
-    from core.persistence.store import EventStore
-    from app.secrets_store import CredentialStore
-    from api.product_routes import build_fyers_auth_routes
+
     import brokers.fyers.auth as _fauth
+    from api.product_routes import build_fyers_auth_routes
+    from app.secrets_store import CredentialStore
+    from core.persistence.store import EventStore
 
     _tmp = tempfile.mkdtemp()
     _store = CredentialStore(EventStore(os.path.join(_tmp, "e.db")))
@@ -199,8 +200,8 @@ def test_login_route_uses_configured_redirect(runner: R) -> None:
 def test_refresh_restore_and_failure(runner: R) -> None:
     import app.server as _srv
     import brokers.fyers.auth as _fauth
-    from core.persistence.store import EventStore
     from app.secrets_store import CredentialStore
+    from core.persistence.store import EventStore
 
     _tmp = tempfile.mkdtemp()
     _store = CredentialStore(EventStore(os.path.join(_tmp, "e.db")))

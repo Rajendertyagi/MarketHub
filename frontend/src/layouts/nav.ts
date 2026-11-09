@@ -27,7 +27,8 @@ export const NAV: NavEntry[] = [
       { to: "/market-map", label: "Heatmap" },
       { to: "/breadth", label: "Breadth" },
       { to: "/sector-heatmap", label: "Sector Analysis" },
-      { to: "/instruments", label: "Instruments" },
+      { to: "/futures-heatmap", label: "Futures Board" },
+      { to: "/market-data", label: "Market Data" },
     ],
   },
   {

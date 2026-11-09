@@ -8,6 +8,7 @@ export const watchlistItemSchema = z
     exchange: z.string().nullable().optional(),
     instrument_token: z.union([z.string(), z.number()]).transform(String),
     tradingsymbol: z.string().nullable().optional(),
+    canonical_id: z.string().nullable().optional(),
   })
   .passthrough();
 

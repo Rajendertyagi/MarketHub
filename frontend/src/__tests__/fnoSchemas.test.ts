@@ -123,7 +123,7 @@ describe("F&O contract schemas", () => {
         },
       ],
       analytics: {
-        scope: "loaded_window",
+        scope: "window",
         pcr_by_oi: 0.9,
         total_call_oi: 1000,
         total_put_oi: 1100,

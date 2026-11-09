@@ -32,12 +32,12 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 
 def _tmp_store(tmp: str):
-    from core.persistence.store import EventStore
     from app.secrets_store import CredentialStore
+    from core.persistence.store import EventStore
     return CredentialStore(EventStore(os.path.join(tmp, "e.db")), data_dir=tmp)
 
 
@@ -179,7 +179,7 @@ async def test_rejected_distinct_from_missing(runner: R) -> None:
         svc = _svc(store, feed)
         rej = svc.status({"upstox": {"enabled": True}}, {})
         # Fresh store, no session, no runtime: the MISSING contract.
-        store2 = _tmp_store(tmp + "2") if False else None
+        _tmp_store(tmp + "2") if False else None
         import tempfile as _tf
         with _tf.TemporaryDirectory() as tmp2:
             store_m = _tmp_store(tmp2)
@@ -259,6 +259,7 @@ async def test_ws_connect_failure_preserves_session(runner: R) -> None:
 
 async def test_status_contract_consistency(runner: R) -> None:
     import tempfile
+
     from brokers.upstox.auth import UpstoxCredentials
     with tempfile.TemporaryDirectory() as tmp:
         # VALID restored token.

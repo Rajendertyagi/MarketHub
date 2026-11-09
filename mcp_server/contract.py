@@ -18,7 +18,7 @@ from __future__ import annotations
 # ─── Contract version ─────────────────────────────────────────────────────────
 # Bumps only when the MCP tool/resource/event contract changes in a breaking way.
 # Distinct from MCP spec version, app version, Python version, and SDK version.
-CONTRACT_VERSION = "2.5.0"
+CONTRACT_VERSION = "2.8.0"
 
 # ─── Resource URIs ─────────────────────────────────────────────────────────────
 # mcp-event:// is an APPLICATION-PRIVATE URI scheme. It is NOT an official
@@ -109,6 +109,12 @@ TOOL_PRICE_IRON_CONDOR = "price_iron_condor"
 TOOL_PRICE_LONG_BUTTERFLY = "price_long_butterfly"
 TOOL_ANALYZE_OPTION_CHAIN = "analyze_option_chain"
 
+# ─── News read tools (v2.7.0) ─────────────────────────────────────────────
+TOOL_NEWS_LIST = "news_list"
+TOOL_NEWS_SEARCH = "news_search"
+TOOL_NEWS_GET = "news_get"
+TOOL_NEWS_REFRESH = "news_refresh"
+
 # ─── X/Twitter read tools (v2.7.0) ────────────────────────────────────────
 TOOL_X_FEED = "twitter_feed"
 TOOL_X_SEARCH = "twitter_search"
@@ -117,6 +123,21 @@ TOOL_X_ARTICLE = "twitter_article"
 TOOL_X_BOOKMARKS = "twitter_bookmarks"
 TOOL_X_USER_POSTS = "twitter_user_posts"
 TOOL_X_USER_PROFILE = "twitter_user_profile"
+
+# ─── Yahoo Finance / yfinance AI research tools (v2.8.0) ───────────────────
+# AI RESEARCH/DATA capability backed by yfinance. Deliberately separate from
+# the broker-authoritative market feed: these tools never write quotes, feeds,
+# the F&O universe, or the heatmap. Yahoo data is not necessarily real-time —
+# every response carries an honest freshness classification.
+TOOL_YAHOO_SEARCH = "yahoo_search"
+TOOL_YAHOO_QUOTE = "yahoo_quote"
+TOOL_YAHOO_HISTORY = "yahoo_history"
+TOOL_YAHOO_COMPANY = "yahoo_company"
+TOOL_YAHOO_FINANCIALS = "yahoo_financials"
+TOOL_YAHOO_CORPORATE_ACTIONS = "yahoo_corporate_actions"
+TOOL_YAHOO_HOLDERS = "yahoo_holders"
+TOOL_YAHOO_OPTIONS = "yahoo_options"
+TOOL_YAHOO_LIVE_QUOTE = "yahoo_live_quote"
 
 
 def consumer_events_uri(consumer_id: str) -> str:

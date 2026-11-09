@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/api/market", () => ({
   searchMarketInstruments: vi.fn(),
+  browseInstruments: vi.fn(),
   getOptionChainView: vi.fn(),
   resolveMarketInstrument: vi.fn(),
 }));
@@ -120,14 +121,14 @@ describe("WatchlistTable", () => {
         id: 1,
         watchlist_id: 7,
         exchange: "NSE",
-        instrument_token: "NSE_EQ:RELIANCE",
+        instrument_token: "NSE_EQ|INE002A01018",
         tradingsymbol: "RELIANCE",
       },
     ];
     const quotes = [
       {
         exchange: "NSE",
-        instrument_token: "NSE_EQ:RELIANCE",
+        instrument_token: "NSE_EQ|INE002A01018",
         tradingsymbol: "RELIANCE",
         ltp: 2500,
         change: 10,
@@ -142,8 +143,8 @@ describe("WatchlistTable", () => {
     renderWithProviders(<WatchlistTable items={items} quotes={quotes} onRemove={() => {}} />);
 
     const link = screen.getByRole("link", { name: "RELIANCE" });
-    expect(link.getAttribute("href")).toContain("/charts?");
-    expect(link.getAttribute("href")).toContain(`key=${encodeURIComponent("NSE_EQ:RELIANCE")}`);
+    expect(link.getAttribute("href")).toContain("/chart?");
+    expect(link.getAttribute("href")).toContain(`key=${encodeURIComponent("NSE_EQ|INE002A01018")}`);
     expect(screen.getByText("2,500.00")).toBeInTheDocument();
   });
 

@@ -33,7 +33,6 @@ import asyncio
 import os
 import sys
 import tempfile
-import uuid
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_DIR = os.path.dirname(_SCRIPT_DIR)
@@ -43,10 +42,10 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
 
 from helpers.runner import R
 
-from core.errors import ConditionValidationError
-from core.persistence.store import EventStore
 from app.condition_alerts import ConditionAlertEngine
 from app.market_identity import MarketInstrumentIdentityResolver
+from core.errors import ConditionValidationError
+from core.persistence.store import EventStore
 
 RELIANCE = "NSE:EQUITY:INE002A01018"
 RELIANCE_ISIN = "INE002A01018"
@@ -72,7 +71,6 @@ def _mk_resolver(store):
 
 
 def _mk_engine(store, resolver=None):
-    from app.condition_alerts import ConditionAlertEngine
     if resolver is None:
         resolver = _mk_resolver(store)
     return ConditionAlertEngine(store, resolver=resolver)
@@ -116,12 +114,21 @@ def _create_v2_any(store, *, cond_ids=None, metric="ltp", value=100,
 
 
 class _FakeQuote:
+    """A canonical quote double.
+
+    ``received_ts`` is REQUIRED by the canonical quote model, so the
+    double carries a fresh one (the freshness guard is exercised on the
+    real path, not skipped).
+    """
+
     def __init__(self, ltp, token="2885", tsym="RELIANCE"):
+        from datetime import datetime, timezone
         self.ltp = ltp
         self.exchange = "NSE"
         self.instrument_token = token
         self.tradingsymbol = tsym
         self.provider = "upstox"
+        self.received_ts = datetime.now(timezone.utc)
 
 
 # ── CG1: v1 backward compatibility ──────────────────────────────────────
@@ -169,7 +176,7 @@ async def test_cg2_all_truth_table(runner: R) -> None:
             {"condition_id": "c_high", "metric": "ltp", "operator": "gt",
              "value": 150, "instrument": {"canonical_id": RELIANCE}},
         ]
-        aid = store.create_condition_alert(
+        store.create_condition_alert(
             consumer_id="consumer-1", name="all-test", trigger_mode="repeat",
             condition_json={"condition_version": 2, "logic": "all",
                             "conditions": conditions})
@@ -218,7 +225,7 @@ async def test_cg3_any_truth_table(runner: R) -> None:
     """
     store, tmp = _mk_store()
     try:
-        aid = _create_v2_any(store, cond_ids=["c_ltp", "c_vol"],
+        _create_v2_any(store, cond_ids=["c_ltp", "c_vol"],
                              metric="ltp", value=100)
         engine = _mk_engine(store)
 
@@ -256,7 +263,7 @@ async def test_cg4_nested_group(runner: R) -> None:
                  "value": 50, "instrument": {"canonical_id": RELIANCE}},
             ]},
         ]
-        aid = store.create_condition_alert(
+        store.create_condition_alert(
             consumer_id="consumer-1", name="nested", trigger_mode="repeat",
             condition_json={"condition_version": 2, "logic": "any",
                             "conditions": conditions})
@@ -282,7 +289,7 @@ async def test_cg4_nested_group(runner: R) -> None:
 async def test_cg5_root_transitions(runner: R) -> None:
     store, tmp = _mk_store()
     try:
-        aid = _create_v2_all(store, cond_ids=["c1", "c2"],
+        _create_v2_all(store, cond_ids=["c1", "c2"],
                              metric="ltp", value=100)
         engine = _mk_engine(store)
 
@@ -313,7 +320,7 @@ async def test_cg5_root_transitions(runner: R) -> None:
 async def test_cg6_rearm_rules(runner: R) -> None:
     store, tmp = _mk_store()
     try:
-        aid = _create_v2_all(store, cond_ids=["c1", "c2"],
+        _create_v2_all(store, cond_ids=["c1", "c2"],
                              metric="ltp", value=100)
         engine = _mk_engine(store)
 
@@ -352,7 +359,7 @@ async def test_cg7_crossing_in_group(runner: R) -> None:
              "operator": "crosses_above", "value": 100,
              "instrument": {"canonical_id": RELIANCE}},
         ]
-        aid = store.create_condition_alert(
+        store.create_condition_alert(
             consumer_id="consumer-1", name="cross-group",
             trigger_mode="repeat",
             condition_json={"condition_version": 2, "logic": "all",
@@ -400,7 +407,7 @@ async def test_cg8_crossing_level_group(runner: R) -> None:
              "operator": "gt", "value": 90,
              "instrument": {"canonical_id": RELIANCE}},
         ]
-        aid = store.create_condition_alert(
+        store.create_condition_alert(
             consumer_id="consumer-1", name="cross-level",
             trigger_mode="repeat",
             condition_json={"condition_version": 2, "logic": "all",
@@ -453,7 +460,7 @@ async def test_cg9_once_mode(runner: R) -> None:
 async def test_cg10_repeat_mode(runner: R) -> None:
     store, tmp = _mk_store()
     try:
-        aid = _create_v2_all(store, cond_ids=["c1", "c2"],
+        _create_v2_all(store, cond_ids=["c1", "c2"],
                              metric="ltp", value=100,
                              trigger_mode="repeat")
         engine = _mk_engine(store)
@@ -480,7 +487,7 @@ async def test_cg10_repeat_mode(runner: R) -> None:
 async def test_cg11_restart_safety(runner: R) -> None:
     store, tmp = _mk_store()
     try:
-        aid = _create_v2_all(store, cond_ids=["c1", "c2"],
+        _create_v2_all(store, cond_ids=["c1", "c2"],
                              metric="ltp", value=100)
         engine = _mk_engine(store)
 
@@ -629,7 +636,7 @@ async def test_cg15_malformed(runner: R) -> None:
 async def test_cg16_concurrent(runner: R) -> None:
     store, tmp = _mk_store()
     try:
-        aid = _create_v2_all(store, cond_ids=["c1", "c2"],
+        _create_v2_all(store, cond_ids=["c1", "c2"],
                              metric="ltp", value=100)
         engine = _mk_engine(store)
 
@@ -680,7 +687,7 @@ async def test_cg17_write_amplification(runner: R) -> None:
 async def test_cg18_payload_shape(runner: R) -> None:
     store, tmp = _mk_store()
     try:
-        aid = _create_v2_all(store, cond_ids=["c1", "c2"],
+        _create_v2_all(store, cond_ids=["c1", "c2"],
                              metric="ltp", value=100)
         engine = _mk_engine(store)
 
@@ -720,7 +727,7 @@ async def test_cg19_kleene_unknown(runner: R) -> None:
         # ALL group: two conditions on same metric, same threshold
         # Both will have same result since they use same quote
         # To test UNKNOWN, we need a metric that can be None
-        aid_all = _create_v2_all(store, cond_ids=["c1", "c2"],
+        _create_v2_all(store, cond_ids=["c1", "c2"],
                                   metric="ltp", value=100)
         engine = _mk_engine(store)
 
@@ -736,7 +743,7 @@ async def test_cg19_kleene_unknown(runner: R) -> None:
         runner.assert_eq("CG19-ALL-T-T", len(fired), 1)
 
         # ANY group
-        aid_any = _create_v2_any(store, cond_ids=["c1", "c2"],
+        _create_v2_any(store, cond_ids=["c1", "c2"],
                                   metric="ltp", value=100)
         engine2 = _mk_engine(store)
 

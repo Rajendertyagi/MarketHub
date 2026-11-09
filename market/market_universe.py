@@ -24,6 +24,8 @@ dropped.
 
 from __future__ import annotations
 
+import threading
+import time
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -33,6 +35,16 @@ from market.derivatives_universe import fno_underlying_rows
 from . import index_constituents as _idx
 
 UNIVERSE_NAMES: tuple[str, ...] = ("FNO", "NSE_EQ", "NIFTY50", "NIFTYNXT50", "BANKNIFTY")
+
+# Index membership is a curated constant, so its EXPENSIVE part is only the
+# per-symbol catalogue resolution (one exact lookup per constituent). The
+# resolved members are cached per universe as a pure function of
+# (universe, catalogue epoch); an epoch change makes the old entry
+# unreachable and the TTL bounds staleness for anything the epoch cannot
+# observe (e.g. provider enablement).
+_INDEX_CACHE_TTL_S = 300.0
+_INDEX_CACHE: dict[str, tuple[int | None, float, list[Member]]] = {}
+_INDEX_CACHE_LOCK = threading.Lock()
 
 
 @dataclass
@@ -56,8 +68,41 @@ def resolve_universe(name: str, catalog: Any) -> list[Member]:
     if key == "NSE_EQ":
         return _resolve_nse_eq(catalog)
     if key in _idx.INDEX_MEMBERS:
-        return _resolve_index(key, catalog)
+        return _resolve_index_cached(key, catalog)
     raise ValueError(f"unknown universe: {name}")
+
+
+def _catalog_epoch(catalog: Any) -> int | None:
+    """The catalogue revision, or None when the catalogue cannot report one."""
+    try:
+        return int(catalog.catalog_epoch())
+    except Exception:
+        return None
+
+
+def _resolve_index_cached(key: str, catalog: Any) -> list[Member]:
+    """Index members, cached by catalogue epoch.
+
+    Concurrent readers may compute the same list twice; that is harmless
+    because the value is a pure function of (universe, epoch) and the cache
+    slot is replaced atomically with a fully-built list. Callers receive a
+    copy, so a consumer mutating its list cannot corrupt the cached one.
+    """
+    epoch = _catalog_epoch(catalog)
+    if epoch is None:
+        # Without an epoch the cache could serve members resolved against a
+        # catalogue that has since been replaced; resolve fresh instead.
+        return _resolve_index(key, catalog)
+    now = time.monotonic()
+    with _INDEX_CACHE_LOCK:
+        hit = _INDEX_CACHE.get(key)
+        if hit is not None and hit[0] == epoch \
+                and now - hit[1] < _INDEX_CACHE_TTL_S:
+            return list(hit[2])
+    members = _resolve_index(key, catalog)
+    with _INDEX_CACHE_LOCK:
+        _INDEX_CACHE[key] = (epoch, now, members)
+    return list(members)
 
 
 def _resolve_fno(catalog: Any) -> list[Member]:
@@ -99,12 +144,9 @@ def _resolve_index(key: str, catalog: Any) -> list[Member]:
         token: str | None = None
         name: str | None = None
         try:
-            rows = catalog.search(
-                q=sym, instrument_type="EQUITY", exchange="NSE", limit=1
-            )
-            if rows:
-                row = rows[0]
-                token = row.get("instrument_token")
+            row = _exact_equity_row(catalog, sym)
+            if row:
+                token = _quote_key(catalog, row)
                 name = row.get("name")
         except Exception:
             # Catalog lookup failure must not abort the whole universe; the
@@ -112,3 +154,48 @@ def _resolve_index(key: str, catalog: Any) -> list[Member]:
             pass
         members.append(Member(sym, name, "NSE", token))
     return members
+
+
+def _exact_equity_row(catalog: Any, symbol: str) -> dict[str, Any] | None:
+    """The EXACT catalogue row for one index constituent.
+
+    The general catalogue search is a substring LIKE with a LIMIT, so a
+    short symbol ("LT") matches an unrelated equity ("20 MICRONS LTD")
+    and a long one ("RELIANCE") matches an invitation/bearer variant
+    ("RCOM"). The EXACT-symbol read model is used instead.
+
+    The primary streaming provider's row is preferred, so the member's
+    quote key is the one the live feed actually writes under; the quote
+    reader still finds the instrument under ANY provider's key.
+    """
+    finder = getattr(catalog, "find_equity", None)
+    if finder is None:
+        return None
+    for provider in ("upstox", None):
+        try:
+            row = finder(symbol, provider=provider, exchange="NSE")
+        except TypeError:
+            try:
+                row = finder(symbol)
+            except Exception:
+                row = None
+        except Exception:
+            row = None
+        if row:
+            return row
+    return None
+
+
+def _quote_key(catalog: Any, row: dict[str, Any]) -> str | None:
+    """The key under which this row's QUOTE STATE is stored.
+
+    The catalogue owns the provider-native identifier roles, so the key is
+    asked of the catalogue - never derived from a key's string shape.
+    """
+    key_of = getattr(catalog, "quote_key", None)
+    if key_of is not None:
+        try:
+            return key_of(row)
+        except Exception:
+            return None
+    return row.get("provider_symbol") or row.get("instrument_token")

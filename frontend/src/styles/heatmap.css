@@ -1,0 +1,128 @@
+@layer components {
+  /* Shared heatmap chrome (Market Map / Sector Heatmap / Futures Board).
+     Additive: feature-scoped copies (e.g. `.market-map .heatmap-surface`)
+     still win where they exist, so this can be adopted incrementally. */
+  .heatmap-surface {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface-1);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+  }
+  .heatmap-bar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    background: color-mix(in oklch, var(--surface-2) 55%, transparent);
+  }
+  .heatmap-title {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.01em;
+  }
+  .heatmap-meta {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-regular);
+    color: var(--text-muted);
+    letter-spacing: 0;
+  }
+  .heat-legend {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+  }
+  .heat-legend .heat-scale {
+    width: 140px;
+    height: 10px;
+    border-radius: 999px;
+    box-shadow: var(--shadow-card);
+    background: linear-gradient(
+      to right,
+      color-mix(in oklch, var(--neg) 92%, transparent),
+      color-mix(in oklch, var(--neg) 45%, transparent),
+      color-mix(in oklch, var(--neg) 14%, transparent),
+      var(--surface-2),
+      color-mix(in oklch, var(--pos) 14%, transparent),
+      color-mix(in oklch, var(--pos) 45%, transparent),
+      color-mix(in oklch, var(--pos) 92%, transparent)
+    );
+  }
+  .heat-legend .heat-scale-labels {
+    display: flex;
+    justify-content: space-between;
+    width: 140px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Uniform heatmap tile (CSS-grid based). Extensible: add extra rows inside
+     `.tile` later without touching the layout. */
+  .tile {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 1px;
+    min-height: 74px;
+    padding: var(--space-2);
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+    overflow: hidden;
+    transition: box-shadow var(--motion-fast) var(--ease),
+      transform var(--motion-fast) var(--ease),
+      filter var(--motion-fast) var(--ease);
+  }
+  .tile:hover,
+  .tile:focus-visible {
+    z-index: 2;
+    outline: 1px solid var(--accent);
+    box-shadow: var(--shadow-float);
+    filter: brightness(1.06);
+  }
+  .tile-sym {
+    font-weight: var(--font-weight-bold);
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-tight);
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tile-val {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-tight);
+  }
+  .tile-chg {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-bold);
+    line-height: var(--line-height-tight);
+    opacity: 0.95;
+  }
+  .tile-badge {
+    font-size: 0.58rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    opacity: 0.8;
+  }
+  .tile-dim {
+    opacity: 0.5;
+  }
+}

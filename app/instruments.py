@@ -13,14 +13,21 @@ previous catalog intact.
 from __future__ import annotations
 
 import gzip
-import io
 import json
 import logging
 import urllib.request
+from collections.abc import Callable, Sequence
 from typing import Any
 
+from app.catalog_sync import (
+    FYERS_MASTER_SEGMENTS_MAP,
+    MasterValidationError,
+    WriteScope,
+)
 from core.persistence.modules.products import (
     KNOWN_SEGMENTS as _KNOWN_SEGMENTS,
+)
+from core.persistence.modules.products import (
     canonical_segment,
     canonicalize_record,
 )
@@ -29,11 +36,16 @@ logger = logging.getLogger("event_server")
 
 UPSTOX_MASTER_URL = ("https://assets.upstox.com/market-quote/"
                      "instruments/exchange/complete.json.gz")
+# FYERS publishes one master PER SEGMENT:
+#   https://public.fyers.in/sym_details/<MASTER>_sym_master.json
+# The covered masters are exactly those that can contribute in-scope
+# contracts (NSE F&O universe + the BSE/SENSEX leg). MCX commodities
+# (MCX_COM) are out of scope; BSE_FO is REQUIRED for the SENSEX leg.
 FYERS_SEGMENT_URLS = {
     "NSE_CM": "https://public.fyers.in/sym_details/NSE_CM_sym_master.json",
     "NSE_FO": "https://public.fyers.in/sym_details/NSE_FO_sym_master.json",
     "BSE_CM": "https://public.fyers.in/sym_details/BSE_CM_sym_master.json",
-    "MCX_COM": "https://public.fyers.in/sym_details/MCX_COM_sym_master.json",
+    "BSE_FO": "https://public.fyers.in/sym_details/BSE_FO_sym_master.json",
 }
 USER_AGENT = "MarketHub/1.0 (trading-terminal)"
 FETCH_TIMEOUT_S = 60
@@ -199,6 +211,43 @@ def _fyers_expiry_iso(raw: Any) -> str | None:
         return None
 
 
+def _validate_sensex_source_row(
+    row: dict[str, Any], inst_type: str | None, symbol_key: str,
+) -> None:
+    """Reject a SENSEX row that lacks authoritative contract metadata.
+
+    The provider master is the only source of truth for these contracts:
+    a row that cannot be fully identified must abort the master (the
+    previous catalogue is retained) instead of being silently skipped.
+    """
+    problems: list[str] = []
+    if not row.get("fyToken"):
+        problems.append("fyToken missing")
+    if row.get("exchange") != 12:
+        problems.append("exchange is not BSE")
+    if not row.get("symTicker"):
+        problems.append("symTicker missing")
+    if row.get("tradeStatus") not in (0, 1):
+        problems.append("tradeStatus missing/invalid")
+    if inst_type not in ("FUTURE", "OPTION"):
+        problems.append("exInstType is not a derivative type")
+    if inst_type in ("FUTURE", "OPTION") and not row.get("expiryDate"):
+        problems.append("expiryDate missing")
+    if inst_type == "OPTION":
+        try:
+            strike = float(row.get("strikePrice"))
+        except (TypeError, ValueError):
+            strike = 0.0
+        if strike <= 0:
+            problems.append("strikePrice invalid")
+        if str(row.get("optType") or "").upper() not in ("CE", "PE"):
+            problems.append("optType is not CE/PE")
+    if problems:
+        raise InstrumentSyncError(
+            "fyers master: malformed SENSEX record "
+            f"{symbol_key}: {', '.join(problems)}")
+
+
 def fyers_master_records(payload: bytes) -> list[dict[str, Any]]:
     """Parse official Fyers <SEGMENT>_sym_master.json into canonical records."""
     data = json.loads(payload.decode("utf-8"))
@@ -211,6 +260,9 @@ def fyers_master_records(payload: bytes) -> list[dict[str, Any]]:
             continue
         inst_type = _FYERS_INST_TYPE.get(
             row.get("exInstType"))
+        underlying = _opt_str(row.get("underSym"))
+        if str(underlying or "").strip().upper() in SENSEX_UNDERLYINGS:
+            _validate_sensex_source_row(row, inst_type, symbol_key)
         rec: dict[str, Any] = {
             "provider": "fyers",
             "provider_symbol": symbol_key,
@@ -230,7 +282,10 @@ def fyers_master_records(payload: bytes) -> list[dict[str, Any]]:
             "lot_size": _opt_int(row.get("minLotSize")),
             "tick_size": _opt_float(row.get("tickSize")),
             "isin": _opt_str(row.get("isin")),
-            "underlying": _opt_str(row.get("underSym")),
+            "underlying": underlying,
+            # Transient provider metadata (not persisted): the selection
+            # policy uses the provider's own trade status.
+            "active": row.get("tradeStatus") != 0,
         }
         if rec["option_type"] in ("XX", ""):
             rec["option_type"] = None
@@ -250,7 +305,7 @@ def fyers_master_records(payload: bytes) -> list[dict[str, Any]]:
 # transactional catalog replace, so disabled segments leave the catalog
 # entirely on the next successful sync.
 DEFAULT_SEGMENTS: frozenset[str] = frozenset({
-    "NSE_EQ", "NSE_FO", "NSE_INDEX", "BSE_INDEX",
+    "NSE_EQ", "NSE_FO", "NSE_INDEX", "BSE_INDEX", "BSE_FO",
 })
 
 # Known provider segments. GET /segments reports these plus anything newly
@@ -294,11 +349,205 @@ def _filter_by_segments(
     return kept, counts, filtered
 
 
+#: Underlyings MarketHub requires from the BSE F&O universe.
+#: Only Sensex and its relevant BSE derivatives are in scope; BANKEX,
+#: SENSEX50, individual BSE stocks and unrelated BSE derivatives are
+#: excluded. This is the single authoritative selection policy, applied
+#: to every provider's BSE_FO master through its own metadata.
+SENSEX_UNDERLYINGS: frozenset[str] = frozenset({"SENSEX"})
+
+
+def _underlying_of(record: dict[str, Any]) -> str | None:
+    """The provider's authoritative underlying for a catalogue record.
+
+    FYERS publishes ``underSym``; Upstox publishes ``underlying_symbol``.
+    Both are normalized into ``underlying`` at ingestion. There is NO
+    symbol-shape fallback: an identifier that cannot be attributed through
+    authoritative metadata is out of scope, never guessed.
+    """
+    raw = record.get("underlying")
+    if raw is None:
+        return None
+    value = str(raw).strip().upper()
+    return value or None
+
+
+def _is_sensex_bse_fo(record: dict[str, Any]) -> bool:
+    return (_derive_segment(record) == "BSE_FO"
+            and _underlying_of(record) in SENSEX_UNDERLYINGS)
+
+
+def _filter_sensex_bse_fo(
+    records: list[dict[str, Any]], segments: frozenset[str] | set[str],
+) -> tuple[list[dict[str, Any]], dict[str, int], int]:
+    """Filter FYERS records to the Sensex BSE_FO policy.
+
+    Other segments (NSE_EQ, NSE_FO, NSE_CM index rows, ...) pass through
+    unchanged. Inside BSE_FO only authoritative-Sensex, active contracts
+    are kept; every other BSE_FO row is counted as filtered.
+    """
+    kept: list[dict[str, Any]] = []
+    counts: dict[str, int] = {}
+    filtered = 0
+    for r in records:
+        seg = _derive_segment(r)
+        if seg is None or seg not in segments:
+            filtered += 1
+            continue
+        if seg == "BSE_FO" and (
+                _underlying_of(r) not in SENSEX_UNDERLYINGS
+                or not r.get("active", True)):
+            filtered += 1
+            continue
+        kept.append(r)
+        counts[seg] = counts.get(seg, 0) + 1
+    return kept, counts, filtered
+
+
+def _sensex_scope_report(
+    records: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    """Selection evidence for one BSE_FO master (pre-write)."""
+    bse_fo = [r for r in records if _derive_segment(r) == "BSE_FO"]
+    matched = [r for r in bse_fo if _underlying_of(r) in SENSEX_UNDERLYINGS]
+    active = [r for r in matched if r.get("active", True)]
+    options = [r for r in active
+               if r.get("instrument_type") == "OPTION"]
+    excluded: dict[str, int] = {}
+    for r in bse_fo:
+        und = _underlying_of(r)
+        if und in SENSEX_UNDERLYINGS:
+            continue
+        key = und or "<missing>"
+        excluded[key] = excluded.get(key, 0) + 1
+    return {
+        "source_records": len(records),
+        "bse_fo_records": len(bse_fo),
+        "matched_sensex": len(matched),
+        "active": len(active),
+        "inactive": len(matched) - len(active),
+        "futures": sum(1 for r in active
+                       if r.get("instrument_type") == "FUTURE"),
+        "options": len(options),
+        "calls": sum(1 for r in options if r.get("option_type") == "CE"),
+        "puts": sum(1 for r in options if r.get("option_type") == "PE"),
+        "expiries": sorted({str(r["expiry"]) for r in active
+                            if r.get("expiry")}),
+        "excluded_bse_fo": sum(excluded.values()),
+        "excluded_by_underlying": dict(sorted(excluded.items())),
+        "persisted": 0,
+    }
+
+
+def _validate_fyers_master_policy(
+    master: str, records: Sequence[dict[str, Any]],
+) -> None:
+    """Structural invariants for the selectively ingested BSE_FO master.
+
+    A truncated or mis-parsed master must retain the previous catalogue,
+    never replace it with a partial Sensex set. Invariants are contractual
+    (authoritative fields and F&O shape), not an arbitrary shrinkage %.
+    """
+    if master != "BSE_FO":
+        return
+    active = [r for r in records
+              if _is_sensex_bse_fo(r) and r.get("active", True)]
+    if not active:
+        raise MasterValidationError(
+            "BSE_FO master has no active SENSEX contracts")
+    futures = [r for r in active
+               if r.get("instrument_type") == "FUTURE"]
+    calls = [r for r in active
+             if r.get("instrument_type") == "OPTION"
+             and r.get("option_type") == "CE"]
+    puts = [r for r in active
+            if r.get("instrument_type") == "OPTION"
+            and r.get("option_type") == "PE"]
+    if not futures:
+        raise MasterValidationError(
+            "BSE_FO master has no active SENSEX futures")
+    if not calls or not puts:
+        raise MasterValidationError(
+            "BSE_FO master is missing SENSEX calls or puts")
+    tokens = [str(r.get("instrument_token") or "") for r in active]
+    if len(set(tokens)) != len(tokens):
+        raise MasterValidationError(
+            "BSE_FO master has duplicate SENSEX provider tokens")
+    symbols = [str(r.get("tradingsymbol") or "") for r in active]
+    if len(set(symbols)) != len(symbols):
+        raise MasterValidationError(
+            "BSE_FO master has duplicate SENSEX trading symbols")
+    for r in active:
+        itype = r.get("instrument_type")
+        if not r.get("expiry"):
+            raise MasterValidationError(
+                f"BSE_FO SENSEX contract {r.get('tradingsymbol')} "
+                "has no expiry")
+        if itype == "OPTION":
+            strike = r.get("strike")
+            if strike is None or float(strike) <= 0:
+                raise MasterValidationError(
+                    f"BSE_FO SENSEX option {r.get('tradingsymbol')} "
+                    "has no valid strike")
+            if r.get("option_type") not in ("CE", "PE"):
+                raise MasterValidationError(
+                    f"BSE_FO SENSEX option {r.get('tradingsymbol')} "
+                    "has no valid option type")
+        elif itype != "FUTURE":
+            raise MasterValidationError(
+                f"BSE_FO SENSEX row {r.get('tradingsymbol')} "
+                f"has unsupported type {itype!r}")
+
+
+def _sensex_master_report(
+    master: str, records: Sequence[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if master != "BSE_FO":
+        return None
+    return _sensex_scope_report(records)
+
+
+#: Selective write scope: the BSE_FO master may only replace Sensex rows.
+FYERS_WRITE_SCOPES: dict[str, WriteScope] = {
+    "BSE_FO": WriteScope(segment="BSE_FO", column="underlying",
+                         values=("SENSEX",)),
+}
+
+
 class InstrumentCatalog:
     """Sync + search over the canonical instruments table."""
 
     def __init__(self, event_store: Any) -> None:
         self._store = event_store
+        # Revision of the catalogue, watched by the derived read models
+        # (market.derivatives_universe). It advances on every successful
+        # synchronisation - including the segment-scoped ones, which do
+        # not go through the event store's provider-wide replace.
+        self._revision = 0
+        # Optional listener invoked after a sync that actually changed the
+        # catalogue. The composition root registers the identity
+        # registries so canonical identity is refreshed (and derived
+        # read-model caches invalidated) as soon as a sync lands - not
+        # only at process start.
+        self._sync_listeners: list[Callable[[Any], None]] = []
+
+    def add_sync_listener(self, listener: Callable[[Any], None]) -> None:
+        """Register a callback invoked after a successful catalogue sync."""
+        if listener is not None and listener not in self._sync_listeners:
+            self._sync_listeners.append(listener)
+
+    def _notify_sync(self, result: Any) -> None:
+        """Notify listeners when the catalogue actually changed."""
+        if getattr(result, "aborted", False) or not getattr(result, "records", 0):
+            return
+        # The catalogue changed -> advance the revision the derived read
+        # models watch.
+        self._revision += 1
+        for listener in list(self._sync_listeners):
+            try:
+                listener(result)
+            except Exception:
+                logger.warning("catalogue sync listener failed", exc_info=True)
 
     # -- segment preferences (source_state: generic durable KV) ------------
 
@@ -340,58 +589,170 @@ class InstrumentCatalog:
         present = set(self.segment_counts())
         return sorted(set(_KNOWN_SEGMENTS) | present)
 
+    def sync_fyers(self, *, fetch=None, segments: set[str] | None = None,
+                   masters: list[str] | None = None) -> dict[str, Any]:
+        """Refresh the FYERS catalogue master by master (segment-scoped).
+
+        Each master file is an independent unit: a file that downloads and
+        validates cleanly replaces ITS OWN segments; a file that fails
+        keeps its previous rows. Nothing is deleted because another
+        segment's download failed.
+
+        ``masters`` restricts the sync to named master files (e.g.
+        ``["BSE_FO"]``), so an operator can refresh the SENSEX leg without
+        re-downloading - or touching - the NSE and BSE cash masters.
+
+        The BSE_FO master is ingested under the Sensex selection policy:
+        only authoritative-Sensex, active contracts are written, and the
+        write is predicate-scoped, so the provider's other BSE_FO
+        underlyings are preserved.
+        """
+        from app.catalog_sync import sync_fyers_masters
+
+        fetch = fetch or _fetch
+        enabled = segments if segments is not None \
+            else self.get_enabled_segments()
+        selected = self._select_fyers_masters(masters, enabled)
+        result = sync_fyers_masters(
+            self._store,
+            fetch=fetch,
+            urls=selected,
+            parse=fyers_master_records,
+            filter_records=_filter_sensex_bse_fo,
+            enabled_segments=sorted(enabled),
+            provider="fyers",
+            validate_master=_validate_fyers_master_policy,
+            report_fn=_sensex_master_report,
+            write_scopes=FYERS_WRITE_SCOPES,
+        )
+        self._notify_sync(result)
+        payload = result.to_dict()
+        if "BSE_FO" in selected:
+            try:
+                payload["scope_audit"] = self.scope_audit("fyers")
+            except Exception:
+                logger.warning("fyers scope audit failed", exc_info=True)
+        return payload
+
+    @staticmethod
+    def _select_fyers_masters(
+        masters: list[str] | None, enabled: set[str],
+    ) -> dict[str, str]:
+        """The master files this sync will download (validated selection).
+
+        An explicitly requested master whose segments are all disabled is
+        a contradiction (the filter would discard its rows and the sync
+        would report a misleading failure), so it is rejected up front.
+        """
+        if masters is None:
+            return dict(FYERS_SEGMENT_URLS)
+        wanted: list[str] = []
+        for raw in masters:
+            name = str(raw or "").strip().upper()
+            if not name:
+                continue
+            if name not in FYERS_SEGMENT_URLS:
+                raise ValueError(f"unknown fyers master: {raw!r}")
+            if name in wanted:
+                continue
+            covered = FYERS_MASTER_SEGMENTS_MAP.get(name, ())
+            if covered and not (set(covered) & enabled):
+                raise ValueError(
+                    f"fyers master {name} is disabled by the segment "
+                    f"preference ({', '.join(covered)})")
+            wanted.append(name)
+        if not wanted:
+            raise ValueError("masters must name at least one master file")
+        return {name: FYERS_SEGMENT_URLS[name] for name in wanted}
+
+    def scope_audit(self, provider: str, *, segment: str = "BSE_FO",
+                    in_scope: frozenset[str] = SENSEX_UNDERLYINGS,
+                    ) -> dict[str, Any]:
+        """Read-only audit of what one provider's segment ALREADY holds.
+
+        Reports the persisted catalogue grouped by underlying, split into
+        the in-scope underlyings (Sensex) and everything else, so an
+        operator can confirm that only in-scope rows were imported and
+        that out-of-scope rows were preserved rather than deleted.
+        """
+        from core.persistence.modules.products import (
+            open_instrument_connection,
+            segment_underlying_summary,
+        )
+
+        conn = open_instrument_connection(self._store.db_path)
+        try:
+            rows = segment_underlying_summary(
+                conn, provider=provider, segment=segment)
+        finally:
+            conn.close()
+
+        def _totals(items: Sequence[dict[str, Any]]) -> dict[str, Any]:
+            return {
+                "instruments": sum(int(r["instruments"]) for r in items),
+                "futures": sum(int(r["futures"]) for r in items),
+                "options": sum(int(r["options"]) for r in items),
+                "calls": sum(int(r["calls"]) for r in items),
+                "puts": sum(int(r["puts"]) for r in items),
+                "expiries": sum(int(r["expiries"]) for r in items),
+            }
+
+        inside = [dict(r, in_scope=True) for r in rows
+                  if r["underlying"] in in_scope]
+        outside = [dict(r, in_scope=False) for r in rows
+                   if r["underlying"] not in in_scope]
+        return {
+            "provider": provider,
+            "segment": segment,
+            "in_scope_underlyings": sorted(in_scope),
+            "in_scope": _totals(inside),
+            "out_of_scope": {
+                **_totals(outside),
+                "underlyings": sorted(r["underlying"] for r in outside),
+            },
+            "underlyings": inside + outside,
+        }
+
     def sync_upstox(self, *, fetch=None, segments: set[str] | None = None,
                     ) -> dict[str, Any]:
-        fetch = fetch or _fetch
-        enabled = segments if segments is not None \
-            else self.get_enabled_segments()
-        raw = fetch(UPSTOX_MASTER_URL)
-        parsed_records = upstox_master_records(raw)
-        kept, seg_counts, filtered = _filter_by_segments(parsed_records,
-                                                         enabled)
-        inserted = self._store.replace_provider_instruments("upstox", kept)
-        logger.info("upstox instrument sync: %d kept / %d parsed "
-                    "(%d filtered; segments=%s)",
-                    inserted, len(parsed_records), filtered,
-                    ",".join(sorted(enabled)))
-        return {"provider": "upstox", "records": inserted,
-                "parsed": len(parsed_records), "kept": len(kept),
-                "filtered": filtered, "segments": seg_counts,
-                "enabled": sorted(enabled)}
+        """Refresh the Upstox catalogue from the official BOD master.
 
-    def sync_fyers(self, *, fetch=None, segments: set[str] | None = None,
-                   ) -> dict[str, Any]:
+        Fail-safe: a download/parse failure, or a master that is empty or
+        structurally incomplete, ABORTS the sync and leaves the stored
+        catalogue untouched (no delete, no partial write).
+        """
+        from app.catalog_sync import sync_upstox_master
+
         fetch = fetch or _fetch
         enabled = segments if segments is not None \
             else self.get_enabled_segments()
-        # Fyers publishes one master PER SEGMENT but the catalog replaces
-        # per PROVIDER — accumulate every segment first, then replace once,
-        # otherwise each segment would wipe the previous one. Filtering is
-        # by DERIVED MarketHub segment per row (see _derive_segment) so a
-        # disabled NSE_EQ never removes NSE_INDEX rows from the cash master.
-        all_records: list[dict[str, Any]] = []
-        parsed = 0
-        for url in FYERS_SEGMENT_URLS.values():
-            try:
-                records = fyers_master_records(fetch(url))
-            except InstrumentSyncError as exc:
-                logger.warning("fyers segment sync skipped (%s): %s",
-                               url.rsplit("/", 1)[-1], exc)
-                continue
-            parsed += len(records)
-            all_records.extend(records)
-        kept, seg_counts, filtered = _filter_by_segments(all_records, enabled)
-        total = self._store.replace_provider_instruments("fyers", kept)
-        logger.info("fyers instrument sync: %d kept / %d parsed "
-                    "(%d filtered; segments=%s)",
-                    total, parsed, filtered, ",".join(sorted(enabled)))
-        return {"provider": "fyers", "records": total,
-                "parsed": parsed, "kept": len(kept),
-                "filtered": filtered, "segments": seg_counts,
-                "enabled": sorted(enabled)}
+        result = sync_upstox_master(
+            self._store,
+            fetch=fetch,
+            url=UPSTOX_MASTER_URL,
+            parse=upstox_master_records,
+            filter_records=_filter_by_segments,
+            enabled_segments=sorted(enabled),
+            provider="upstox",
+        )
+        self._notify_sync(result)
+        payload = result.to_dict()
+        try:
+            payload["scope_audit"] = self.scope_audit("upstox")
+        except Exception:
+            logger.warning("upstox scope audit failed", exc_info=True)
+        return payload
 
     def search(self, **kw: Any) -> list[dict[str, Any]]:
         return self._store.search_instruments(**kw)
+
+    def browse(self, **kw: Any) -> dict[str, Any]:
+        """Paginated, provider-deduped browse over the canonical catalog."""
+        return self._store.browse_instruments(**kw)
+
+    def pool(self, **kw: Any) -> list[dict[str, Any]]:
+        """Curated navigation pool for the native symbol picker."""
+        return self._store.instrument_pool(**kw)
 
     def find_exact_rows(self, symbol: str, *, exchange: str | None = None,
                         instrument_type: str | None = None,
@@ -411,8 +772,18 @@ class InstrumentCatalog:
                                                exchange=exchange)
 
     def catalog_epoch(self) -> int:
-        """Monotonic catalog version (changes on every catalog replace)."""
-        return self._store.catalog_epoch()
+        """Monotonic catalog version (changes on every catalog replace).
+
+        The catalogue's own revision is authoritative for the
+        segment-scoped synchronisations (they do not pass through the
+        event store's provider-wide replace); the store's epoch is
+        included so a replace performed elsewhere is never missed.
+        """
+        try:
+            store_epoch = int(self._store.catalog_epoch())
+        except Exception:
+            store_epoch = 0
+        return max(self._revision, store_epoch)
 
     def fno_universe(self, *, provider: str, today: str,
                      q: str | None = None, limit: int = 500) -> list[dict]:
@@ -437,6 +808,234 @@ class InstrumentCatalog:
 
     def get(self, provider: str, token: str) -> dict[str, Any] | None:
         return self._store.get_instrument(provider, token)
+
+    def find_equity(self, symbol: str, *, provider: str | None = None,
+                    exchange: str | None = "NSE") -> dict[str, Any] | None:
+        """Find the EXACT equity cash row for a canonical symbol.
+
+        The catalogue search is a substring LIKE with a LIMIT, so a short
+        symbol (e.g. "LT") would otherwise match an unrelated equity
+        ("20MICRONS", "3BBLACKBIO", ...) or fall outside the limit
+        window entirely. This uses the EXACT-symbol read model.
+        """
+        want = (symbol or "").strip().upper()
+        if not want:
+            return None
+        try:
+            rows = self._store.find_by_exact_symbol(
+                want, provider=provider, instrument_type="EQUITY",
+                exchange=exchange)
+        except Exception:
+            rows = []
+        for row in rows or []:
+            if str(row.get("tradingsymbol") or "").upper() == want:
+                return row
+            if str(row.get("underlying") or "").upper() == want:
+                return row
+        return rows[0] if rows else None
+
+    def quote_key(self, row: dict[str, Any]) -> str | None:
+        """The key under which this row's QUOTE STATE is stored.
+
+        The catalogue owns the provider-native identifier ROLES, so the
+        quote key is asked of the catalogue - it is never derived from an
+        identifier's string shape.
+        """
+        from app.canonical_identity import provider_quote_key
+        return provider_quote_key(row)
+
+    def find_index(self, symbol: str, *, provider: str | None = None,
+                   exchange: str | None = None) -> dict[str, Any] | None:
+        """Find the EXACT index row for a canonical symbol/underlying."""
+        rows = self.find_index_rows(symbol, provider=provider,
+                                    exchange=exchange)
+        return rows[0] if rows else None
+
+    def find_index_rows(self, symbol: str, *, provider: str | None = None,
+                        exchange: str | None = None) -> list[dict[str, Any]]:
+        """Every EXACT index row for a canonical symbol/underlying.
+
+        One row per PROVIDER — the index is listed by both, and each has
+        its own identifier for it.
+        """
+        want = (symbol or "").strip().upper()
+        if not want:
+            return []
+        try:
+            rows = self._store.find_by_exact_symbol(
+                want, provider=provider, instrument_type="INDEX",
+                exchange=exchange)
+        except Exception:
+            rows = []
+        out: list[dict[str, Any]] = []
+        for row in rows or []:
+            if str(row.get("underlying") or "").upper() == want:
+                out.append(row)
+                continue
+            tsym = str(row.get("tradingsymbol") or "").upper()
+            if tsym == want or tsym.endswith(f":{want}"):
+                out.append(row)
+        return out
+
+    def find_canonical_rows(self, canonical_id: str,
+                            ) -> list[dict[str, Any]]:
+        """Every catalogue row that carries this canonical id.
+
+        The catalogue stores provider-native rows; the canonical id is
+        DERIVED from them (``app.canonical_identity.canonical_id_for_row``),
+        so a row is located by the provider-independent parts the id is
+        made of:
+
+          * ``EXCHANGE:EQUITY:ISIN`` — the ISIN (the provider-independent
+            identity of a cash instrument), or the cash symbol for a row
+            without an ISIN;
+          * ``EXCHANGE:INDEX:SYMBOL`` — the index symbol;
+          * ``EXCHANGE:FUTURE:U:EXPIRY`` — underlying + expiry;
+          * ``EXCHANGE:OPTION:U:EXPIRY:STRIKE:TYPE`` — underlying +
+            expiry + strike + option type.
+
+        The parts are matched EXACTLY, so the result is the complete set of
+        providers that list the contract — the set the subscription
+        manager routes over. A row is kept only when its DERIVED canonical
+        id equals the requested one, so a near-miss can never be routed
+        as if it were the same contract.
+        """
+        from app.canonical_identity import canonical_id_for_row
+        want = (canonical_id or "").strip()
+        if not want:
+            return []
+        parts = want.split(":")
+        if len(parts) < 3:
+            return []
+        exchange, kind = parts[0], parts[1]
+        rest = parts[2:]
+        rows: list[dict[str, Any]] = []
+        try:
+            if kind in ("EQUITY", "ETF"):
+                symbol = rest[0]
+                # The ISIN is the cross-provider identity of a cash
+                # instrument; fall back to the canonical symbol for a row
+                # that carries no ISIN.
+                rows = list(self._store.search_instruments(
+                    isin=symbol, exchange=exchange,
+                    instrument_type=kind, limit=20) or [])
+                if not rows:
+                    rows = list(self.find_equity(
+                        symbol, exchange=exchange) or [])
+            elif kind == "INDEX":
+                rows = list(self.find_index_rows(
+                    rest[0], exchange=exchange) or [])
+            elif kind == "FUTURE" and len(rest) >= 2:
+                rows = list(self._store.search_instruments(
+                    underlying=rest[0], expiry=rest[1], exchange=exchange,
+                    instrument_type="FUTURE", limit=20) or [])
+            elif kind == "OPTION" and len(rest) >= 4:
+                try:
+                    strike = float(rest[2])
+                except (TypeError, ValueError):
+                    return []
+                rows = list(self._store.search_instruments(
+                    underlying=rest[0], expiry=rest[1], strike=strike,
+                    option_type=rest[3], exchange=exchange,
+                    instrument_type="OPTION", limit=20) or [])
+        except Exception:
+            return []
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                if canonical_id_for_row(row) == want:
+                    out.append(row)
+            except Exception:
+                continue
+        return out
+
+    def get_by_key(self, instrument_key: str) -> dict[str, Any] | None:
+        """Find the catalogue row that OWNS a provider-native key.
+
+        A key is owned by the provider that published it: the Upstox
+        instrument key, the Fyers API symbol, or the Fyers fyToken. The
+        catalogue is the authority, so a caller never has to infer the
+        provider from the key's string shape.
+        """
+        if not instrument_key:
+            return None
+        key = str(instrument_key)
+        for provider in ("upstox", "fyers"):
+            try:
+                row = self.get(provider, key)
+            except Exception:
+                row = None
+            if row:
+                return row
+        # The Fyers REST/feed key is the API SYMBOL, which the catalogue
+        # stores in ``provider_symbol`` rather than ``instrument_token``.
+        try:
+            rows = self.search(q=key, limit=10)
+        except Exception:
+            rows = []
+        for row in rows or []:
+            if str(row.get("provider_symbol") or "") == key:
+                return row
+        return None
+
+    # -- provider-native identifiers (Phase A) ----------------------------
+
+    def provider_identifiers(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Provider-native identifiers for one catalogue row, BY ROLE.
+
+        See :func:`app.canonical_identity.provider_identifiers_for_row`:
+        ``feed_key`` (stream + quote storage), ``rest_key`` (REST request),
+        ``token`` (the provider's own token — NEVER a request identifier on
+        its own).
+        """
+        from app.canonical_identity import provider_identifiers_for_row
+        return provider_identifiers_for_row(row)
+
+    def canonical_id(self, row: dict[str, Any]) -> str | None:
+        """Provider-neutral canonical id for one catalogue row."""
+        from app.canonical_identity import canonical_id_for_row
+        return canonical_id_for_row(row)
+
+    def resolve_provider_reference(
+        self, *, provider: str, underlying: str, instrument_type: str,
+        expiry: str | None = None, exchange: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Resolve one UNDERLYING to a provider's own identifiers.
+
+        Returns the catalogue row for the provider's own representation of
+        the underlying, plus its role-tagged provider identifiers.
+
+        This is the ONE place a provider request identifier is resolved for
+        a whole underlying (e.g. the Fyers option-chain request symbol).
+        It never guesses from an identifier's string shape: the provider's
+        own catalogue row is the source of truth.
+        """
+        symbol = (underlying or "").strip().upper()
+        if not symbol:
+            return None
+        rows = self.search(underlying=symbol, instrument_type=instrument_type,
+                           provider=provider, limit=50)
+        if not rows:
+            rows = self.search(q=symbol, instrument_type=instrument_type,
+                               provider=provider, limit=50)
+        exact = None
+        for row in rows or []:
+            row_sym = str(row.get("underlying") or "").upper()
+            if row_sym == symbol:
+                exact = row
+                break
+            row_tsym = str(row.get("tradingsymbol") or "").upper()
+            if row_tsym == symbol or row_tsym.endswith(f":{symbol}"):
+                exact = row
+                break
+        if exact is None and rows:
+            exact = rows[0]
+        if exact is None:
+            return None
+        ids = self.provider_identifiers(exact)
+        ids["row"] = exact
+        ids["canonical_id"] = self.canonical_id(exact)
+        return ids
 
     def equity_universe(self, *, provider: str | None = None,
                        limit: int = 5000) -> list[dict[str, Any]]:

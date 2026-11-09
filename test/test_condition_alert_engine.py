@@ -26,7 +26,6 @@ import asyncio
 import os
 import sys
 import tempfile
-from datetime import datetime, timezone
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_DIR = os.path.dirname(_SCRIPT_DIR)
@@ -37,19 +36,28 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
 from helpers.runner import R
 
 from core.persistence.store import EventStore
-from market.models import Quote
 
 RELIANCE = "NSE:EQUITY:INE002A01018"
 RELIANCE_ISIN = "INE002A01018"
 
 
 class _FakeQuote:
-    def __init__(self, ltp, token="2885", tsym="RELIANCE"):
+    """A canonical quote double.
+
+    ``received_ts`` is REQUIRED by the canonical quote model, so the
+    double carries a fresh one (the freshness guard is exercised on the
+    real path, not skipped).
+    """
+
+    def __init__(self, ltp, token="2885", tsym="RELIANCE", age_seconds=0.0):
+        from datetime import datetime, timedelta, timezone
         self.exchange = "NSE"
         self.instrument_token = token
         self.tradingsymbol = tsym
         self.ltp = ltp
         self.provider = "upstox"
+        self.received_ts = (datetime.now(timezone.utc)
+                            - timedelta(seconds=age_seconds))
 
 
 def _mk_store() -> tuple[EventStore, tempfile.TemporaryDirectory]:

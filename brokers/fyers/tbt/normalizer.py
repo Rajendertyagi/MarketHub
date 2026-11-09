@@ -119,7 +119,7 @@ def _parse_levels(
       * Order count (nord) preservation
     """
     result = []
-    for i, level in enumerate(levels):
+    for _i, level in enumerate(levels):
         if not isinstance(level, msg_pb2.MarketLevel):
             continue
 

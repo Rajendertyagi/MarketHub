@@ -25,7 +25,6 @@ import asyncio
 import json
 import os
 import sys
-import time
 
 # Make the test dir importable so the shared normalizer (mcp_result) resolves,
 # regardless of the working directory the suite is launched from.
@@ -36,9 +35,7 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from mcp_result import reserve_free_port  # noqa: E402
-from helpers.runner import R  # noqa: E402
-
+from helpers.runner import R
 
 # ---------------------------------------------------------------------------
 # Unit Tests (P8-U1 through P8-U4)
@@ -100,11 +97,11 @@ def test_http_json_poller_unit(runner: R) -> None:
     name = "P8-U2-http-poller"
     from sources.http_poller import (
         HttpJsonPoller,
+        _extract_item_id,
         _navigate_json,
         _resolve_env_headers,
-        _extract_item_id,
-        sanitize_url,
         _safe_error,
+        sanitize_url,
     )
 
     p = HttpJsonPoller({"url": ""})
@@ -218,9 +215,10 @@ def test_source_manager_registration(runner: R) -> None:
 async def test_create_publisher(runner: R) -> None:
     """P8-U4: create_publisher returns a Publisher with publish + durable dedup helpers."""
     name = "P8-U4-create-publisher"
-    from sources import create_publisher
-    from core.persistence import store as store_mod
     from mcp.server.subscriptions import InMemorySubscriptionBus
+
+    from core.persistence import store as store_mod
+    from sources import create_publisher
 
     test_db = os.path.join(_PROJECT_DIR, "_p8_test_u4.db")
     try:
@@ -278,8 +276,6 @@ def test_registry_known_type(runner: R) -> None:
     """R1: known source type creates the correct class."""
     name = "R1-registry-known-type"
     from sources import build_source_manager
-    from sources.http_poller import HttpJsonPoller
-    from sources.test_source import TestSource
 
     m = build_source_manager({"a": {"type": "http_poller", "url": "https://x.com"},
                                "b": {"type": "test_source"}})
@@ -308,7 +304,7 @@ def test_registry_two_instances(runner: R) -> None:
 def test_registry_unknown_type(runner: R) -> None:
     """R3: unknown source type fails clearly with SourceConfigError."""
     name = "R3-registry-unknown-type"
-    from sources import build_source_manager, SourceConfigError
+    from sources import SourceConfigError, build_source_manager
 
     try:
         build_source_manager({"bad": {"type": "does_not_exist"}})

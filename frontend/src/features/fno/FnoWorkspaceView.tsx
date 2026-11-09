@@ -60,13 +60,18 @@ export function FnoWorkspaceView() {
 
   // Equity F&O: establish the bounded active-view subscription (reuses the
   // existing owner). Best-effort; never blocks rendering.
-  // activeView is a stable useMutation result, so including it never
-  // causes extra runs.
+  //
+  // Depend on the STABLE `mutate` function, NOT on the whole mutation
+  // result: `useMutation` returns a NEW result object on every render
+  // (its identity changes with the mutation state), so depending on it
+  // re-runs this effect on every render and turns the active-view POST
+  // into a request storm.
+  const { mutate: postActiveView } = activeView;
   useEffect(() => {
     if (kind === "equity" && sym) {
-      activeView.mutate({ symbol: sym, window: windowSize });
+      postActiveView({ symbol: sym, window: windowSize });
     }
-  }, [kind, sym, windowSize, activeView]);
+  }, [kind, sym, windowSize, postActiveView]);
 
   const setParam = (key: string, value: string) => {
     setParams(

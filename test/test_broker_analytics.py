@@ -13,18 +13,23 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from datetime import datetime, timezone  # noqa: E402
+from datetime import timezone
 
-from helpers.runner import R  # noqa: E402
-from market.models import (  # noqa: E402
-    OIStrikeRow, OISnapshot, OIChangeStrikeRow, OIChangeSnapshot,
-    MaxPainData, PCRData, NewsArticle, NewsSnapshot,
+from market.models import (
+    MaxPainData,
+    NewsArticle,
+    NewsSnapshot,
+    OIChangeSnapshot,
+    OISnapshot,
+    PCRData,
 )
-from market.normalize.upstox_analytics import (  # noqa: E402
-    oi_from_rest, oi_change_from_rest, max_pain_from_rest, pcr_from_rest,
+from market.normalize.upstox_analytics import (
+    max_pain_from_rest,
+    oi_change_from_rest,
+    oi_from_rest,
+    pcr_from_rest,
 )
-from market.normalize.upstox_news import news_from_rest  # noqa: E402
-
+from market.normalize.upstox_news import news_from_rest
 
 UTC = timezone.utc
 

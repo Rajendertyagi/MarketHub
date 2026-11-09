@@ -2,22 +2,19 @@
 Tools package init — re-exports registration functions for convenience.
 """
 
-from mcp_server.tools.system import register_system_tools
-from mcp_server.tools.events import register_event_tools
-from mcp_server.tools.consumers import register_consumer_tools
-from mcp_server.tools.replay import register_replay_tools
 from mcp_server.tools.alerts import register_alert_tools
-from mcp_server.tools.market import register_market_tools
-
-from mcp_server.tools.market_intel_tools import register_market_intel_tools
-
-from mcp_server.tools.market_alerts import register_market_alert_tools
-
-from mcp_server.tools.options_analytics_tools import register_options_analytics_tools
-
 from mcp_server.tools.condition_alerts import register_condition_alert_tools
-
+from mcp_server.tools.consumers import register_consumer_tools
+from mcp_server.tools.events import register_event_tools
+from mcp_server.tools.market import register_market_tools
+from mcp_server.tools.market_alerts import register_market_alert_tools
+from mcp_server.tools.market_intel_tools import register_market_intel_tools
+from mcp_server.tools.news_tools import register_news_tools
+from mcp_server.tools.options_analytics_tools import register_options_analytics_tools
+from mcp_server.tools.replay import register_replay_tools
+from mcp_server.tools.system import register_system_tools
 from mcp_server.tools.twitter_tools import register_twitter_tools
+from mcp_server.tools.yahoo_tools import register_yahoo_tools
 
 __all__ = [
     "register_system_tools",
@@ -28,4 +25,9 @@ __all__ = [
     "register_options_analytics_tools",
     "register_condition_alert_tools",
     "register_twitter_tools",
+    "register_yahoo_tools",
+    "register_market_tools",
+    "register_market_alert_tools",
+    "register_market_intel_tools",
+    "register_news_tools",
 ]

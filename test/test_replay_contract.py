@@ -37,8 +37,10 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from core import events  # noqa: E402
-from core.errors import (  # noqa: E402
+from helpers.runner import R
+
+from core import events
+from core.errors import (
     AlertNotFoundError,
     ConsumerNotFoundError,
     EventNotFoundError,
@@ -46,9 +48,7 @@ from core.errors import (  # noqa: E402
     StorageError,
     ValidationError,
 )
-from core.persistence.store import EventStore  # noqa: E402
-from helpers.runner import R  # noqa: E402
-
+from core.persistence.store import EventStore
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
 
@@ -153,7 +153,7 @@ def _raises(runner: R, name: str, exc_type, fn, *args, **kwargs) -> bool:
     except exc_type:
         runner.ok(name)
         return True
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         runner.fail(name, f"expected {exc_type.__name__}, got "
                           f"{type(exc).__name__}: {exc}")
         return False
@@ -167,7 +167,7 @@ async def _raises_async(runner: R, name: str, exc_type, fn, *args, **kwargs) -> 
     except exc_type:
         runner.ok(name)
         return True
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         runner.fail(name, f"expected {exc_type.__name__}, got "
                           f"{type(exc).__name__}: {exc}")
         return False
@@ -197,7 +197,7 @@ async def test_replay_does_not_ack(runner: R) -> None:
     _tmp, store, fake, _services = _mk_consumer_env()
     cid = "rc-alo"
     store.register_consumer(cid)
-    evts = [await _publish(store, _StubBus(), "test.rc") for _ in range(3)]
+    [await _publish(store, _StubBus(), "test.rc") for _ in range(3)]
 
     first = await fake.tools["consumer_event_pending_list"](consumer_id=cid)
     runner.assert_eq("RC-ALO-returned", first["returned"], 3)

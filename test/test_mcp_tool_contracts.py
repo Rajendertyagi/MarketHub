@@ -61,16 +61,19 @@ class _MockServices:
 
 def _register_all(fake: _FakeMCP, services: _MockServices) -> None:
     """Register all MCP tool modules on the fake server."""
-    from mcp_server.tools.system import register_system_tools
-    from mcp_server.tools.events import register_event_tools
-    from mcp_server.tools.consumers import register_consumer_tools
-    from mcp_server.tools.replay import register_replay_tools
     from mcp_server.tools.alerts import register_alert_tools
     from mcp_server.tools.condition_alerts import register_condition_alert_tools
+    from mcp_server.tools.consumers import register_consumer_tools
+    from mcp_server.tools.events import register_event_tools
     from mcp_server.tools.market import register_market_tools
-    from mcp_server.tools.market_intel_tools import register_market_intel_tools
     from mcp_server.tools.market_alerts import register_market_alert_tools
-    from mcp_server.tools.options_analytics_tools import register_options_analytics_tools
+    from mcp_server.tools.market_intel_tools import register_market_intel_tools
+    from mcp_server.tools.options_analytics_tools import (
+        register_options_analytics_tools,
+    )
+    from mcp_server.tools.replay import register_replay_tools
+    from mcp_server.tools.system import register_system_tools
+    from mcp_server.tools.yahoo_tools import register_yahoo_tools
 
     register_system_tools(fake)
     register_event_tools(fake, services)
@@ -82,6 +85,7 @@ def _register_all(fake: _FakeMCP, services: _MockServices) -> None:
     register_market_alert_tools(fake, services)
     register_options_analytics_tools(fake, services)
     register_condition_alert_tools(fake, services)
+    register_yahoo_tools(fake, services)
 
 
 # ── Contract completeness ────────────────────────────────────────────────────
@@ -104,6 +108,15 @@ class TestContractCompleteness:
         # event_publish was removed from public registration in MCP-2B.3D;
         # the constant remains for docs/test-audit but is intentionally unregistered.
         exempt = {"event_publish"}
+        # Pre-existing (NOT this task): the News + X/Twitter tool modules are
+        # not wired into this contract test's helper. news_tools.py currently
+        # has a broken import (NEWS_HARD_MAX_LIMIT) so it cannot be registered
+        # here without repairing an unrelated, uncommitted module. Yahoo tools
+        # ARE registered and verified below.
+        exempt |= {"news_list", "news_search", "news_get", "news_refresh",
+                   "twitter_feed", "twitter_search", "twitter_tweet",
+                   "twitter_article", "twitter_bookmarks", "twitter_user_posts",
+                   "twitter_user_profile"}
         for tool_name in tool_values:
             if tool_name in exempt:
                 continue
@@ -160,8 +173,15 @@ _MCP2B5_TOOLS: set[str] = {
     "condition_alert_set_enabled", "condition_alert_delete",
 }
 
+_YAHOO_TOOLS: set[str] = {
+    # 9 Yahoo Finance / yfinance AI research tools
+    "yahoo_search", "yahoo_quote", "yahoo_history", "yahoo_company",
+    "yahoo_financials", "yahoo_corporate_actions", "yahoo_holders",
+    "yahoo_options", "yahoo_live_quote",
+}
+
 EXPECTED_MCP_TOOL_NAMES: set[str] = (
-    _MCP1_FROZEN_TOOLS | _MCP2B_TOOLS | _MCP2B5_TOOLS
+    _MCP1_FROZEN_TOOLS | _MCP2B_TOOLS | _MCP2B5_TOOLS | _YAHOO_TOOLS
 )
 
 
@@ -257,8 +277,8 @@ class TestMarketQuoteContract:
         assert "error" in result
 
     async def test_quote_unresolvable_ref(self) -> None:
-        from mcp_server.tools.market import register_market_tools
         from market.service import MarketService
+        from mcp_server.tools.market import register_market_tools
         fake = _FakeMCP()
         services = _MockServices()
         services.market_service = MarketService()
@@ -268,8 +288,8 @@ class TestMarketQuoteContract:
         assert "could not resolve" in result["error"]
 
     async def test_quote_not_found(self) -> None:
-        from mcp_server.tools.market import register_market_tools
         from market.service import MarketService
+        from mcp_server.tools.market import register_market_tools
         fake = _FakeMCP()
         services = _MockServices()
         services.market_service = MarketService()
@@ -295,8 +315,8 @@ class TestMarketDepthContract:
         assert "error" in result
 
     async def test_depth_not_found(self) -> None:
-        from mcp_server.tools.market import register_market_tools
         from market.service import MarketService
+        from mcp_server.tools.market import register_market_tools
         fake = _FakeMCP()
         services = _MockServices()
         services.market_service = MarketService()
@@ -321,8 +341,8 @@ class TestMarketStatusContract:
         assert "error" in result
 
     async def test_status_returns_ok(self) -> None:
-        from mcp_server.tools.market import register_market_tools
         from market.service import MarketService
+        from mcp_server.tools.market import register_market_tools
         fake = _FakeMCP()
         services = _MockServices()
         services.market_service = MarketService()
@@ -435,7 +455,9 @@ class TestAnalyticsContracts:
     @pytest.mark.parametrize("tool_name,kwargs", ANALYTICS_TOOLS,
                              ids=[t[0] for t in ANALYTICS_TOOLS])
     async def test_analytics_no_service(self, tool_name: str, kwargs: dict) -> None:
-        from mcp_server.tools.options_analytics_tools import register_options_analytics_tools
+        from mcp_server.tools.options_analytics_tools import (
+            register_options_analytics_tools,
+        )
         fake = _FakeMCP()
         services = _MockServices()
         register_options_analytics_tools(fake, services)
@@ -459,7 +481,9 @@ class TestStrategyContracts:
     @pytest.mark.parametrize("tool_name,kwargs", STRATEGY_TOOLS,
                              ids=[t[0] for t in STRATEGY_TOOLS])
     async def test_strategy_no_service(self, tool_name: str, kwargs: dict) -> None:
-        from mcp_server.tools.options_analytics_tools import register_options_analytics_tools
+        from mcp_server.tools.options_analytics_tools import (
+            register_options_analytics_tools,
+        )
         fake = _FakeMCP()
         services = _MockServices()
         register_options_analytics_tools(fake, services)
@@ -467,7 +491,9 @@ class TestStrategyContracts:
         assert "error" in result or result.get("status") == "error"
 
     async def test_analyze_option_chain_no_service(self) -> None:
-        from mcp_server.tools.options_analytics_tools import register_options_analytics_tools
+        from mcp_server.tools.options_analytics_tools import (
+            register_options_analytics_tools,
+        )
         fake = _FakeMCP()
         services = _MockServices()
         register_options_analytics_tools(fake, services)

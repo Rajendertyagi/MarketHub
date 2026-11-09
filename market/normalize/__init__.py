@@ -19,9 +19,9 @@ Pure stdlib + market.models only.
 """
 
 from market.normalize.common import (
+    QUOTE_FIELD_NAMES,
     NormalizationError,
     NumericError,
-    QUOTE_FIELD_NAMES,
     TimestampError,
     apply_derived_change,
     check_quote_fields,
@@ -32,18 +32,38 @@ from market.normalize.common import (
 )
 from market.normalize.fyers import (
     depth_from_rest as fyers_depth_from_rest,
+)
+from market.normalize.fyers import (
     instrument_from_master as fyers_instrument_from_master,
+)
+from market.normalize.fyers import (
     quote_fields_from_symbol_update as fyers_quote_fields_from_symbol_update,
+)
+from market.normalize.fyers import (
     quote_from_quotes_rest as fyers_quote_from_quotes_rest,
+)
+from market.normalize.fyers import (
     split_fyers_symbol,
 )
 from market.normalize.upstox import (
     depth_from_rest as upstox_depth_from_rest,
+)
+from market.normalize.upstox import (
     depth_from_ws as upstox_depth_from_ws,
+)
+from market.normalize.upstox import (
     exchange_from_segment,
+)
+from market.normalize.upstox import (
     instrument_from_master as upstox_instrument_from_master,
+)
+from market.normalize.upstox import (
     quote_fields_from_ws_full as upstox_quote_fields_from_ws_full,
+)
+from market.normalize.upstox import (
     quote_fields_from_ws_ltpc as upstox_quote_fields_from_ws_ltpc,
+)
+from market.normalize.upstox import (
     quote_from_rest as upstox_quote_from_rest,
 )
 

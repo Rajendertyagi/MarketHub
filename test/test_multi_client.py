@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import subprocess
 import sys
 import time
 from typing import Any
@@ -27,17 +26,17 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers.lifecycle import (  # noqa: E402
-    start_server,
-    restore_environment,
+from helpers.lifecycle import (
     get_server_url,
+    restore_environment,
+    start_server,
 )
-from helpers.mcp_client import publish_event  # noqa: E402
-from helpers.runner import R  # noqa: E402
-from mcp_result import safe_teardown  # noqa: E402
+from helpers.mcp_client import publish_event
+from helpers.runner import R
+from mcp_result import safe_teardown
 
-try:  # noqa: E402
-    import pytest  # noqa: E402
+try:
+    import pytest
 
     # These tests were written for standalone ``main()`` execution. Under pytest
     # the subprocess server is started by the module-scoped ``mcp_server`` fixture.
@@ -56,8 +55,10 @@ async def test_concurrent_clients_gather(runner: R) -> None:
     name = "P7T8-concurrent"
     url = get_server_url()
 
-    from mcp import ClientSession  # noqa: E402
-    from mcp.client.streamable_http import streamable_http_client as streamablehttp_client  # noqa: E402
+    from mcp import ClientSession
+    from mcp.client.streamable_http import (
+        streamable_http_client as streamablehttp_client,
+    )
 
     async def _ping() -> Any:
         async with streamablehttp_client(url) as (r, w):
@@ -80,15 +81,17 @@ async def test_concurrent_generate_and_ping(runner: R) -> None:
     name = "P7T8-ext-different-tools"
     url = get_server_url()
 
-    from mcp import ClientSession  # noqa: E402
-    from mcp.client.streamable_http import streamable_http_client as streamablehttp_client  # noqa: E402
+    from mcp import ClientSession
+    from mcp.client.streamable_http import (
+        streamable_http_client as streamablehttp_client,
+    )
 
     async def _ping_client() -> dict:
         async with streamablehttp_client(url) as (r, w):
             async with ClientSession(r, w) as session:
                 await session.initialize()
                 result = await session.call_tool("system_ping", {})
-                from mcp_result import to_payload  # noqa: E402
+                from mcp_result import to_payload
                 return to_payload(result)
 
     async def _event_client() -> dict:
@@ -106,9 +109,11 @@ async def test_three_concurrent_sessions(runner: R) -> None:
     name = "P7T8-ext3-three-sessions"
     url = get_server_url()
 
-    from mcp import ClientSession  # noqa: E402
-    from mcp.client.streamable_http import streamable_http_client as streamablehttp_client  # noqa: E402
-    from mcp_result import to_payload  # noqa: E402
+    from mcp import ClientSession
+    from mcp.client.streamable_http import (
+        streamable_http_client as streamablehttp_client,
+    )
+    from mcp_result import to_payload
 
     async def _work(idx: int) -> dict:
         async with streamablehttp_client(url) as (r, w):

@@ -67,7 +67,7 @@ def _instrument_label(condition_json: str) -> str:
 def build_ai_alert_routes(store: Any, mcp_server: Any = None) -> list[Route]:
     """Build read-only AI alert observability routes."""
 
-    async def _list_condition_alerts(request: Request) -> Response:  # noqa: ARG001
+    async def _list_condition_alerts(request: Request) -> Response:
         """GET /api/ai-alerts — List all condition alerts with runtime state."""
         conn = store._open(store._db_path)
         try:
@@ -181,7 +181,7 @@ def build_ai_alert_routes(store: Any, mcp_server: Any = None) -> list[Route]:
         finally:
             conn.close()
 
-    async def _consumer_status(request: Request) -> Response:  # noqa: ARG001
+    async def _consumer_status(request: Request) -> Response:
         """GET /api/ai-alerts/consumers — Per-consumer delivery status."""
         conn = store._open(store._db_path)
         try:
@@ -248,7 +248,7 @@ def build_ai_alert_routes(store: Any, mcp_server: Any = None) -> list[Route]:
         finally:
             conn.close()
 
-    async def _list_mcp_tools(request: Request) -> Response:  # noqa: ARG001
+    async def _list_mcp_tools(request: Request) -> Response:
         """GET /api/mcp/tools — List all registered MCP tools from canonical registry."""
         from mcp_server.registry import TOOLS, get_input_schema
         try:

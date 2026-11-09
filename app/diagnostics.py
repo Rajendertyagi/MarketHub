@@ -10,9 +10,10 @@ import asyncio
 import json
 import time
 import types
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, date, timedelta, timezone
-from typing import Any, Callable
+from datetime import date, datetime, timedelta, timezone
+from typing import Any
 
 import httpx
 
@@ -29,7 +30,7 @@ _SAFE_FIELDS = frozenset({
     "sentiment", "score", "matched_keywords",
     "upstox", "fyers", "nse", "bse",
     "run_at", "summary", "failures", "warnings", "results",
-    "mode", "duration_ms", "strike_count", "candle_count",
+    "mode", "strike_count", "candle_count",
 })
 
 # Fields whose VALUES must always be redacted (secret leakage prevention)
@@ -116,7 +117,7 @@ class DiagnosticsRunner:
             await self._http_client.aclose()
             self._http_client = None
 
-    def with_base_url(self, base_url: str) -> "DiagnosticsRunner":
+    def with_base_url(self, base_url: str) -> DiagnosticsRunner:
         """Return a new runner with a different base URL (for testing)."""
         clone = DiagnosticsRunner(
             base_url=base_url,
@@ -752,7 +753,7 @@ class DiagnosticsRunner:
                 r.get("applied") for r in applied.values())
             msg = (f"Indices {idx}/{total} enabled · resolved {resolved}"
                    + (f" · pending {len(pending)}" if pending else "")
-                   + (f" · applied" if all_applied else " · apply pending"))
+                   + (" · applied" if all_applied else " · apply pending"))
             status = "PASS" if all_applied and not pending else "PARTIAL"
             return DiagnosticResult(
                 id="subscriptions", name="Market-Data Subscriptions",

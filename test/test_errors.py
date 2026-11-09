@@ -27,27 +27,21 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers.lifecycle import (  # noqa: E402
+from helpers.lifecycle import (
+    get_server_url,
+    restore_environment,
     start_server,
     stop_server,
-    restore_environment,
-    get_server_url,
-    wait_mcp_ready,
 )
-from helpers.mcp_client import (  # noqa: E402
+from helpers.mcp_client import (
     call,
-    read_res,
-    list_tools_names,
-    wait_source_ready,
-    wait_for_event_count,
-    inspect_tool_output,
 )
-from helpers.runner import R  # noqa: E402
-from mcp_result import safe_teardown  # noqa: E402
-
-from mcp import ClientSession  # noqa: E402
-from mcp.client.streamable_http import streamable_http_client as streamablehttp_client  # noqa: E402
-
+from helpers.runner import R
+from mcp import ClientSession
+from mcp.client.streamable_http import (
+    streamable_http_client as streamablehttp_client,
+)
+from mcp_result import safe_teardown
 
 # ---------------------------------------------------------------------------
 # Test helpers

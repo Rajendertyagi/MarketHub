@@ -14,8 +14,6 @@ with Sector Heatmap, by construction. These tests enforce that contract.
 import asyncio
 import json
 
-import pytest
-
 from api.routes import build_market_routes
 from market.breadth import compute_breadth, effective_change
 from market.market_map import compute_market_map

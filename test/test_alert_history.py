@@ -22,6 +22,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+from datetime import datetime, timezone
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_DIR = os.path.dirname(_SCRIPT_DIR)
@@ -29,7 +30,7 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 
 def _tmp_db():
@@ -158,8 +159,8 @@ async def test_ah7_backup_includes(runner: R) -> None:
 
 async def test_ah8_engine_integration(runner: R) -> None:
     """AlertEngine.evaluate must record a history row on trigger."""
-    from core.persistence.store import EventStore
     from app.alerts import AlertEngine
+    from core.persistence.store import EventStore
 
     p = _tmp_db()
     s = EventStore(p)
@@ -172,6 +173,9 @@ async def test_ah8_engine_integration(runner: R) -> None:
         instrument_token = "INE009"
         ltp = 15.0
         provider = "upstox"
+        # The canonical quote model REQUIRES a receipt timestamp (the
+        # freshness guard is exercised, not skipped).
+        received_ts = datetime.now(timezone.utc)
 
     engine = AlertEngine(s)
     fired = await engine.evaluate(_Quote())
@@ -188,10 +192,11 @@ async def test_ah8_engine_integration(runner: R) -> None:
 
 async def test_ah9_api_validation(runner: R) -> None:
     """Bounded/validated query params; 400 on invalid limit/offset."""
-    from core.persistence.store import EventStore
     from starlette.applications import Starlette
     from starlette.testclient import TestClient
+
     from api.product_routes import build_alert_history_routes
+    from core.persistence.store import EventStore
 
     p = _tmp_db()
     s = EventStore(p)

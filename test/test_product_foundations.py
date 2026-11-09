@@ -34,7 +34,6 @@ import os
 import sys
 import tempfile
 from datetime import datetime, timezone
-from pathlib import Path
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_DIR = os.path.dirname(_SCRIPT_DIR)
@@ -43,10 +42,15 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 UTC = timezone.utc
-NOW = datetime(2026, 8, 24, 10, 0, tzinfo=UTC)
+NOW = datetime.now(UTC)
+
+
+def _now():
+    """A FRESH timestamp (the alert engine refuses a stale quote)."""
+    return datetime.now(UTC)
 
 
 class _Env:
@@ -204,21 +208,40 @@ def test_pf8_pf9_sync_service(runner: R) -> None:
             return json.dumps(_UPSTOX_ROWS).encode()
         raise InstrumentSyncError("offline segment")
 
-    result = cat.sync_upstox(fetch=fake_fetch)
+    # The sync is scoped to the segments the fixture master covers; a
+    # master that lost an enabled segment is rejected (see PF9b).
+    result = cat.sync_upstox(fetch=fake_fetch,
+                             segments={"NSE_EQ", "NSE_FO"})
     runner.assert_eq("PF8-sync-inserted", result["records"], 3)
     runner.assert_eq("PF8-no-fyers-url-hit",
                      any("fyers" in u for u in calls), False)
 
-    # PF9: failing sync leaves existing catalog intact.
+    # PF9: a failing sync leaves the existing catalog intact and reports
+    # the failure (it no longer raises, so a caller always gets a
+    # structured result).
     before = len(cat.search(provider="upstox"))
-    try:
-        cat.sync_upstox(fetch=lambda url: (_ for _ in ()).throw(
-            InstrumentSyncError("network down")))
-        failed = False
-    except InstrumentSyncError:
-        failed = True
-    runner.assert_true("PF9-failure-raised", failed)
+    failed = cat.sync_upstox(
+        fetch=lambda url: (_ for _ in ()).throw(
+            InstrumentSyncError("network down")),
+        segments={"NSE_EQ", "NSE_FO"})
+    runner.assert_true("PF9-failure-reported", failed["aborted"] is True)
+    runner.assert_true("PF9-failure-reason",
+                       "download failed" in failed["reason"])
     runner.assert_eq("PF9-catalog-intact",
+                     len(cat.search(provider="upstox")), before)
+
+    # PF9b: a master that lost an enabled segment is rejected before any
+    # write - the stored catalogue survives.
+    partial = cat.sync_upstox(
+        fetch=lambda url: json.dumps(
+            [r for r in _UPSTOX_ROWS if r.get("segment") == "NSE_EQ"]
+        ).encode(),
+        segments={"NSE_EQ", "NSE_FO"})
+    runner.assert_true("PF9b-partial-master-rejected",
+                       partial["aborted"] is True)
+    runner.assert_true("PF9b-partial-master-reason",
+                       "missing enabled segment" in partial["reason"])
+    runner.assert_eq("PF9b-catalog-intact",
                      len(cat.search(provider="upstox")), before)
 
 
@@ -263,7 +286,7 @@ def test_pf10_to_pf12_watchlists(runner: R) -> None:
 def _mk_quote(**overrides):
     from market.models import Quote
     base = dict(instrument_token="T1", exchange="NSE",
-                tradingsymbol="AAA", received_ts=NOW, ltp=100.0,
+                tradingsymbol="AAA", received_ts=_now(), ltp=100.0,
                 change_percent=1.0, volume=1000)
     base.update(overrides)
     return Quote(**base)
@@ -339,7 +362,9 @@ def _find(routes, path, method="GET"):
 
 async def test_pf18_to_pf20_rest_endpoints(runner: R) -> None:
     from api.product_routes import (
-        build_alert_routes, build_instrument_routes, build_watchlist_routes,
+        build_alert_routes,
+        build_instrument_routes,
+        build_watchlist_routes,
     )
 
     env = _Env()

@@ -27,7 +27,7 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 
 class _StubWS:
@@ -43,9 +43,9 @@ class _StubWS:
 
 
 def _mk_feed(keys=("K1", "K2")):
-    from brokers.upstox.feed import UpstoxFeed
+
     from brokers.upstox.auth import UpstoxCredentials
-    from datetime import datetime, timezone
+    from brokers.upstox.feed import UpstoxFeed
 
     class _Rest:
         async def authorize_market_feed(self, credentials):

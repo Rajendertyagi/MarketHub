@@ -10,7 +10,6 @@ from market.index_constituents import INDEX_MEMBERS, members_of
 from market.market_universe import resolve_universe
 from test.helpers.market_breadth_fakes import FakeCatalog
 
-
 # Authoritative NIFTY 50 set (NSE factsheet, as of 8 Dec 2025).
 EXPECTED_NIFTY50 = {
     "ADANIENT", "ADANIPORTS", "APOLLOHOSP", "ASIANPAINT", "AXISBANK",

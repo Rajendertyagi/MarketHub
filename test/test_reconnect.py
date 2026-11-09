@@ -27,23 +27,18 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers.lifecycle import (  # noqa: E402
-    start_server,
-    stop_server,
+from helpers.lifecycle import (
     restart_server,
     restore_environment,
-    get_server_url,
-    wait_mcp_ready,
+    start_server,
+    stop_server,
 )
-from helpers.mcp_client import (  # noqa: E402
+from helpers.mcp_client import (
     call,
-    read_res,
-    list_tools_names,
     publish_event,
 )
-from helpers.runner import R  # noqa: E402
-from mcp_result import reserve_free_port, safe_teardown  # noqa: E402
-
+from helpers.runner import R
+from mcp_result import safe_teardown
 
 # ---------------------------------------------------------------------------
 # Test helpers
@@ -85,7 +80,7 @@ async def T10(runner: R) -> None:
             "test.t10", source="test", persistent=True,
         )
         eid = resp["event"]["id"]
-        seq = resp["event"]["sequence"]
+        resp["event"]["sequence"]
 
         # Restart using the helper (stops the running server first, then starts
         # a fresh one — preserving the data dir, and leaving no orphan process).
@@ -144,8 +139,8 @@ async def P8T10(runner: R) -> None:
         proc = await start_server()
 
         # Write source_state directly into the DB before restart.
-        data_dir = os.path.join(_PROJECT_DIR, "data_test")
-        db_path = os.path.join(data_dir, "events.db")
+        from app.runtime_paths import runtime_db_path
+        db_path = str(runtime_db_path())
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         from core.persistence import store as store_mod
         es = store_mod.EventStore(db_path)

@@ -603,7 +603,7 @@ def _article_to_dict(article: Any) -> dict[str, Any]:
     plus ``item_id`` (stable provider-derived identity shared with the
     sentiment payload and the durable store).
     """
-    from market.models import RSSEntry, RedditPost
+    from market.models import RedditPost, RSSEntry
     if isinstance(article, RSSEntry):
         return {
             "type": "rss",

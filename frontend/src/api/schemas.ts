@@ -49,6 +49,39 @@ export const marketSearchResponseSchema = z.object({
   results: z.array(marketInstrumentSchema),
 });
 
+export const browseResponseSchema = z.object({
+  count: z.number(),
+  results: z.array(marketInstrumentSchema),
+  next_cursor: z.string().nullable(),
+  total: z.number().nullable(),
+});
+
+// Curated Vela native-picker pool (GET /api/instruments/pool). Carries Vela
+// SymbolDescriptor fields plus the exact canonical identity so a native-picker
+// selection resolves to the correct provider/token (never a same-ticker collision).
+export const poolSymbolSchema = z
+  .object({
+    ticker: z.string(),
+    description: z.string().optional(),
+    type: z.string().optional(),
+    group: z.string().optional(),
+    prefix: z.string().optional(),
+    provider: z.string().optional(),
+    provider_token: z.string().optional(),
+    instrument_key: z.string().optional(),
+    native_key: z.string().nullable().optional(),
+    canonical_id: z.string().nullable().optional(),
+    exchange: z.string().optional(),
+    instrument_type: z.string().optional(),
+    symbol: z.string().optional(),
+  })
+  .passthrough();
+
+export const poolResponseSchema = z.object({
+  count: z.number(),
+  symbols: z.array(poolSymbolSchema),
+});
+
 export const candleSchema = z.object({
   timestamp: z.string(),
   open: z.number(),
@@ -441,6 +474,9 @@ export const subscriptionIndexSchema = z.object({
   label: z.string(),
   key: z.string(),
   fyers_symbol: z.string(),
+  // Additive canonical identity (S8a). Optional so a payload without it
+  // still parses (backwards compatible); the UI falls back to `key`.
+  canonical_id: z.string().nullable().optional(),
   enabled: z.boolean(),
   canonical: z.boolean(),
 });
@@ -448,6 +484,7 @@ export const subscriptionIndexSchema = z.object({
 export const subscriptionStockSchema = z.object({
   key: z.string(),
   label: z.string(),
+  canonical_id: z.string().nullable().optional(),
   enabled: z.boolean(),
 });
 
@@ -498,5 +535,148 @@ export const segmentsResponseSchema = z.object({
 export const syncStateSchema = z
   .object({
     providers: z.array(z.record(z.string(), z.unknown())),
+  })
+  .passthrough();
+
+// ── F&O coverage / Futures Board (/api/futures/heatmap, /api/fno/*) ──────────
+
+// Runtime validation for the F&O coverage + futures-board contracts. Kept
+// permissive where the backend owns the shape (`.passthrough()`, nullable /
+// optional numerics) so a backend field addition never breaks the UI, while a
+// genuinely wrong type still surfaces as a typed parse error.
+
+export const fnoProviderInfoSchema = z
+  .object({
+    provider: z.string(),
+    label: z.string().nullable().optional(),
+    enabled: z.boolean().nullable().optional(),
+    status: z.string().nullable().optional(),
+    available: z.boolean().nullable().optional(),
+    capabilities: z.array(z.string()).nullable().optional(),
+    budget: z.number().nullable().optional(),
+  })
+  .passthrough();
+
+export const fnoCapacitySchema = z
+  .object({
+    budget: z.number().nullable().optional(),
+    used: z.number().nullable().optional(),
+    available: z.number().nullable().optional(),
+  })
+  .passthrough();
+
+export const fnoRoutedContractSchema = z
+  .object({
+    underlying: z.string(),
+    kind: z.string(),
+    exchange: z.string(),
+    expiry: z.string(),
+    instrument_type: z.string(),
+    provider: z.string(),
+    provider_token: z.string().nullable(),
+    tradingsymbol: z.string().nullable().optional(),
+    lot_size: z.number().nullable().optional(),
+    state: z.string(),
+    reason: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+export const fnoCoverageSchema = z
+  .object({
+    status: z.string().optional(),
+    enabled: z.boolean(),
+    expiry_requested: z.string(),
+    expiry_resolved: z.string().nullable(),
+    expiries: z.array(z.string()),
+    desired: z.number(),
+    routed: z.number(),
+    by_provider: z.record(z.string(), z.number()),
+    states: z.record(z.string(), z.number()),
+    capacity: z.record(z.string(), fnoCapacitySchema),
+    providers: z.array(fnoProviderInfoSchema),
+    uncovered: z.array(fnoRoutedContractSchema),
+    errors: z.array(z.string()),
+    contracts: z.array(fnoRoutedContractSchema).optional(),
+  })
+  .passthrough();
+
+// The heatmap's coverage block mirrors the plan but reports `uncovered` as a
+// COUNT, not a contract list.
+export const futuresBoardCoverageSchema = z
+  .object({
+    desired: z.number(),
+    routed: z.number(),
+    by_provider: z.record(z.string(), z.number()),
+    states: z.record(z.string(), z.number()),
+    capacity: z.record(z.string(), fnoCapacitySchema),
+    uncovered: z.number(),
+    errors: z.array(z.string()),
+  })
+  .passthrough();
+
+export const futuresHeatTileSchema = z
+  .object({
+    symbol: z.string(),
+    kind: z.string(),
+    exchange: z.string(),
+    underlying: z.string(),
+    expiry: z.string(),
+    provider: z.string().nullable(),
+    instrument_key: z.string(),
+    futures_ltp: z.number().nullable(),
+    price_pct: z.number().nullable(),
+    oi: z.number().nullable(),
+    previous_oi: z.number().nullable(),
+    oi_change: z.number().nullable(),
+    oi_pct: z.number().nullable(),
+    buildup: z.string().nullable(),
+    spot_ltp: z.number().nullable(),
+    basis: z.number().nullable(),
+    coverage: z.string().nullable(),
+    oi_basis: z.string().nullable(),
+    received_ts: z.string().nullable(),
+    status: z.string().optional(),
+  })
+  .passthrough();
+
+export const futuresHeatmapSchema = z
+  .object({
+    expiry_requested: z.string(),
+    expiry_resolved: z.string().nullable(),
+    expiries: z.array(z.string()),
+    eligible: z.number(),
+    quoted: z.number(),
+    unavailable: z.number(),
+    class_counts: z.record(z.string(), z.number()),
+    as_of: z.string().nullable(),
+    data_status: z.string(),
+    items: z.array(futuresHeatTileSchema),
+    buildup: z.string(),
+    providers: z.array(fnoProviderInfoSchema),
+    coverage: futuresBoardCoverageSchema,
+  })
+  .passthrough();
+
+export const fnoCoverageUniverseSchema = z
+  .object({
+    status: z.string(),
+    enabled: z.boolean(),
+    indices: z.array(z.string()),
+    stocks: z.array(z.string()),
+    expiries: z.array(z.string()),
+    expiry_resolved: z.string().nullable(),
+    errors: z.array(z.string()),
+  })
+  .passthrough();
+
+export const fnoApplySchema = z
+  .object({
+    status: z.string(),
+    expiry_resolved: z.string().nullable().optional(),
+    desired: z.number().optional(),
+    routed: z.number().optional(),
+    by_provider: z.record(z.string(), z.number()).optional(),
+    apply: z.unknown().optional(),
+    released: z.boolean().optional(),
   })
   .passthrough();

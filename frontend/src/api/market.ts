@@ -7,11 +7,17 @@ import type {
   ApplyResult,
   BarsResponse,
   BreadthSnapshot,
+  BrowseResponse,
   Candle,
   DerivativeRule,
+  FnoApplyResult,
+  FnoCatalogResponse,
+  FnoCoverageSnapshot,
+  FnoCoverageUniverseResponse,
   FnoUniverseResponse,
   FnoViewResponse,
   FnoWorkspace,
+  FuturesHeatSnapshot,
   FuturesResponse,
   HistoryResponse,
   IndexOptionUnderlying,
@@ -20,6 +26,7 @@ import type {
   MarketMapSnapshot,
   OptionChainView,
   OptionExpiriesResponse,
+  PoolResponse,
   ScannerDef,
   ScannerRunParams,
   ScanResult,
@@ -34,9 +41,14 @@ import {
   applyResultSchema,
   barsResponseSchema,
   breadthSchema,
+  browseResponseSchema,
+  fnoApplySchema,
+  fnoCoverageSchema,
+  fnoCoverageUniverseSchema,
   fnoUniverseSchema,
   fnoViewSchema,
   fnoWorkspaceSchema,
+  futuresHeatmapSchema,
   futuresResponseSchema,
   historyResponseSchema,
   indexOptionUnderlyingsSchema,
@@ -44,6 +56,7 @@ import {
   marketSearchResponseSchema,
   optionChainViewSchema,
   optionExpiriesSchema,
+  poolResponseSchema,
   scannersListSchema,
   scanResultSchema,
   sectorHeatmapSchema,
@@ -168,6 +181,63 @@ export async function searchMarketInstruments(
     signal,
   });
   return data.results;
+}
+
+export interface BrowseParams {
+  /** Canonical classes; backend defaults to INDEX/EQUITY/ETF when omitted. */
+  types?: string[];
+  exchange?: string;
+  segment?: string;
+  /** Required when types includes OPTION (backend rejects unscoped options). */
+  underlying?: string;
+  expiry?: string;
+  option_type?: "CE" | "PE";
+  strike?: number;
+  include_expired?: boolean;
+  /** Opaque keyset cursor from a previous page; bound to the filter set. */
+  cursor?: string;
+  limit?: number;
+}
+
+/**
+ * Paginated canonical browse (GET /api/instruments/browse, Phase 1).
+ *
+ * Provider-deduped keyset pagination: pass `next_cursor` back unchanged with
+ * the SAME filters to continue. Rows carry the same compact canonical identity
+ * as search — `provider_token` is the bare token, never `instrument_key`.
+ */
+export async function browseInstruments(
+  params: BrowseParams,
+  signal?: AbortSignal,
+): Promise<BrowseResponse> {
+  return request<BrowseResponse>("/instruments/browse", {
+    params: {
+      types: params.types?.length ? params.types.join(",") : undefined,
+      exchange: params.exchange,
+      segment: params.segment,
+      underlying: params.underlying,
+      expiry: params.expiry,
+      option_type: params.option_type,
+      strike: params.strike,
+      include_expired: params.include_expired ? 1 : undefined,
+      cursor: params.cursor,
+      limit: params.limit ?? 50,
+    },
+    schema: browseResponseSchema,
+    signal,
+  });
+}
+
+/** Curated pool for Vela's native symbol picker (bounded, deterministic). */
+export async function getInstrumentPool(
+  params: { limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<PoolResponse> {
+  return request<PoolResponse>("/instruments/pool", {
+    params: { limit: params.limit },
+    schema: poolResponseSchema,
+    signal,
+  });
 }
 
 /**
@@ -493,3 +563,73 @@ export async function getSyncState(
 }
 
 export type { Candle };
+
+// ── F&O coverage / Futures Board (/api/futures/heatmap, /api/fno/*) ──────────
+
+export async function getFuturesHeatmap(
+  expiry = "latest",
+  buildup = "all",
+  signal?: AbortSignal,
+): Promise<FuturesHeatSnapshot> {
+  return request<FuturesHeatSnapshot>("/futures/heatmap", {
+    params: { expiry, buildup },
+    schema: futuresHeatmapSchema,
+    signal,
+  });
+}
+
+export async function getFnoCoverage(
+  expiry?: string,
+  signal?: AbortSignal,
+): Promise<FnoCoverageSnapshot> {
+  return request<FnoCoverageSnapshot>("/fno/coverage", {
+    params: { expiry: expiry ?? "" },
+    schema: fnoCoverageSchema,
+    signal,
+  });
+}
+
+export async function previewFnoCoverage(
+  expiry?: string,
+  signal?: AbortSignal,
+): Promise<FnoCoverageSnapshot> {
+  return request<FnoCoverageSnapshot>("/fno/preview", {
+    params: { expiry: expiry ?? "" },
+    signal,
+  });
+}
+
+export async function applyFnoCoverage(
+  expiry?: string,
+  signal?: AbortSignal,
+): Promise<FnoApplyResult> {
+  return request<FnoApplyResult>("/fno/apply", {
+    method: "POST",
+    body: { expiry: expiry ?? null },
+    schema: fnoApplySchema,
+    signal,
+  });
+}
+
+export async function releaseFnoCoverage(signal?: AbortSignal): Promise<FnoApplyResult> {
+  return request<FnoApplyResult>("/fno/apply", {
+    method: "DELETE",
+    schema: fnoApplySchema,
+    signal,
+  });
+}
+
+export async function getFnoCoverageUniverse(
+  expiry?: string,
+  signal?: AbortSignal,
+): Promise<FnoCoverageUniverseResponse> {
+  return request<FnoCoverageUniverseResponse>("/fno/universe", {
+    params: { expiry: expiry ?? "" },
+    schema: fnoCoverageUniverseSchema,
+    signal,
+  });
+}
+
+export async function getFnoCatalog(signal?: AbortSignal): Promise<FnoCatalogResponse> {
+  return request<FnoCatalogResponse>("/fno/catalog", { signal });
+}

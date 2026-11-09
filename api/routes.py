@@ -11,24 +11,27 @@ app.state.
 from __future__ import annotations
 
 import asyncio
+import gzip
 import json
-from datetime import date, datetime, timezone
-from typing import Any, Callable
+import logging
+import time
+from collections.abc import Callable
+from datetime import date
+from typing import Any
 
 from sse_starlette import EventSourceResponse
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-import logging
-logger = logging.getLogger("event_server")
-
+from market.breadth import compute_breadth as _compute_breadth
 from market.derivatives_universe import fno_underlying_rows as _fno_underlying_rows
+from market.market_map import compute_market_map as _compute_market_map
 from market.market_universe import resolve_universe as _resolve_universe
 from market.scanner import ScannerEngine
-from market.breadth import compute_breadth as _compute_breadth
 from market.sector_heatmap import compute_sector_heatmap as _compute_sector_heatmap
-from market.market_map import compute_market_map as _compute_market_map
+
+logger = logging.getLogger("event_server")
 
 __all__ = [
     "build_market_routes",
@@ -42,6 +45,23 @@ def _json(data: Any, status: int = 200) -> JSONResponse:
     return JSONResponse(data, status_code=status)
 
 
+def _json_maybe_gzip(request: Request, data: Any,
+                     status: int = 200) -> Response:
+    """JSON response, gzipped when the client advertises support.
+
+    Only the large snapshot endpoints use this (the canonical quote
+    snapshot is ~0.8 MB); small responses keep the plain path.
+    """
+    if "gzip" not in (request.headers.get("accept-encoding") or "").lower():
+        return _json(data, status)
+    body = gzip.compress(
+        json.dumps(data, ensure_ascii=False).encode("utf-8"),
+        compresslevel=6)
+    return Response(
+        body, status_code=status, media_type="application/json",
+        headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
+
+
 def build_market_routes(
     market_broker: Any,
     market_service: Any = None,
@@ -50,6 +70,8 @@ def build_market_routes(
     index_catalog: Any = None,
     subscriptions: Any = None,
     feed_provider: Any = None,
+    quote_coordinator: Any = None,
+    quote_service: Any = None,
 ) -> list[Route]:
     """Build market API routes around injected dependencies.
 
@@ -62,6 +84,22 @@ def build_market_routes(
     major Indian indices are ever listed — never fabricated.
     """
 
+    if quote_service is None and market_service is not None:
+        # The shared canonical quote service is the ONE read path. When the
+        # composition root does not inject it, the routes build it from the
+        # dependencies they already have, so no consumer falls back to a
+        # raw provider-key lookup.
+        try:
+            from app.quote_service import QuoteService
+
+            quote_service = QuoteService(
+                market_service,
+                identity_registry=identity_resolver,
+                catalog=index_catalog,
+            )
+        except Exception:  # pragma: no cover - the raw fallback still works
+            quote_service = None
+
     def _resolve_token(exchange: str, token: str) -> tuple[str, str]:
         if identity_resolver is not None:
             resolved = identity_resolver.resolve(token)
@@ -71,8 +109,13 @@ def build_market_routes(
 
     # -- SSE stream ----------------------------------------------------------
 
-    async def _market_stream(request: Request) -> Response:  # noqa: ARG001
+    async def _market_stream(request: Request) -> Response:
         from sse_starlette.sse import ServerSentEvent
+
+        def _encode(data: Any) -> bytes:
+            return ServerSentEvent(
+                data=json.dumps(data, ensure_ascii=False, allow_nan=False),
+                event="quote").encode()
 
         async def _generate():
             # Reconciliation on (re)connect: clear any stale pre-restart
@@ -83,17 +126,52 @@ def build_market_routes(
             # surface JSON envelopes skip it while the WebUI `reset` listener
             # still fires.
             yield ServerSentEvent(data="reset", event="reset").encode()
-            if market_service is not None:
+            # Selected (canonical, freshness-gated) snapshot so the REST
+            # snapshot and the live stream agree exactly.
+            if quote_service is not None:
+                # The SAME canonical payloads the REST read returns.
+                for payload in await quote_service.quotes():
+                    yield _encode({"type": "quote", "data": payload})
+            elif quote_coordinator is not None:
+                from market.quote_coordinator import selected_quote_to_dict
+                for sel in (await quote_coordinator.canonical_quotes()).values():
+                    yield _encode({"type": "quote",
+                                   "data": selected_quote_to_dict(sel)})
+            elif market_service is not None:
                 from market.serialization import quote_to_dict
 
                 for q in await market_service.quotes():
-                    envelope = json.dumps(
-                        {"type": "quote", "data": quote_to_dict(q)},
-                        ensure_ascii=False, allow_nan=False)
-                    yield ServerSentEvent(data=envelope, event="quote").encode()
+                    yield _encode({"type": "quote", "data": quote_to_dict(q)})
 
             async with market_broker.subscribe() as lines:
                 async for line in lines:
+                    # Live updates must reflect the SAME selected quote as
+                    # the snapshot: re-select the canonical instrument.
+                    cid = None
+                    try:
+                        cid = json.loads(line).get("data", {}).get(
+                            "canonical_id")
+                    except Exception:
+                        cid = None
+                    if cid:
+                        payload = None
+                        if quote_service is not None:
+                            # The SAME selection, identity, provenance and
+                            # freshness verdict as the REST read (the
+                            # provider comes from the catalogue, never from
+                            # the shape of a storage key).
+                            payload = await quote_service.quote(cid)
+                        elif quote_coordinator is not None:
+                            from market.quote_coordinator import (
+                                selected_quote_to_dict,
+                            )
+                            sel = await quote_coordinator.get_canonical_quote(
+                                cid)
+                            if sel is not None:
+                                payload = selected_quote_to_dict(sel)
+                        if payload is not None:
+                            yield _encode({"type": "quote", "data": payload})
+                            continue
                     # Broker lines are raw JSON envelopes; frame them as
                     # `quote` SSE events so the WebUI listener fires.
                     yield ServerSentEvent(data=line, event="quote").encode()
@@ -104,17 +182,60 @@ def build_market_routes(
 
     # -- read-only market data -------------------------------------------------
 
-    async def _market_quotes(request: Request) -> Response:  # noqa: ARG001
+    # Building the canonical snapshot selects one quote per instrument
+    # (~2 s for the full universe), and every WebUI mount asks for it while
+    # SSE supplies the live ticks. A very short single-flight cache collapses
+    # the burst (StrictMode mounts, several tabs) without letting the data
+    # drift: live quotes come from the stream, not from this seed.
+    _snapshot: dict[str, Any] = {"payload": None, "built": 0.0}
+    _snapshot_lock = asyncio.Lock()
+    _SNAPSHOT_TTL_S = 1.0
+
+    async def _quotes_snapshot() -> dict[str, Any]:
+        now = time.monotonic()
+        payload = _snapshot["payload"]
+        if payload is not None \
+                and now - _snapshot["built"] < _SNAPSHOT_TTL_S:
+            return payload
+        async with _snapshot_lock:
+            now = time.monotonic()
+            payload = _snapshot["payload"]
+            if payload is not None \
+                    and now - _snapshot["built"] < _SNAPSHOT_TTL_S:
+                return payload
+            if quote_service is not None:
+                payload = {"quotes": await quote_service.quotes(),
+                           "scope": "canonical-selected"}
+            elif quote_coordinator is not None:
+                from market.quote_coordinator import selected_quote_to_dict
+                selected = await quote_coordinator.canonical_quotes()
+                payload = {
+                    "quotes": [selected_quote_to_dict(s)
+                               for s in selected.values()],
+                    "scope": "canonical-selected",
+                }
+            else:
+                from market.serialization import quote_to_dict
+                quotes = await market_service.quotes()
+                payload = {"quotes": [quote_to_dict(q) for q in quotes]}
+            _snapshot["payload"] = payload
+            _snapshot["built"] = time.monotonic()
+            return payload
+
+    async def _market_quotes(request: Request) -> Response:
         if market_service is None:
             return _json({"error": "market service unavailable"}, 503)
-        quotes = await market_service.quotes()
-        from market.serialization import quote_to_dict
-        return _json({"quotes": [quote_to_dict(q) for q in quotes]})
+        return _json_maybe_gzip(request, await _quotes_snapshot())
 
-    async def _market_depths(request: Request) -> Response:  # noqa: ARG001
+    async def _market_depths(request: Request) -> Response:
         if market_service is None:
             return _json({"error": "market service unavailable"}, 503)
         depths = await market_service.depths()
+        if quote_service is not None:
+            # The SAME canonical depth payload the single-depth route and
+            # the MCP tool return (identity, provider, as_of).
+            return _json({"depths": [quote_service.depth_payload(d)
+                                     for d in depths]})
         from market.serialization import depth_to_dict
         return _json({"depths": [depth_to_dict(d) for d in depths]})
 
@@ -124,6 +245,11 @@ def build_market_routes(
         exchange = request.path_params.get("exchange", "")
         token = request.path_params.get("instrument_token", "")
         exchange, token = _resolve_token(exchange, token)
+        if quote_service is not None:
+            payload = await quote_service.quote(token)
+            if payload is None:
+                return _json({"error": "not found"}, 404)
+            return _json(payload)
         q = await market_service.get_quote(exchange, token)
         if q is None:
             return _json({"error": "not found"}, 404)
@@ -136,6 +262,11 @@ def build_market_routes(
         exchange = request.path_params.get("exchange", "")
         token = request.path_params.get("instrument_token", "")
         exchange, token = _resolve_token(exchange, token)
+        if quote_service is not None:
+            payload = await quote_service.depth(token)
+            if payload is None:
+                return _json({"error": "not found"}, 404)
+            return _json(payload)
         d = await market_service.get_depth(exchange, token)
         if d is None:
             return _json({"error": "not found"}, 404)
@@ -144,7 +275,7 @@ def build_market_routes(
 
     # -- canonical header indices ---------------------------------------------
 
-    async def _market_indices(request: Request) -> Response:  # noqa: ARG001
+    async def _market_indices(request: Request) -> Response:
         from app.market_indices import resolve_indices
         if market_service is None:
             return _json({"error": "market service unavailable"}, 503)
@@ -159,7 +290,7 @@ def build_market_routes(
 
     # -- source / feed status ---------------------------------------------------
 
-    async def _source_status(request: Request) -> Response:  # noqa: ARG001
+    async def _source_status(request: Request) -> Response:
         sources: list[dict] = []
         if source_status_fn is not None:
             sources = source_status_fn()
@@ -168,15 +299,37 @@ def build_market_routes(
     # -- market breadth (shared universe + canonical quote reader) -------------
 
     def _reader():
-        # Bind the injected canonical MarketService as the quote reader.
-        return market_service.get_quote_now if market_service else (lambda e, t: None)
+        """The canonical quote reader (identity-resolved, provider-agnostic).
+
+        The store is keyed by the provider's STORAGE key, while a consumer
+        (breadth, sector heatmap, scanner, market map) holds whatever
+        identity the universe published - a market identity, a canonical id
+        or a provider key. The shared quote service resolves the
+        instrument, so a quote served by ANY provider is found and no
+        consumer has to know which provider answered.
+        """
+        if market_service is None:
+            return lambda e, t: None
+        if quote_service is not None:
+            def _read(exchange: str, token: str):
+                if not token:
+                    return None
+                try:
+                    quote = quote_service.quote_now(token, exchange)
+                except Exception:
+                    quote = None
+                if quote is not None:
+                    return quote
+                return market_service.get_quote_now(exchange, token)
+            return _read
+        return market_service.get_quote_now
 
     def _scanner_engine():
         if index_catalog is None:
             return None
         return ScannerEngine(index_catalog)
 
-    async def _scanners_list(request: Request) -> Response:  # noqa: ARG001
+    async def _scanners_list(request: Request) -> Response:
         engine = _scanner_engine()
         if engine is None:
             return _json({"error": "instrument catalog unavailable"}, 503)
@@ -240,7 +393,7 @@ def build_market_routes(
 
     # -- read-only diagnostics (Test Center) -----------------------------------
 
-    async def _breadth_diag(request: Request) -> Response:  # noqa: ARG001
+    async def _breadth_diag(request: Request) -> Response:
         if market_service is None or index_catalog is None:
             return _json({"error": "service unavailable"}, 503)
         out = {}
@@ -259,12 +412,12 @@ def build_market_routes(
                     "unclassified": snap.unclassified,
                     "net_advances": snap.net_advances,
                 }
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 out[u] = {"error": str(exc)}
         out["reconciliation_status"] = "ok"
         return _json(out)
 
-    async def _sector_diag(request: Request) -> Response:  # noqa: ARG001
+    async def _sector_diag(request: Request) -> Response:
         if market_service is None or index_catalog is None:
             return _json({"error": "service unavailable"}, 503)
         out = {}
@@ -283,7 +436,7 @@ def build_market_routes(
                     "declines": snap.declines,
                     "reconciliation": snap.reconciliation,
                 }
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 out[u] = {"error": str(exc)}
         out["reconciliation_status"] = "ok"
         return _json(out)
@@ -302,7 +455,7 @@ def build_market_routes(
                 index_catalog, provider="upstox",
                 today=date.today().isoformat(), limit=2000)
             return {str(r.get("symbol", "")).upper() for r in (rows or [])}
-        except Exception:  # noqa: BLE001
+        except Exception:
             return set()
 
     async def _market_map(request: Request) -> Response:
@@ -319,7 +472,7 @@ def build_market_routes(
             universe, members, _reader(), fno_symbols=_fno_symbols(), as_of=None)
         return _json(snap.to_dict())
 
-    async def _market_map_diag(request: Request) -> Response:  # noqa: ARG001
+    async def _market_map_diag(request: Request) -> Response:
         if market_service is None or index_catalog is None:
             return _json({"error": "service unavailable"}, 503)
         out = {}
@@ -347,7 +500,7 @@ def build_market_routes(
                     "unchanged": snap.unchanged,
                     "reconciliation": recon,
                 }
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 ok = False
                 out[u] = {"error": str(exc)}
         out["reconciliation_status"] = "ok" if ok else "mismatch"
@@ -487,7 +640,7 @@ def build_market_routes(
         subscriptions.clear_analytics_universe()
         try:
             outcome = await subscriptions.reconcile(feed_provider)
-        except Exception as exc:
+        except Exception:
             logger.exception("analytics coverage clear failed")
             return _json({"error": "apply failed"}, 500)
         return _json({"status": "ok", "cleared": True, "apply": outcome["apply"]})
@@ -637,7 +790,7 @@ def build_settings_routes(
         if not config_path:
             return {}
         try:
-            with open(config_path, "r", encoding="utf-8") as _f:
+            with open(config_path, encoding="utf-8") as _f:
                 return json.load(_f)
         except FileNotFoundError:
             return {}
@@ -677,7 +830,7 @@ def build_settings_routes(
             return False
         return "upstox" in (source_manager.enabled_sources or {})
 
-    async def _feed_status(request: Request) -> Response:  # noqa: ARG001
+    async def _feed_status(request: Request) -> Response:
         _cfg = (sources_cfg or {}).get("upstox")
         configured = isinstance(_cfg, dict)
         enabled = bool(_cfg.get("enabled")) if configured else False
@@ -748,7 +901,7 @@ def build_settings_routes(
             result["restart_required"] = False
         return _json(result)
 
-    async def _delete_feed(request: Request) -> Response:  # noqa: ARG001
+    async def _delete_feed(request: Request) -> Response:
         try:
             _remove_upstox_feed()
         except Exception:
@@ -762,7 +915,7 @@ def build_settings_routes(
                 logger.exception("upstox feed stop failed")
         return _json({"configured": False, "enabled": False})
 
-    async def _settings_status(request: Request) -> Response:  # noqa: ARG001
+    async def _settings_status(request: Request) -> Response:
         status = cred_store.status()
         store = cred_store.store_status()
         # Distinguish "nothing stored" from "stored but undecryptable with
@@ -802,7 +955,7 @@ def build_settings_routes(
         oauth_ref["api_secret"] = api_secret.strip()
         return _json({"configured": True})
 
-    async def _delete_credentials(request: Request) -> Response:  # noqa: ARG001
+    async def _delete_credentials(request: Request) -> Response:
         try:
             removed = cred_store.delete_upstox_app_credentials()
         except Exception:
@@ -966,7 +1119,7 @@ def build_auth_routes(
             except Exception:
                 logger.exception("upstox login: feed restart failed")
 
-    async def _auth_status(request: Request) -> Response:  # noqa: ARG001
+    async def _auth_status(request: Request) -> Response:
         # Thin adapter: the auth service owns status projection (token=None
         # + explicit auth_state; feed state never implies auth). Request
         # parsing (oauth readiness) stays here; lifecycle lives in app/auth/.
@@ -979,7 +1132,7 @@ def build_auth_routes(
         base["oauth_available"] = _oauth_ready()
         return _json(base)
 
-    async def _forget_session(request: Request) -> Response:  # noqa: ARG001
+    async def _forget_session(request: Request) -> Response:
         """Forget the durably stored Upstox session (does NOT delete API creds).
 
         Thin adapter: the auth service clears runtime + durable state.
@@ -990,7 +1143,7 @@ def build_auth_routes(
             logger.exception("failed to clear upstox session")
             return _json({"error": "auth service unavailable"}, 503)
 
-    async def _oauth_login(request: Request) -> Response:  # noqa: ARG001
+    async def _oauth_login(request: Request) -> Response:
         if not _oauth_ready():
             return _json({"error": "oauth not configured"}, 503)
 

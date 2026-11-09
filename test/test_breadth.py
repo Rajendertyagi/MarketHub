@@ -3,7 +3,7 @@
 import pytest
 
 from market.breadth import compute_breadth, effective_change
-from market.market_universe import Member, resolve_universe
+from market.market_universe import resolve_universe
 from test.helpers.market_breadth_fakes import (
     FakeCatalog,
     FakeQuoteReader,

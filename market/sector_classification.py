@@ -26,8 +26,8 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from functools import lru_cache
-from typing import Callable
 
 UNCLASSIFIED = "Unclassified"
 
@@ -37,7 +37,7 @@ _TAXONOMY_PATH = os.path.join(os.path.dirname(__file__), "data", "sector_taxonom
 @lru_cache(maxsize=1)
 def _load_taxonomy() -> dict[str, str]:
     try:
-        with open(_TAXONOMY_PATH, "r", encoding="utf-8") as fh:
+        with open(_TAXONOMY_PATH, encoding="utf-8") as fh:
             data = json.load(fh)
         if isinstance(data, dict):
             # Keys beginning with "_" are metadata (e.g. "_meta"), never symbols.

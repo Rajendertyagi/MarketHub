@@ -51,7 +51,7 @@ def build_diagnostics_run_routes(runner: Any) -> list[Route]:
                 status_code=500,
             )
 
-    async def _list_checks(request: Request) -> Response:  # noqa: ARG001
+    async def _list_checks(request: Request) -> Response:
         checks = runner.list_checks()
         return Response(
             content=__import__("json").dumps({"checks": checks}),

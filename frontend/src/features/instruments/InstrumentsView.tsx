@@ -5,7 +5,7 @@ import { useInstrumentMutations, useSegments, useSyncState } from "./useInstrume
 
 type SyncPhase = "idle" | "running" | "success" | "error";
 
-export function InstrumentsView() {
+export function InstrumentsView({ embedded = false }: { embedded?: boolean } = {}) {
   const segmentsQuery = useSegments();
   const syncStateQuery = useSyncState();
   const { saveSegments, sync } = useInstrumentMutations();
@@ -147,6 +147,13 @@ export function InstrumentsView() {
         </div>
       </>
     );
+  }
+
+  // Embedded: rendered inside a host page that already owns the `.panel`
+  // surface and the page header, so neither is repeated here (a `.panel` is a
+  // page-root elevated surface and must never nest inside another one).
+  if (embedded) {
+    return <div className="instruments-view">{body}</div>;
   }
 
   return (

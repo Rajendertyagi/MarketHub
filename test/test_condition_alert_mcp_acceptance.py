@@ -19,10 +19,8 @@ NO LIVE BROKER. Synthetic quotes only.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sys
-import tempfile
 import time
 from datetime import datetime, timezone
 
@@ -32,14 +30,13 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers import lifecycle
 from helpers.lifecycle import (
     get_server_url,
     restore_environment,
     start_server,
     stop_server,
 )
-from helpers.mcp_client import call, wait_source_ready
+from helpers.mcp_client import call
 from helpers.runner import R
 from mcp_result import safe_teardown
 
@@ -55,8 +52,8 @@ def _uid(suffix: str = "") -> str:
 
 
 def _db_path() -> str:
-    data_dir = getattr(lifecycle, "_server_data_dir", "") or "data_test"
-    return os.path.join(_PROJECT_DIR, data_dir, "events.db")
+    from app.runtime_paths import runtime_db_path
+    return str(runtime_db_path())
 
 
 def _seed_catalog() -> None:
@@ -473,11 +470,12 @@ async def scenario_x7(runner: R) -> None:
     try:
         proc = await start_server()
         await call("system_ping")  # ensure server is ready
-        tools = await call("system_ping")  # dummy — we need list_tools
+        await call("system_ping")  # dummy — we need list_tools
         # Use direct MCP call for tool listing.
         from mcp import ClientSession
         from mcp.client.streamable_http import (
-            streamable_http_client as streamablehttp_client)
+            streamable_http_client as streamablehttp_client,
+        )
         url = get_server_url()
         async with streamablehttp_client(url) as (r, w):
             async with ClientSession(r, w) as session:
@@ -629,11 +627,12 @@ async def scenario_x9(runner: R) -> None:
         leaves = cond["conditions"]
         runner.assert_eq(name + "-leaves", len(leaves), 2)
         # One quote leaf, one analytics leaf.
-        metrics = {l["metric"] for l in leaves}
+        metrics = {leaf["metric"] for leaf in leaves}
         runner.assert_true(name + "-has-quote", "ltp" in metrics)
         runner.assert_true(name + "-has-analytics", "pcr_oi" in metrics)
         # Expiry preserved in _dependency_key (strip happens in validator).
-        analytics_leaf = [l for l in leaves if l["metric"] == "pcr_oi"][0]
+        analytics_leaf = [leaf for leaf in leaves
+                          if leaf["metric"] == "pcr_oi"][0]
         dep_key = analytics_leaf.get("_dependency_key", "")
         runner.assert_true(name + "-expiry-in-depkey",
                            "2026-09-25" in dep_key)
@@ -692,9 +691,9 @@ async def scenario_x10(runner: R) -> None:
         runner.assert_true(name + "-created", bool(alert_id))
 
         # Trigger in-process against shared DB (production engine path).
-        from core.persistence.store import EventStore as ES
         from app.condition_alerts import ConditionAlertEngine as CAE
         from app.market_identity import MarketInstrumentIdentityResolver as MIR
+        from core.persistence.store import EventStore as ES
 
         store = ES(_db_path())
         resolver = MIR()

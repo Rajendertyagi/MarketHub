@@ -31,7 +31,6 @@ from starlette.testclient import TestClient
 
 from app.subscriptions.service import SubscriptionService
 
-
 # ── fakes ────────────────────────────────────────────────────────────────────
 
 class _FakeStore:
@@ -92,6 +91,20 @@ class _FakeCatalog:
     def get(self, provider, key):
         return {"tradingsymbol": key.split("|")[-1]}
 
+    def find_equity(self, symbol, *, provider=None, exchange=None):
+        """The EXACT-symbol read model (the general search is a LIKE)."""
+        rows = self.search(q=symbol, instrument_type="EQUITY",
+                           exchange=exchange, limit=1)
+        want = str(symbol or "").upper()
+        for row in rows:
+            if str(row.get("tradingsymbol") or "").upper() == want:
+                return row
+        return rows[0] if rows else None
+
+    def quote_key(self, row):
+        """The key the quote state is written under."""
+        return row.get("provider_symbol") or row.get("instrument_token")
+
     def fno_universe(self, provider="upstox", today=None, limit=2000, **_):
         return [{"symbol": "RELIANCE", "name": "Reliance",
                  "equity_key": "NSE_EQ|INE_RELIANCE"}]
@@ -142,9 +155,11 @@ def test_analytics_unions_into_resolve():
     res = svc.resolve()
     analytics = [c for c in res["contracts"] if c["kind"] == "analytics"]
     assert len(analytics) == 3, analytics
-    # baseline indices still present
+    # baseline indices still present - ONE provider per canonical index
+    # (a contract is never subscribed on both providers).
     idx = [c for c in res["contracts"] if c["kind"] == "index"]
-    assert len(idx) == 8
+    assert len(idx) == 9
+    assert len({c["key"] for c in idx}) == len(idx)
     # no duplicate keys
     upstox = res["by_provider"]["upstox"]
     assert len(upstox) == len(set(upstox))

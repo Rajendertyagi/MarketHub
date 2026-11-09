@@ -28,7 +28,7 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 UTC = timezone.utc
 
@@ -65,8 +65,8 @@ class _StubWS:
 
 def _mk_feed(token="PENDING-OAUTH-LOGIN", expires_at=None,
              rest=None, keys=("K1",)):
-    from brokers.upstox.feed import UpstoxFeed
     from brokers.upstox.auth import UpstoxCredentials
+    from brokers.upstox.feed import UpstoxFeed
 
     creds = UpstoxCredentials(access_token=token, expires_at=expires_at)
     ws = _StubWS()
@@ -86,8 +86,8 @@ def _mk_feed(token="PENDING-OAUTH-LOGIN", expires_at=None,
 
 
 def _mk_manager(feed, extra_sources=None):
-    from sources import SourceManager
     from core.runtime import BackgroundTaskManager
+    from sources import SourceManager
 
     mgr = SourceManager()
     mgr.register(feed)
@@ -260,7 +260,6 @@ async def test_as6_multi_source_safety(runner: R) -> None:
 
 async def test_as7_config_recorded_when_gated(runner: R) -> None:
     """AS7: gated source keeps its config so restart_source can launch it."""
-    env_async_done = None
     rest = _CountingRest()
     feed, _ws = _mk_feed(token="PENDING-OAUTH-LOGIN", rest=rest)
 
@@ -289,10 +288,11 @@ def _restore_session_feed(token: str, expires_at_iso: str | None):
     UpstoxFeed from the reloaded material (mirrors server.py startup restore)."""
     import os
     import tempfile
-    from core.persistence.store import EventStore
+    from datetime import datetime, timezone
+
     from app.secrets_store import CredentialStore
     from brokers.upstox.auth import UpstoxCredentials
-    from datetime import datetime, timezone
+    from core.persistence.store import EventStore
 
     tmp = tempfile.mkdtemp()
     store = CredentialStore(EventStore(os.path.join(tmp, "e.db")), data_dir=tmp)
@@ -341,9 +341,10 @@ def test_as11_session_roundtrip_expiry(runner: R) -> None:
     datetime corruption)."""
     import os
     import tempfile
-    from core.persistence.store import EventStore
-    from app.secrets_store import CredentialStore
     from datetime import datetime, timezone
+
+    from app.secrets_store import CredentialStore
+    from core.persistence.store import EventStore
 
     tmp = tempfile.mkdtemp()
     store = CredentialStore(EventStore(os.path.join(tmp, "e.db")), data_dir=tmp)
@@ -356,8 +357,6 @@ def test_as11_session_roundtrip_expiry(runner: R) -> None:
     runner.assert_eq("AS11-aware-utc", restored.utcoffset().total_seconds(), 0)
     runner.assert_eq("AS11-equal", restored, exp)
 
-
-import json  # noqa: E402
 
 
 # -- main -------------------------------------------------------------------------

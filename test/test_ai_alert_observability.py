@@ -5,7 +5,6 @@ Verifies the read-only REST API for condition-alert lifecycle data.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import shutil
 import sys
@@ -17,8 +16,9 @@ if _PROJECT_DIR not in sys.path:
     sys.path.insert(0, _PROJECT_DIR)
 
 from helpers.runner import R
-from core.persistence.store import EventStore
+
 from core import events
+from core.persistence.store import EventStore
 
 
 class _StubBus:
@@ -60,13 +60,13 @@ async def t1_alerts_appear_in_api(runner: R) -> None:
         aid = _create_condition_alert(store, threshold=25000.0)
         aid2 = _create_condition_alert(store, consumer_id="c2", threshold=30000.0)
 
-        conn = store._open(store._db_path)
+        store._open(store._db_path)
         from api.ai_alert_routes import build_ai_alert_routes
         routes = build_ai_alert_routes(store)
 
         # Simulate GET /api/ai-alerts
-        from starlette.testclient import TestClient
         from starlette.applications import Starlette
+        from starlette.testclient import TestClient
         app = Starlette(routes=routes)
         client = TestClient(app)
         resp = client.get("/api/ai-alerts")
@@ -118,9 +118,10 @@ async def t2_trigger_appears_in_events(runner: R) -> None:
             store=store, bus=bus,
         )
 
-        from api.ai_alert_routes import build_ai_alert_routes
-        from starlette.testclient import TestClient
         from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
+        from api.ai_alert_routes import build_ai_alert_routes
         app = Starlette(routes=build_ai_alert_routes(store))
         client = TestClient(app)
         resp = client.get("/api/ai-alerts/events")
@@ -166,9 +167,10 @@ async def t3_ack_changes_status(runner: R) -> None:
         )
 
         # Before ACK
-        from api.ai_alert_routes import build_ai_alert_routes
-        from starlette.testclient import TestClient
         from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
+        from api.ai_alert_routes import build_ai_alert_routes
         app = Starlette(routes=build_ai_alert_routes(store))
         client = TestClient(app)
         resp = client.get("/api/ai-alerts/events")
@@ -216,9 +218,10 @@ async def t4_consumer_status(runner: R) -> None:
             store=store, bus=bus,
         )
 
-        from api.ai_alert_routes import build_ai_alert_routes
-        from starlette.testclient import TestClient
         from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
+        from api.ai_alert_routes import build_ai_alert_routes
         app = Starlette(routes=build_ai_alert_routes(store))
         client = TestClient(app)
         resp = client.get("/api/ai-alerts/consumers")
@@ -261,9 +264,10 @@ async def t5_consumer_isolation(runner: R) -> None:
             store=store, bus=bus,
         )
 
-        from api.ai_alert_routes import build_ai_alert_routes
-        from starlette.testclient import TestClient
         from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
+        from api.ai_alert_routes import build_ai_alert_routes
         app = Starlette(routes=build_ai_alert_routes(store))
         client = TestClient(app)
 
@@ -287,7 +291,7 @@ async def t6_repeat_alert_history(runner: R) -> None:
     try:
         aid = _create_condition_alert(store, threshold=100.0, trigger_mode="repeat")
         event_ids = []
-        for i in range(3):
+        for _i in range(3):
             data = {
                 "alert_family": "market_condition",
                 "alert_id": aid,
@@ -322,9 +326,10 @@ async def t6_repeat_alert_history(runner: R) -> None:
         finally:
             conn.close()
 
-        from api.ai_alert_routes import build_ai_alert_routes
-        from starlette.testclient import TestClient
         from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
+        from api.ai_alert_routes import build_ai_alert_routes
         app = Starlette(routes=build_ai_alert_routes(store))
         client = TestClient(app)
         resp = client.get("/api/ai-alerts/events")
@@ -383,9 +388,10 @@ async def t7_once_alert_single_trigger(runner: R) -> None:
         finally:
             conn.close()
 
-        from api.ai_alert_routes import build_ai_alert_routes
-        from starlette.testclient import TestClient
         from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
+        from api.ai_alert_routes import build_ai_alert_routes
         app = Starlette(routes=build_ai_alert_routes(store))
         client = TestClient(app)
 
@@ -412,9 +418,10 @@ async def t8_disabled_alert_shows_correctly(runner: R) -> None:
         # Disable it after creation (create always inserts enabled=1)
         store.set_condition_alert_enabled(aid, False)
 
-        from api.ai_alert_routes import build_ai_alert_routes
-        from starlette.testclient import TestClient
         from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
+        from api.ai_alert_routes import build_ai_alert_routes
         app = Starlette(routes=build_ai_alert_routes(store))
         client = TestClient(app)
         resp = client.get("/api/ai-alerts")
@@ -431,9 +438,10 @@ async def t9_deleted_alert_disappears(runner: R) -> None:
     try:
         aid = _create_condition_alert(store, threshold=25000.0)
 
-        from api.ai_alert_routes import build_ai_alert_routes
-        from starlette.testclient import TestClient
         from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
+        from api.ai_alert_routes import build_ai_alert_routes
         app = Starlette(routes=build_ai_alert_routes(store))
         client = TestClient(app)
 
@@ -489,9 +497,10 @@ async def t10_restart_preserves_state(runner: R) -> None:
         # Reopen store (simulates restart)
         store2 = EventStore(db_path)
 
-        from api.ai_alert_routes import build_ai_alert_routes
-        from starlette.testclient import TestClient
         from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
+        from api.ai_alert_routes import build_ai_alert_routes
         app = Starlette(routes=build_ai_alert_routes(store2))
         client = TestClient(app)
 

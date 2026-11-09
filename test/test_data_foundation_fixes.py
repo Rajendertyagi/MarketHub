@@ -13,10 +13,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
-import pytest
-
 from market.models import Quote
-
 
 # ---------------------------------------------------------------------------
 # 1. Upstox authenticated_request must accept `params` (GET query string)

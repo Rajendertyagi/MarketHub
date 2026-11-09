@@ -44,16 +44,16 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
-from core.persistence.store import EventStore  # noqa: E402
-from app.subscriptions import SubscriptionService  # noqa: E402
-from app.instruments import (  # noqa: E402
+from app.instruments import (
     InstrumentCatalog,
     upstox_master_records,
 )
+from app.subscriptions import SubscriptionService
+from core.persistence.store import EventStore
 
-TODAY = "2026-09-07"
+TODAY = "2026-10-16"
 
 
 def _fo(key, itype, und, expiry, strike=None, sym=None):
@@ -72,7 +72,7 @@ def _eq(key, sym, name):
 
 def _rows():
     ms = 86400000  # one day in ms
-    base = 1788892199000  # 2026-09-08 end-of-day
+    base = 1796774399000  # 2026-12-08 end-of-day
     return [
         # HDFCBANK: F&O stock
         _eq("NSE_EQ|INE040A01034", "HDFCBANK", "HDFC Bank Ltd"),
@@ -151,9 +151,9 @@ def test_universe(runner: R) -> None:
     runner.assert_eq("un-hdfc-fut-exp", hdfc["future_expiries"], 2)
     runner.assert_eq("un-hdfc-opt-exp", hdfc["option_expiries"], 1)
     runner.assert_eq("un-hdfc-nearest-fut", hdfc["nearest_future"],
-                     "2026-09-29")
+                     "2026-12-29")
     runner.assert_eq("un-hdfc-nearest-opt", hdfc["nearest_option"],
-                     "2026-09-29")
+                     "2026-12-29")
     runner.assert_eq("un-hdfc-name", hdfc["name"], "HDFC Bank Ltd")
     runner.assert_eq("un-hdfc-key", hdfc["equity_key"],
                      "NSE_EQ|INE040A01034")
@@ -175,10 +175,10 @@ def test_workspace(runner: R) -> None:
     futs = ws["futures"]
     runner.assert_eq("ws-fut-count", len(futs), 2)
     runner.assert_eq("ws-fut1", futs[0]["key"], "NSE_FO|90001")
-    runner.assert_eq("ws-fut1-exp", futs[0]["expiry"], "2026-09-29")
+    runner.assert_eq("ws-fut1-exp", futs[0]["expiry"], "2026-12-29")
     runner.assert_eq("ws-fut2", futs[1]["key"], "NSE_FO|90002")
     runner.assert_eq("ws-opt-expiries", len(ws["option_expiries"]), 1)
-    runner.assert_eq("ws-selected", ws["selected_expiry"], "2026-09-29")
+    runner.assert_eq("ws-selected", ws["selected_expiry"], "2026-12-29")
     # spot 1675 -> nearest listed ATM = 1700; window ±1 => 1650,1700,1750
     runner.assert_eq("ws-atm", ws["atm"], 1700.0)
     opt_keys = _contract_keys(ws["options"], "option")
@@ -249,7 +249,9 @@ async def test_active_view(runner: R) -> None:
     # persistent: disable NIFTY index so the baseline set is 7 indices
     svc.set_index("NIFTY", False)
     base = _contract_keys(svc.resolve()["contracts"], "index")
-    runner.assert_eq("av-base-7", len(base), 7)
+    # One provider per canonical index: 9 canonical indices, NIFTY off ->
+    # 8 index contracts.
+    runner.assert_eq("av-base-8", len(base), 8)
 
     # open HDFCBANK workspace -> bounded union
     ws = svc.workspace_contracts("HDFCBANK")
@@ -259,7 +261,7 @@ async def test_active_view(runner: R) -> None:
     up = out["apply"]["results"]["upstox"]
     runner.assert_eq("av-applied", up["applied"], True)
     desired = svc.resolve()["by_provider"]["upstox"]
-    runner.assert_eq("av-desired-16", len(desired), 16)  # 7 + 9 view keys
+    runner.assert_eq("av-desired-17", len(desired), 17)  # 7 + 9 view keys
     runner.assert_true("av-persistent-intact",
                        all(k in desired for k in base))
 
@@ -267,9 +269,9 @@ async def test_active_view(runner: R) -> None:
     ws2 = svc.workspace_contracts("RELIANCE")
     keys2 = ws2.pop("_keys_by_provider", {})
     svc.set_active_view(keys2)
-    out2 = await _reconcile(svc, feed)
+    await _reconcile(svc, feed)
     desired2 = svc.resolve()["by_provider"]["upstox"]
-    runner.assert_eq("av-switch-desired", len(desired2), 13)  # 7 + 6
+    runner.assert_eq("av-switch-desired-14", len(desired2), 14)  # 7 + 6
     runner.assert_true("av-hdfc-dropped",
                        "NSE_FO|90001" not in desired2)
     runner.assert_true("av-reliance-added",
@@ -288,17 +290,17 @@ async def test_active_view(runner: R) -> None:
     runner.assert_true("av-hdfc-back", "NSE_FO|90001" in desired3)
     runner.assert_true("av-reliance-gone", "NSE_FO|91001" not in desired3)
     runner.assert_true("av-base-still", all(k in desired3 for k in base))
-    runner.assert_eq("av-no-accumulation", len(desired3), 16)
+    runner.assert_eq("av-no-accumulation-17", len(desired3), 17)
 
     # duplicate ownership: view key == persistent key never unsubscribes
     svc.add_stock("NSE_EQ|INE040A01034", "HDFCBANK")  # persistent stock
     svc.set_active_view({})  # clear view
-    out4 = await _reconcile(svc, feed)
+    await _reconcile(svc, feed)
     desired4 = svc.resolve()["by_provider"]["upstox"]
     runner.assert_true("av-dup-owner-safe",
                        "NSE_EQ|INE040A01034" in desired4)
     # closing the view leaves persistent-only desired set
-    runner.assert_eq("av-cleared", len(desired4), 8)  # 7 indices + HDFCBANK
+    runner.assert_eq("av-cleared-9", len(desired4), 9)  # 7 indices + HDFCBANK
     runner.assert_eq("av-feed-matches",
                      set(feed._instrument_keys), set(desired4))
     tmp.cleanup()

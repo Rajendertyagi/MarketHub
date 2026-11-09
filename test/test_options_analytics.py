@@ -22,16 +22,10 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
-from market.models import (  # noqa: E402
-    OptionChainSnapshot,
-    OptionContractData,
-    OptionStrikeRow,
-)
-from market.analytics.option_chain import (  # noqa: E402
+from market.analytics.option_chain import (
     analyze_option_chain,
-    classify_buildup,
     compute_atm,
     compute_futures_basis,
     compute_gex,
@@ -43,16 +37,20 @@ from market.analytics.option_chain import (  # noqa: E402
     compute_support_resistance,
     compute_top_oi_strikes,
 )
-from market.analytics.strategies import (  # noqa: E402
+from market.analytics.strategies import (
     price_bear_put_spread,
     price_bull_call_spread,
     price_iron_condor,
     price_long_butterfly,
-    price_long_strangle,
     price_long_straddle,
-    price_strategy,
+    price_long_strangle,
 )
-from mcp_server.contract import (  # noqa: E402
+from market.models import (
+    OptionChainSnapshot,
+    OptionContractData,
+    OptionStrikeRow,
+)
+from mcp_server.contract import (
     TOOL_ANALYZE_OPTION_CHAIN,
     TOOL_COMPUTE_ATM,
     TOOL_COMPUTE_FUTURES_BASIS,
@@ -275,7 +273,9 @@ def test_oa18_contract_constants(runner: R) -> None:
 
 
 def test_oa19_tools_module_importable(runner: R) -> None:
-    from mcp_server.tools.options_analytics_tools import register_options_analytics_tools
+    from mcp_server.tools.options_analytics_tools import (
+        register_options_analytics_tools,
+    )
     runner.assert_true("OA19-import", callable(register_options_analytics_tools))
 
 

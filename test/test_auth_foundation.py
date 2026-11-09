@@ -32,12 +32,12 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 
 def _tmp_store(tmp: str):
-    from core.persistence.store import EventStore
     from app.secrets_store import CredentialStore
+    from core.persistence.store import EventStore
     es = EventStore(os.path.join(tmp, "e.db"))
     return CredentialStore(es, data_dir=tmp)
 
@@ -215,9 +215,10 @@ async def test_upstox_logout_clears(runner: R) -> None:
 
 async def test_fyers_login_restore_refresh(runner: R) -> None:
     import tempfile
-    from app.fyers_runtime_auth import FyersRuntimeAuth
+
     from app.auth.fyers import FyersAuthService
     from app.auth.storage import AuthStorage
+    from app.fyers_runtime_auth import FyersRuntimeAuth
     with tempfile.TemporaryDirectory() as tmp:
         store = _tmp_store(tmp)
         rt = FyersRuntimeAuth()
@@ -258,7 +259,6 @@ async def test_fyers_login_restore_refresh(runner: R) -> None:
         store.clear_fyers_session()
         store.save_fyers_credentials("APPID-1", "SECRET-1")
         store.save_fyers_pin("1234")
-        from core.persistence.store import EventStore as _ES  # noqa
         store.save_fyers_refresh_token("FY-REF-1")
         rout3 = await svc3.restore_session()
         runner.assert_true("fyers-refreshed", rout3.restored)
@@ -280,7 +280,7 @@ async def test_storage_expiry_roundtrip_tz_safe(runner: R) -> None:
                                         expires_at_iso=naive)
         sess = store.load_upstox_session_token()
         runner.assert_eq("rt-match", sess["expires_at"], naive)
-        from app.auth.models import parse_expiry_iso, is_expired
+        from app.auth.models import is_expired, parse_expiry_iso
         exp = parse_expiry_iso(sess["expires_at"])
         runner.assert_true("rt-aware", exp.tzinfo is not None)
         runner.assert_false("rt-not-expired", is_expired(exp))
@@ -297,8 +297,12 @@ async def test_storage_no_secret_leakage(runner: R) -> None:
 
 
 async def test_fake_guard_blocks_production_writes(runner: R) -> None:
-    from app.auth.storage import (guard_fake_token_write, is_fake_token,
-                                  is_production_db_path, production_db_path)
+    from app.auth.storage import (
+        guard_fake_token_write,
+        is_fake_token,
+        is_production_db_path,
+        production_db_path,
+    )
     runner.assert_true("fake-marker", is_fake_token("PENDING-OAUTH-LOGIN"))
     runner.assert_true("fake-prefix", is_fake_token("FAKE-123"))
     runner.assert_false("real-ok", is_fake_token("REAL-TOKEN-ABC"))
@@ -341,6 +345,10 @@ async def test_no_test_writes_to_production_db(runner: R) -> None:
         try:
             mod = type(obj).__module__
             name = type(obj).__name__
+            # Some C-level types expose a non-string (descriptor) __module__.
+            # They can never be our stores, so skip them safely.
+            if not isinstance(mod, str) or not isinstance(name, str):
+                continue
         except Exception:
             continue
         is_real_store = (
@@ -363,11 +371,12 @@ async def test_no_test_writes_to_production_db(runner: R) -> None:
 async def test_startup_matrix_never_blocks_boot(runner: R) -> None:
     """Server reliability matrix: restore_sessions() never raises."""
     import tempfile
-    from app.fyers_runtime_auth import FyersRuntimeAuth
+
+    from app.auth.fyers import FyersAuthService
     from app.auth.service import AuthService
     from app.auth.storage import AuthStorage
     from app.auth.upstox import UpstoxAuthService
-    from app.auth.fyers import FyersAuthService
+    from app.fyers_runtime_auth import FyersRuntimeAuth
 
     async def _case(name, setup):
         with tempfile.TemporaryDirectory() as tmp:
@@ -433,15 +442,14 @@ async def test_startup_matrix_never_blocks_boot(runner: R) -> None:
         await _case(name, setup)
     # 8: provider network unavailable during Fyers refresh.
     with tempfile.TemporaryDirectory() as tmp:
-        import tempfile as _tf
         store = _tmp_store(tmp)
         store.save_fyers_credentials("A", "B")
         store.save_fyers_refresh_token("R")
         store.save_fyers_pin("1")
-        from app.auth.storage import AuthStorage
-        from app.auth.upstox import UpstoxAuthService as _U
         from app.auth.fyers import FyersAuthService as _F
         from app.auth.service import AuthService as _S
+        from app.auth.storage import AuthStorage
+        from app.auth.upstox import UpstoxAuthService as _U
         svc = _S(upstox=_U(AuthStorage(store)),
                  fyers=_F(AuthStorage(store), FyersRuntimeAuth(),
                           refresh_fn=_net_down))

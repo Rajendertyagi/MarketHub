@@ -8,25 +8,36 @@ import type { WatchlistItem } from "../types";
 interface Props {
   items: WatchlistItem[];
   quotes: MarketQuote[];
+  /** Selected quote per canonical id (S7 coordinator contract). */
+  byCanonical?: Map<string, MarketQuote>;
   onRemove: (itemId: number) => void;
 }
 
-export function WatchlistTable({ items, quotes, onRemove }: Props) {
+export function WatchlistTable({ items, quotes, byCanonical, onRemove }: Props) {
   const [query, setQuery] = useState("");
 
-  // O(1) quote join. Exact exchange:token match first, bare-token fallback
-  // for items whose exchange is unknown — built once per quote flush.
-  const { byKey, byToken } = useMemo(() => {
+  // O(1) quote join. Canonical identity first (the backend-selected quote
+  // for the instrument); exact exchange:token match and bare-token fallback
+  // remain for items whose canonical id is not yet resolved.
+  const { byKey, byToken, byCanonicalId } = useMemo(() => {
     const byKey = new Map<string, MarketQuote>();
     const byToken = new Map<string, MarketQuote>();
+    const byCanonicalId = new Map<string, MarketQuote>();
     for (const q of quotes) {
       byKey.set(quoteKey(q), q);
       if (!byToken.has(q.instrument_token)) byToken.set(q.instrument_token, q);
+      const cid = (q as { canonical_id?: string | null }).canonical_id;
+      if (cid && !byCanonicalId.has(cid)) byCanonicalId.set(cid, q);
     }
-    return { byKey, byToken };
+    return { byKey, byToken, byCanonicalId };
   }, [quotes]);
 
   const quoteFor = (it: WatchlistItem): MarketQuote | undefined => {
+    // Canonical-selected quote wins when the item carries a canonical id.
+    if (it.canonical_id) {
+      const selected = byCanonical?.get(it.canonical_id) ?? byCanonicalId.get(it.canonical_id);
+      if (selected) return selected;
+    }
     if (it.exchange) {
       const exact = byKey.get(`${it.exchange}:${it.instrument_token}`);
       if (exact) return exact;

@@ -27,12 +27,13 @@ from typing import Any
 
 from core import events
 from core.alert_events import ALERT_ENGINE_SOURCE, build_alert_triggered_data
-from core.errors import AlertNotFoundError, ConsumerNotFoundError, ValidationError
+from core.errors import ValidationError
 
 logger = logging.getLogger(__name__)
 
-# Supported comparison operators (MVP only).
-SUPPORTED_OPERATORS = ("eq", "ne", "gt", "gte", "lt", "lte")
+# Supported comparison operators.
+SUPPORTED_OPERATORS = ("eq", "ne", "gt", "gte", "lt", "lte",
+                      "contains", "not_contains", "any_of", "match")
 
 # Internal sentinel for "field path absent" (distinct from JSON null).
 _MISSING = object()
@@ -62,16 +63,39 @@ def validate_alert_definition(
         raise ValidationError("field_path must not contain empty components")
     if operator not in SUPPORTED_OPERATORS:
         raise ValidationError(
-            "operator must be one of: {0}".format(", ".join(SUPPORTED_OPERATORS))
+            "operator must be one of: {}".format(", ".join(SUPPORTED_OPERATORS))
         )
-    # value must be a JSON scalar (not dict/list).
-    if isinstance(value, (dict, list)):
+    # value must be a JSON scalar (not dict/list), except for any_of which
+    # takes a list of strings.
+    if isinstance(value, dict):
+        raise ValidationError("value must be a JSON scalar (string, number, bool, or null)")
+    if isinstance(value, list) and operator != "any_of":
         raise ValidationError("value must be a JSON scalar (string, number, bool, or null)")
     # Ordering operators require a numeric value (bool is NOT numeric).
     if operator in ("gt", "gte", "lt", "lte"):
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValidationError(
-                "operator '{0}' requires a numeric value".format(operator)
+                f"operator '{operator}' requires a numeric value"
+            )
+    # String operators require a string value.
+    if operator in ("contains", "not_contains", "match"):
+        if not isinstance(value, str):
+            raise ValidationError(
+                f"operator '{operator}' requires a string value"
+            )
+    # any_of requires a non-empty list of strings (max 32).
+    if operator == "any_of":
+        if not isinstance(value, list) or not value:
+            raise ValidationError(
+                "operator 'any_of' requires a non-empty list of strings"
+            )
+        if len(value) > 32:
+            raise ValidationError(
+                "operator 'any_of' accepts at most 32 strings"
+            )
+        if not all(isinstance(v, str) for v in value):
+            raise ValidationError(
+                "operator 'any_of' requires a list of strings"
             )
     if name is not None and not isinstance(name, str):
         raise ValidationError("name must be a string or null")
@@ -129,6 +153,26 @@ def compare_values(observed: Any, operator: str, expected: Any) -> bool:
         return _eq(observed, expected)
     if operator == "ne":
         return not _eq(observed, expected)
+    # String operators (case-insensitive).
+    if operator in ("contains", "match"):
+        if not isinstance(observed, str) or not isinstance(expected, str):
+            return False
+        return expected.lower() in observed.lower()
+    if operator == "not_contains":
+        if not isinstance(observed, str) or not isinstance(expected, str):
+            return False
+        return expected.lower() not in observed.lower()
+    if operator == "any_of":
+        if not isinstance(expected, list):
+            return False
+        needles = [str(n).lower() for n in expected]
+        if isinstance(observed, list):
+            haystack = [str(x).lower() for x in observed]
+            return any(n in haystack for n in needles)
+        if isinstance(observed, str):
+            low = observed.lower()
+            return any(n in low for n in needles)
+        return False
     # Ordering operators: numeric only. Non-numeric → no match (not an error).
     if not (_is_numeric(observed) and _is_numeric(expected)):
         return False

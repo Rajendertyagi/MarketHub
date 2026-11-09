@@ -10,11 +10,10 @@ from typing import Any
 
 from market.models import (
     CompanyProfile,
-    KeyRatios,
-    CorporateAction,
     Competitor,
+    CorporateAction,
+    KeyRatios,
 )
-
 
 # ---------------------------------------------------------------------------
 # Company Profile

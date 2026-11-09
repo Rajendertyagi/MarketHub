@@ -56,7 +56,6 @@ class TestImportWall:
         mod_name = "mcp_server"
         if mod_name in sys.modules:
             del sys.modules[mod_name]
-        import mcp_server  # noqa: F401
         post_broker = {
             k for k in sys.modules
             if k.startswith("brokers.upstox") or k.startswith("brokers.fyers")
@@ -73,11 +72,15 @@ class TestNoBrokerConnections:
     def test_tool_registration_no_broker_instantiation(self) -> None:
         from mcp_server.services import Services
         from mcp_server.tools import (
-            register_system_tools, register_market_tools,
-            register_event_tools, register_consumer_tools,
+            register_alert_tools,
+            register_consumer_tools,
+            register_event_tools,
+            register_market_alert_tools,
+            register_market_intel_tools,
+            register_market_tools,
+            register_options_analytics_tools,
             register_replay_tools,
-            register_alert_tools, register_market_intel_tools,
-            register_options_analytics_tools, register_market_alert_tools,
+            register_system_tools,
         )
 
         mock_services = Services(

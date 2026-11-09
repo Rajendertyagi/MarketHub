@@ -17,16 +17,16 @@ from core import events
 from mcp_server.contract import (
     RESOURCE_EVENT_LATEST,
     RESOURCE_EVENTS_PENDING,
-    RESOURCE_SYSTEM_INFO,
-    RESOURCE_SOURCES_STATUS,
-    RESOURCE_SYSTEM_METRICS,
     RESOURCE_EVENTS_RECENT,
-    RESOURCE_CONSUMER_EVENTS_PREFIX,
-    consumer_events_uri,
+    RESOURCE_SOURCES_STATUS,
+    RESOURCE_SYSTEM_INFO,
+    RESOURCE_SYSTEM_METRICS,
 )
+from mcp_server.services import Services
 
 
-def register_resources(mcp, services: "Services", constants: dict[str, str]) -> None:
+def register_resources(mcp, services: Services,
+                      constants: dict[str, str]) -> None:
     """Register all MCP resources on the given server instance."""
     SERVER_VERSION = constants["SERVER_VERSION"]
     CONTRACT_VERSION = constants["CONTRACT_VERSION"]
@@ -58,7 +58,7 @@ def register_resources(mcp, services: "Services", constants: dict[str, str]) -> 
             "contract_version": CONTRACT_VERSION,
             "purpose": "Generic self-hosted MCP event server",
             "transport": "streamable-http",
-            "endpoint": "http://{0}:{1}/mcp".format(
+            "endpoint": "http://{}:{}/mcp".format(
                 constants.get("LISTEN_HOST", "127.0.0.1"),
                 constants.get("LISTEN_PORT", 8000),
             ),

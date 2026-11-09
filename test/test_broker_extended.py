@@ -13,27 +13,32 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from datetime import datetime, timezone  # noqa: E402
+from datetime import timezone
 
-from helpers.runner import R  # noqa: E402
-from market.models import (  # noqa: E402
-    MarketHoliday, MarketSession,
-    FuturesSmartlist, FuturesSmartlistEntry,
-    FIIRecord, FIIActivity,
-    DIIRecord, DIIActivity,
-    CompanyProfile, KeyRatios, CorporateAction, Competitor,
+from market.models import (
+    CompanyProfile,
+    DIIActivity,
+    FIIActivity,
+    FuturesSmartlist,
+    KeyRatios,
+    MarketHoliday,
 )
-from market.normalize.upstox_market_info import (  # noqa: E402
-    holidays_from_rest, holiday_status_from_rest, timings_from_rest,
+from market.normalize.upstox_analytics_extended import (
+    dii_single_from_rest,
+    fii_single_from_rest,
+    futures_smartlist_from_rest,
 )
-from market.normalize.upstox_analytics_extended import (  # noqa: E402
-    futures_smartlist_from_rest, fii_single_from_rest, dii_single_from_rest,
+from market.normalize.upstox_fundamentals import (
+    company_profile_from_rest,
+    competitors_from_rest,
+    corporate_actions_from_rest,
+    key_ratios_from_rest,
 )
-from market.normalize.upstox_fundamentals import (  # noqa: E402
-    company_profile_from_rest, key_ratios_from_rest,
-    corporate_actions_from_rest, competitors_from_rest,
+from market.normalize.upstox_market_info import (
+    holiday_status_from_rest,
+    holidays_from_rest,
+    timings_from_rest,
 )
-
 
 UTC = timezone.utc
 

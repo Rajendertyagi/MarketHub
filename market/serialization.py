@@ -13,7 +13,8 @@ Locked rules:
 
 from __future__ import annotations
 
-from dataclasses import fields as dataclass_fields, is_dataclass
+from dataclasses import fields as dataclass_fields
+from dataclasses import is_dataclass
 from datetime import datetime, timezone
 from typing import Any
 

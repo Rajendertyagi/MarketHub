@@ -13,12 +13,15 @@ _PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_DIR not in sys.path:
     sys.path.insert(0, _PROJECT_DIR)
 
-from app.previous_oi import (  # noqa: E402
-    BASIS_PERSISTED, BASIS_PROVIDER, BASIS_UNAVAILABLE, PreviousOiRecorder,
+from app.previous_oi import (
+    BASIS_PERSISTED,
+    BASIS_PROVIDER,
+    BASIS_UNAVAILABLE,
+    PreviousOiRecorder,
     oi_change_and_pct,
 )
-from core.persistence.modules.previous_oi import ist_session_date  # noqa: E402
-from core.persistence.store import EventStore  # noqa: E402
+from core.persistence.modules.previous_oi import ist_session_date
+from core.persistence.store import EventStore
 
 
 def _store():
@@ -41,7 +44,9 @@ def test_schema_is_v22_with_table() -> None:
     store, tmp = _store()
     con = sqlite3.connect(store.db_path)
     try:
-        assert con.execute("PRAGMA user_version").fetchone()[0] == 22
+        # The schema version moves with every migration; the table
+        # itself is what this test pins.
+        assert con.execute("PRAGMA user_version").fetchone()[0] >= 22
         names = {r[0] for r in con.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         assert "futures_oi_snapshot" in names

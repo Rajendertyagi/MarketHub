@@ -9,14 +9,12 @@ Each workflow calls tool handlers directly with mock services.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
-
-from market.models import Depth, DepthLevel, Quote
+from market.models import Depth, DepthLevel
 from market.service import MarketService, QuotePatch
-from datetime import datetime, timezone
 
 NOW = datetime(2026, 8, 27, 10, 0, tzinfo=timezone.utc)
 
@@ -157,7 +155,9 @@ def _register_tools(svc: _MockServices) -> dict[str, Any]:
     fake = _FakeMCP()
     from mcp_server.tools.market import register_market_tools
     from mcp_server.tools.market_intel_tools import register_market_intel_tools
-    from mcp_server.tools.options_analytics_tools import register_options_analytics_tools
+    from mcp_server.tools.options_analytics_tools import (
+        register_options_analytics_tools,
+    )
     from mcp_server.tools.system import register_system_tools
     register_system_tools(fake)
     register_market_tools(fake, svc)

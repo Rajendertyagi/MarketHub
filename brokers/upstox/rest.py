@@ -36,9 +36,10 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Mapping
+from typing import Any
 
 from brokers.upstox.auth import UpstoxCredentials, upstox_token_expiry
 from brokers.upstox.errors import (
@@ -86,7 +87,7 @@ SyncTransport = Callable[
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """SEC-HTTP-2: surface 3xx responses instead of following them."""
 
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ARG002
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
 
 
@@ -201,6 +202,9 @@ def _raise_for_status(response: HttpResponse, operation: str) -> None:
     if status == 401:
         raise UpstoxAuthError(message)
     if status == 429:
+        # The provider signalled a rate limit. The BLOCK is reported by
+        # the caller (which knows the quota bucket).
+        pass
         raise UpstoxRateLimitError(
             message, upstox_codes=codes,
             retry_after_seconds=_parse_retry_after(response.headers),
@@ -270,10 +274,74 @@ class UpstoxRest:
         sync_transport: SyncTransport | None = None,
         utc_now: Callable[[], datetime] | None = None,
     ) -> None:
+        # Every Upstox REST request goes through the SHARED per-provider
+        # request budget (per API, per user), so all callers share one
+        # accounting state.
         self._transport: SyncTransport = sync_transport or _default_sync_transport
         self._utc_now: Callable[[], datetime] = utc_now or (
             lambda: datetime.now(timezone.utc)
         )
+
+    #: URL prefix -> documented quota bucket. The limits are documented
+    #: "per API, per user", so each API family has its OWN budget.
+    _QUOTA_BUCKETS: tuple[tuple[str, str], ...] = (
+        ("/v3/market-quote/", "market_quote"),
+        ("/v3/historical-candle/", "historical"),
+        ("/v2/option/chain", "option_chain"),
+        ("/v2/market/", "market_info"),
+        # The market-data feed authorization (a one-time authorized
+        # WebSocket URI per CONNECTION - it is NOT a user login) has its
+        # own documented scope; it must not be billed to the TOTP-login
+        # quota, and it must not be billed to the market-info quota
+        # either.
+        ("/v3/feed/market-data-feed/authorize", "feed_authorize"),
+        # The interactive login family (the TOTP/PIN login and the PIN
+        # validation) shares the ONE strict auth budget, so repeated
+        # attempts against it cannot bypass that budget. The OAuth
+        # authorization-code exchange is a different documented API
+        # family (standard row) and has its own budget.
+        ("/v2/totp-login/", "auth"),
+        ("/v2/login/validate", "auth"),
+        ("/v2/login/authorization/token", "auth_code"),
+    )
+
+    @classmethod
+    def _bucket_for(cls, url: str) -> str:
+        """The documented quota bucket of one endpoint."""
+        for prefix, bucket in cls._QUOTA_BUCKETS:
+            if prefix in url:
+                return bucket
+        return "market_info"
+
+    async def _call(self, method: str, url: str, headers: Any,
+                     body: bytes | None, timeout: float) -> HttpResponse:
+        """Perform one request through the SHARED Upstox request budget.
+
+        Every Upstox REST call (market data, history, option chain,
+        analytics) goes through here, so all callers share one accounting
+        state. An exhausted window is refused BEFORE the request - the
+        provider is never pushed into a block by our own retries - and the
+        refusal surfaces as the provider's rate-limit error so the
+        caller's contract is unchanged.
+        """
+        from providers.rate import BudgetExhausted, get_budget_manager
+        bucket = self._bucket_for(url)
+        try:
+            get_budget_manager().acquire("upstox", bucket)
+        except BudgetExhausted as exc:
+            raise UpstoxRateLimitError(
+                "upstox request budget exhausted") from exc
+        response = await asyncio.to_thread(
+            self._transport, method, url, headers, body, timeout)
+        if getattr(response, "status", None) == 429:
+            # The provider signalled a rate limit: stop THIS quota bucket
+            # for the window instead of retrying into a restriction.
+            try:
+                from providers.rate import get_budget_manager
+                get_budget_manager().report_block("upstox", bucket)
+            except Exception:
+                pass
+        return response
 
     # -- market-data feed authorization --------------------------------------
 
@@ -296,8 +364,8 @@ class UpstoxRest:
         }
         operation = "market-data feed authorization"
         try:
-            response = await asyncio.to_thread(
-                self._transport, "GET", _AUTHORIZE_URL, headers, None,
+            response = await self._call(
+                "GET", _AUTHORIZE_URL, headers, None,
                 _AUTHORIZE_TIMEOUT_S,
             )
         except OSError as exc:  # URLError/TimeoutError/socket.timeout
@@ -375,8 +443,8 @@ class UpstoxRest:
         }
         operation = "authorization-code exchange"
         try:
-            response = await asyncio.to_thread(
-                self._transport, "POST", _TOKEN_URL, headers, form,
+            response = await self._call(
+                "POST", _TOKEN_URL, headers, form,
                 _EXCHANGE_TIMEOUT_S,
             )
         except OSError as exc:
@@ -435,8 +503,8 @@ class UpstoxRest:
         }
         operation = "validate-with-pin"
         try:
-            response = await asyncio.to_thread(
-                self._transport, "POST", _VALIDATE_URL, headers, body,
+            response = await self._call(
+                "POST", _VALIDATE_URL, headers, body,
                 _EXCHANGE_TIMEOUT_S,
             )
         except OSError as exc:
@@ -498,8 +566,8 @@ class UpstoxRest:
             headers["Content-Type"] = "application/json"
         operation = f"upstox api call ({method})"
         try:
-            response = await asyncio.to_thread(
-                self._transport, method, url, headers, body, timeout)
+            response = await self._call(
+                method, url, headers, body, timeout)
         except OSError as exc:
             raise _wrap_network_error(operation, exc) from exc
         if response.status != 200:

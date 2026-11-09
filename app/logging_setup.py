@@ -30,8 +30,9 @@ import logging.handlers
 import os
 import platform
 import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
+from typing import Any
 
 __all__ = ["setup_logging", "log_startup_diagnostics"]
 

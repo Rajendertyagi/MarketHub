@@ -31,7 +31,7 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 _TOPIC = "sf|nse_cm|1234"
 
@@ -79,6 +79,10 @@ def _snapshot_frame(topic_id: int, name: str, fields: dict[int, int],
     body.append(count)
     for idx in range(count):
         body += struct.pack(">i", fields.get(idx, -2147483648))
+    # The official SDK skips TWO bytes between the value array and the
+    # multiplier (fyers_apiv3/FyersWebsocket/data_ws.py); the wire layout
+    # is part of the protocol, so the fixture reproduces it.
+    body += b"\x00\x00"
     body += struct.pack(">H", multiplier)
     body.append(precision)
     for s in ("NSE", "1234", "SBIN"):
@@ -131,7 +135,8 @@ class _StubWS:
         self.closed = True
 
 
-def _mk_feed(market_service=None, instrument_keys=None):
+def _mk_feed(market_service=None, instrument_keys=None,
+             wire_resolver=None):
     from brokers.fyers.feed import FyersFeed
 
     ws = _StubWS()
@@ -146,6 +151,7 @@ def _mk_feed(market_service=None, instrument_keys=None):
            "app_id": "APP-1",
            "access_token_getter": lambda: _jwt_with_hsm_key("HSMSYNTH"),
            "ws_connect": ws_connect,
+           "wire_symbol_resolver": wire_resolver,
            "utc_now_iso": lambda: "2026-08-24T10:00:00+00:00"}
     feed = FyersFeed(config=cfg, auth=object(),
                      market_service=market_service)
@@ -218,7 +224,16 @@ async def test_ff3_to_ff5_lifecycle(runner: R) -> None:
 
 
 async def test_ff6_delta_frames(runner: R) -> None:
-    feed, ws = _mk_feed()
+    from brokers.fyers.hsm_symbols import Resolution
+
+    def _stub_resolver(symbols, token):
+        """Stub wire resolver: unit tests never touch the network."""
+        res = Resolution()
+        for sym in symbols:
+            res.resolved[sym] = f"sf|nse_cm|{abs(hash(sym)) % 10000:04d}"
+        return res
+
+    feed, ws = _mk_feed(wire_resolver=_stub_resolver)
 
     async def run():
         stop = asyncio.Event()
@@ -312,6 +327,7 @@ async def test_ff12_symbol_resolution_real_path(runner: R) -> None:
     the mapping. This drives the REAL code path with a stubbed HTTP layer.
     """
     import urllib.request
+
     from brokers.fyers.feed import FyersFeed
 
     calls = {}
@@ -367,6 +383,7 @@ async def test_ff12_symbol_resolution_real_path(runner: R) -> None:
 async def test_ff13_resolution_failure_retries(runner: R) -> None:
     """Failed symbol resolution must NOT cache identity tokens."""
     import urllib.request
+
     from brokers.fyers.feed import FyersFeed
 
     def failing_urlopen(req, timeout=0):
@@ -395,6 +412,7 @@ async def test_ff14_auth_failure_raises_auth_invalid(runner: R) -> None:
     retrying forever on a stale/expired token after a MarketHub restart."""
     import urllib.error
     import urllib.request
+
     from brokers.fyers.feed import FyersFeed, _FyersAuthInvalid
 
     def auth_fail_urlopen(req, timeout=0):
@@ -426,7 +444,7 @@ async def test_ff11_terminal_outcome_no_crash(runner: R) -> None:
     sentinel INSTANCE, raising TypeError on every real connect - found
     during first live login.
     """
-    from brokers.fyers.feed import FyersFeed, _TERMINAL
+    from brokers.fyers.feed import _TERMINAL, FyersFeed
 
     cfg = {"source_name": "fyers", "instrument_keys": ["NSE:X"],
            "app_id": "A", "access_token_getter": lambda: "T",

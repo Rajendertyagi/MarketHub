@@ -25,7 +25,7 @@ function IndexRow({
         </label>
       </td>
       <td>{index.label}</td>
-      <td className="muted">{index.key}</td>
+      <td className="muted">{index.canonical_id ?? index.key}</td>
       <td className="muted">{index.fyers_symbol}</td>
     </tr>
   );
@@ -53,7 +53,7 @@ function StockRow({
         </label>
       </td>
       <td>{stock.label}</td>
-      <td className="muted">{stock.key}</td>
+      <td className="muted">{stock.canonical_id ?? stock.key}</td>
       <td>
         <Button variant="default" className="btn-compact sub-remove" onClick={onRemove}>
           Remove
@@ -169,7 +169,7 @@ function RuleEditor({
   );
 }
 
-export function SubscriptionsView() {
+export function SubscriptionsView({ embedded = false }: { embedded?: boolean } = {}) {
   const [tab, setTab] = useState<Tab>("indices");
   const [newKey, setNewKey] = useState("");
   const [newLabel, setNewLabel] = useState("");
@@ -325,6 +325,15 @@ export function SubscriptionsView() {
         )}
       </>
     );
+  }
+
+  // Embedded: rendered as a section of a host page that already owns the
+  // `.panel` surface, the page header AND the tab bar. Repeating any of them
+  // would nest an elevated surface or produce two competing tab bars, so the
+  // embedded form renders the active tab's body only. "Save & Apply" is
+  // intentionally retained — it is the section's own primary action, not chrome.
+  if (embedded) {
+    return <div className="subscriptions-view">{body}</div>;
   }
 
   return (

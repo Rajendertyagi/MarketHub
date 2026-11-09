@@ -1,0 +1,90 @@
+@layer features {
+  /* Full-page board: filters + summary on top, the tile wall fills the rest
+     and scrolls inside its own container (the page itself does not scroll). */
+  .futures-heatmap {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    gap: var(--space-3);
+  }
+  .futures-heatmap .board-toolbar {
+    flex: 0 0 auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-end;
+  }
+  .futures-heatmap .board-summary {
+    flex: 0 0 auto;
+  }
+
+  /* Uniform card wall. */
+  .futures-heatmap .fboard-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+    gap: 6px;
+    align-content: start;
+    padding: var(--space-2);
+  }
+
+  .futures-heatmap .fboard-table-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .futures-heatmap .board-coverage {
+    flex: 0 0 auto;
+    padding: var(--space-2) var(--space-3);
+    box-shadow: 0 1px 0 var(--edge);
+    font-size: var(--font-size-sm);
+  }
+  .futures-heatmap .board-coverage summary {
+    cursor: pointer;
+    color: var(--text-muted);
+    padding: var(--space-1) 0;
+  }
+
+  .futures-heatmap tbody tr {
+    cursor: pointer;
+  }
+  .futures-heatmap .row-dim {
+    opacity: 0.6;
+  }
+
+  /* Coverage badges (mirrors the backend coverage vocabulary). */
+  .cov {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 5px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    line-height: 1.6;
+    white-space: nowrap;
+    background: var(--surface-3);
+    color: var(--text-muted);
+  }
+  .cov-live {
+    background: color-mix(in oklab, var(--pos) 18%, transparent);
+    color: var(--pos);
+  }
+  .cov-stale {
+    background: color-mix(in oklab, var(--neg) 14%, transparent);
+    color: var(--neg);
+  }
+  /* no_data / unsubscribed are NOT "zero" and NOT "unavailable instrument". */
+  .cov-no-data,
+  .cov-unsubscribed {
+    background: var(--surface-3);
+    color: var(--text-muted);
+  }
+  .cov-uncovered,
+  .cov-capacity-limited,
+  .cov-provider-unavailable {
+    background: color-mix(in oklab, var(--warn) 16%, transparent);
+    color: var(--warn);
+  }
+}

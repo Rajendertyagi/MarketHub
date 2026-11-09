@@ -42,15 +42,19 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 # Resolve the composed app objects at import time so the tests also work when
 # collected directly by pytest (the own-runner path sets these inside main()).
 try:
-    from app.server import (  # noqa: E402
-        app as _mse_app,
-        _market_service as _mse_service,
+    from app.server import (
         _market_event_broker as _mse_broker,
+    )
+    from app.server import (
+        _market_service as _mse_service,
+    )
+    from app.server import (
+        app as _mse_app,
     )
     app = _mse_app
     market_service = _mse_service
@@ -186,6 +190,29 @@ async def _wait_subscribers_zero(broker, timeout: float = 3.0) -> bool:
     return False
 
 
+async def _next_quote_for(driver, marker: int, timeout: float = READ_TIMEOUT,
+                          max_events: int = 32):
+    """The next quote event that carries the applied update's token.
+
+    The stream opens with the authoritative SNAPSHOT (the quotes that are
+    known right now), so the update applied afterwards is not necessarily
+    the FIRST event. The helper drains the stream until the applied
+    update arrives - it never accepts a different instrument.
+    """
+    token = f"TEST|{marker}"
+    seen = 0
+    while seen < max_events:
+        evt = await driver.next_json(timeout=timeout)
+        seen += 1
+        if evt.get("type") != "quote":
+            continue
+        data = evt.get("data") or {}
+        if data.get("instrument_token") == token:
+            return evt
+    raise AssertionError(
+        f"no quote event for {token} within {seen} streamed events")
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -209,7 +236,7 @@ async def test_market_stream_delivers_quote(runner: R) -> None:
                      (outcome.accepted, outcome.created, outcome.changed),
                      (True, True, True))
 
-    evt = await driver.next_json()
+    evt = await _next_quote_for(driver, marker)
     runner.assert_eq(name + "-envelope-type", evt.get("type"), "quote")
 
     data = evt.get("data") or {}
@@ -247,8 +274,8 @@ async def test_two_subscribers_both_receive(runner: R) -> None:
 
     await market_service.apply_quote(_make_patch(marker))
 
-    evt_a = await driver_a.next_json()
-    evt_b = await driver_b.next_json()
+    evt_a = await _next_quote_for(driver_a, marker)
+    evt_b = await _next_quote_for(driver_b, marker)
     runner.assert_eq(name + "-a-type", evt_a.get("type"), "quote")
     runner.assert_eq(name + "-b-type", evt_b.get("type"), "quote")
     runner.assert_eq(name + "-same-token",
@@ -319,9 +346,9 @@ async def test_idle_subscriber_never_blocks(runner: R) -> None:
 
 async def main() -> bool:
     global app, market_service, market_broker
-    from app.server import app as _app
     from app.server import _market_event_broker as _broker
     from app.server import _market_service as _service
+    from app.server import app as _app
 
     app = _app
     market_service = _service

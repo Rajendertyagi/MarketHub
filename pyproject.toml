@@ -14,6 +14,7 @@ dependencies = [
     "starlette>=0.48.0,<2.0.0",
     "uvicorn>=0.31.1,<1.0.0",
     "sse-starlette>=3.0.0,<4.0.0",
+    "yfinance>=0.2.54,<2.0",
 ]
 
 [project.scripts]
@@ -23,16 +24,16 @@ eventhub = "app.server:main"
 version = { attr = "app.__init__.__version__" }
 
 [tool.setuptools.packages.find]
-include = ["app*", "core*", "mcp_server*", "sources*", "market*", "brokers*", "api*"]
+include = ["app*", "core*", "mcp_server*", "sources*", "market*", "brokers*", "api*", "news*", "x_twitter*", "yfinance_service*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 
 [tool.ruff]
-# Pinned minimal gate (deliberate: ruff's zero-config default set is
-# version-dependent and currently flags ~2000 pre-existing tree items).
-# These rules stay green on owned/cleaned paths; the rest of the tree is
-# red-but-baselined and cleaned incrementally, never churned for lint.
+# Pinned minimal gate (deliberately NOT ruff's zero-config default set,
+# which is version-dependent and flags far more than this project intends
+# to enforce). The WHOLE TREE is clean under this rule set, and the CI gate
+# (.github/workflows/ruff.yml) checks all of it.
 target-version = "py310"
 
 [tool.ruff.lint]
@@ -42,3 +43,17 @@ ignore = [
     # route/service/restore layers (500+ pre-existing sites).
     "BLE001",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# E402 (module-level import not at top of file) is STRUCTURAL in two places:
+#
+#  * test/**.py — every standalone-runnable test bootstraps ``sys.path``
+#    BEFORE importing the project modules it needs (so the file can be run
+#    directly with ``python test/<file>.py``). The bootstrap must precede
+#    the imports it enables.
+#  * app/server.py — the application COMPOSITION ROOT. Its module-level
+#    imports are placed next to the construction step they serve (route
+#    builders next to the route list, service constructors next to their
+#    wiring). Hoisting them would restructure the composition order.
+"test/*.py" = ["E402"]
+"app/server.py" = ["E402"]

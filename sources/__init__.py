@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Protocol, runtime_checkable
 
+from sources.registry import SOURCE_TYPES
+
 logger = logging.getLogger(__name__)
 
 
@@ -538,8 +540,6 @@ class SourceManager:
 # ---------------------------------------------------------------------------
 # Static source registry + config-driven builder (Nuitka-safe, no discovery)
 # ---------------------------------------------------------------------------
-
-from sources.registry import SOURCE_TYPES  # noqa: E402  (bottom import avoids cycles)
 
 
 def build_source_manager(

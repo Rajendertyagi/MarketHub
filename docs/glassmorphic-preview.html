@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MarketHub — Glassmorphic Preview</title>
+  <style>
+    :root {
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 20px;
+      --space-6: 28px;
+
+      --radius-sm: 6px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+
+      --font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-size-xs: 11px;
+      --font-size-sm: 12px;
+      --font-size-md: 13px;
+      --font-size-base: 13px;
+      --font-size-lg: 15px;
+      --font-size-xl: 17px;
+      --font-size-2xl: 20px;
+
+      --motion-fast: 150ms;
+      --ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+      --pos: oklch(0.78 0.17 155);
+      --neg: oklch(0.72 0.18 25);
+      --success: oklch(0.72 0.14 150);
+      --danger: oklch(0.70 0.17 25);
+      --warning: oklch(0.68 0.13 75);
+      --info: oklch(0.68 0.12 240);
+    }
+
+    [data-theme="dark"] {
+      color-scheme: dark;
+      --bg: oklch(0.13 0 0);
+      --surface-1: rgba(255, 255, 255, 0.04);
+      --surface-2: rgba(255, 255, 255, 0.06);
+      --surface-3: rgba(255, 255, 255, 0.08);
+      
+      --text: oklch(0.95 0.01 100);
+      --text-muted: oklch(0.70 0.008 100);
+      --text-faint: oklch(0.50 0.006 80);
+      
+      --shadow-card: 0 8px 32px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.05);
+      --shadow-float: 0 12px 48px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.08);
+      
+      --accent: oklch(0.66 0.124 254);
+      --accent-hover: oklch(0.72 0.124 254);
+      --accent-active: oklch(0.78 0.124 254);
+      --accent-soft: color-mix(in oklch, var(--accent) 50%, transparent);
+    }
+
+    [data-theme="light"] {
+      color-scheme: light;
+      --bg: oklch(0.97 0.012 250);
+      --surface-1: rgba(255, 255, 255, 0.75);
+      --surface-2: rgba(255, 255, 255, 0.85);
+      --surface-3: rgba(255, 255, 255, 0.95);
+      
+      --text: oklch(0.20 0.01 250);
+      --text-muted: oklch(0.45 0.01 250);
+      --text-faint: oklch(0.65 0.01 250);
+      
+      --shadow-card: 0 8px 32px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.05);
+      --shadow-float: 0 12px 48px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.08);
+      
+      --accent: oklch(0.52 0.15 254);
+      --accent-hover: oklch(0.47 0.15 254);
+      --accent-active: oklch(0.42 0.15 254);
+      --accent-soft: color-mix(in oklch, var(--accent) 50%, transparent);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-family);
+      font-size: var(--font-size-base);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    .theme-toggle {
+      position: fixed; top: var(--space-4); right: var(--space-4); z-index: 100;
+      background: var(--surface-1);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border-radius: var(--radius-md); padding: var(--space-2) var(--space-3);
+      color: var(--text); font-size: var(--font-size-sm); cursor: pointer; border: none;
+      box-shadow: var(--shadow-card); transition: background var(--motion-fast) var(--ease);
+    }
+    .theme-toggle:hover { background: var(--surface-2); }
+
+    .topbar {
+      display: flex; align-items: center; gap: var(--space-2); height: 40px;
+      padding: 0 var(--space-4); background: var(--surface-1);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      box-shadow: var(--shadow-card); position: sticky; top: 0; z-index: 10;
+    }
+    .brand { font-weight: 600; font-size: var(--font-size-lg); color: var(--text); }
+    .nav { flex: 1; display: flex; align-items: center; gap: var(--space-1); }
+    .nav-link {
+      padding: var(--space-1) var(--space-2); border-radius: var(--radius-md);
+      color: var(--text-muted); font-size: var(--font-size-sm); text-decoration: none;
+      cursor: pointer; transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+    }
+    .nav-link:hover { background: var(--surface-2); color: var(--text); }
+    .nav-link.active { background: var(--accent-soft); color: var(--text); font-weight: 500; }
+
+    .main { padding: var(--space-4); max-width: 1400px; margin: 0 auto; }
+    .page-header { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-4); }
+    .page-title { font-size: var(--font-size-2xl); font-weight: 600; }
+    .page-meta { font-size: var(--font-size-sm); color: var(--text-muted); }
+
+    .idx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--space-3); margin-bottom: var(--space-5); }
+    .idx-card {
+      display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4);
+      background: var(--surface-1); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border-radius: var(--radius-lg); box-shadow: var(--shadow-card);
+      cursor: pointer; transition: transform var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
+    }
+    .idx-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-float); }
+    .idx-name { font-size: var(--font-size-xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); }
+    .idx-value { font-size: var(--font-size-2xl); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+    .idx-change { display: inline-flex; align-items: baseline; gap: var(--space-2); font-size: var(--font-size-sm); font-variant-numeric: tabular-nums; }
+    .idx-change.pos { color: var(--pos); }
+    .idx-change.neg { color: var(--neg); }
+
+    .widget-card {
+      padding: var(--space-3); background: var(--surface-1);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border-radius: var(--radius-md); box-shadow: var(--shadow-card);
+      transition: box-shadow var(--motion-fast) var(--ease);
+    }
+    .widget-card:hover { box-shadow: var(--shadow-float); }
+    .widget-body { display: flex; flex-direction: column; gap: var(--space-2); }
+    .widget-row { display: flex; align-items: center; justify-content: space-between; padding: var(--space-1) 0; }
+    .widget-row:hover { background: var(--surface-2); border-radius: var(--radius-sm); }
+    .w-sym { font-weight: 600; }
+    .w-ltp { font-variant-numeric: tabular-nums; }
+    .w-chg.pos { color: var(--pos); }
+    .w-chg.neg { color: var(--neg); }
+
+    .movers-tabs { display: flex; gap: var(--space-1); margin-bottom: var(--space-3); }
+    .movers-tab {
+      padding: var(--space-1) var(--space-2); border-radius: 999px; font-size: var(--font-size-xs);
+      background: var(--surface-1); color: var(--text-muted); border: none; cursor: pointer;
+      transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+    }
+    .movers-tab:hover { background: var(--surface-2); color: var(--text); }
+    .movers-tab.active { background: var(--accent-soft); color: var(--text); }
+
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+      height: 32px; padding: 0 var(--space-3); border-radius: var(--radius-md);
+      background: var(--surface-1); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      color: var(--text); font-size: var(--font-size-md); border: none; cursor: pointer;
+      box-shadow: var(--shadow-card); transition: background var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
+    }
+    .btn:hover { background: var(--surface-2); box-shadow: var(--shadow-float); }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-primary:hover { background: var(--accent-hover); }
+
+    .input {
+      height: 32px; padding: 0 var(--space-2); border-radius: var(--radius-md);
+      background: var(--surface-1); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      color: var(--text); font-size: var(--font-size-md); border: none; box-shadow: var(--shadow-card);
+      transition: background var(--motion-fast) var(--ease);
+    }
+    .input:focus { outline: none; background: var(--surface-2); }
+    .input::placeholder { color: var(--text-faint); }
+
+    .table { width: 100%; border-collapse: collapse; font-size: var(--font-size-md); }
+    .table th, .table td { padding: var(--space-2) var(--space-3); text-align: left; }
+    .table thead th { color: var(--text-muted); font-size: var(--font-size-xs); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 500; }
+    .table tbody tr { cursor: pointer; transition: background var(--motion-fast) var(--ease); }
+    .table tbody tr:hover { background: var(--surface-2); }
+    .table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+    .chip { display: inline-block; padding: 2px var(--space-2); border-radius: 999px; font-size: var(--font-size-xs); background: var(--surface-2); color: var(--text-muted); }
+    .chip.pos { background: var(--pos); color: white; }
+    .chip.neg { background: var(--neg); color: white; }
+    .chip.neutral { background: var(--surface-3); color: var(--text-muted); }
+
+    .badge { display: inline-block; padding: 2px var(--space-2); border-radius: 999px; font-size: var(--font-size-xs); font-weight: 500; }
+    .badge-success { background: var(--success); color: white; }
+    .badge-warning { background: var(--warning); color: white; }
+    .badge-danger { background: var(--danger); color: white; }
+    .badge-info { background: var(--accent); color: white; }
+
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); display: inline-block; }
+    .status-online { background: var(--pos); }
+    .status-offline { background: var(--neg); }
+    .status-checking { background: var(--warning); }
+
+    .section-label { font-size: var(--font-size-xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); margin-bottom: var(--space-2); }
+
+    .news-item {
+      padding: var(--space-3); background: var(--surface-1);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border-radius: var(--radius-md); box-shadow: var(--shadow-card);
+      margin-bottom: var(--space-2); transition: background var(--motion-fast) var(--ease);
+    }
+    .news-item:hover { background: var(--surface-2); }
+    .news-title { font-weight: 600; color: var(--text); margin-bottom: var(--space-1); }
+    .news-meta { font-size: var(--font-size-sm); color: var(--text-muted); }
+    .news-snippet { margin-top: var(--space-2); font-size: var(--font-size-sm); color: var(--text-muted); line-height: 1.5; }
+
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+      display: flex; align-items: center; justify-content: center; z-index: 50;
+    }
+    .modal-card {
+      background: var(--surface-1); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      border-radius: var(--radius-lg); padding: var(--space-5); box-shadow: var(--shadow-float);
+      max-width: 480px; width: 90%;
+    }
+    .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-3); }
+    .modal-title { font-size: var(--font-size-lg); font-weight: 600; }
+    .modal-footer { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
+
+    .preview-section { margin-bottom: var(--space-6); }
+    .demo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+    @media (max-width: 900px) { .demo-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <button class="theme-toggle" onclick="toggleTheme()">Toggle Theme</button>
+
+  <div class="topbar">
+    <span class="brand">MarketHub</span>
+    <nav class="nav">
+      <a class="nav-link active" href="#">Dashboard</a>
+      <a class="nav-link" href="#">Watchlists</a>
+      <a class="nav-link" href="#">Charts</a>
+      <a class="nav-link" href="#">News</a>
+      <a class="nav-link" href="#">Settings</a>
+    </nav>
+  </div>
+
+  <div class="main">
+    <div class="page-header">
+      <h1 class="page-title">Dashboard</h1>
+      <span class="page-meta">Last updated: 2 min ago · <span class="status-dot status-online"></span> Live</span>
+    </div>
+
+    <div class="preview-section">
+      <div class="section-label">Major Indices</div>
+      <div class="idx-grid">
+        <div class="idx-card">
+          <span class="idx-name">NIFTY 50</span>
+          <span class="idx-value">24,567.80</span>
+          <span class="idx-change pos"><span>+186.40</span><span class="pct">(0.76%)</span></span>
+        </div>
+        <div class="idx-card">
+          <span class="idx-name">BANK NIFTY</span>
+          <span class="idx-value">52,341.25</span>
+          <span class="idx-change neg"><span>-124.60</span><span class="pct">(-0.24%)</span></span>
+        </div>
+        <div class="idx-card">
+          <span class="idx-name">SENSEX</span>
+          <span class="idx-value">81,234.56</span>
+          <span class="idx-change pos"><span>+412.30</span><span class="pct">(0.51%)</span></span>
+        </div>
+        <div class="idx-card" style="background: color-mix(in oklch, var(--accent) 12%, var(--surface-1));">
+          <span class="idx-name">INDIA VIX</span>
+          <span class="idx-value">14.23</span>
+          <span class="idx-change" style="color: var(--text-muted);"><span>-0.45</span><span class="pct">(-3.07%)</span></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="demo-grid">
+      <div class="preview-section">
+        <div class="section-label">Top Movers</div>
+        <div class="movers-tabs">
+          <button class="movers-tab active">Gainers</button>
+          <button class="movers-tab">Losers</button>
+          <button class="movers-tab">Active</button>
+        </div>
+        <div class="widget-card">
+          <div class="widget-body">
+            <div class="widget-row"><span class="w-sym">RELIANCE</span><span class="w-ltp">2,847.50</span><span class="w-chg pos">+45.20 (1.61%)</span></div>
+            <div class="widget-row"><span class="w-sym">TCS</span><span class="w-ltp">4,123.80</span><span class="w-chg pos">+78.40 (1.94%)</span></div>
+            <div class="widget-row"><span class="w-sym">HDFC BANK</span><span class="w-ltp">1,567.25</span><span class="w-chg neg">-23.15 (1.45%)</span></div>
+            <div class="widget-row"><span class="w-sym">INFY</span><span class="w-ltp">1,892.40</span><span class="w-chg pos">+34.60 (1.86%)</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="preview-section">
+        <div class="section-label">Latest News</div>
+        <div class="news-item">
+          <div class="news-title">RBI keeps repo rate unchanged at 6.5%</div>
+          <div class="news-meta">Economic Times · 12 min ago</div>
+          <div class="news-snippet">The Reserve Bank of India's Monetary Policy Committee decided to keep the repo rate unchanged...</div>
+          <div style="margin-top: 8px; display: flex; gap: 8px;">
+            <span class="chip neutral">regulatory</span>
+            <span class="chip" style="background: var(--pos); color: white;">positive</span>
+          </div>
+        </div>
+        <div class="news-item">
+          <div class="news-title">Tata Steel reports Q2 results beat estimates</div>
+          <div class="news-meta">Moneycontrol · 28 min ago</div>
+          <div class="news-snippet">The company posted a profit of Rs 2,847 crore, beating analyst estimates of Rs 2,400 crore...</div>
+          <div style="margin-top: 8px; display: flex; gap: 8px;">
+            <span class="chip neutral">earnings</span>
+            <span class="chip" style="background: var(--pos); color: white;">bullish</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="demo-grid">
+      <div class="preview-section">
+        <div class="section-label">Components</div>
+        <div class="widget-card">
+          <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px;">
+            <button class="btn">Default</button>
+            <button class="btn btn-primary">Primary</button>
+            <button class="btn" disabled>Disabled</button>
+          </div>
+          <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px;">
+            <input class="input" placeholder="Search instruments..." style="width: 200px;">
+            <select class="input" style="width: 120px;"><option>NSE</option><option>BSE</option></select>
+          </div>
+          <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+            <span class="chip pos">Bullish</span>
+            <span class="chip neg">Bearish</span>
+            <span class="chip neutral">Neutral</span>
+            <span class="badge badge-success">Active</span>
+            <span class="badge badge-warning">Pending</span>
+            <span class="badge badge-danger">Error</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="preview-section">
+        <div class="section-label">Data Table</div>
+        <div class="widget-card" style="padding: 0;">
+          <table class="table">
+            <thead><tr><th>Symbol</th><th>LTP</th><th>Change</th><th>Volume</th><th>OI</th></tr></thead>
+            <tbody>
+              <tr><td><strong>RELIANCE</strong></td><td class="num">2,847.50</td><td class="num pos">+1.61%</td><td class="num">45.2M</td><td class="num">12.4M</td></tr>
+              <tr><td><strong>TCS</strong></td><td class="num">4,123.80</td><td class="num pos">+1.94%</td><td class="num">12.8M</td><td class="num">8.2M</td></tr>
+              <tr><td><strong>HDFC BANK</strong></td><td class="num">1,567.25</td><td class="num neg">-1.45%</td><td class="num">32.1M</td><td class="num">18.7M</td></tr>
+              <tr><td><strong>INFY</strong></td><td class="num">1,892.40</td><td class="num pos">+1.86%</td><td class="num">28.5M</td><td class="num">15.3M</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="preview-section">
+      <div class="section-label">Modal Dialog</div>
+      <div class="widget-card">
+        <div class="modal-overlay">
+          <div class="modal-card">
+            <div class="modal-header">
+              <h3 class="modal-title">Add to Watchlist</h3>
+              <button class="btn" style="padding: 4px 8px;">✕</button>
+            </div>
+            <div>
+              <div style="margin-bottom: 12px;">
+                <label style="display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">Instrument</label>
+                <input class="input" placeholder="Search symbol..." style="width: 100%;">
+              </div>
+              <div>
+                <label style="display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">Watchlist</label>
+                <select class="input" style="width: 100%;">
+                  <option>My Watchlist</option><option>F&O Stocks</option><option>New List...</option>
+                </select>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn">Cancel</button>
+              <button class="btn btn-primary">Add</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function toggleTheme() {
+      const html = document.documentElement;
+      const current = html.getAttribute('data-theme');
+      html.setAttribute('data-theme', current === 'dark' ? 'light' : 'dark');
+    }
+  </script>
+</body>
+</html>

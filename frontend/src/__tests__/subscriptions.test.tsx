@@ -44,12 +44,18 @@ function prefs(overrides: Partial<Record<string, unknown>> = {}) {
       label,
       key: `KEY_${i}`,
       fyers_symbol: `FS_${i}`,
+      canonical_id: `NSE:INDEX:${label}`,
       enabled: true,
       canonical: true,
     })),
     stocks: [
-      { key: "NSE:RELIANCE", label: "RELIANCE", enabled: true },
-      { key: "NSE:INFY", label: "INFY", enabled: false },
+      {
+        key: "NSE:RELIANCE",
+        label: "RELIANCE",
+        canonical_id: "NSE:EQUITY:RELIANCE",
+        enabled: true,
+      },
+      { key: "NSE:INFY", label: "INFY", canonical_id: "NSE:EQUITY:INFY", enabled: false },
     ],
     derivatives: [
       {

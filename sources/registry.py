@@ -20,12 +20,13 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Callable, Type
-
-logger = logging.getLogger(__name__)
+from collections.abc import Callable
+from typing import Any
 
 from sources.http_poller import HttpJsonPoller
 from sources.test_source import TestSource
+
+logger = logging.getLogger(__name__)
 
 
 def _create_upstox_feed(config: dict, *, market_service: Any = None) -> Any:

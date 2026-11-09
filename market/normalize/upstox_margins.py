@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from market.models import MarginEntry, MarginBasket
+from market.models import MarginBasket, MarginEntry
 
 
 def margin_from_rest(payload: dict[str, Any]) -> MarginBasket:

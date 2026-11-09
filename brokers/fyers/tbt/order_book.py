@@ -10,7 +10,6 @@ Maintains per-instrument bid/ask state to correctly handle:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Dict, Optional
 
 from market.models import Depth, DepthLevel
 
@@ -38,12 +37,12 @@ class LocalOrderBook:
         self.instrument_token = instrument_token
         self.exchange = exchange
         self.tradingsymbol = tradingsymbol
-        self.bids: Dict[float, DepthLevel] = {}
-        self.asks: Dict[float, DepthLevel] = {}
+        self.bids: dict[float, DepthLevel] = {}
+        self.asks: dict[float, DepthLevel] = {}
         self.snapshot_count = 0
         self.delta_count = 0
-        self.last_sequence: Optional[int] = None
-        self.last_update_ts: Optional[datetime] = None
+        self.last_sequence: int | None = None
+        self.last_update_ts: datetime | None = None
 
     def apply_snapshot(self, depth: Depth, sequence: int) -> None:
         """Apply full snapshot (replace entire book).
@@ -174,7 +173,7 @@ class OrderBookStore:
     """
 
     def __init__(self) -> None:
-        self._books: Dict[str, LocalOrderBook] = {}
+        self._books: dict[str, LocalOrderBook] = {}
 
     def get_or_create(
         self,
@@ -191,7 +190,7 @@ class OrderBookStore:
             )
         return self._books[symbol]
 
-    def get(self, symbol: str) -> Optional[LocalOrderBook]:
+    def get(self, symbol: str) -> LocalOrderBook | None:
         """Get existing book or None."""
         return self._books.get(symbol)
 

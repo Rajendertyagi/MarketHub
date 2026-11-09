@@ -21,14 +21,12 @@ Covers:
   - Persistence across restart
 """
 import asyncio
-import json
 import logging
 import os
 import sqlite3
 import sys
 import tempfile
 import threading
-import time
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_DIR = os.path.dirname(_SCRIPT_DIR)
@@ -37,7 +35,6 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
         sys.path.insert(0, _p)
 
 from helpers.runner import R
-
 
 # ===================================================================
 # REDACTION TESTS
@@ -240,8 +237,8 @@ def test_handler_force_rebind(r: R) -> None:
                f"buf1={len(buf1)} buf2={len(buf2)}")
 
     # Duplicate collapse: plant an extra handler, attach collapses to one
-    from core.webui_log_handler import WebUILogHandler
     from core.log_buffer import LogBuffer as _LB
+    from core.webui_log_handler import WebUILogHandler
     dup = WebUILogHandler(_LB(max_size=10))
     logging.getLogger().addHandler(dup)
     h3 = attach_webui_handler(buf2)
@@ -367,9 +364,9 @@ def test_sse_cleanup(r: R) -> None:
 
 def _make_news_service():
     """Create a NewsService backed by an in-memory SQLite database."""
-    from news.service import NewsService
-    from news.adapters.rss import RSSAdapter
     from news.adapters.reddit import RedditAdapter
+    from news.adapters.rss import RSSAdapter
+    from news.service import NewsService
 
     # In-memory store mock
     conn = sqlite3.connect(":memory:")
@@ -391,6 +388,7 @@ def _make_news_service():
         def upsert_news_source(self, *, source_id, name, source_type,
                                category, enabled, config_json=None):
             from datetime import datetime, timezone
+
             from core.persistence.modules.news import upsert_source
             upsert_source(self._conn, source_id=source_id, name=name,
                           source_type=source_type, category=category,
@@ -753,8 +751,8 @@ def test_sentiment_basic(r: R) -> None:
 # ===================================================================
 
 def test_rss_adapter_no_url(r: R) -> None:
-    from news.adapters.rss import RSSAdapter
     from market.models import NewsSourceConfig
+    from news.adapters.rss import RSSAdapter
 
     adapter = RSSAdapter()
     source = NewsSourceConfig(
@@ -770,8 +768,8 @@ def test_rss_adapter_no_url(r: R) -> None:
 
 
 def test_reddit_adapter_no_subreddit(r: R) -> None:
-    from news.adapters.reddit import RedditAdapter
     from market.models import NewsSourceConfig
+    from news.adapters.reddit import RedditAdapter
 
     adapter = RedditAdapter()
     source = NewsSourceConfig(
@@ -792,9 +790,10 @@ def test_reddit_adapter_no_subreddit(r: R) -> None:
 
 def test_handler_redacts_before_broadcast(r: R) -> None:
     """Verify the WebUILogHandler redacts before SSE broadcast."""
+    import logging
+
     from core.log_buffer import LogBuffer
     from core.webui_log_handler import WebUILogHandler
-    import logging
 
     buf = LogBuffer(max_size=100)
     handler = WebUILogHandler(buf, broker=None)
@@ -829,7 +828,10 @@ def test_sse_transport_excluded(r: R) -> None:
     """P1: sse_starlette (+children) never enter the WebUI pipeline."""
     from core.log_buffer import LogBuffer
     from core.webui_log_handler import (
-        WebUILogHandler, _EXCLUDED_LOGGER_PREFIXES, _is_excluded_logger)
+        _EXCLUDED_LOGGER_PREFIXES,
+        WebUILogHandler,
+        _is_excluded_logger,
+    )
 
     if "sse_starlette" not in _EXCLUDED_LOGGER_PREFIXES:
         r.fail("P1:prefix_configured", f"got {_EXCLUDED_LOGGER_PREFIXES}")
@@ -969,14 +971,15 @@ def test_source_id_contract(r: R) -> None:
 
 def test_invalid_id_not_persisted_routes(r: R) -> None:
     """P2: invalid ids get 400 on POST/PUT and are never stored."""
-    from starlette.applications import Starlette
-    from starlette.testclient import TestClient
-    from api.news_routes import build_news_routes
-
     # Dedicated service: TestClient serves requests from a portal thread,
     # so the in-memory sqlite handle must allow cross-thread use here.
     # (Production opens a fresh connection per call and is unaffected.)
     import sqlite3 as _sqlite3
+
+    from starlette.applications import Starlette
+    from starlette.testclient import TestClient
+
+    from api.news_routes import build_news_routes
     from core.persistence.modules.news import create_news_tables
     from news.service import NewsService
     conn = _sqlite3.connect(":memory:", check_same_thread=False)
@@ -993,6 +996,7 @@ def test_invalid_id_not_persisted_routes(r: R) -> None:
 
         def upsert_news_source(self, **kw):
             from datetime import datetime, timezone
+
             from core.persistence.modules.news import upsert_source
             upsert_source(conn, now_iso=datetime.now(timezone.utc).isoformat(),
                           **kw)
@@ -1127,10 +1131,11 @@ def _seed_two_sources(svc):
 def test_items_migration(r: R) -> None:
     """P4: v15→v16 migration + fresh schema create table/indexes."""
     import sqlite3 as _sqlite3
+
     from core.persistence.modules import news as _news
     from core.persistence.modules.schema import SCHEMA_VERSION
 
-    if SCHEMA_VERSION == 16:
+    if SCHEMA_VERSION >= 16:
         r.ok("P4:schema_version_16")
     else:
         r.fail("P4:schema_version_16", f"got {SCHEMA_VERSION}")
@@ -1214,7 +1219,7 @@ def test_ingest_dedup_restart(r: R) -> None:
         from core.persistence.store import EventStore
         from news.service import NewsService
         store2 = EventStore(os.path.join(tmp, "e2e_news.db"))
-        svc2 = NewsService(store2)
+        NewsService(store2)
         rows = store2.query_news_items(limit=100)
         if len(rows) == 3:
             r.ok("P5:restart_retains")
@@ -1328,7 +1333,7 @@ def test_retention(r: R) -> None:
         now = datetime.now(timezone.utc)
         old = (now - timedelta(days=40)).isoformat()
         recent = (now - timedelta(hours=2)).isoformat()
-        now_iso = now.isoformat()
+        now.isoformat()
         long_ago = (now - timedelta(days=100)).isoformat()
         store.upsert_news_source(source_id="s_keep", name="K",
                                  source_type="rss", category="c", enabled=True,
@@ -1387,6 +1392,7 @@ def test_retention(r: R) -> None:
 def test_persisted_filters(r: R) -> None:
     """P6: source/category/symbol/include/exclude/age/limit over history."""
     from datetime import datetime, timedelta, timezone
+
     from market.models import NewsFilter
     tmp = tempfile.mkdtemp()
     try:
@@ -1506,6 +1512,7 @@ def test_symbols_sql_scope(r: R) -> None:
 def test_sentiment_persisted_no_dupes(r: R) -> None:
     """P9: repeated ingestion never double-counts sentiment contributions."""
     from datetime import datetime, timezone
+
     from market.models import NewsFilter
     tmp = tempfile.mkdtemp()
     try:
@@ -1564,7 +1571,7 @@ def test_sentiment_persisted_no_dupes(r: R) -> None:
 
 def test_exclude_filter_no_crash(r: R) -> None:
     """D1: keywords_exclude must filter without raising ValueError."""
-    from market.models import NewsFilter, RSSEntry, RedditPost
+    from market.models import NewsFilter, RedditPost, RSSEntry
 
     items = [
         RSSEntry(source_id="s1", source_name="S1", title="Nifty rallies today",
@@ -1648,7 +1655,6 @@ def test_live_sse_delivery(r: R) -> None:
 
 def test_seed_tombstone_restart(r: R) -> None:
     """D3: deleted seeded sources stay deleted across store restart."""
-    from news.service import NewsService
     from core.persistence.modules.news import create_news_tables
 
     tmp = tempfile.mkdtemp()
@@ -1657,9 +1663,9 @@ def test_seed_tombstone_restart(r: R) -> None:
 
         # Build two service generations over the same DB file
         import news.service as _ns
-        from news.adapters.rss import RSSAdapter
-        from news.adapters.reddit import RedditAdapter
         from core.persistence.modules import news as _news_mod
+        from news.adapters.reddit import RedditAdapter
+        from news.adapters.rss import RSSAdapter
 
         class FileStore:
             def __init__(self, path):
@@ -1775,6 +1781,7 @@ def test_rss_utc_conversion(r: R) -> None:
     import calendar
     from datetime import datetime, timezone
     from unittest.mock import patch
+
     from news.adapters.rss import RSSAdapter
 
     entry = {"published_parsed": (2024, 1, 15, 12, 30, 0, 0, 15, 0)}
@@ -1809,7 +1816,7 @@ def test_rss_utc_conversion(r: R) -> None:
 
 def test_recursive_redaction(r: R) -> None:
     """D5: nested secrets never enter WebUI buffer/SSE output."""
-    from core.log_redaction import redact_value, redact_record
+    from core.log_redaction import redact_record, redact_value
 
     nested = {
         "event": "auth",
@@ -1902,14 +1909,14 @@ def test_sse_thread_churn(r: R) -> None:
             for _ in range(n):
                 async with broker.subscribe():
                     pass
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             errors.append(f"churn: {exc}")
 
     def _blast(n):
         try:
             for i in range(n):
                 broker.broadcast(f"data: {i}\n\n")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             errors.append(f"blast: {exc}")
 
     async def _run():

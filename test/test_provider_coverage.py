@@ -41,7 +41,7 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 UTC = timezone.utc
 NOW = datetime(2026, 8, 24, 10, 0, tzinfo=UTC)
@@ -123,7 +123,8 @@ def test_pc1_to_pc4_upstox(runner: R) -> None:
 
 def test_pc5_to_pc8_fyers_quotes_depth(runner: R) -> None:
     from market.normalize.fyers import (
-        depth_from_rest, quote_fields_from_symbol_update,
+        depth_from_rest,
+        quote_fields_from_symbol_update,
     )
 
     # PC6/PC7: REST depth supplemental carries circuits/OI%/ltq/ltt.
@@ -189,7 +190,9 @@ def test_pc11_to_pc12_fyers_greeks(runner: R) -> None:
     runner.assert_true("PC11-greeks-built", g is not None)
     if g is not None:
         runner.assert_eq("PC11-delta", g.delta, 0.41)
-        runner.assert_eq("PC11-iv", g.iv, 14.75)
+        # The canonical model stores IV as a FRACTION (the provider reports
+        # percent; the model converts: 14.75% -> 0.1475).
+        runner.assert_eq("PC11-iv", g.iv, 0.1475)
         runner.assert_eq("PC11-rho-none", g.rho, None)
 
     runner.assert_eq("PC12-empty-greeks",
@@ -202,8 +205,8 @@ def test_pc11_to_pc12_fyers_greeks(runner: R) -> None:
 
 
 def test_pc13_to_pc15_models_serialization(runner: R) -> None:
-    from market.models import OptionGreeks, Quote
     from market import serialization
+    from market.models import OptionGreeks, Quote
 
     g = OptionGreeks(delta=0.5, iv=15.0)
     q = Quote(
@@ -300,7 +303,6 @@ def test_pc18_cross_provider_ltp(runner: R) -> None:
 
 
 def test_pc19_pc20_regression_guards(runner: R) -> None:
-    from market.normalize.common import NormalizationError
     from market.normalize.upstox import quote_fields_from_ws_full
     from market.service import QuotePatch
 

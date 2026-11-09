@@ -38,7 +38,7 @@ def build_subscription_routes(subscriptions: Any,
     GET  /api/subscriptions/status         — health projection
     """
 
-    async def _list(request: Request) -> Response:  # noqa: ARG001
+    async def _list(request: Request) -> Response:
         prefs = await asyncio.to_thread(subscriptions.preferences)
         return _json({"status": "ok", **prefs})
 
@@ -101,7 +101,7 @@ def build_subscription_routes(subscriptions: Any,
         return _json({"status": "ok" if deleted else "not found"},
                      200 if deleted else 404)
 
-    async def _list_rules(request: Request) -> Response:  # noqa: ARG001
+    async def _list_rules(request: Request) -> Response:
         prefs = await asyncio.to_thread(subscriptions.preferences)
         return _json({"status": "ok",
                       "rules": prefs["derivatives"]})
@@ -138,7 +138,7 @@ def build_subscription_routes(subscriptions: Any,
         return _json({"status": "ok" if deleted else "not found"},
                      200 if deleted else 404)
 
-    async def _preview(request: Request) -> Response:  # noqa: ARG001
+    async def _preview(request: Request) -> Response:
         try:
             resolved = await asyncio.to_thread(subscriptions.resolve)
         except Exception as exc:
@@ -160,7 +160,7 @@ def build_subscription_routes(subscriptions: Any,
             "notes": resolved["notes"],
         })
 
-    async def _apply(request: Request) -> Response:  # noqa: ARG001
+    async def _apply(request: Request) -> Response:
         try:
             outcome = await subscriptions.reconcile(feed_provider)
         except Exception as exc:
@@ -179,7 +179,7 @@ def build_subscription_routes(subscriptions: Any,
             "apply": outcome["apply"],
         })
 
-    async def _status(request: Request) -> Response:  # noqa: ARG001
+    async def _status(request: Request) -> Response:
         st = await asyncio.to_thread(subscriptions.status)
         return _json({"status": "ok", **st})
 

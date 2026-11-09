@@ -196,9 +196,9 @@ def test_mi4_chain_spot_fallback_and_errors(runner: R) -> None:
 
 def test_mi5_snapshot_freshness(runner: R) -> None:
     """Snapshot includes live quote + explicit freshness; none fabricated."""
-    from core.persistence.store import EventStore
     from app.instruments import InstrumentCatalog
     from app.market_intel import MarketIntel
+    from core.persistence.store import EventStore
 
     store = EventStore(os.path.join(tempfile.mkdtemp(), "e.db"))
     _seed(store)
@@ -207,8 +207,9 @@ def test_mi5_snapshot_freshness(runner: R) -> None:
     class _Q:
         pass
 
-    from market.models import Quote
     from datetime import datetime, timezone
+
+    from market.models import Quote
     live_quote = Quote(instrument_token="100IDX", exchange="NSE",
                        tradingsymbol="NSE:NIFTY50-INDEX",
                        received_ts=datetime.now(timezone.utc),
@@ -368,6 +369,56 @@ def test_mi10_route_exact_and_ranked(runner: R) -> None:
     runner.assert_true("MI10-ranked-has-results", ranked["count"] > 0)
 
 
+def _seed_collisions(store):
+    """Same tradingsymbol across providers/types (distinct canonical identities)."""
+    rows = []
+    for sym, isin in (("ENERGY", "INF769K01PR2"), ("INFRA", "INF769K01QB4"),
+                      ("METAL", "INF769K01LY7"), ("MID150", "INF174KA1VW2")):
+        rows.append(dict(provider="upstox", instrument_token=f"BSE_INDEX|{sym}",
+                         exchange="BSE", tradingsymbol=sym,
+                         name=f"BSE {sym}", instrument_type="INDEX",
+                         segment="BSE_INDEX"))
+        rows.append(dict(provider="upstox", instrument_token=f"NSE_EQ|{isin}",
+                         exchange="NSE", tradingsymbol=sym,
+                         name=f"MIRAEAMC - {sym}", instrument_type="EQUITY",
+                         segment="NSE_EQ", underlying=sym, isin=isin, lot_size=1))
+        rows.append(dict(provider="fyers", instrument_token=f"1010000000{sym}",
+                         exchange="NSE", tradingsymbol=sym,
+                         name=f"MIRAE ASSET {sym} ETF", instrument_type="ETF",
+                         segment="10", underlying=sym, isin=isin, lot_size=1,
+                         provider_symbol=f"NSE:{sym}-EQ"))
+    store.replace_provider_instruments("upstox",
+                                       [r for r in rows if r["provider"] == "upstox"])
+    store.replace_provider_instruments("fyers",
+                                       [r for r in rows if r["provider"] == "fyers"])
+
+
+def test_mi11_collision_discoverability(runner: R) -> None:
+    """Ordinary ranked search discovers all distinct identities for collision symbols."""
+    from app.instruments import InstrumentCatalog
+    from app.market_intel import MarketIntel
+    from core.persistence.store import EventStore
+
+    store = EventStore(os.path.join(tempfile.mkdtemp(), "coll.db"))
+    _seed_collisions(store)
+    intel = MarketIntel(InstrumentCatalog(store))
+    ui_types = ["INDEX", "EQUITY", "ETF", "FUTURE"]
+    for sym in ("ENERGY", "INFRA", "METAL", "MID150"):
+        r = intel.search(sym, types=ui_types, limit=20)
+        exact = [x for x in r["results"] if x["symbol"] == sym]
+        kinds = {(x["exchange"], x["type"], x["provider"]) for x in exact}
+        runner.assert_eq(f"MI11-{sym}-count", len(kinds), 3)
+        runner.assert_in(f"MI11-{sym}-index", ("BSE", "INDEX", "upstox"), kinds)
+        runner.assert_in(f"MI11-{sym}-equity", ("NSE", "EQUITY", "upstox"), kinds)
+        runner.assert_in(f"MI11-{sym}-etf", ("NSE", "ETF", "fyers"), kinds)
+        tokens = [x["provider_token"] for x in exact]
+        runner.assert_eq(f"MI11-{sym}-distinct-tokens", len(tokens), len(set(tokens)))
+
+    # Ordinary non-collision search still behaves correctly.
+    plain = intel.search("ENERGY", limit=20)
+    runner.assert_true("MI11-plain-has-results", plain["count"] > 0)
+
+
 if __name__ == "__main__":
     runner = R()
     test_mi1_search(runner)
@@ -380,4 +431,5 @@ if __name__ == "__main__":
     test_mi8_exact_mode(runner)
     test_mi9_limit_caps(runner)
     test_mi10_route_exact_and_ranked(runner)
+    test_mi11_collision_discoverability(runner)
     sys.exit(0 if runner.summary() else 1)

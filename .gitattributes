@@ -1,0 +1,25 @@
+# Normalize line endings in the repository, not in the working tree.
+#
+# Without this, `core.autocrlf=true` (set in the *system* gitconfig on Windows,
+# outside this repo) rewrites every tracked text file to CRLF on checkout and
+# back to LF on commit. The Biome formatter expects LF, so a fresh Windows
+# checkout reports the entire tree as mis-formatted.
+#
+# `text=auto eol=lf` makes Git store LF in the object database AND check out LF
+# on every platform, so the working tree matches the blobs and the formatter
+# gate is deterministic for contributors and for CI on any runner OS.
+* text=auto eol=lf
+
+# Binary assets must never be line-ending translated.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.pdf binary
+*.exe binary
+*.db binary
+*.db-wal binary
+*.db-shm binary

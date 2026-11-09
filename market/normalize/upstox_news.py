@@ -22,7 +22,7 @@ def news_from_rest(payload: dict[str, Any], instrument_key: str = "") -> NewsSna
     page_info = metadata.get("page") or {}
 
     articles: list[NewsArticle] = []
-    for key, item_list in data.items():
+    for _key, item_list in data.items():
         if not isinstance(item_list, list):
             continue
         for item in item_list:

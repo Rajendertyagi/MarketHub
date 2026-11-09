@@ -21,10 +21,10 @@ from helpers.runner import R
 
 def _mk_world():
     """Synthetic catalog + market state + alert store + registry."""
-    from core.persistence.store import EventStore
+    from app.chat_tools import ChatToolRegistry
     from app.instruments import InstrumentCatalog
     from app.market_intel import MarketIntel
-    from app.chat_tools import ChatToolRegistry
+    from core.persistence.store import EventStore
 
     tmp = tempfile.mkdtemp()
     store = EventStore(os.path.join(tmp, "e.db"))
@@ -187,7 +187,7 @@ def test_ch5_registry_boundaries(runner: R) -> None:
                  "fund", "transfer")
     for d in registry.definitions:
         name = d["function"]["name"].lower()
-        desc = d["function"]["description"].lower()
+        d["function"]["description"].lower()
         for word in forbidden:
             runner.assert_false(f"CH5-no-trading-tool:{word}:{name}",
                                 word in name)

@@ -189,6 +189,8 @@ def prune_x_tweets(conn: Any, max_age_days: int, *, batch: int = 2000) -> int:
         if not cur.rowcount:
             break
         total += cur.rowcount
+    if total:
+        conn.commit()
     return total
 
 

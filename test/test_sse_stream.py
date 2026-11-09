@@ -45,18 +45,17 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers.lifecycle import (  # noqa: E402
+from helpers.lifecycle import (
     get_server_port,
-    get_server_url,
     restore_environment,
     start_server,
     stop_server,
 )
-from helpers.runner import R  # noqa: E402
-from mcp_result import safe_teardown, to_payload  # noqa: E402
+from helpers.runner import R
+from mcp_result import safe_teardown
 
-try:  # noqa: E402
-    import pytest  # noqa: E402
+try:
+    import pytest
 
     # This test was written for standalone ``main()`` execution. Under pytest
     # the subprocess server is started by the module-scoped ``mcp_server`` fixture.
@@ -67,7 +66,7 @@ try:  # noqa: E402
         "SSE test manages its own server with test_source; "
         "see main() for standalone execution."
     )
-except ImportError:  # noqa: E402
+except ImportError:
     pass
 
 # Bounded-wait budgets (seconds). No indefinite streaming waits anywhere.

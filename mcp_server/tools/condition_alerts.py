@@ -102,7 +102,7 @@ def _resolve_public_instrument(services: Any,
         try:
             strike_f = float(strike)
         except (TypeError, ValueError):
-            raise ValidationError("instrument.strike must be a number")
+            raise ValidationError("instrument.strike must be a number") from None
         rows = catalog.search(exchange=exchange, instrument_type="OPTION",
                               underlying=underlying, expiry=expiry,
                               option_type=option_type, strike=strike_f,
@@ -207,7 +207,7 @@ def _normalize_leaf(services: Any, node: dict[str, Any], *,
             datetime.strptime(expiry, "%Y-%m-%d")
         except (ValueError, TypeError):
             raise ConditionValidationError(
-                f"instrument.expiry must be YYYY-MM-DD (got {expiry!r})")
+                f"instrument.expiry must be YYYY-MM-DD (got {expiry!r})") from None
         chain_key = f"analytics:{canonical_id}:{expiry}"
     else:
         resolved = _resolve_public_instrument(services, instrument)

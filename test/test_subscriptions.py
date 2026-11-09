@@ -22,23 +22,19 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers.lifecycle import (  # noqa: E402
+from helpers.lifecycle import (
     restore_environment,
     start_server,
     stop_server,
 )
-from helpers.mcp_client import (  # noqa: E402
+from helpers.mcp_client import (
     call,
-    read_res,
     wait_source_ready,
-    wait_for_event_count,
 )
-from helpers.runner import R  # noqa: E402
-from helpers.mock_http import start_mock  # noqa: E402
-
-from mcp.client.client import Client  # noqa: E402
-from mcp.client.subscriptions import ResourceUpdated  # noqa: E402
-
+from helpers.mock_http import start_mock
+from helpers.runner import R
+from mcp.client.client import Client
+from mcp.client.subscriptions import ResourceUpdated
 
 EVENT_RESOURCE_URI = "mcp-event://events/latest"
 

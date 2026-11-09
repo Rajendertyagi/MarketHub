@@ -32,4 +32,8 @@ class Services:
     provider_market_data: Any = None    # history/option-chain services
     analytics_service: Any = None       # B6 MarketAnalyticsService
     news_service: Any = None            # N1 News & Sentiment service
+    x_twitter: Any = None               # X/Twitter research service
+    yahoo_service: Any = None           # Yahoo Finance/yfinance research service
+    quote_service: Any = None           # unified canonical quote service
+    subscription_manager: Any = None    # lease-based subscription manager
 

@@ -14,8 +14,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from market.models import Quote
 from market.market_universe import Member
+from market.models import Quote
 
 
 def make_quote(
@@ -63,7 +63,13 @@ class FakeQuoteReader:
 
 
 class FakeCatalog:
-    """Minimal InstrumentCatalog stand-in for universe resolution."""
+    """Minimal InstrumentCatalog stand-in for universe resolution.
+
+    ``find_equity`` mirrors the real EXACT-symbol read model: the general
+    ``search`` is a substring LIKE, so a short symbol ("LT") can match an
+    unrelated equity ("20 MICRONS LTD"). The exact read model only
+    accepts a row whose ``tradingsymbol``/``underlying`` IS the symbol.
+    """
 
     def __init__(
         self,
@@ -84,6 +90,26 @@ class FakeCatalog:
     def search(self, **kw):
         q = (kw.get("q") or "").upper()
         return self._search.get(q, [])
+
+    def find_equity(self, symbol, *, provider=None, exchange=None):
+        want = (symbol or "").strip().upper()
+        rows = self._search.get(want, [])
+        exact = [r for r in rows
+                 if str(r.get("tradingsymbol") or "").upper() == want
+                 or str(r.get("underlying") or "").upper() == want]
+        for row in (exact or rows):
+            if provider and row.get("provider") \
+                    and str(row["provider"]) != provider:
+                continue
+            if exchange and row.get("exchange") \
+                    and str(row["exchange"]) != exchange:
+                continue
+            return row
+        return None
+
+    def quote_key(self, row):
+        """The key under which this row's quote state is stored."""
+        return row.get("provider_symbol") or row.get("instrument_token")
 
 
 def members_from_symbols(symbols: list[str], tokens: dict[str, str | None] | None = None):

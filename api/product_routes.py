@@ -11,15 +11,16 @@ import asyncio
 import dataclasses
 import logging
 import os
-from typing import Any, Callable
-
-logger = logging.getLogger(__name__)
+from collections.abc import Callable
+from typing import Any
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from app.fyers_runtime_auth import FyersRuntimeAuth
 
+logger = logging.getLogger(__name__)
 
 try:
     from app.market_data import ProviderMarketDataError
@@ -258,7 +259,8 @@ def build_diagnostics_routes(version: str,
                              store: Any,
                              source_status_fn: Callable[[], list],
                              base_url_fn: Callable[[], str],
-                             auth_status_fn: Any = None) -> list[Route]:
+                             auth_status_fn: Any = None,
+                             lifecycle_status_fn: Any = None) -> list[Route]:
     """GET /api/diagnostics — read-only support snapshot with NO secrets.
 
     Aggregates what an operator needs to report a problem: application and
@@ -267,11 +269,23 @@ def build_diagnostics_routes(version: str,
     facts, clearly separated). Tokens, API secrets, refresh tokens, PINs,
     auth codes, authorized WSS URLs and raw broker error bodies are never
     included.
+
+    ``lifecycle_status_fn`` reports the state of the background components
+    that must have a real owner (the Fyers index poller, the previous-OI
+    recorder) — so a component that is constructed but not running is
+    visible rather than silent.
     """
 
-    async def _diagnostics(request: Request) -> Response:  # noqa: ARG001
+    async def _diagnostics(request: Request) -> Response:
         import datetime as _dt
 
+        lifecycle_out: dict[str, Any] = {}
+        try:
+            _lifecycle = lifecycle_status_fn() if lifecycle_status_fn else {}
+            if isinstance(_lifecycle, dict):
+                lifecycle_out = _lifecycle
+        except Exception:
+            lifecycle_out = {}
         sources_out: list[dict[str, Any]] = []
         try:
             _raw = source_status_fn() or []
@@ -352,6 +366,7 @@ def build_diagnostics_routes(version: str,
             "public_base_url": base_url,
             "sources": sources_out,
             "auth": auth_out,
+            "lifecycle": lifecycle_out,
             "generated_at": _dt.datetime.now(
                 _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         })
@@ -377,24 +392,113 @@ def _upstox_index_key(underlying: str):
             entry["upstox_symbol"])
 
 
+def _chain_underlying_ref(result: dict[str, Any], underlying: str,
+                          provider: str | None) -> tuple[str, str, str]:
+    """The provider-native reference for a chain's UNDERLYING.
+
+    Returns ``(instrument_key, exchange, tradingsymbol)`` for the provider
+    that owns the chain. ``native_key`` IS the provider's own request
+    identifier (Fyers ``BSE:SENSEX-INDEX``, Upstox ``BSE_INDEX|SENSEX``)
+    and is passed through unchanged: splitting on ``:`` would strip the
+    exchange from a Fyers symbol, and the adapter would address the wrong
+    exchange. The static index table is only the fallback for an index the
+    catalogue has not confirmed.
+    """
+    block = result.get("underlying_instrument") or {}
+    native = block.get("native_key")
+    exchange = block.get("exchange") or "NSE"
+    tsym = block.get("symbol") or underlying
+    if native:
+        return str(native), str(exchange), str(tsym)
+    key = block.get("instrument_key") or ""
+    if key:
+        # Legacy fallback: ``instrument_key`` is "EXCHANGE:token"; the
+        # provider request wants the bare key.
+        if ":" in key:
+            exchange, key = key.split(":", 1)
+        return str(key), str(exchange), str(tsym)
+    idx = _upstox_index_key(underlying)
+    if idx is not None:
+        return idx
+    return "", exchange, tsym
+
+
 async def _enrich_chain_with_provider_quotes(
         result: dict[str, Any], provider_md: Any,
-        underlying: str, expiry: str | None) -> None:
+        underlying: str, expiry: str | None,
+        provider_ref: Callable[
+            [str, str], tuple[str, str, str] | None] | None = None) -> None:
     """Merge real provider option quotes into the catalog chain rows.
 
     Populates each row's ``call["quote"]`` / ``put["quote"]`` with the fields
     the WebUI already renders (oi, oi_change, volume, iv, ltp, bid, ask,
     delta, gamma, theta, vega). ``rho``/``change`` are not in the snapshot, so
     they stay absent (rendered as "—", never fabricated).
+
+    The provider is NOT hardcoded: the chain rows carry the provider that
+    owns each contract, and the snapshot is requested for that provider. A
+    provider's data is only ever merged into ITS OWN contracts' rows.
     """
-    idx = _upstox_index_key(underlying)
-    if idx is None or not expiry:
+    if not expiry:
         return
-    instrument_key, exchange, tradingsymbol = idx
-    snap = await provider_md.option_chain(
-        instrument_key=instrument_key, exchange=exchange,
-        tradingsymbol=tradingsymbol, expiry=expiry, provider="upstox")
+    rows = result.get("rows") or []
+    if not rows:
+        return
+    # One provider per chain (the rows are built from the routed
+    # provider's contracts); the first row names it.
+    provider = None
+    for row in rows:
+        for side in ("call", "put"):
+            leg = row.get(side) or {}
+            if leg.get("provider"):
+                provider = leg["provider"]
+                break
+        if provider:
+            break
+    if not provider:
+        return
+    block = result.get("underlying_instrument") or {}
+    ref = None
+    if provider_ref is not None and block.get("provider") != provider:
+        try:
+            ref = provider_ref(underlying, provider)
+        except Exception:
+            ref = None
+    if ref:
+        instrument_key, exchange, tradingsymbol = ref
+    elif block.get("provider") and block.get("provider") != provider:
+        # The underlying row belongs to ANOTHER provider and none of this
+        # provider's own identifiers could be resolved. Addressing it with a
+        # foreign symbol would query the wrong instrument, so enrichment is
+        # skipped rather than guessed.
+        logger.info("option chain enrichment skipped for %s: no %s "
+                    "underlying reference", underlying, provider)
+        return
+    else:
+        instrument_key, exchange, tradingsymbol = _chain_underlying_ref(
+            result, underlying, provider)
+    if not instrument_key:
+        return
+    try:
+        snap = await provider_md.option_chain(
+            instrument_key=instrument_key, exchange=exchange,
+            tradingsymbol=tradingsymbol, expiry=expiry, provider=provider)
+    except Exception as exc:
+        logger.info("option chain enrichment skipped for %s: %s",
+                    underlying, type(exc).__name__)
+        return
     if snap is None:
+        return
+    # A provider may serve a DIFFERENT expiry than the one requested
+    # (Fyers falls back to the nearest listed expiry). Merging such a
+    # chain would label one expiry's quotes as another's, so the response
+    # is checked, never assumed.
+    served = getattr(snap, "actual_expiry", None) or getattr(
+        snap, "expiry", None)
+    if served and str(served)[:10] != str(expiry)[:10]:
+        logger.info(
+            "option chain enrichment skipped for %s: provider served "
+            "expiry %s, requested %s", underlying, served, expiry)
         return
     by_key: dict[tuple[float, str], Any] = {}
     for s in getattr(snap, "strikes", []) or []:
@@ -422,17 +526,31 @@ async def _enrich_chain_with_provider_quotes(
             "theta": getattr(c, "theta", None),
             "vega": getattr(c, "vega", None),
             "rho": None,
+            "provider": getattr(c, "provider", None) or provider,
         }
 
-    for row in result.get("rows", []):
+    for row in rows:
         strike = row.get("strike")
         for side, otype in (("call", "CE"), ("put", "PE")):
             leg = row.get(side)
             if not leg:
                 continue
+            # Only merge into a leg that belongs to the snapshot's
+            # provider — never another provider's contract.
+            leg_provider = leg.get("provider")
+            if leg_provider and leg_provider != provider:
+                continue
             contract = by_key.get((strike, otype))
             if contract is not None:
                 leg["quote"] = to_quote(contract)
+
+    # The catalog chain assembled before these quotes existed, so its
+    # window analytics are recomputed over the rows as now returned.
+    try:
+        from app.market_intel import window_analytics
+        result["analytics"] = window_analytics(rows)
+    except Exception:
+        logger.debug("window analytics recompute failed", exc_info=True)
 
 
 def build_intel_routes(market_intel: Any,
@@ -440,6 +558,7 @@ def build_intel_routes(market_intel: Any,
     """Unified market-intelligence routes (shared with MCP/Chat logic).
 
     GET /api/market/search   — structured instrument search
+                               (`exact=1` = exact resolver, no substring)
     GET /api/futures         — futures contracts by underlying (+expiry)
     GET /api/options/chain   — catalog-driven chain when `underlying` is
                                supplied (legacy provider chain keeps working
@@ -512,13 +631,15 @@ def build_intel_routes(market_intel: Any,
         if provider_md is not None and result.get("rows"):
             try:
                 await _enrich_chain_with_provider_quotes(
-                    result, provider_md, underlying, result.get("expiry"))
-            except Exception as exc:  # noqa: BLE001
+                    result, provider_md, underlying, result.get("expiry"),
+                    provider_ref=getattr(
+                        market_intel, "provider_underlying_ref", None))
+            except Exception as exc:
                 logger.warning("option chain provider enrichment skipped: %s",
                                exc)
         return _json(result)
 
-    async def _index_option_underlyings(request: Request) -> Response:  # noqa: ARG001
+    async def _index_option_underlyings(request: Request) -> Response:
         """Canonical index option-chain underlyings (backend-owned).
 
         The frontend consumes this instead of hard-coding the supported
@@ -528,8 +649,49 @@ def build_intel_routes(market_intel: Any,
         from app.market_indices import index_option_underlyings
         return _json({"underlyings": index_option_underlyings()})
 
+    async def _browse(request: Request) -> Response:
+        qp = request.query_params
+        types = [t for t in (qp.get("types") or "").split(",") if t]
+        try:
+            limit = int(qp.get("limit", 50))
+        except ValueError:
+            return _json({"error": "limit must be an integer"}, 400)
+        strike = None
+        if qp.get("strike"):
+            try:
+                strike = float(qp["strike"])
+            except ValueError:
+                return _json({"error": "strike must be a number"}, 400)
+        try:
+            result = await asyncio.to_thread(
+                market_intel.browse,
+                types=types or None,
+                exchange=qp.get("exchange") or None,
+                segment=qp.get("segment") or None,
+                underlying=qp.get("underlying") or None,
+                expiry=qp.get("expiry") or None,
+                option_type=qp.get("option_type") or None,
+                strike=strike,
+                include_expired=qp.get("include_expired") in ("1", "true"),
+                cursor=qp.get("cursor") or None,
+                limit=limit)
+        except ValueError as exc:
+            return _json({"error": str(exc)}, 400)
+        return _json(result)
+
+    async def _pool(request: Request) -> Response:
+        qp = request.query_params
+        try:
+            limit = int(qp.get("limit", 1000))
+        except ValueError:
+            return _json({"error": "limit must be an integer"}, 400)
+        result = await asyncio.to_thread(market_intel.pool, limit=limit)
+        return _json(result)
+
     return [
         Route("/api/market/search", endpoint=_search, methods=["GET"]),
+        Route("/api/instruments/browse", endpoint=_browse, methods=["GET"]),
+        Route("/api/instruments/pool", endpoint=_pool, methods=["GET"]),
         Route("/api/futures", endpoint=_futures, methods=["GET"]),
         Route("/api/options/chain/view", endpoint=_intel_chain,
               methods=["GET"]),
@@ -583,7 +745,29 @@ def build_instrument_routes(catalog: Any, store: Any = None) -> list[Route]:
             body = await request.json()
         except Exception:
             body = {}
-        provider = (body or {}).get("provider", "upstox")
+        if not isinstance(body, dict):
+            body = {}
+        provider = body.get("provider", "upstox")
+        masters = body.get("masters")
+        if masters is not None:
+            # Selective refresh: one or more FYERS master files (e.g.
+            # ["BSE_FO"]) so the SENSEX leg can be refreshed without
+            # re-downloading - or touching - the NSE/BSE cash masters.
+            if provider != "fyers":
+                return _json({"error": "masters is only supported for fyers"},
+                             400)
+            if not isinstance(masters, list) or not masters:
+                return _json({"error": "masters must be a non-empty list"},
+                             400)
+            try:
+                result = await asyncio.to_thread(catalog.sync_fyers,
+                                                 masters=masters)
+            except ValueError as exc:
+                return _json({"error": str(exc)}, 400)
+            except Exception as exc:
+                return _json({"error": f"sync failed: "
+                                       f"{type(exc).__name__}"}, 502)
+            return _json({"status": "ok", **result})
         try:
             if provider == "upstox":
                 result = await asyncio.to_thread(catalog.sync_upstox)
@@ -596,11 +780,11 @@ def build_instrument_routes(catalog: Any, store: Any = None) -> list[Route]:
                                    f"{type(exc).__name__}"}, 502)
         return _json({"status": "ok", **result})
 
-    async def _sync_state(request: Request) -> Response:  # noqa: ARG001
+    async def _sync_state(request: Request) -> Response:
         return _json({"providers": await asyncio.to_thread(
             catalog.sync_state)})
 
-    async def _segments_get(request: Request) -> Response:  # noqa: ARG001
+    async def _segments_get(request: Request) -> Response:
         """Available segments + enabled preference + catalog counts."""
         counts = await asyncio.to_thread(catalog.segment_counts)
         enabled = await asyncio.to_thread(catalog.get_enabled_segments)
@@ -662,14 +846,27 @@ def build_instrument_routes(catalog: Any, store: Any = None) -> list[Route]:
 
 
 def build_watchlist_routes(store: Any,
-                           subscription: Any = None) -> list[Route]:
+                           subscription: Any = None,
+                           identity_resolver: Any = None) -> list[Route]:
     """CRUD routes over persistent watchlists.
 
     ``subscription`` is an optional adapter exposing
     ``add(exchange, token)`` / ``remove(exchange, token)`` coroutines.
     Removal is reference-counted across ALL watchlists: the feed only
     unsubscribes when the last watchlist reference disappears.
+
+    ``identity_resolver`` is an optional alias -> canonical-id resolver used
+    to expose an additive ``canonical_id`` on each item (the stored native
+    ``(exchange, instrument_token)`` remains the identity for depth/nav).
     """
+
+    def _canonical_id(exchange: str, token: str) -> str | None:
+        if identity_resolver is None:
+            return None
+        try:
+            return identity_resolver.resolve(token)
+        except Exception:
+            return None
 
     async def _refs(store: Any, exchange: str, token: str) -> int:
         """Count references to this instrument across every watchlist."""
@@ -683,13 +880,17 @@ def build_watchlist_routes(store: Any,
                 and it["instrument_token"] == token)
         return total
 
-    async def _list(request: Request) -> Response:  # noqa: ARG001
+    async def _list(request: Request) -> Response:
         wls = await asyncio.to_thread(store.list_watchlists)
         out = []
         for wl in wls:
             wl = dict(wl)
-            wl["items"] = await asyncio.to_thread(
+            items = await asyncio.to_thread(
                 store.list_watchlist_items, wl["id"])
+            wl["items"] = [
+                {**it, "canonical_id": _canonical_id(
+                    it.get("exchange", ""), it.get("instrument_token", ""))}
+                for it in items]
             out.append(wl)
         return _json({"watchlists": out})
 
@@ -821,7 +1022,7 @@ def build_watchlist_routes(store: Any,
 def build_alert_routes(store: Any, engine: Any = None) -> list[Route]:
     """CRUD + control routes for market alerts."""
 
-    async def _list(request: Request) -> Response:  # noqa: ARG001
+    async def _list(request: Request) -> Response:
         alerts = await asyncio.to_thread(store.list_market_alerts)
         recent = engine.recent_notifications(10) if engine else []
         return _json({"alerts": alerts, "notifications": recent})
@@ -910,7 +1111,7 @@ def _int_param(request: Request, name: str, default: int,
 def build_alert_history_routes(store: Any) -> list[Route]:
     """Bounded, paginated alert trigger-history API (P2)."""
 
-    async def _list(request: Request) -> Response:  # noqa: ARG001
+    async def _list(request: Request) -> Response:
         limit = _int_param(request, "limit", 50, 1, 500)
         if limit is None:
             return _json({"error": "limit must be an integer in [1, 500]"}, 400)
@@ -932,7 +1133,7 @@ def build_alert_history_routes(store: Any) -> list[Route]:
         return _json({"history": history, "total": total,
                       "limit": limit, "offset": offset})
 
-    async def _clear(request: Request) -> Response:  # noqa: ARG001
+    async def _clear(request: Request) -> Response:
         alert_id_raw = request.query_params.get("alert_id")
         alert_id = None
         if alert_id_raw is not None:
@@ -993,7 +1194,6 @@ def build_market_data_routes(provider_md: Any) -> list[Route]:
                 exchange=qp["exchange"],
                 tradingsymbol=qp.get("tradingsymbol", ""),
                 expiry=qp["expiry"])
-            from market.serialization import quote_to_dict as _q2d
             strikes = []
             for s in snap.strikes:
                 strikes.append({
@@ -1012,7 +1212,7 @@ def build_market_data_routes(provider_md: Any) -> list[Route]:
             })
         except ProviderMarketDataError as exc:
             return _json({"error": str(exc)}, 400)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("option chain provider failed")
             return _json({"error": f"option chain failed: "
                                    f"{type(exc).__name__}: {exc}"}, 500)
@@ -1083,7 +1283,7 @@ def build_market_data_routes(provider_md: Any) -> list[Route]:
 def build_admin_routes(store: Any, data_dir: Any) -> list[Route]:
     """Operational routes: database backup (contains ciphertext only)."""
 
-    async def _backup(request: Request) -> Response:  # noqa: ARG001
+    async def _backup(request: Request) -> Response:
         import datetime as _dt
         stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         dest = data_dir / "backups" / f"events-{stamp}.db"
@@ -1106,7 +1306,7 @@ def build_admin_routes(store: Any, data_dir: Any) -> list[Route]:
 def build_api_meta_routes() -> list[Route]:
     """GET /api — safe, self-describing capability metadata."""
 
-    async def _meta(request: Request) -> Response:  # noqa: ARG001
+    async def _meta(request: Request) -> Response:
         return _json({
             "service": "MarketHub",
             "capabilities": {
@@ -1118,6 +1318,8 @@ def build_api_meta_routes() -> list[Route]:
                     "GET /api/market/stream (SSE)",
                     "GET /api/market/history"
                     "?instrument_key&unit&interval&from&to",
+                    "GET /api/market/bars"
+                    "?instrument_key&timeframe&from&to&limit",
                 ],
                 "instruments": [
                     "GET /api/instruments/search?q&exchange&type&provider&limit",
@@ -1189,7 +1391,7 @@ def build_api_meta_routes() -> list[Route]:
 def build_fyers_auth_routes(cred_store: Any,
                             redirect_uri: str = (
         "http://localhost:7070/auth/fyers/callback"),
-                            runtime_auth: "FyersRuntimeAuth | None" = None,
+                            runtime_auth: FyersRuntimeAuth | None = None,
                             restart_fn: Any = None,
                             restore_state: dict[str, Any] | None = None,
                             source_manager: Any = None,
@@ -1289,7 +1491,7 @@ def build_fyers_auth_routes(cred_store: Any,
             target = f"{target}#{frag}"
         return RedirectResponse(target, status_code=302)
 
-    async def _status(request: Request) -> Response:  # noqa: ARG001
+    async def _status(request: Request) -> Response:
         # Thin adapter: auth facts from the service; source/feed lifecycle
         # state (separate concept) from the SourceManager/config.
         try:
@@ -1344,7 +1546,7 @@ def build_fyers_auth_routes(cred_store: Any,
             return _json({"error": "failed to save fyers credentials"}, 500)
         return _json(result)
 
-    async def _delete(request: Request) -> Response:  # noqa: ARG001
+    async def _delete(request: Request) -> Response:
         try:
             removed = await asyncio.to_thread(
                 cred_store.delete_app_credentials, "fyers")
@@ -1422,7 +1624,7 @@ def build_fyers_auth_routes(cred_store: Any,
         # never the dashboard — with a safe result flag for the UI banner.
         return _redirect_with_result(return_to, "ok")
 
-    async def _forget_session(request: Request) -> Response:  # noqa: ARG001
+    async def _forget_session(request: Request) -> Response:
         """Forget saved Fyers SESSION material (token/PIN/refresh).
 
         Keeps the App ID/Secret credentials so the operator does not have to
@@ -1436,7 +1638,7 @@ def build_fyers_auth_routes(cred_store: Any,
         except Exception:
             return _json({"error": "failed to forget session"}, 500)
 
-    async def _feed_status(request: Request) -> Response:  # noqa: ARG001
+    async def _feed_status(request: Request) -> Response:
         _fy_cfg = (sources_cfg or {}).get("fyers")
         configured = isinstance(_fy_cfg, dict)
         registered = False
@@ -1520,7 +1722,7 @@ def build_fyers_auth_routes(cred_store: Any,
                     logger.warning("failed to remove fyers source config")
         return _json(result)
 
-    async def _delete_feed(request: Request) -> Response:  # noqa: ARG001
+    async def _delete_feed(request: Request) -> Response:
         if source_manager is not None and \
                 "fyers" in (source_manager.enabled_sources or {}):
             try:
@@ -1556,7 +1758,7 @@ def build_fyers_auth_routes(cred_store: Any,
 def build_watchlist_portability_routes(store: Any) -> list[Route]:
     """JSON export/import of watchlists (identities only — never secrets)."""
 
-    async def _export(request: Request) -> Response:  # noqa: ARG001
+    async def _export(request: Request) -> Response:
         out = []
         for wl in await asyncio.to_thread(store.list_watchlists):
             items = await asyncio.to_thread(store.list_watchlist_items,
@@ -1641,7 +1843,7 @@ def build_app_settings_routes(config_path: str) -> list[Route]:
         if not os.path.isfile(config_path):
             return {}
         try:
-            with open(config_path, "r", encoding="utf-8") as _f:
+            with open(config_path, encoding="utf-8") as _f:
                 return _json_mod.load(_f)
         except Exception:
             return {}
@@ -1662,7 +1864,7 @@ def build_app_settings_routes(config_path: str) -> list[Route]:
                 except OSError:
                     pass
 
-    async def _get(request: Request) -> Response:  # noqa: ARG001
+    async def _get(request: Request) -> Response:
         _cfg = _read_config()
         _base = get_public_base_url(_cfg)
         return _json({
@@ -1691,20 +1893,18 @@ def build_app_settings_routes(config_path: str) -> list[Route]:
         try:
             _cfg = load_config(config_path)
         except Exception as _exc:
-            return _json({"error": "cannot read current config: {0}".format(
-                _exc)}, 400)
+            return _json({"error": f"cannot read current config: {_exc}"}, 400)
         _cfg["public_base_url"] = _base.strip()
         # Validate the full config so we never persist a broken file.
         try:
             validate_config(_cfg)
         except Exception as _exc:
-            return _json({"error": "invalid configuration: {0}".format(_exc)},
+            return _json({"error": f"invalid configuration: {_exc}"},
                           400)
         try:
             _write_config(_cfg)
         except Exception as _exc:
-            return _json({"error": "failed to write config: {0}".format(
-                type(_exc).__name__)}, 500)
+            return _json({"error": f"failed to write config: {type(_exc).__name__}"}, 500)
         return _json({"status": "ok", "requires_restart": True,
                       "public_base_url": _base.strip()})
 

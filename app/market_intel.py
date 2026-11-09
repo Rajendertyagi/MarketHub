@@ -15,9 +15,14 @@ expiry, strike, option_type).
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import logging
 import re
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import date
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +39,41 @@ _CE_PE = {"ce": "CE", "pe": "PE", "call": "CE", "put": "PE"}
 
 _DEFAULT_WINDOW = 10
 _MAX_WINDOW = 100
+
+
+def window_analytics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Analytics over the LOADED window only (explicitly labeled).
+
+    The scope tier is the locked canonical name (``window``) — never
+    ``whole-expiry``. Shared with the route-level quote merge so the numbers
+    always describe the rows actually returned.
+    """
+    def _oi(entry: dict[str, Any] | None):
+        q = (entry or {}).get("quote") or {}
+        return q.get("open_interest")
+
+    call_ois = [_oi(r.get("call")) for r in rows if r.get("call")
+                and _oi(r.get("call")) is not None]
+    put_ois = [_oi(r.get("put")) for r in rows if r.get("put")
+               and _oi(r.get("put")) is not None]
+    analytics: dict[str, Any] = {"scope": "window"}
+    if call_ois and put_ois:
+        tot_call, tot_put = sum(call_ois), sum(put_ois)
+        analytics["total_call_oi"] = tot_call
+        analytics["total_put_oi"] = tot_put
+        analytics["pcr_by_oi"] = (
+            round(tot_put / tot_call, 4) if tot_call else None)
+    for side in ("call", "put"):
+        best = None
+        for r in rows:
+            entry = r.get(side)
+            oi = _oi(entry)
+            if oi is not None and (best is None or oi > best[1]):
+                best = (entry.get("strike"), oi)
+        if best:
+            analytics[f"highest_{side}_oi_strike"] = best[0]
+            analytics[f"highest_{side}_oi"] = best[1]
+    return analytics
 
 
 class MarketIntel:
@@ -75,12 +115,91 @@ class MarketIntel:
                 return exchange, resolved
         return exchange, token
 
+    def _quote_ref(self, compact: dict[str, Any]) -> tuple[str, str]:
+        """(exchange, quote-storage key) for a compact instrument result.
+
+        The compact result carries the provider's QUOTE key (``native_key``)
+        - the key the quote state is actually written under. Splitting
+        ``instrument_key`` instead would address the provider's TOKEN (a
+        FYERS fyToken, an Upstox instrument key), which is NOT the quote
+        storage key, so the quote would never be found.
+        """
+        exchange = str(compact.get("exchange") or "")
+        key = compact.get("native_key")
+        if not key:
+            parts = str(compact.get("instrument_key") or "").split(":", 1)
+            if len(parts) == 2:
+                exchange = exchange or parts[0]
+                key = parts[1]
+        return self._storage_key(exchange, str(key or ""))
+
     # -- internals ---------------------------------------------------------
 
     @staticmethod
     def _norm(value: str | None) -> str:
         return re.sub(r"[^a-z0-9]", "", (value or "").lower())
 
+    def provider_underlying_ref(self, underlying: str,
+                                provider: str) -> tuple[str, str, str] | None:
+        """The underlying's provider-native ``(key, exchange, symbol)``.
+
+        A chain's contracts can belong to a different provider than the
+        underlying row the catalogue surfaced (SENSEX rows are Fyers-sourced
+        while the routed contracts are Upstox). A provider request must use
+        the OWNER's own identifier, so the reference is resolved from that
+        provider's catalogue row (index table only as the canonical
+        fallback) - never another provider's symbol.
+        """
+        provider = str(provider or "")
+        if not provider:
+            return None
+        try:
+            from app.canonical_identity import provider_quote_key
+            from app.market_indices import entry_for_label, label_for_underlying
+        except Exception:
+            return None
+        label = label_for_underlying(underlying)
+        if label is not None:
+            rows: list[dict[str, Any]] = []
+            try:
+                finder = getattr(self._catalog, "find_index_rows", None)
+                if callable(finder):
+                    rows = list(finder(label, provider=provider) or [])
+            except Exception:
+                rows = []
+            for row in rows:
+                if str(row.get("provider") or "") != provider:
+                    continue
+                key = provider_quote_key(row)
+                if key:
+                    return (str(key), str(row.get("exchange") or ""),
+                            str(row.get("tradingsymbol") or key))
+            entry = entry_for_label(label) or {}
+            key = entry.get("fyers_symbol" if provider == "fyers"
+                            else f"{provider}_key")
+            if not key:
+                return None
+            return (str(key),
+                    str(entry.get(f"{provider}_exchange") or ""),
+                    str(entry.get(f"{provider}_symbol")
+                        or entry.get("fyers_symbol") or key))
+        # Non-index underlying: the provider's OWN listing of the equity.
+        try:
+            rows = list(self._catalog.search(
+                provider=provider, instrument_type="EQUITY", q=underlying,
+                limit=100) or [])
+        except Exception:
+            rows = []
+        want = self._norm(underlying)
+        for row in rows:
+            if want not in (self._norm(row.get("tradingsymbol")),
+                            self._norm(row.get("underlying"))):
+                continue
+            key = provider_quote_key(row)
+            if key:
+                return (str(key), str(row.get("exchange") or ""),
+                        str(row.get("tradingsymbol") or key))
+        return None
 
     def _find_underlying(self, name: str) -> dict[str, Any] | None:
         """Resolve an underlying name ('NIFTY', 'RELIANCE', 'NIFTY50') to
@@ -126,6 +245,29 @@ class MarketIntel:
             return order.index(provider)
         except ValueError:
             return len(order) + 1
+
+    def _select_one_provider(self, rows: list[dict[str, Any]]
+                             ) -> list[dict[str, Any]]:
+        """Keep ONE row per logical contract, from the routed provider.
+
+        A logical contract is (underlying, expiry, strike, option type). When
+        both providers list it, only the routed provider's row is kept — a
+        logical contract is never emitted twice, and a join can never
+        attribute one provider's data to the other provider's contract.
+        """
+        by_contract: dict[tuple, dict[str, Any]] = {}
+        for row in rows or []:
+            key = (str(row.get("underlying") or "").upper(),
+                   str(row.get("expiry") or ""),
+                   row.get("strike"),
+                   row.get("option_type"))
+            current = by_contract.get(key)
+            if current is None:
+                by_contract[key] = row
+                continue
+            if self._provider_rank(row) < self._provider_rank(current):
+                by_contract[key] = row
+        return list(by_contract.values())
 
     def _dedupe_rows(self, rows: list[dict[str, Any]]
                      ) -> list[dict[str, Any]]:
@@ -257,21 +399,28 @@ class MarketIntel:
                 und_key = under_row.get("underlying") \
                     or under_row.get("tradingsymbol")
                 parsed["underlying"] = und_key
-                for wt in want_types:
-                    if wt in ("FUTURE", "OPTION"):
-                        rows = self._catalog.search(
-                            underlying=und_key, instrument_type=wt,
-                            expiry=expiry, limit=max(limit, 50))
-                    else:
-                        rows = self._catalog.search(
-                            q=remainder, instrument_type=wt,
-                            exchange=exchange, expiry=expiry,
-                            limit=limit)
-                    results.extend(self._compact(r) for r in rows)
-                if results:
+                deriv_types = [wt for wt in want_types if wt in ("FUTURE", "OPTION")]
+                cash_types = [wt for wt in want_types if wt not in ("FUTURE", "OPTION")]
+                combined: list[dict[str, Any]] = []
+                if cash_types:
+                    rows = self._catalog.search(
+                        q=remainder, types=cash_types, exchange=exchange,
+                        expiry=expiry, limit=max(limit, 50), rank=remainder)
+                    combined.extend(self._dedupe_rows(rows))
+                for wt in deriv_types:
+                    rows = self._catalog.search(
+                        underlying=und_key, instrument_type=wt,
+                        expiry=expiry, limit=max(limit, 50))
+                    combined.extend(rows)
+                if combined:
+                    # Cash rows are already deduped; derivative rows are
+                    # contract-specific. Dedupe the full set so a mixed
+                    # scope never emits the same canonical instrument twice.
+                    combined = self._dedupe_rows(combined)
+                    compacted = [self._compact(r) for r in combined]
                     return {"query": query, "parsed": parsed,
-                            "count": len(results),
-                            "results": results[:limit]}
+                            "count": len(compacted[:limit]),
+                            "results": compacted[:limit]}
 
         # Generic fallback: ONE ranked pass over the cash classes. The read
         # model scores relevance (exact -> prefix -> contains) and prefers
@@ -321,6 +470,164 @@ class MarketIntel:
         result["count"] = len(result["results"])
         return result
 
+    # -- Phase 1: browse + navigation pool ------------------------------------
+
+    @staticmethod
+    def _provider_config() -> tuple[list[str], list[str]]:
+        """(preference order, enabled ids) from the registry; empty when the
+        registry is unavailable (tests construct MarketIntel standalone)."""
+        try:
+            from providers.registry import get_registry
+            reg = get_registry()
+            return list(reg.preference_order()), list(reg.enabled_ids())
+        except Exception:
+            return [], []
+
+    @staticmethod
+    def _browse_fingerprint(filters: dict[str, Any]) -> str:
+        raw = json.dumps(filters, sort_keys=True, default=str)
+        return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+    @staticmethod
+    def _encode_cursor(after: tuple, fp: str) -> str:
+        raw = json.dumps({"after": list(after), "fp": fp},
+                         separators=(",", ":"))
+        return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+
+    @staticmethod
+    def _decode_cursor(cursor: str) -> tuple[tuple, str]:
+        pad = "=" * (-len(cursor) % 4)
+        try:
+            obj = json.loads(base64.urlsafe_b64decode(cursor + pad))
+            after = obj["after"]
+            if not isinstance(after, list) or len(after) != 3 \
+                    or not all(isinstance(v, str) for v in after):
+                raise ValueError("bad cursor shape")
+            return tuple(after), str(obj["fp"])
+        except (ValueError, KeyError, TypeError) as exc:
+            raise ValueError("invalid cursor") from exc
+
+    def browse(self, *, types: list[str] | None = None,
+               exchange: str | None = None, segment: str | None = None,
+               underlying: str | None = None, expiry: str | None = None,
+               option_type: str | None = None, strike: float | None = None,
+               include_expired: bool = False, cursor: str | None = None,
+               limit: int = 50) -> dict[str, Any]:
+        """Paginated, provider-deduped browse over the canonical catalog.
+
+        Defaults to the cash classes (INDEX/EQUITY/ETF). OPTION browse
+        requires an ``underlying`` scope — the unscoped option dedupe
+        exceeds the latency budget. The cursor is opaque and bound to the
+        filter set; reusing it with different filters is a 400.
+        """
+        from app.canonical_identity import _SYMBOL_ALIASES
+        want = [t.upper() for t in (types or [])] or ["INDEX", "EQUITY", "ETF"]
+        for t in want:
+            if t not in _CANONICAL_TYPES:
+                raise ValueError(f"unsupported type: {t}")
+        if "OPTION" in want and not underlying:
+            raise ValueError("underlying is required for option browse")
+        if option_type and option_type.upper() not in ("CE", "PE"):
+            raise ValueError("option_type must be CE or PE")
+        order, _enabled = self._provider_config()
+        filters = {"types": want, "exchange": exchange, "segment": segment,
+                   "underlying": underlying, "expiry": expiry,
+                   "option_type": option_type, "strike": strike,
+                   "include_expired": include_expired,
+                   "provider_order": order}
+        fp = self._browse_fingerprint(filters)
+        after = None
+        if cursor:
+            after, cursor_fp = self._decode_cursor(cursor)
+            if cursor_fp != fp:
+                raise ValueError("cursor does not match the current filters")
+        result = self._catalog.browse(
+            types=want, exchange=exchange, segment=segment,
+            underlying=underlying, expiry=expiry,
+            option_type=option_type.upper() if option_type else None,
+            strike=strike, include_expired=include_expired, after=after,
+            limit=max(1, min(int(limit), 200)), provider_order=order,
+            symbol_aliases=_SYMBOL_ALIASES, today=date.today().isoformat())
+        rows = [self._compact(r) for r in result["rows"]]
+        next_cursor = None
+        if result["next_after"] is not None:
+            next_cursor = self._encode_cursor(result["next_after"], fp)
+        return {"count": len(rows), "results": rows,
+                "next_cursor": next_cursor, "total": result["total"]}
+
+    _POOL_INDEX_PRIORITY = ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY",
+                            "NIFTYNXT50", "SENSEX", "BANKEX")
+
+    def pool(self, *, limit: int = 1000) -> dict[str, Any]:
+        """Curated navigation pool for the native Vela symbol picker.
+
+        Vela SymbolDescriptor shape: ticker/description/type/group/prefix.
+        Indices first (liquid ones lead), then F&O stock underlyings, then
+        ETFs. Tickers are globally unique (uppercase) — the picker's local
+        filter and getBars address the bare ticker, so a collision would
+        silently chart the wrong instrument.
+        """
+        from app.canonical_identity import (
+            _SYMBOL_ALIASES,
+            _canonical_symbol,
+            canonical_id_for_row,
+            provider_quote_key,
+        )
+        order, enabled = self._provider_config()
+        rows = self._catalog.pool(
+            provider_order=order, enabled=enabled or None,
+            symbol_aliases=_SYMBOL_ALIASES, today=date.today().isoformat(),
+            limit=max(1, min(int(limit), 5000)))
+
+        def sort_key(row: dict[str, Any]) -> tuple:
+            itype = row.get("instrument_type")
+            sym = _canonical_symbol(
+                str(row.get("underlying") or row.get("tradingsymbol") or ""))
+            if itype == "INDEX":
+                try:
+                    prio = self._POOL_INDEX_PRIORITY.index(sym)
+                except ValueError:
+                    prio = len(self._POOL_INDEX_PRIORITY)
+                return (0, prio, sym)
+            if itype == "EQUITY":
+                return (1, 0, sym)
+            return (2, 0, sym)
+
+        seen: set[str] = set()
+        symbols: list[dict[str, Any]] = []
+        for row in sorted(rows, key=sort_key):
+            ticker = str(row.get("tradingsymbol") or "").upper()
+            if not ticker or ticker in seen:
+                continue
+            seen.add(ticker)
+            itype = row.get("instrument_type")
+            try:
+                native_key = provider_quote_key(row)
+                canonical_id = canonical_id_for_row(row)
+            except Exception:
+                native_key = row.get("provider_symbol") or row.get("instrument_token")
+                canonical_id = None
+            symbols.append({
+                "ticker": ticker,
+                "description": row.get("name") or row.get("tradingsymbol"),
+                "type": {"INDEX": "index", "EQUITY": "stock",
+                         "ETF": "etf"}.get(itype, "stock"),
+                "group": itype,
+                "prefix": row.get("exchange"),
+                # Exact canonical identity for safe chart resolution (Phase 3).
+                # Vela's native picker selects by ticker; the chart must resolve
+                # to THIS instrument, never a same-ticker collision.
+                "provider": row.get("provider"),
+                "provider_token": row.get("instrument_token"),
+                "instrument_key": f"{row['exchange']}:{row['instrument_token']}",
+                "native_key": native_key,
+                "canonical_id": canonical_id,
+                "exchange": row.get("exchange"),
+                "instrument_type": itype,
+                "symbol": row.get("tradingsymbol"),
+            })
+        return {"count": len(symbols), "symbols": symbols}
+
     # -- Package 20: futures discovery ---------------------------------------
 
     @staticmethod
@@ -345,11 +652,18 @@ class MarketIntel:
             return {"error": f"unknown underlying '{underlying}'"}
         und_key = under_row.get("underlying") \
             or under_row.get("tradingsymbol")
-        expiries = self._catalog.derivative_expiries(und_key, "FUTURE")
+        exchange = self._derivative_exchange(under_row)
+        expiries = self._catalog.derivative_expiries(
+            und_key, "FUTURE", exchange=exchange)
         rows = self._catalog.search(underlying=und_key,
-                                    instrument_type="FUTURE", limit=100)
+                                    instrument_type="FUTURE",
+                                    exchange=exchange, limit=100)
         if expiry:
             rows = [r for r in rows if r.get("expiry") == expiry]
+        # ONE provider per logical contract: when both providers list the
+        # same (underlying, expiry), only the routed provider's contract is
+        # emitted, so discovery never duplicates or misattributes it.
+        rows = self._select_one_provider(rows)
         rows.sort(key=lambda r: r.get("expiry") or "")
         return {
             "underlying": und_key,
@@ -370,7 +684,8 @@ class MarketIntel:
             "underlying": und_key,
             "underlying_instrument": self._compact(under_row),
             "expiries": self._catalog.derivative_expiries(
-                und_key, "OPTION"),
+                und_key, "OPTION",
+                exchange=self._derivative_exchange(under_row)),
         }
 
     def _spot_for(self, under_row: dict[str, Any]) -> tuple[
@@ -426,6 +741,11 @@ class MarketIntel:
         ATM is the nearest ACTUAL listed strike to the underlying spot
         (live when available). Analytics are computed over the loaded
         window only and labeled as such.
+
+        ONE provider is selected per logical contract: when both providers
+        list the same (expiry, strike, CE/PE), only the routed provider's
+        contract is emitted — a logical contract is never duplicated and
+        its data is never attributed to the wrong provider.
         """
         window = max(1, min(int(window), _MAX_WINDOW))
         under_row = self._find_underlying(underlying)
@@ -433,16 +753,25 @@ class MarketIntel:
             return {"error": f"unknown underlying '{underlying}'"}
         und_key = under_row.get("underlying") \
             or under_row.get("tradingsymbol")
+        exchange = self._derivative_exchange(under_row)
 
-        expiries = self._catalog.derivative_expiries(und_key, "OPTION")
+        expiries = self._catalog.derivative_expiries(
+            und_key, "OPTION", exchange=exchange)
         if not expiries:
             return {"error": f"no listed options for '{und_key}'"}
-        chosen_expiry = expiry or expiries[0]
+        from datetime import date
+        today = date.today().isoformat()
+        future_expiries = [e for e in expiries if str(e) >= today]
+        if not future_expiries:
+            future_expiries = list(expiries)
+        chosen_expiry = expiry or future_expiries[0]
         if chosen_expiry not in expiries:
             return {"error": f"expiry '{chosen_expiry}' not listed",
                     "available_expiries": expiries}
 
-        contracts = self._catalog.option_strikes(und_key, chosen_expiry)
+        contracts = self._select_one_provider(
+            self._catalog.option_strikes(und_key, chosen_expiry,
+                                         exchange=exchange))
         if not contracts:
             return {"error": "empty chain", "underlying": und_key,
                     "expiry": chosen_expiry}
@@ -466,6 +795,8 @@ class MarketIntel:
         hi = min(len(strikes_sorted), atm_index + window + 1)
         window_strikes = strikes_sorted[lo:hi]
 
+        # The chain is built from the SELECTED provider's contracts only, so
+        # a row is never a last-write-wins mix of two providers.
         by_key: dict[tuple[float, str], dict[str, Any]] = {}
         for c in contracts:
             if c.get("strike") in window_strikes and c.get("option_type"):
@@ -482,33 +813,6 @@ class MarketIntel:
             rows.append({"strike": strike, "atm": strike == atm_strike,
                          "call": call, "put": put})
 
-        # Analytics over the LOADED window only (explicitly labeled).
-        def _oi(entry):
-            q = (entry or {}).get("quote") or {}
-            return q.get("open_interest")
-
-        call_ois = [_oi(r["call"]) for r in rows if r["call"]
-                    and _oi(r["call"]) is not None]
-        put_ois = [_oi(r["put"]) for r in rows if r["put"]
-                   and _oi(r["put"]) is not None]
-        analytics: dict[str, Any] = {"scope": "loaded_window"}
-        if call_ois and put_ois:
-            tot_call, tot_put = sum(call_ois), sum(put_ois)
-            analytics["total_call_oi"] = tot_call
-            analytics["total_put_oi"] = tot_put
-            analytics["pcr_by_oi"] = (
-                round(tot_put / tot_call, 4) if tot_call else None)
-        for side in ("call", "put"):
-            best = None
-            for r in rows:
-                entry = r[side]
-                oi = _oi(entry)
-                if oi is not None and (best is None or oi > best[1]):
-                    best = (entry["strike"], oi)
-            if best:
-                analytics[f"highest_{side}_oi_strike"] = best[0]
-                analytics[f"highest_{side}_oi"] = best[1]
-
         return {
             "underlying": und_key,
             "underlying_instrument": self._compact(under_row),
@@ -521,7 +825,7 @@ class MarketIntel:
             "strikes_loaded": len(rows),
             "strikes_total_listed": len(strikes_sorted),
             "rows": rows,
-            "analytics": analytics,
+            "analytics": window_analytics(rows),
         }
 
     def _live_quote_for(self, compact: dict[str, Any]) -> dict[str, Any] | None:
@@ -529,8 +833,7 @@ class MarketIntel:
         if self._spot_provider is None:
             return None
         try:
-            exchange, token = compact["instrument_key"].split(":", 1)
-            exchange, token = self._storage_key(exchange, token)
+            exchange, token = self._quote_ref(compact)
             quote = self._spot_provider(exchange, token)
         except Exception:
             return None
@@ -573,8 +876,7 @@ class MarketIntel:
             return {"error": f"no instrument matches '{query}'"}
         best = found["results"][0]
         snap: dict[str, Any] = {"instrument": best}
-        exchange, token = best["instrument_key"].split(":", 1)
-        exchange, token = self._storage_key(exchange, token)
+        exchange, token = self._quote_ref(best)
         if self._spot_provider is not None:
             try:
                 quote = self._spot_provider(exchange, token)
@@ -583,10 +885,13 @@ class MarketIntel:
             if quote is not None:
                 from market.serialization import quote_to_dict
                 snap["quote"] = quote_to_dict(quote)
-                snap["freshness"] = {
-                    "received_at": snap["quote"].get("received_ts"),
-                    "stale": False,
-                }
+                # The SHARED freshness verdict: a quote that exists is
+                # not evidence that it is live (the age decides).
+                from app.quote_service import quote_freshness
+                snap["freshness"] = quote_freshness(
+                    best.get("canonical_id"),
+                    snap["quote"].get("received_ts"))
+                snap["provider"] = best.get("provider")
             else:
                 snap["quote"] = None
                 snap["freshness"] = {"stale": True,

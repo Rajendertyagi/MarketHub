@@ -11,14 +11,11 @@ Run:
 from __future__ import annotations
 
 import asyncio
-import json
 import os
-import socket
-import subprocess
 import sys
 import threading
 import time
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # Ensure project root is importable.
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -27,19 +24,17 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers.lifecycle import (  # noqa: E402
+from helpers.lifecycle import (
     restore_environment,
     start_server,
     stop_server,
 )
-from helpers.mcp_client import (  # noqa: E402
+from helpers.mcp_client import (
     call,
     publish_event,
     wait_source_ready,
 )
-from helpers.runner import R  # noqa: E402
-from helpers.mock_http import MockHandler, start_mock  # noqa: E402
-
+from helpers.runner import R
 
 # ===================================================================
 # Timeout Tests
@@ -114,7 +109,7 @@ async def s10_timeout_no_leak(runner: R) -> None:
 
 
 async def main() -> bool:
-    proc = await start_server()
+    await start_server()
     runner = R()
     try:
         print("  Timeout Behavior Tests")

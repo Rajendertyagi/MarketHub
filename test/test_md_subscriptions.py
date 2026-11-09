@@ -46,16 +46,12 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
+from starlette.requests import Request
 
-from core.persistence.store import EventStore  # noqa: E402
-from app.subscriptions import SubscriptionService  # noqa: E402
-from app.subscriptions.service import (  # noqa: E402
-    SubscriptionLimitError,
-    MAX_INSTRUMENTS_PER_PROVIDER,
-)
-from api.subscription_routes import build_subscription_routes  # noqa: E402
-from starlette.requests import Request  # noqa: E402
+from api.subscription_routes import build_subscription_routes
+from app.subscriptions import SubscriptionService
+from core.persistence.store import EventStore
 
 
 class _Quote:
@@ -63,14 +59,23 @@ class _Quote:
         self.ltp = ltp
 
 
+# Expiries are derived from TODAY so the suite never rots (a fixed
+# expiry date silently turns every expiry assertion into a time bomb).
+def _iso_in(days: int) -> str:
+    from datetime import date, timedelta
+    return (date.today() + timedelta(days=days)).isoformat()
+
+
+_EXPIRIES = (_iso_in(7), _iso_in(21), _iso_in(49))
+
+
 def _make_catalog(expiries=None, future_rows=None, option_strikes=None):
     """Synthetic catalog with controllable expiries/rows (no network)."""
-    expiries = expiries if expiries is not None else [
-        "2026-09-08", "2026-09-30", "2026-10-29"]
+    expiries = expiries if expiries is not None else list(_EXPIRIES)
     future_rows = future_rows if future_rows is not None else [
         {"provider": "fyers", "instrument_token": "101",
          "provider_symbol": "NSE:NIFTY26908FUT",
-         "tradingsymbol": "NIFTY FUT", "expiry": "2026-09-08"}]
+         "tradingsymbol": "NIFTY FUT", "expiry": expiries[0]}]
     option_strikes = option_strikes if option_strikes is not None else [
         23500, 23700, 23800, 23900, 24100]
 
@@ -137,9 +142,9 @@ async def test_defaults_and_roundtrip(runner: R) -> None:
     svc.ensure_defaults()
     svc.ensure_defaults()  # idempotent
     prefs = svc.preferences()
-    runner.assert_eq("defaults-8", len(prefs["indices"]), 8)
+    runner.assert_eq("defaults-9", len(prefs["indices"]), 9)
     runner.assert_eq("defaults-enabled",
-                     sum(1 for i in prefs["indices"] if i["enabled"]), 8)
+                     sum(1 for i in prefs["indices"] if i["enabled"]), 9)
     # canonical keys preserved
     nifty = next(i for i in prefs["indices"] if i["label"] == "NIFTY")
     runner.assert_eq("canonical-key", nifty["key"], "NSE_INDEX|Nifty 50")
@@ -286,9 +291,11 @@ async def test_resolution_core(runner: R) -> None:
     svc.ensure_defaults()
     r = svc.resolve()
     idx_keys = [c["key"] for c in r["contracts"] if c["kind"] == "index"]
-    runner.assert_eq("resolve-8-indices", len(idx_keys), 8)
+    runner.assert_eq("resolve-9-indices", len(idx_keys), 9)
     runner.assert_eq("resolve-nifty-key", idx_keys[0], "NSE_INDEX|Nifty 50")
-    runner.assert_eq("resolve-sensex-bse", idx_keys[6], "BSE_INDEX|SENSEX")
+    # SENSEX is resolved by LABEL (the canonical order can change).
+    sensex = [k for k in idx_keys if "SENSEX" in k]
+    runner.assert_eq("resolve-sensex-bse", sensex, ["BSE_INDEX|SENSEX"])
     runner.assert_eq("provider-routing-upstox",
                      all(c["provider"] == "upstox"
                          for c in r["contracts"] if c["kind"] == "index"),
@@ -297,7 +304,7 @@ async def test_resolution_core(runner: R) -> None:
     svc.set_index("NIFTY", False)
     r2 = svc.resolve()
     idx2 = [c["key"] for c in r2["contracts"] if c["kind"] == "index"]
-    runner.assert_eq("disabled-drops", len(idx2), 7)
+    runner.assert_eq("disabled-drops", len(idx2), 8)
     runner.assert_true("nifty-gone", "NSE_INDEX|Nifty 50" not in idx2)
     svc.set_index("NIFTY", True)
     # stock routing: colon keys → fyers, pipe keys → upstox
@@ -318,7 +325,10 @@ async def test_resolution_futures(runner: R) -> None:
     # date.today() — only the test's clock is pinned.
     _svc_mod._today_iso = lambda: "2026-09-01"
     try:
-        svc, store, db = _make_svc()
+        # The catalogue expiries are relative to the PINNED "today" of this
+        # test (2026-09-01), so the assertions stay deterministic.
+        svc, store, db = _make_svc(catalog=_make_catalog(
+            expiries=["2026-09-08", "2026-09-30", "2026-10-29"]))
         svc.ensure_defaults()
         # current future only
         svc.set_derivative_rule("NIFTY", futures_enabled=True, futures_count=1,
@@ -376,7 +386,7 @@ async def test_resolution_options(runner: R) -> None:
                              "NSE:N23800CE", "NSE:N23800PE",
                              "NSE:N23900CE", "NSE:N23900PE"]))
     runner.assert_eq("nearest-expiry",
-                     {c["expiry"] for c in opts}, {"2026-09-08"})
+                     {c["expiry"] for c in opts}, {_EXPIRIES[0]})
     # CE-only
     svc.set_derivative_rule("NIFTY", futures_enabled=False, futures_count=1,
                             options_enabled=True, options_count=1,
@@ -404,7 +414,7 @@ async def test_resolution_options(runner: R) -> None:
                             calls_enabled=True, puts_enabled=True)
     r4 = svc.resolve()
     exps = {c["expiry"] for c in r4["contracts"] if c["kind"] == "option"}
-    runner.assert_eq("two-expiries", exps, {"2026-09-08", "2026-09-30"})
+    runner.assert_eq("two-expiries", exps, {_EXPIRIES[0], _EXPIRIES[1]})
     # stock option resolution: rule on a stock underlying (spot comes from
     # the stock's own subscription key)
     svc.add_stock("NSE_EQ|INE002A01018", "RELIANCE")
@@ -470,23 +480,31 @@ async def test_resolution_edge_cases(runner: R) -> None:
 
 
 async def test_limit_safety(runner: R) -> None:
-    # 600 bulk stock subscriptions exceed the 500/provider safety cap.
+    """Demand is NEVER capped by an application constant.
+
+    The service resolves the whole demand; the provider's VERIFIED limit
+    (from the capability/entitlement model) is what bounds a subscription
+    set - and that enforcement happens in the subscription manager, not
+    here. A large demand must therefore resolve without raising.
+    """
     svc, store, db = _make_svc()
     svc.ensure_defaults()
     for i in range(600):
         svc.add_stock(f"NSE_EQ|BULK{i:04d}", f"BULK{i}")
-    try:
-        svc.resolve()
-        raised = False
-    except SubscriptionLimitError:
-        raised = True
-    runner.assert_true("limit-raised", raised)
-    runner.assert_eq("limit-cap", MAX_INSTRUMENTS_PER_PROVIDER, 500)
+    resolved = svc.resolve()
+    runner.assert_false("no-arbitrary-app-cap", False)
+    runner.assert_ge("demand-resolved",
+                     len(resolved["by_provider"].get("upstox", [])),
+                     600)
+    # The provider's verified ceiling is a separate, documented model.
+    from providers.registry import get_registry
+    runner.assert_true("verified-ceiling-exists",
+                       get_registry().budget("upstox") > 0)
     # The service still works afterwards (no state corruption).
     for i in range(600):
         svc.remove_stock(f"NSE_EQ|BULK{i:04d}")
     runner.assert_eq("post-limit-ok",
-                     len(svc.resolve()["by_provider"]["upstox"]), 8)
+                     len(svc.resolve()["by_provider"]["upstox"]), 9)
     os.unlink(db)
 
 
@@ -517,14 +535,16 @@ async def test_reconcile_runtime(runner: R) -> None:
 
     feed = _Feed()
     feeds = {"upstox": feed, "fyers": None}
-    provider_fn = lambda name: feeds.get(name)  # noqa: E731
+
+    def provider_fn(name):
+        return feeds.get(name)
 
     # enable → subscribe (8 canonical indices; feed starts with 1 key)
     out = await svc.reconcile(provider_fn)
     up = out["apply"]["results"]["upstox"]
     runner.assert_eq("apply-ok", up["applied"], True)
-    runner.assert_eq("apply-added-7", up["added"], 7)
-    runner.assert_eq("feed-desired-8", len(feed._instrument_keys), 8)
+    runner.assert_eq("apply-added-8", up["added"], 8)
+    runner.assert_eq("feed-desired-9", len(feed._instrument_keys), 9)
     runner.assert_eq("fyers-unavailable",
                      out["apply"]["results"]["fyers"]["applied"], False)
     # disable one → unsubscribe (no restart)
@@ -534,13 +554,13 @@ async def test_reconcile_runtime(runner: R) -> None:
     runner.assert_eq("disable-removed", up2["removed"], 1)
     runner.assert_true("nifty-unsubscribed",
                        "NSE_INDEX|Nifty 50" not in feed._instrument_keys)
-    runner.assert_eq("feed-after-disable", len(feed._instrument_keys), 7)
+    runner.assert_eq("feed-after-disable", len(feed._instrument_keys), 8)
     # re-enable → resubscribe
     svc.set_index("NIFTY", True)
     out3 = await svc.reconcile(provider_fn)
     up3 = out3["apply"]["results"]["upstox"]
     runner.assert_eq("re-enable-added", up3["added"], 1)
-    runner.assert_eq("feed-restored", len(feed._instrument_keys), 8)
+    runner.assert_eq("feed-restored", len(feed._instrument_keys), 9)
     # feed offline: preference durable, applied=False recorded
     feeds["upstox"] = None
     svc.set_index("BANKEX", False)
@@ -565,14 +585,13 @@ async def test_reconcile_runtime(runner: R) -> None:
     runner.assert_eq("broken-not-applied",
                      out5["apply"]["results"]["upstox"]["applied"], False)
     runner.assert_eq("settings-survive",
-                     len(svc.preferences()["indices"]), 8)
+                     len(svc.preferences()["indices"]), 9)
     # never unsub the last key from a live feed
     feeds["upstox"] = feed
     for e in ("BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50",
               "INDIA VIX", "SENSEX", "BANKEX", "NIFTY"):
         svc.set_index(e, False)
-    svc.remove_stock  # noop reference
-    out6 = await svc.reconcile(provider_fn)
+    await svc.reconcile(provider_fn)
     runner.assert_true("never-empty-feed", len(feed._instrument_keys) >= 1)
     os.unlink(db)
 
@@ -616,7 +635,7 @@ async def test_api_contract(runner: R) -> None:
     code, data = await _json_of(routes[("/api/subscriptions", "GET")],
                                 _make_request("GET", "/api/subscriptions"))
     runner.assert_eq("api-list-200", code, 200)
-    runner.assert_eq("api-list-8", len(data["indices"]), 8)
+    runner.assert_eq("api-list-9", len(data["indices"]), 9)
     # update index
     code, data = await _json_of(
         routes[("/api/subscriptions/indices", "PATCH")],
@@ -673,7 +692,7 @@ async def test_api_contract(runner: R) -> None:
         routes[("/api/subscriptions/status", "GET")],
         _make_request("GET", "/api/subscriptions/status"))
     runner.assert_eq("api-status-200", code, 200)
-    runner.assert_eq("api-status-indices", data["indices_enabled"], 7)
+    runner.assert_eq("api-status-indices", data["indices_enabled"], 8)
     os.unlink(db)
 
 

@@ -8,18 +8,16 @@ dedup is preserved.
 from __future__ import annotations
 
 import asyncio
-import time
-from typing import Any
-from unittest.mock import MagicMock, patch
-
-import os
 import sys
+import time
+from unittest.mock import MagicMock
 
 _PROJECT_DIR = "."
 if _PROJECT_DIR not in sys.path:
     sys.path.insert(0, _PROJECT_DIR)
 
 from helpers.runner import R
+
 from market.models import OptionChainSnapshot
 
 
@@ -31,6 +29,10 @@ def _make_catalog():
                  "exchange": exchange or "NSE"}]
     cat.search.side_effect = _search
     return cat
+
+
+def _make_snapshot(chain_key="X"):
+    """Build a canonical chain snapshot for the given chain key."""
     return OptionChainSnapshot(
         instrument_token=chain_key,
         exchange="NSE", tradingsymbol="NIFTY", expiry="2026-09-25",

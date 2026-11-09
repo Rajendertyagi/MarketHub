@@ -27,9 +27,9 @@ def _mk_registry():
 
 def _mk_world():
     """Catalog (Fyers-shaped) + MarketService + intel with resolver."""
-    from core.persistence.store import EventStore
     from app.instruments import InstrumentCatalog
     from app.market_intel import MarketIntel
+    from core.persistence.store import EventStore
     from market.service import MarketService, QuotePatch
 
     tmp = tempfile.mkdtemp()

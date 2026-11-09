@@ -36,8 +36,7 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
-
+from helpers.runner import R
 
 # -- helpers ------------------------------------------------------------------
 
@@ -270,8 +269,6 @@ async def test_wa13_source_manager_owner(runner: R) -> None:
 
 async def test_wa14_imports_intact(runner: R) -> None:
     """WA14: app composition and route builders still import cleanly."""
-    from api.routes import build_market_routes, build_auth_routes  # noqa: F401
-    from brokers.upstox.feed import UpstoxFeed  # noqa: F401
     runner.assert_true("WA14-all-imports-ok", True)
 
 

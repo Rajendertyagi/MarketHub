@@ -22,20 +22,20 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers.lifecycle import (  # noqa: E402
+from helpers.lifecycle import (
+    get_server_url,
     restore_environment,
     start_server,
 )
-from helpers.mcp_client import (  # noqa: E402
-    call,
-    read_res,
+from helpers.mcp_client import (
     publish_event,
+    read_res,
 )
-from helpers.runner import R  # noqa: E402
-from mcp import ClientSession  # noqa: E402
-from mcp.client.streamable_http import streamable_http_client as streamablehttp_client  # noqa: E402
-from helpers.lifecycle import get_server_url  # noqa: E402
-
+from helpers.runner import R
+from mcp import ClientSession
+from mcp.client.streamable_http import (
+    streamable_http_client as streamablehttp_client,
+)
 
 # ===================================================================
 # Performance Tests
@@ -47,7 +47,7 @@ async def perf1_publish_storm(runner: R) -> None:
     name = "PERF1-publish-storm"
     start = time.monotonic()
     for i in range(50):
-        resp = await publish_event(f"test.perf{i}", source="test")
+        await publish_event(f"test.perf{i}", source="test")
     elapsed = time.monotonic() - start
     runner.assert_true(name, elapsed < 30.0, f"50 events took {elapsed:.2f}s (>30s)")
 
@@ -93,7 +93,7 @@ async def perf3_concurrent_tool_calls(runner: R) -> None:
 
 
 async def main() -> bool:
-    proc = await start_server()
+    await start_server()
     runner = R()
     try:
         print("  Performance Sanity Tests")

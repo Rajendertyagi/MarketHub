@@ -18,7 +18,6 @@ cross-provider rewriting). Real master row structure (sanitized fixtures).
 
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
 import tempfile
@@ -30,15 +29,14 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
-from core.persistence.store import EventStore  # noqa: E402
-from app.subscriptions import SubscriptionService  # noqa: E402
-from app.instruments import (  # noqa: E402
+from app.instruments import (
     InstrumentCatalog,
     upstox_master_records,
 )
-
+from app.subscriptions import SubscriptionService
+from core.persistence.store import EventStore
 
 # Real master row shape (sanitized): epoch-ms expiry, FUT/CE/PE types.
 _UPSTOX_FO_ROWS = [
@@ -143,6 +141,31 @@ def _svc(env: _Env, spot=23779.15) -> SubscriptionService:
     return svc
 
 
+class _FrozenClock:
+    """Pin the resolution clock to a date before the fixture's expiries.
+
+    The fixture's expiries are FIXED dates (29 Sep 2026, 27 Oct 2026, ...).
+    Without a pinned clock the suite would start failing the day the
+    earliest fixture expiry passes — a time-dependent test, not a
+    behavioural regression.
+    """
+
+    def __init__(self, today: str = "2026-09-01") -> None:
+        self._today = today
+        self._original = None
+
+    def __enter__(self):
+        import app.subscriptions.service as svc_mod
+        self._original = svc_mod._today_iso
+        svc_mod._today_iso = lambda: self._today
+        return self
+
+    def __exit__(self, *exc):
+        import app.subscriptions.service as svc_mod
+        svc_mod._today_iso = self._original
+        return False
+
+
 def test_upstox_futures_resolution(runner: R) -> None:
     env = _Env()
     svc = _svc(env)
@@ -150,7 +173,8 @@ def test_upstox_futures_resolution(runner: R) -> None:
                             options_enabled=False, options_count=1,
                             strikes_below=0, strikes_above=0,
                             calls_enabled=True, puts_enabled=True)
-    r = svc.resolve()
+    with _FrozenClock():
+        r = svc.resolve()
     futs = [c for c in r["contracts"] if c["kind"] == "future"
             and c["underlying"] == "NIFTY"]
     up_futs = [c for c in futs if c["provider"] == "upstox"]
@@ -170,7 +194,8 @@ def test_upstox_options_resolution(runner: R) -> None:
                             options_enabled=True, options_count=1,
                             strikes_below=1, strikes_above=1,
                             calls_enabled=True, puts_enabled=True)
-    r = svc.resolve()
+    with _FrozenClock():
+        r = svc.resolve()
     opts = [c for c in r["contracts"] if c["kind"] == "option"
             and c["underlying"] == "NIFTY" and c["provider"] == "upstox"]
     runner.assert_eq("opt-atm-snap", r["atm"].get("NIFTY"), 23800.0)
@@ -204,7 +229,8 @@ def test_stock_derivatives_resolution(runner: R) -> None:
                             options_count=1, strikes_below=0,
                             strikes_above=0, calls_enabled=True,
                             puts_enabled=True)
-    r = svc.resolve()
+    with _FrozenClock():
+        r = svc.resolve()
     futs = [c for c in r["contracts"] if c["kind"] == "future"
             and c["underlying"] == "RELIANCE"]
     runner.assert_eq("stockfut-key", futs[0]["key"], "NSE_FO|125841")
@@ -218,27 +244,39 @@ def test_stock_derivatives_resolution(runner: R) -> None:
 
 
 def test_cross_provider_isolation(runner: R) -> None:
+    """A logical contract is routed ONCE, to ONE provider.
+
+    The fixture lists the SAME contract (NIFTY 23800 CE, 08 Sep 26) under
+    BOTH providers: Upstox ``NSE_FO|42631`` and Fyers
+    ``NSE:NIFTY2690823800CE``. The established contract is that one
+    provider is selected for each canonical contract — so exactly ONE of
+    them is emitted, and the selected provider's own key is used (never a
+    merged or duplicated logical contract).
+    """
     env = _Env()
     svc = _svc(env)
     svc.set_derivative_rule("NIFTY", futures_enabled=False, futures_count=1,
                             options_enabled=True, options_count=1,
                             strikes_below=1, strikes_above=1,
                             calls_enabled=True, puts_enabled=True)
-    r = svc.resolve()
-    by_prov = {}
-    for c in r["contracts"]:
-        if c["kind"] == "option" and c["strike"] == 23800.0:
-            by_prov.setdefault(c["provider"], []).append(c["key"])
-    # Same contract resolves under BOTH providers explicitly — never merged.
-    runner.assert_true("fyers-stays-fyers",
-                       any(k.startswith("NSE:") for k in
-                           by_prov.get("fyers", [])))
-    runner.assert_true("upstox-stays-upstox",
-                       any(k.startswith("NSE_FO|") for k in
-                           by_prov.get("upstox", [])))
-    # No duplicated keys within one provider.
-    runner.assert_eq("no-dup-keys",
-                     len(by_prov["upstox"]), len(set(by_prov["upstox"])))
+    with _FrozenClock():
+        r = svc.resolve()
+    legs = [c for c in r["contracts"]
+            if c["kind"] == "option" and c["strike"] == 23800.0
+            and c.get("option_type") == "CE"]
+    # Exactly ONE leg for the logical contract.
+    runner.assert_eq("one-leg-per-contract", len(legs), 1)
+    # It is a concrete provider feed key of the SELECTED provider.
+    key = legs[0]["key"]
+    provider = legs[0]["provider"]
+    runner.assert_true("selected-provider-own-key",
+                       (provider == "upstox" and key == "NSE_FO|42631")
+                       or (provider == "fyers"
+                           and key == "NSE:NIFTY2690823800CE"))
+    # The OTHER provider's key for the same contract is NOT emitted.
+    other = ("NSE:NIFTY2690823800CE" if provider == "upstox"
+             else "NSE_FO|42631")
+    runner.assert_not_in("other-provider-not-emitted", other, [key])
 
 
 def test_sync_idempotent(runner: R) -> None:
@@ -255,9 +293,14 @@ def test_all8_indices_regression(runner: R) -> None:
     svc = _svc(env)
     r = svc.resolve()
     idx = [c["key"] for c in r["contracts"] if c["kind"] == "index"]
-    runner.assert_eq("all8", len(idx), 8)
+    # One routed key per canonical index (the canonical set has grown).
+    runner.assert_eq("all-indices", len(idx), 9)
     runner.assert_eq("nifty-first", idx[0], "NSE_INDEX|Nifty 50")
-    runner.assert_eq("sensex-bse", idx[6], "BSE_INDEX|SENSEX")
+    runner.assert_eq("sensex-bse",
+                     [k for k in idx if "SENSEX" in k], ["BSE_INDEX|SENSEX"])
+    # One provider at a time: no index is subscribed on both providers.
+    runner.assert_eq("one-provider-per-index",
+                     len(idx), len(set(idx)))
 
 
 def main() -> bool:

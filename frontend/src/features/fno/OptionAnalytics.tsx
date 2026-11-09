@@ -9,6 +9,25 @@ interface Props {
   rows: ChainRowView[];
 }
 
+// Backend-owned analytics scope tiers -> human label. The backend states
+// exactly what input the analytics were computed from; the UI never infers
+// or widens the scope (no "whole-expiry" claim without backend evidence).
+export function scopeLabel(scope: string): string {
+  switch (scope) {
+    case "window":
+      return "Window-scoped (returned strikes)";
+    case "loaded_window":
+      // Legacy tier name (pre-S6); still window-scoped.
+      return "Window-scoped (loaded window)";
+    case "aggregate-unverified":
+      return "Aggregate — scope unverified";
+    case "whole-expiry":
+      return "Whole-expiry";
+    default:
+      return scope;
+  }
+}
+
 // Index-chain analytics (over the loaded window, labeled as such by the backend).
 // PCR / straddle / OI are canonical; the OI-by-strike chart reuses the shared
 // EChart wrapper — no second chart library, no client-side aggregation beyond
@@ -25,6 +44,7 @@ export function OptionAnalytics({ analytics, rows }: Props) {
 
   return (
     <div className="fno-analytics">
+      {analytics.scope ? <div className="hint">Scope: {scopeLabel(analytics.scope)}</div> : null}
       <div className="stat-grid">
         <div className="stat-card">
           <span className="stat-label">PCR (OI)</span>

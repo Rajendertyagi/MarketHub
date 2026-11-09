@@ -12,7 +12,6 @@ from typing import Any
 
 from market.models import MarketHoliday, MarketSession
 
-
 # ---------------------------------------------------------------------------
 # Market Holidays
 # ---------------------------------------------------------------------------

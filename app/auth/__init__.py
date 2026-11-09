@@ -17,6 +17,7 @@ Fake placeholder strings (e.g. "PENDING-OAUTH-LOGIN") are NEVER production
 credentials. Tests may use fakes only in isolated temp stores.
 """
 
+from app.auth.fyers import FyersAuthService
 from app.auth.models import AuthState, BrokerSession, parse_expiry_iso
 from app.auth.service import AuthService
 from app.auth.storage import (
@@ -26,7 +27,6 @@ from app.auth.storage import (
     is_production_store,
     resolve_store_db_path,
 )
-from app.auth.fyers import FyersAuthService
 from app.auth.upstox import UpstoxAuthService
 
 __all__ = [

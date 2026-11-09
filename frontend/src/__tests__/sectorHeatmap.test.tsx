@@ -20,7 +20,6 @@ vi.mock("@/api/market", () => ({
   getHistory: vi.fn(),
   listScanners: vi.fn(),
   runScanner: vi.fn(),
-  searchInstruments: vi.fn(),
   resolveInstrument: vi.fn(),
   getBreadth: vi.fn(),
   getSectorHeatmap: vi.fn(),

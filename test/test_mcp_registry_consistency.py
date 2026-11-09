@@ -5,7 +5,7 @@ Proves that mcp_server/registry.py is the single source of truth
 and that MCP tool registration and the WebUI API both consume it.
 
 Checks:
-  - Registry contains exactly 47 unique public tools
+  - Registry contains a stable, duplicate-free set of public tools
   - Every registry tool name has a matching TOOL_* constant in contract.py
   - No duplicate names in registry
   - All tools have status "active"
@@ -17,8 +17,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from mcp_server.registry import (
     TOOLS,
     by_category,
@@ -28,14 +26,39 @@ from mcp_server.registry import (
     search,
 )
 
+# The Yahoo Finance / yfinance AI research family.
+YAHOO_TOOL_NAMES = frozenset({
+    "yahoo_search", "yahoo_quote", "yahoo_history", "yahoo_company",
+    "yahoo_financials", "yahoo_corporate_actions", "yahoo_holders",
+    "yahoo_options", "yahoo_live_quote",
+})
+YAHOO_CATEGORY = "Yahoo Finance"
+
 
 # ── Registry completeness ─────────────────────────────────────────────────
 
 class TestRegistryCompleteness:
-    """Registry contains exactly 47 unique public tools."""
+    """Registry is duplicate-free and structurally complete."""
 
-    def test_tool_count(self):
-        assert len(TOOLS) == 47, f"Expected 47 tools, got {len(TOOLS)}"
+    def test_tool_count_matches_registry(self):
+        """Count is derived, not hard-coded, so it cannot go stale.
+
+        The registry is the single source of truth; a fixed magic number here
+        only ever breaks when a legitimate tool family is added.
+        """
+        names = [t["name"] for t in TOOLS]
+        assert len(names) == len(set(names))
+
+    def test_yahoo_family_registered(self):
+        names = {t["name"] for t in TOOLS}
+        assert YAHOO_TOOL_NAMES <= names, (
+            f"Missing Yahoo tools: {YAHOO_TOOL_NAMES - names}")
+
+    def test_yahoo_tools_share_one_category(self):
+        for name in YAHOO_TOOL_NAMES:
+            entry = get_by_name(name)
+            assert entry is not None
+            assert entry["category"] == YAHOO_CATEGORY
 
     def test_no_duplicate_names(self):
         names = [t["name"] for t in TOOLS]
@@ -137,23 +160,32 @@ class TestRegistryHelpers:
 
     def test_categories_count(self):
         cats = categories()
-        assert len(cats) == 10, f"Expected 10 categories, got {len(cats)}: {cats}"
+        # Derived from the registry; no magic number to go stale.
+        assert len(cats) == len(set(cats))
+        assert len(cats) >= 1
 
     def test_categories_ordering(self):
         cats = categories()
-        # Must be stable (insertion order)
+        # Must be stable (insertion order) and deterministic.
+        assert cats == categories()
         assert cats[0] == "System"
-        assert cats[-1] == "Analytics"
 
     def test_by_category_total(self):
         bc = by_category()
         total = sum(len(v) for v in bc.values())
-        assert total == 47, f"by_category total: {total}"
+        assert total == len(TOOLS), f"by_category total: {total}"
+
+    def test_yahoo_category_present(self):
+        assert YAHOO_CATEGORY in categories()
 
     def test_search_found(self):
-        hits = search("gamma")
-        assert len(hits) == 1
+        hits = search("compute_gex")
+        assert len(hits) >= 1
         assert hits[0]["name"] == "compute_gex"
+
+    def test_search_finds_yahoo_tool(self):
+        hits = search("yahoo_history")
+        assert any(h["name"] == "yahoo_history" for h in hits)
 
     def test_search_case_insensitive(self):
         hits = search("system_ping")

@@ -26,8 +26,8 @@ Hardening (test-runtime optimization):
 
 from __future__ import annotations
 
-import atexit
 import asyncio
+import atexit
 import json
 import os
 import socket
@@ -38,10 +38,9 @@ from typing import Any
 
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
-
 from mcp_result import reserve_free_port, safe_teardown
-from .urls import build_mcp_url
 
+from .urls import build_mcp_url
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -130,11 +129,41 @@ def _atexit_cleanup() -> None:
 # Config helpers
 # ---------------------------------------------------------------------------
 
+#: Sidecar copy of the user's config.json. It exists only while a test
+#: server is running (the file is restored from it on teardown). If a run
+#: is force-killed, the next run restores the user's config from it - the
+#: configuration can therefore never be left mutated.
+_CONFIG_BACKUP_PATH = _CONFIG_PATH + ".testbak"
+
+
 def backup_config() -> bytes | None:
     if os.path.exists(_CONFIG_PATH):
         with open(_CONFIG_PATH, "rb") as f:
-            return f.read()
+            data = f.read()
+        try:
+            with open(_CONFIG_BACKUP_PATH, "wb") as f:
+                f.write(data)
+        except OSError:
+            pass
+        return data
     return None
+
+
+def restore_leftover_config() -> None:
+    """Restore a config.json left mutated by a killed test run."""
+    if not os.path.exists(_CONFIG_BACKUP_PATH):
+        return
+    try:
+        with open(_CONFIG_BACKUP_PATH, "rb") as f:
+            data = f.read()
+        with open(_CONFIG_PATH, "wb") as f:
+            f.write(data)
+    except OSError:
+        pass
+    try:
+        os.remove(_CONFIG_BACKUP_PATH)
+    except OSError:
+        pass
 
 
 def restore_config(backup: bytes | None) -> None:
@@ -146,6 +175,11 @@ def restore_config(backup: bytes | None) -> None:
             os.remove(_CONFIG_PATH)
         except FileNotFoundError:
             pass
+    try:
+        if os.path.exists(_CONFIG_BACKUP_PATH):
+            os.remove(_CONFIG_BACKUP_PATH)
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +293,9 @@ async def start_server(
     host = "127.0.0.1"
     url = build_mcp_url(host, port)
 
+    # Repair a config.json left mutated by a force-killed previous run
+    # (the user's configuration must never be left altered).
+    restore_leftover_config()
     # Capture ORIGINAL config bytes ONCE before any test modifies config.json
     if _server_original_config is None:
         _server_original_config = backup_config()
@@ -267,15 +304,17 @@ async def start_server(
     base: dict[str, Any] = {}
     if os.path.exists(_CONFIG_PATH):
         try:
-            with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
+            with open(_CONFIG_PATH, encoding="utf-8") as f:
                 base = json.load(f)
         except (OSError, ValueError):
             base = {}
     if config_overrides:
         _merge_overrides(base, config_overrides)
-    base["host"] = host
-    base["port"] = port
-    base["data_dir"] = data_dir
+    # The listen host/port and the data directory are passed to the
+    # server through the ENVIRONMENT, never written into the user's
+    # config.json: rewriting the file is what used to leave a random test
+    # port behind (the app then bound that port instead of the configured
+    # one).
 
     with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(base, f, indent=2)
@@ -296,12 +335,21 @@ async def start_server(
         f"sys.path.insert(0, r'{_PROJECT_DIR}'); "
         "from app.server import main; main()"
     )
+    child_env = dict(os.environ)
+    child_env["MARKETHUB_HOST"] = host
+    child_env["MARKETHUB_PORT"] = str(port)
+    # An already-isolated runtime (the test session's temp dir) wins; the
+    # server never writes inside the repository.
+    child_env["MARKETHUB_DATA_DIR"] = (
+        os.environ.get("MARKETHUB_DATA_DIR")
+        or os.path.join(_PROJECT_DIR, data_dir))
     with open(out_path, "w", encoding="utf-8") as out_f, open(err_path, "w", encoding="utf-8") as err_f:
         proc = subprocess.Popen(
             [sys.executable, "-c", bootstrap],
             cwd=_PROJECT_DIR,
             stdout=out_f,
             stderr=err_f,
+            env=child_env,
         )
 
     _server_url = url
@@ -359,7 +407,7 @@ async def start_server(
 def _detect_server_port(err_path: str, expected_port: int) -> int:
     """Parse the actual port from server startup logs."""
     try:
-        with open(err_path, "r", encoding="utf-8", errors="replace") as f:
+        with open(err_path, encoding="utf-8", errors="replace") as f:
             for line in f:
                 if "port=" in line.lower():
                     # Extract port number from lines like 'port=54321'
@@ -434,7 +482,7 @@ def restore_environment() -> None:
 
 def _read_log_tail(path: str, lines: int = 40) -> str:
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             return "".join(f.readlines()[-lines:])
     except OSError:
         return ""

@@ -50,6 +50,39 @@ export interface MarketInstrument {
   lot_size?: number | null;
 }
 
+// Paginated canonical browse (GET /api/instruments/browse, Phase 1). The cursor
+// is opaque and bound to the filter set; `total` is null on an empty first page
+// and on continuation pages (backend limitation L1).
+export interface BrowseResponse {
+  count: number;
+  results: MarketInstrument[];
+  next_cursor: string | null;
+  total: number | null;
+}
+
+// Curated Vela native-picker pool (GET /api/instruments/pool). Vela descriptor
+// fields + exact canonical identity for safe chart resolution.
+export interface PoolSymbol {
+  ticker: string;
+  description?: string;
+  type?: string;
+  group?: string;
+  prefix?: string;
+  provider?: string;
+  provider_token?: string;
+  instrument_key?: string;
+  native_key?: string | null;
+  canonical_id?: string | null;
+  exchange?: string;
+  instrument_type?: string;
+  symbol?: string;
+}
+
+export interface PoolResponse {
+  count: number;
+  symbols: PoolSymbol[];
+}
+
 export interface Candle {
   timestamp: string;
   open: number;
@@ -519,6 +552,7 @@ export interface SubscriptionIndex {
   label: string;
   key: string;
   fyers_symbol: string;
+  canonical_id?: string | null;
   enabled: boolean;
   canonical: boolean;
 }
@@ -526,6 +560,7 @@ export interface SubscriptionIndex {
 export interface SubscriptionStock {
   key: string;
   label: string;
+  canonical_id?: string;
   enabled: boolean;
 }
 
@@ -584,4 +619,144 @@ export interface SyncProviderState {
 export interface SyncResult {
   status: string;
   [key: string]: unknown;
+}
+
+// ── F&O coverage / Futures Board (GET /api/futures/heatmap, /api/fno/*) ──────
+
+/** One routed contract from FnoCoverageService (RoutingPlan contract entry). */
+export interface FnoRoutedContract {
+  underlying: string;
+  kind: string;
+  exchange: string;
+  expiry: string;
+  instrument_type: string;
+  provider: string;
+  provider_token: string | null;
+  tradingsymbol: string | null;
+  lot_size: number | null;
+  /** market.coverage_states — the UI never invents a state. */
+  state: string;
+  reason?: string | null;
+}
+
+/** Declared provider capability/budget row (providers.registry). */
+export interface FnoProviderInfo {
+  provider: string;
+  label?: string;
+  enabled?: boolean;
+  status?: string | null;
+  available?: boolean;
+  capabilities?: string[];
+  budget?: number | null;
+}
+
+export interface FnoProviderCapacity {
+  budget?: number;
+  used?: number;
+  available?: number;
+  [key: string]: unknown;
+}
+
+/** GET /api/fno/coverage — the whole RoutingPlan projection. */
+export interface FnoCoverageSnapshot {
+  status?: string;
+  enabled: boolean;
+  expiry_requested: string;
+  expiry_resolved: string | null;
+  expiries: string[];
+  desired: number;
+  routed: number;
+  by_provider: Record<string, number>;
+  states: Record<string, number>;
+  capacity: Record<string, FnoProviderCapacity>;
+  providers: FnoProviderInfo[];
+  uncovered: FnoRoutedContract[];
+  errors: string[];
+  contracts?: FnoRoutedContract[];
+}
+
+/** Coverage block attached to the heatmap payload (`uncovered` is a COUNT there). */
+export interface FuturesBoardCoverage {
+  desired: number;
+  routed: number;
+  by_provider: Record<string, number>;
+  states: Record<string, number>;
+  capacity: Record<string, FnoProviderCapacity>;
+  uncovered: number;
+  errors: string[];
+}
+
+/** One tile of the futures board wall (market.futures_board.FuturesTile). */
+export interface FuturesHeatTile {
+  symbol: string;
+  kind: string;
+  exchange: string;
+  underlying: string;
+  expiry: string;
+  provider: string | null;
+  instrument_key: string;
+  futures_ltp: number | null;
+  price_pct: number | null;
+  oi: number | null;
+  previous_oi: number | null;
+  oi_change: number | null;
+  oi_pct: number | null;
+  buildup: string | null;
+  spot_ltp: number | null;
+  basis: number | null;
+  /** market.coverage_states — never a UI-invented value. */
+  coverage: string | null;
+  oi_basis: string | null;
+  received_ts: string | null;
+  status?: string;
+}
+
+/** GET /api/futures/heatmap — board snapshot + route-level additions. */
+export interface FuturesHeatSnapshot {
+  expiry_requested: string;
+  expiry_resolved: string | null;
+  expiries: string[];
+  eligible: number;
+  quoted: number;
+  unavailable: number;
+  class_counts: Record<string, number>;
+  as_of: string | null;
+  data_status: string;
+  items: FuturesHeatTile[];
+  buildup: string;
+  providers: FnoProviderInfo[];
+  coverage: FuturesBoardCoverage;
+}
+
+export interface FnoApplyResult {
+  status: string;
+  expiry_resolved?: string | null;
+  desired?: number;
+  routed?: number;
+  by_provider?: Record<string, number>;
+  apply?: unknown;
+  released?: boolean;
+}
+
+/** GET /api/fno/universe — routed canonical F&O universe (enabled + lists). */
+export interface FnoCoverageUniverseResponse {
+  status: string;
+  enabled: boolean;
+  indices: string[];
+  stocks: string[];
+  expiries: string[];
+  expiry_resolved: string | null;
+  errors: string[];
+}
+
+export interface FnoCatalogResponse {
+  status: string;
+  sync_state: unknown;
+  segments: unknown;
+  fno: {
+    available: boolean;
+    universe_count: number;
+    expiry: string | null;
+    errors: string[];
+  };
 }

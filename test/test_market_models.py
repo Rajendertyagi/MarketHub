@@ -31,9 +31,9 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from datetime import datetime, timedelta, timezone  # noqa: E402
+from datetime import datetime, timedelta, timezone
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 # --- shared fixtures -------------------------------------------------------
 
@@ -400,7 +400,7 @@ def test_purity_and_reexport(runner: R) -> None:
                      ["Depth", "DepthLevel", "Instrument", "Quote"])
 
     # Static source scan: no application-package or third-party imports.
-    with open(mm.__file__, "r", encoding="utf-8") as f:
+    with open(mm.__file__, encoding="utf-8") as f:
         source = f.read()
 
     forbidden_project = (
@@ -416,6 +416,7 @@ def test_purity_and_reexport(runner: R) -> None:
         "from __future__ import annotations",
         "from dataclasses import dataclass",
         "from datetime import datetime",
+        "from datetime import datetime, timezone",
         "from typing import Any",
     }
     import_lines = [

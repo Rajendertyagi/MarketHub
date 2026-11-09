@@ -31,12 +31,12 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 
 def _tmp_store(tmp: str):
-    from core.persistence.store import EventStore
     from app.secrets_store import CredentialStore
+    from core.persistence.store import EventStore
     return CredentialStore(EventStore(os.path.join(tmp, "e.db")), data_dir=tmp)
 
 
@@ -108,6 +108,7 @@ async def test_invariant_missing(runner: R) -> None:
 
 async def test_invariant_expired(runner: R) -> None:
     import tempfile
+
     from brokers.upstox.auth import UpstoxCredentials
     with tempfile.TemporaryDirectory() as tmp:
         store = _tmp_store(tmp)
@@ -169,9 +170,10 @@ async def test_invariant_restored(runner: R) -> None:
 
 async def test_invariant_fyers(runner: R) -> None:
     import tempfile
-    from app.fyers_runtime_auth import FyersRuntimeAuth
+
     from app.auth.fyers import FyersAuthService
     from app.auth.storage import AuthStorage
+    from app.fyers_runtime_auth import FyersRuntimeAuth
     with tempfile.TemporaryDirectory() as tmp:
         store = _tmp_store(tmp)
         rt = FyersRuntimeAuth()
@@ -211,7 +213,6 @@ async def _assert_no_invalidation(runner, name, feed_setup) -> None:
 async def test_transients_never_invalidate(runner: R) -> None:
     def _mk(state, exit_reason=None):
         def _setup(store):
-            from brokers.upstox.feed import UpstoxFeed
             feed = _DeadFeed(_creds("REAL-T"))
             feed.status = lambda: {"state": state,
                                    "last_exit_reason": exit_reason,
@@ -240,7 +241,7 @@ async def test_transients_never_invalidate(runner: R) -> None:
 
 async def test_only_three_invalidators_upstox(runner: R) -> None:
     import tempfile
-    from brokers.upstox.auth import UpstoxCredentials
+
     # 1. genuine expiry (startup restore clears).
     with tempfile.TemporaryDirectory() as tmp:
         store = _tmp_store(tmp)
@@ -280,9 +281,10 @@ async def test_only_three_invalidators_upstox(runner: R) -> None:
 
 async def test_fyers_invalidation_rules(runner: R) -> None:
     import tempfile
-    from app.fyers_runtime_auth import FyersRuntimeAuth
+
     from app.auth.fyers import FyersAuthService
     from app.auth.storage import AuthStorage
+    from app.fyers_runtime_auth import FyersRuntimeAuth
     with tempfile.TemporaryDirectory() as tmp:
         store = _tmp_store(tmp)
         store.save_fyers_credentials("AID", "SEC")
@@ -325,11 +327,12 @@ async def test_fyers_invalidation_rules(runner: R) -> None:
 
 async def _boot_case(runner: R, name: str, setup) -> None:
     import tempfile
-    from app.fyers_runtime_auth import FyersRuntimeAuth
+
+    from app.auth.fyers import FyersAuthService
     from app.auth.service import AuthService
     from app.auth.storage import AuthStorage
     from app.auth.upstox import UpstoxAuthService
-    from app.auth.fyers import FyersAuthService
+    from app.fyers_runtime_auth import FyersRuntimeAuth
     with tempfile.TemporaryDirectory() as tmp:
         store = _tmp_store(tmp)
         extra = setup(store)
@@ -413,8 +416,8 @@ async def test_startup_isolation_matrix(runner: R) -> None:
             async def _down(**kw):
                 raise TimeoutError("dns timeout")
 
-            def _setup(s):
-                setup(s)
+            def _setup(s, _setup_fn=setup):
+                _setup_fn(s)
                 return {"refresh_fn": _down}
             await _boot_case(runner, name, _setup)
         else:
@@ -422,10 +425,10 @@ async def test_startup_isolation_matrix(runner: R) -> None:
 
 
 async def test_throwing_store_never_blocks_boot(runner: R) -> None:
+    from app.auth.fyers import FyersAuthService
     from app.auth.service import AuthService
     from app.auth.storage import AuthStorage
     from app.auth.upstox import UpstoxAuthService
-    from app.auth.fyers import FyersAuthService
     from app.fyers_runtime_auth import FyersRuntimeAuth
     svc = AuthService(
         upstox=UpstoxAuthService(AuthStorage(_ExplodingStore())),
@@ -472,7 +475,7 @@ async def test_expiry_roundtrip_tz_safe(runner: R) -> None:
                                             expires_at_iso=iso)
             sess = store.load_upstox_session_token()
             runner.assert_eq(f"tz-keep-{iso}", sess["expires_at"], iso)
-            from app.auth.models import parse_expiry_iso, is_expired
+            from app.auth.models import is_expired, parse_expiry_iso
             exp = parse_expiry_iso(sess["expires_at"])
             runner.assert_true(f"tz-aware-{iso}", exp.tzinfo is not None)
             runner.assert_false(f"tz-future-{iso}", is_expired(exp))
@@ -481,9 +484,9 @@ async def test_expiry_roundtrip_tz_safe(runner: R) -> None:
 # -- §7 cross-broker isolation --------------------------------------------------------------
 
 async def _both_logins(tmp: str):
-    from app.fyers_runtime_auth import FyersRuntimeAuth
     from app.auth.fyers import FyersAuthService
     from app.auth.storage import AuthStorage
+    from app.fyers_runtime_auth import FyersRuntimeAuth
     store = _tmp_store(tmp)
     usvc = _usvc(store, _real_feed())
     await usvc.apply_session(_creds("REAL-U"))
@@ -520,8 +523,8 @@ async def test_fyers_failure_keeps_upstox(runner: R) -> None:
         async def _boom(**kw):
             raise ConnectionError("fyers down")
 
-        from app.auth.storage import AuthStorage
         from app.auth.fyers import FyersAuthService
+        from app.auth.storage import AuthStorage
         from app.fyers_runtime_auth import FyersRuntimeAuth
         rt2 = FyersRuntimeAuth()
         svc2 = FyersAuthService(AuthStorage(store), rt2, refresh_fn=_boom)
@@ -557,11 +560,12 @@ async def test_logouts_do_not_cross(runner: R) -> None:
 
 async def test_restore_isolates_exceptions(runner: R) -> None:
     import tempfile
-    from app.fyers_runtime_auth import FyersRuntimeAuth
+
+    from app.auth.fyers import FyersAuthService
     from app.auth.service import AuthService
     from app.auth.storage import AuthStorage
     from app.auth.upstox import UpstoxAuthService
-    from app.auth.fyers import FyersAuthService
+    from app.fyers_runtime_auth import FyersRuntimeAuth
     with tempfile.TemporaryDirectory() as tmp:
         store = _tmp_store(tmp)
         store.save_upstox_session_token(

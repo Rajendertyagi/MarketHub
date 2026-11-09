@@ -38,6 +38,11 @@ _FIELD_ATTRS = {
 _CROSSING_OPERATORS = frozenset({"crosses_above", "crosses_below"})
 _ALL_OPERATORS = frozenset({"gt", "lt"}) | _CROSSING_OPERATORS
 
+#: ABSOLUTE freshness ceiling for alert evaluation (the same default
+#: window the canonical quote service uses). A quote older than this - or
+#: one whose age cannot be established - must NEVER fire an alert.
+_DEFAULT_MAX_QUOTE_AGE_SECONDS = 120.0
+
 
 class AlertEngine:
     """Evaluates enabled alerts against live canonical quotes."""
@@ -49,7 +54,44 @@ class AlertEngine:
         self._rules: dict[int, dict[str, Any]] = {}
         self._notifications: list[dict[str, Any]] = []
         self._last_values: dict[tuple[str, str], float] = {}
+        # The ABSOLUTE freshness ceiling for alert evaluation (the same
+        # window the canonical quote service uses by default).
+        self._max_quote_age_seconds: float = _DEFAULT_MAX_QUOTE_AGE_SECONDS
+        # How many evaluations were refused because the quote was stale or
+        # undated (surfaced for diagnostics).
+        self._stale_evaluations = 0
         self.reload()
+
+    @staticmethod
+    def _quote_age(quote: Any) -> float | None:
+        """The age of a quote in seconds (None when unknown)."""
+        received = getattr(quote, "received_ts", None)
+        if received is None:
+            return None
+        try:
+            now = datetime.now(timezone.utc)
+            if received.tzinfo is None:
+                received = received.replace(tzinfo=timezone.utc)
+            return (now - received).total_seconds()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _provider_for(instrument_token: str | None) -> str | None:
+        """The provider that published a storage key.
+
+        The provider REGISTRY is the authority (the catalogue first, the
+        adapter-declared key style as the fallback) - the durable trigger
+        record never leaves the provider blank.
+        """
+        if not instrument_token:
+            return None
+        try:
+            from providers.registry import get_registry
+            provider = get_registry().provider_for_key(str(instrument_token))
+        except Exception:
+            provider = None
+        return str(provider) if provider else None
 
     def reload(self) -> None:
         """Re-read enabled alert rules from persistence."""
@@ -66,8 +108,16 @@ class AlertEngine:
 
         Returns newly-fired notifications (already persisted as
         'triggered'); repeated ticks never re-notify until re-arm.
+
+        A quote whose age cannot be established, or whose age exceeds the
+        freshness window, NEVER fires: stale or undated data must never
+        trigger an alert.
         """
         fired: list[dict[str, Any]] = []
+        age = self._quote_age(quote)
+        if age is None or age > self._max_quote_age_seconds:
+            self._stale_evaluations += 1
+            return fired
         with self._lock:
             rules = list(self._rules.values())
         for rule in rules:
@@ -108,6 +158,11 @@ class AlertEngine:
                 _provider = getattr(quote, "provider", None)
                 if _provider is None:
                     _provider = getattr(quote, "source", None)
+                if _provider is None:
+                    # The canonical Quote carries no provider field: the
+                    # provider that published the storage key is resolved
+                    # from the provider registry (never left blank).
+                    _provider = self._provider_for(quote.instrument_token)
                 self._store.record_alert_trigger_history(
                     alert_id=rule["id"],
                     exchange=rule.get("exchange"),

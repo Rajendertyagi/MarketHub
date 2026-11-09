@@ -29,7 +29,13 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Any
 
-from market.models import Depth, DepthLevel, Instrument, Quote
+from market.models import (
+    Depth,
+    DepthLevel,
+    Instrument,
+    OptionContractData,
+    Quote,
+)
 from market.normalize.common import (
     NormalizationError,
     TimestampError,
@@ -48,6 +54,7 @@ __all__ = [
     "depth_from_rest",
     "quote_fields_from_ws_ltpc",
     "quote_fields_from_ws_full",
+    "quote_fields_from_ws_first_level_with_greeks",
     "depth_from_ws",
 ]
 
@@ -142,6 +149,9 @@ def quote_from_rest(entry: dict[str, Any], *, received_ts: datetime) -> Quote:
     set_reported(fields, entry, "net_change", "change", to_float)
     set_reported(fields, entry, "average_price", "avg_trade_price", to_float)
     set_reported(fields, entry, "oi", "open_interest", to_float)
+    # Previous-session OI (F&O, V3 REST only — NOT on the WS wire). Populated
+    # here so market.oi can derive OI change/% with the approved precedence.
+    set_reported(fields, entry, "previous_oi", "previous_oi", to_float)
     set_reported(fields, entry, "total_buy_quantity", "total_buy_qty", to_int)
     set_reported(fields, entry, "total_sell_quantity", "total_sell_qty", to_int)
     # Circuit limits (only present in REST, not in WS)
@@ -248,6 +258,11 @@ def _apply_ltpc(fields: dict[str, Any], ltpc: dict[str, Any]) -> None:
         fields["exchange_ts"] = parse_timestamp(
             ltpc["ltt"], unit="ms", field="ltpc.ltt"
         )
+    # CAS: indicative equilibrium price on LTPC during auction sessions.
+    iep_raw = ltpc.get("iep")
+    if iep_raw is not None and iep_raw != 0:
+        fields["indicative_equilibrium_price"] = to_float(
+            iep_raw, field="ltpc.iep")
 
 
 def quote_fields_from_ws_ltpc(
@@ -310,6 +325,27 @@ def quote_fields_from_ws_full(
         if raw is None or raw == 0:
             continue
         fields[dst] = to_int(raw, field=src)
+
+    # CAS (Closing Auction Session) fields — present on full/full_d30 and
+    # ltpc during auction sessions. P-ZERO: zero/absent means not reported.
+    cas_eligible_raw = ff.get("casEligible")
+    if cas_eligible_raw is not None:
+        fields["cas_eligible"] = bool(cas_eligible_raw)
+    rp_raw = ff.get("rp")
+    if rp_raw is not None and rp_raw != 0 and rp_raw != "":
+        try:
+            fields["reference_price"] = to_float(rp_raw, field="rp")
+        except (ValueError, TypeError):
+            pass  # non-numeric reference price; skip
+    ieq_raw = ff.get("ieq")
+    if ieq_raw is not None and ieq_raw != 0:
+        fields["indicative_equilibrium_qty"] = to_float(ieq_raw, field="ieq")
+    iiq_total_raw = ff.get("iiqTotal")
+    if iiq_total_raw is not None and iiq_total_raw != 0:
+        fields["indicative_imbalance_qty"] = to_float(iiq_total_raw, field="iiqTotal")
+    iiq_m_raw = ff.get("iiqM")
+    if iiq_m_raw is not None and iiq_m_raw != 0:
+        fields["market_indicative_imbalance_qty"] = to_float(iiq_m_raw, field="iiqM")
 
     # Implied volatility (P-ZERO: wire-absent decodes as 0).
     # GREEKS WIRE-FORCED NOTE: OptionGreeks children are plain proto3
@@ -381,6 +417,93 @@ def quote_fields_from_ws_full(
             if price:
                 fields[dst_key] = price
                 break
+
+    apply_derived_change(fields)
+    check_quote_fields(fields)
+    return fields
+
+
+def quote_fields_from_ws_first_level_with_greeks(
+    flwg: dict[str, Any],
+    *,
+    instrument_key: str,
+    received_ts: datetime,
+    tradingsymbol: str | None = None,
+) -> dict[str, Any]:
+    """Normalize an option_greeks-mode (firstLevelWithGreeks) tick.
+
+    Carries LTPC + first depth level + option greeks + OI + IV + volume.
+    """
+    if not isinstance(flwg, dict):
+        raise NormalizationError(
+            "upstox ws firstLevelWithGreeks: expected object")
+    from market.models import OptionGreeks
+
+    fields = _base_fields(instrument_key, received_ts, tradingsymbol)
+
+    ltpc = flwg.get("ltpc")
+    if isinstance(ltpc, dict):
+        _apply_ltpc(fields, ltpc)
+
+    # Volume / OI (P-ZERO: zero means not reported).
+    for src, dst in (("vtt", "volume"),):
+        raw = flwg.get(src)
+        if raw is None or raw == 0:
+            continue
+        fields[dst] = to_int(raw, field=src)
+    oi_raw = flwg.get("oi")
+    if oi_raw is not None and oi_raw != 0:
+        fields["open_interest"] = to_float(oi_raw, field="oi")
+
+    # IV (P-ZERO).
+    iv_raw = flwg.get("iv")
+    if iv_raw is not None and iv_raw != 0:
+        iv_val = to_float(iv_raw, field="iv")
+        existing = fields.get("greeks")
+        if existing is not None:
+            fields["greeks"] = OptionGreeks(
+                delta=existing.delta, gamma=existing.gamma,
+                theta=existing.theta, vega=existing.vega,
+                rho=existing.rho, iv=iv_val,
+            )
+        else:
+            fields["greeks"] = OptionGreeks(iv=iv_val)
+
+    # Option greeks message.
+    og = flwg.get("optionGreeks")
+    if isinstance(og, dict) and og:
+        greek_values: dict[str, float] = {}
+        for name in ("delta", "gamma", "theta", "vega", "rho"):
+            raw = og.get(name)
+            if raw is None or raw == 0:
+                continue
+            greek_values[name] = to_float(raw, field=f"optionGreeks.{name}")
+        if greek_values:
+            existing = fields.get("greeks")
+            if existing is not None:
+                merged = {
+                    "delta": existing.delta, "gamma": existing.gamma,
+                    "theta": existing.theta, "vega": existing.vega,
+                    "rho": existing.rho, "iv": existing.iv,
+                }
+                merged.update(greek_values)
+                fields["greeks"] = OptionGreeks(**merged)
+            else:
+                fields["greeks"] = OptionGreeks(**greek_values)
+
+    # First depth level.
+    fd = flwg.get("firstDepth")
+    if isinstance(fd, dict):
+        bid_p = fd.get("bidP")
+        ask_p = fd.get("askP")
+        if bid_p is not None:
+            price = to_float(bid_p, field="firstDepth.bidP")
+            if price:
+                fields["best_bid"] = price
+        if ask_p is not None:
+            price = to_float(ask_p, field="firstDepth.askP")
+            if price:
+                fields["best_ask"] = price
 
     apply_derived_change(fields)
     check_quote_fields(fields)
@@ -533,17 +656,17 @@ def candles_from_rest(payload: dict[str, Any]):
         except Exception:
             continue
         try:
-            o, h, l, c = (to_float(row[1], field="candle.open"),
-                          to_float(row[2], field="candle.high"),
-                          to_float(row[3], field="candle.low"),
-                          to_float(row[4], field="candle.close"))
+            o, h, low, c = (to_float(row[1], field="candle.open"),
+                            to_float(row[2], field="candle.high"),
+                            to_float(row[3], field="candle.low"),
+                            to_float(row[4], field="candle.close"))
         except NormalizationError:
             continue
         vol = to_int(row[5], field="candle.volume") \
             if len(row) > 5 and row[5] is not None else None
         oi = to_float(row[6], field="candle.oi") \
             if len(row) > 6 and row[6] is not None else None
-        out.append(Candle(timestamp=ts, open=o, high=h, low=l, close=c,
+        out.append(Candle(timestamp=ts, open=o, high=h, low=low, close=c,
                           volume=vol, open_interest=oi))
     return out
 
@@ -553,9 +676,7 @@ def candles_from_rest(payload: dict[str, Any]):
 # ---------------------------------------------------------------------------
 
 
-def _contract_data(md: Any, og: Any) -> "OptionContractData | None":
-    from market.models import OptionContractData
-
+def _contract_data(md: Any, og: Any) -> OptionContractData | None:
     if not isinstance(md, dict):
         return None
     greeks = og if isinstance(og, dict) else {}
@@ -592,8 +713,18 @@ def _contract_data(md: Any, og: Any) -> "OptionContractData | None":
 
 def option_chain_from_rest(payload: dict[str, Any], *,
                            instrument_token: str, exchange: str,
-                           tradingsymbol: str = "", expiry: str):
-    """Normalize an Upstox option-chain response into a canonical snapshot."""
+                           tradingsymbol: str = "", expiry: str,
+                           provider: str = "upstox",
+                           native_underlying_key: str | None = None,
+                           received_at: Any = None):
+    """Normalize an Upstox option-chain response into a canonical snapshot.
+
+    The snapshot carries the PROVENANCE of the chain: the provider that
+    served it (``provider``), the provider-native identifier of the
+    underlying (``native_underlying_key``) and the canonical id of the
+    underlying. Every leg is attributed to that provider, so a join can
+    never attribute one provider's data to another provider's contract.
+    """
     if not isinstance(payload, dict):
         raise NormalizationError("upstox option chain: expected object")
     data = payload.get("data")
@@ -630,12 +761,17 @@ def option_chain_from_rest(payload: dict[str, Any], *,
         except (TypeError, ValueError):
             pass
         strikes.append(OptionStrikeRow(strike=strike, call=call, put=put,
-                                       atm=is_atm))
+                                       atm=is_atm, provider=provider))
     strikes.sort(key=lambda s: s.strike)
     return OptionChainSnapshot(
         instrument_token=instrument_token, exchange=exchange,
         tradingsymbol=tradingsymbol, expiry=expiry,
-        spot_price=spot, atm_strike=atm_strike, strikes=tuple(strikes))
+        spot_price=spot, atm_strike=atm_strike, strikes=tuple(strikes),
+        scope="whole-expiry",
+        provider=provider,
+        native_underlying_key=native_underlying_key or instrument_token,
+        actual_expiry=expiry,
+        received_at=received_at)
 
 
 

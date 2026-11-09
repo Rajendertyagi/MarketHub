@@ -7,6 +7,7 @@ export interface WatchlistItem {
   exchange?: string | null;
   instrument_token: string;
   tradingsymbol?: string | null;
+  canonical_id?: string | null;
 }
 
 export interface Watchlist {

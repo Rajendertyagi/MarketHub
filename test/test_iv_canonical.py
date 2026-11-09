@@ -28,7 +28,6 @@ magnitude heuristics anywhere.
 
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
 
@@ -39,15 +38,16 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
+from datetime import datetime, timezone
 
-from market.models import OptionGreekSnapshot  # noqa: E402
-from market.normalize.upstox import option_chain_from_rest  # noqa: E402
-from market.normalize.upstox_option_greeks import (  # noqa: E402
+from helpers.runner import R
+
+from market.models import OptionGreekSnapshot
+from market.normalize.fyers import greeks_from_options_chain
+from market.normalize.upstox import option_chain_from_rest
+from market.normalize.upstox_option_greeks import (
     option_greeks_from_rest as standalone_from_rest,
 )
-from market.normalize.fyers import greeks_from_options_chain  # noqa: E402
-from datetime import datetime, timezone  # noqa: E402
 
 
 def _ts():

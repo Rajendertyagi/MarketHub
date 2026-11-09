@@ -13,9 +13,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from market.models import OptionChainSnapshot
-
 from market.analytics.option_chain import _atm_strike, _num
+from market.models import OptionChainSnapshot
 
 
 def _payoff_at(legs: list[dict[str, Any]], spot: float) -> float:
@@ -32,7 +31,7 @@ def _payoff_at(legs: list[dict[str, Any]], spot: float) -> float:
 
 def _breakevens(legs: list[dict[str, Any]]) -> list[float]:
     """Numerically find expiry breakeven spots where net payoff == 0."""
-    strikes = sorted({float(l["strike"]) for l in legs})
+    strikes = sorted({float(leg["strike"]) for leg in legs})
     if not strikes:
         return []
     lo = min(strikes) * 0.5
@@ -89,9 +88,9 @@ def price_strategy(
             "signedQty": signed,
         })
 
-    net_debit = sum(-l["signedQty"] * l["price"] for l in priced_legs)
+    net_debit = sum(-leg["signedQty"] * leg["price"] for leg in priced_legs)
 
-    strikes = [l["strike"] for l in priced_legs]
+    strikes = [leg["strike"] for leg in priced_legs]
     lo = min(strikes) * 0.5 if strikes else 0
     hi = max(strikes) * 1.5 if strikes else 0
     samples = [_payoff_at(priced_legs, lo + (hi - lo) * i / 100)

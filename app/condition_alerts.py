@@ -66,12 +66,23 @@ from core.persistence.modules.condition_alerts import (
     LAST_RESULT_FALSE,
     LAST_RESULT_TRUE,
     LAST_RESULT_UNKNOWN,
-    LEVEL_OPERATORS,
     ROOT_CONDITION_ID_PREFIX,
     validate_condition_tree,
 )
-from market.condition_metrics import extract_metric, extract_analytics_metric, METRIC_SOURCE
+from market.condition_metrics import (
+    METRIC_SOURCE,
+    extract_analytics_metric,
+    extract_metric,
+)
 
+#: ABSOLUTE freshness policy for alert evaluation.
+#:
+#: The default is the SHARED quote service's freshness window (the canonical
+#: quote service judges a quote with a per-instrument-kind policy; this is
+#: its default window). A quote older than this is the previous session's
+#: value and must never trigger an alert. The value is configurable
+#: (``set_freshness_policy``) and its basis is reported.
+DEFAULT_MAX_QUOTE_AGE_SECONDS = 120.0
 logger = logging.getLogger("event_server")
 
 # Canonical alert family for the market_condition engine.
@@ -142,6 +153,27 @@ class ConditionAlertEngine:
         self._resolver = resolver
         self._bus = bus
         self._analytics = analytics_service
+        # The subscription manager (lease registry). The engine leases the
+        # instruments an enabled alert depends on, so an alert is only
+        # "monitored" when its dependencies are actually subscribed.
+        self._leaser: Any = None
+        # Absolute freshness policy for evaluation. The default is the
+        # project's documented "last session" threshold (5 minutes, in
+        # parity with the WebUI STALE_MIN); it is configurable and the
+        # basis is reported with it.
+        self._max_quote_age_seconds: float = DEFAULT_MAX_QUOTE_AGE_SECONDS
+        self._freshness_basis: str = (
+            "shared canonical quote service freshness window "
+            "(120 seconds; the quote service judges a quote per "
+            "instrument kind)")
+        # Optional callback: the runtime state of a dependency
+        # (canonical id -> {"state": ..., "reason": ...}).
+        self._dependency_state_fn: Any = None
+        # lease id per alert id (so a reload can release them again)
+        self._alert_leases: dict[str, list[str]] = {}
+        # evaluations skipped because the quote was outside the freshness
+        # window (the alert failed closed).
+        self._stale_evaluations = 0
         self._lock = threading.Lock()
         self._alerts: dict[str, dict[str, Any]] = {}
         # dependency_key → set of alert_ids (B7: multi-target routing)
@@ -155,7 +187,73 @@ class ConditionAlertEngine:
         self._notifications: list[dict[str, Any]] = []
         self.reload()
 
-    # ── Lifecycle ───────────────────────────────────────────────────────────
+    # ── Configuration ─────────────────────────────────────────────────
+    def set_leaser(self, leaser: Any) -> None:
+        """Attach the subscription manager (lease registry)."""
+        self._leaser = leaser
+        self.reload()
+
+    def set_freshness_policy(self, max_quote_age_seconds: float | None,
+                             basis: str | None = None) -> None:
+        """Configure the ABSOLUTE freshness policy for evaluation."""
+        if max_quote_age_seconds is not None:
+            self._max_quote_age_seconds = float(max_quote_age_seconds)
+        if basis:
+            self._freshness_basis = str(basis)
+
+    def set_dependency_state_fn(self, fn: Any) -> None:
+        """Attach the callback that reports a dependency's runtime state."""
+        self._dependency_state_fn = fn
+
+    def freshness_policy(self) -> dict[str, Any]:
+        """The active freshness policy and its justification."""
+        return {"max_quote_age_seconds": self._max_quote_age_seconds,
+                "basis": self._freshness_basis}
+
+    def monitoring_state(self, alert_id: str) -> dict[str, Any]:
+        """The monitoring state of one alert.
+
+        ``active``  - the dependencies are subscribed and fresh data is
+                      arriving;
+        ``waiting`` - the dependencies are subscribed but no fresh data
+                      has arrived yet;
+        ``blocked`` - a dependency cannot be monitored (provider
+                      unavailable, capacity limited or unrouted).
+        """
+        with self._lock:
+            alert = self._alerts.get(alert_id)
+            deps = set(self._alert_deps.get(alert_id, ()))
+        if alert is None:
+            return {"state": "blocked", "reason": "alert is not enabled",
+                    "dependencies": []}
+        states: list[dict[str, Any]] = []
+        for dep in sorted(deps):
+            cid = dep.split(":", 1)[1] if ":" in dep else dep
+            info: dict[str, Any] = {"dependency": dep, "canonical_id": cid}
+            if self._dependency_state_fn is not None:
+                try:
+                    info.update(self._dependency_state_fn(cid) or {})
+                except Exception:
+                    pass
+            states.append(info)
+        blocked = [s for s in states
+                   if s.get("state") in ("capacity_limited", "unrouted",
+                                         "provider_unavailable")]
+        if blocked:
+            return {"state": "blocked",
+                    "reason": blocked[0].get("reason")
+                    or "a dependency cannot be monitored",
+                    "dependencies": states}
+        waiting = [s for s in states if s.get("state") == "subscribed"]
+        if waiting:
+            return {"state": "waiting",
+                    "reason": "waiting for fresh data on "
+                              f"{waiting[0].get('canonical_id')}",
+                    "dependencies": states}
+        return {"state": "active", "reason": "",
+                "dependencies": states}
+
+    # ── Lifecycle ────────────────────────────────────────────────────────────
 
     def reload(self) -> None:
         """Re-read enabled condition alerts + runtime state from persistence.
@@ -171,6 +269,11 @@ class ConditionAlertEngine:
                            type(exc).__name__)
             return
         with self._lock:
+            # The state of the alerts that did NOT change is preserved:
+            # creating, editing or deleting one alert must never reset
+            # another alert's evaluation state.
+            previous_alerts = dict(self._alerts)
+            previous_state = dict(self._state)
             self._alerts = {}
             self._dep_index = {}
             self._alert_deps = {}
@@ -219,9 +322,28 @@ class ConditionAlertEngine:
                     "leaves": leaves,
                     "root": root_state,
                 }
-            self._last_values = {}
+                # An unchanged alert keeps its runtime state (the
+                # persisted rows only carry the persisted part).
+                prior = previous_state.get(alert_id)
+                prior_alert = previous_alerts.get(alert_id)
+                if prior and prior_alert is not None and \
+                        prior_alert.get("updated_at") == alert.get(
+                            "updated_at"):
+                    self._state[alert_id] = prior
+            # The in-memory values of UNCHANGED alerts are preserved:
+            # creating, editing or deleting one alert must never reset
+            # another alert's evaluation state.
+            changed_ids = {aid for aid, a in self._alerts.items()
+                           if previous_alerts.get(aid, {}).get(
+                               "updated_at") != a.get("updated_at")}
+            self._last_values = {
+                key: value for key, value in self._last_values.items()
+                if not isinstance(key, str) or key not in changed_ids}
             # B7: per-(alert_id, condition_id) last-known values for cross-instrument
             self._dep_last_values: dict[tuple[str, str], float] = {}
+            # WHEN each stored last-known value was observed (the basis for
+            # the freshness verdict of a stored value).
+            self._dep_last_seen: dict[tuple[str, str], datetime] = {}
             # B7: track which analytics leaves have seen a non-None value.
             # When an analytics snapshot disappears (None) after having a value,
             # the leaf must go UNKNOWN, not preserve its old state.
@@ -243,7 +365,152 @@ class ConditionAlertEngine:
                 if not lock.locked():
                     del self._alert_locks[aid]
 
-    # ── Helpers ─────────────────────────────────────────────────────────────
+        self._sync_leases(active_ids)
+
+    def _sync_leases(self, active_ids: set[str]) -> None:
+        """Acquire/release the subscription leases of the enabled alerts.
+
+        An alert only claims to be MONITORED when its dependencies are
+        actually subscribed, so every enabled alert leases the instruments
+        it evaluates. The leases of alerts that disappeared are released.
+        """
+        if self._leaser is None:
+            return
+        try:
+            from app.subscriptions.manager import PRIORITY_ALERT
+        except Exception:
+            PRIORITY_ALERT = 20
+        for alert_id, lease_ids in list(self._alert_leases.items()):
+            if alert_id in active_ids:
+                continue
+            for lease_id in lease_ids:
+                try:
+                    self._leaser.release(lease_id)
+                except Exception:
+                    pass
+            self._alert_leases.pop(alert_id, None)
+        for alert_id in active_ids:
+            with self._lock:
+                deps = set(self._alert_deps.get(alert_id, ()))
+            held = set(self._alert_leases.get(alert_id, ()))
+            for dep in sorted(deps):
+                if not dep.startswith("quote:"):
+                    continue        # analytics dependencies are chain-based
+                canonical_id = dep.split(":", 1)[1]
+                if any(self._lease_matches(lid, canonical_id)
+                       for lid in held):
+                    continue
+                lease_id = self._acquire_lease(alert_id, canonical_id,
+                                               PRIORITY_ALERT)
+                if lease_id:
+                    held.add(lease_id)
+            self._alert_leases[alert_id] = sorted(held)
+
+    def _lease_matches(self, lease_id: str, canonical_id: str) -> bool:
+        try:
+            for lease in self._leaser.leases():
+                if lease.lease_id == lease_id:
+                    return lease.canonical_id == canonical_id
+        except Exception:
+            return False
+        return False
+
+    def _acquire_lease(self, alert_id: str, canonical_id: str,
+                       priority: int) -> str | None:
+        """Lease the instrument of a dependency (provider-routed)."""
+        key = None
+        try:
+            resolver = getattr(self._resolver, "storage_key_for", None)
+            if callable(resolver):
+                key = resolver(canonical_id)
+        except Exception:
+            key = None
+        try:
+            # The canonical id is the identity; the manager resolves the
+            # provider storage key (and the provider) from the catalogue.
+            return self._leaser.acquire(
+                key or "", canonical_id=canonical_id, priority=priority,
+                owner_kind="alert", owner_id=alert_id)
+        except Exception:
+            return None
+
+    def release_alert_leases(self, alert_id: str) -> int:
+        """Release the leases of one alert (deleted or disabled)."""
+        lease_ids = self._alert_leases.pop(alert_id, [])
+        released = 0
+        for lease_id in lease_ids:
+            try:
+                if self._leaser is not None and self._leaser.release(lease_id):
+                    released += 1
+            except Exception:
+                pass
+        return released
+
+    # ── Helpers ────────────────────────────────────────────────────
+    @staticmethod
+    def _quote_age(quote: Any) -> float | None:
+        """The age of a quote in seconds (None when unknown)."""
+        received = getattr(quote, "received_ts", None)
+        if received is None:
+            return None
+        try:
+            now = datetime.now(timezone.utc)
+            if received.tzinfo is None:
+                received = received.replace(tzinfo=timezone.utc)
+            return (now - received).total_seconds()
+        except Exception:
+            return None
+
+    def _max_age_for(self, canonical_id: str | None) -> float:
+        """The freshness window for this instrument (the shared policy).
+
+        The per-instrument-kind policy of the canonical quote service is
+        applied, CAPPED by the configured absolute ceiling. The alert
+        engine and the read path therefore never disagree about whether
+        the same quote is fresh.
+        """
+        ceiling = float(self._max_quote_age_seconds)
+        try:
+            from app.quote_service import fresh_window_for_canonical
+            window = fresh_window_for_canonical(canonical_id)
+        except Exception:
+            window = ceiling
+        return min(ceiling, window)
+
+    @staticmethod
+    def _quote_received_at(quote: Any) -> datetime | None:
+        """When the quote was received (None when unknown)."""
+        received = getattr(quote, "received_ts", None)
+        if isinstance(received, datetime):
+            if received.tzinfo is None:
+                return received.replace(tzinfo=timezone.utc)
+            return received
+        return None
+
+    def _stored_value(self, alert_id: str, cid: str
+                      ) -> tuple[float | None, bool]:
+        """The stored last-known value of a leaf and whether it is STALE.
+
+        A stored value is only usable while it is FRESH: a value that was
+        observed longer ago than the freshness window describes the past,
+        not the present, and must never satisfy a condition.
+        """
+        value = self._dep_last_values.get((alert_id, cid))
+        if value is None:
+            return None, False
+        seen = self._dep_last_seen.get((alert_id, cid))
+        if seen is None:
+            # An observation without a timestamp cannot be trusted.
+            return None, True
+        try:
+            age = (datetime.now(timezone.utc) - seen).total_seconds()
+        except Exception:
+            return None, True
+        if age > self._max_age_for(None):
+            return None, True
+        return value, False
+
+    # ── Helpers ───────────────────────────────────────────────────────────
 
     @staticmethod
     def _get_dependency_keys(condition: dict[str, Any]) -> set[str]:
@@ -303,6 +570,15 @@ class ConditionAlertEngine:
         """
         canonical_id = self._resolver.resolve_quote(quote)
         if canonical_id is None:
+            return []
+        # ABSOLUTE freshness policy: a quote that is older than the
+        # configured window is the previous session's value and must NEVER
+        # trigger an alert (the alert fails closed). A quote whose age
+        # cannot be established is treated as stale for the same reason:
+        # "a quote exists" is never evidence that it is live.
+        age = self._quote_age(quote)
+        if age is None or age > self._max_age_for(canonical_id):
+            self._stale_evaluations += 1
             return []
         dep_key = f"quote:{canonical_id}"
         with self._lock:
@@ -452,8 +728,9 @@ class ConditionAlertEngine:
                 child_result = await self._evaluate_subgroup(
                     child, state, quote, alert=alert)
                 child_results.append(child_result)
-                # Persist subgroup state under synthetic ID.
-                sg_state = self._get_subgroup_state(state, cid)
+                # Persist subgroup state under synthetic ID (this call
+                # INITIALIZES the subgroup's state entry).
+                self._get_subgroup_state(state, cid)
                 # No direct state updates for subgroups — they manage their
                 # own internal state via recursive calls.
             else:
@@ -464,6 +741,9 @@ class ConditionAlertEngine:
                 leaf_dep = child.get("_dependency_key")
                 quote_dep = f"quote:{self._resolver.resolve_quote(quote) or ''}"
                 last_seen = self._dep_last_values.get((alert["alert_id"], cid))
+                # Whether the value used for this leaf is a STALE stored
+                # observation (it can never satisfy a condition).
+                value_stale = False
                 # Dependency-driven freshness (see _evaluate_leaf_v1 for the
                 # full rationale). Quote leaf fresh only when its own quote dep
                 # triggered; analytics leaf fresh only when its own chain
@@ -498,10 +778,14 @@ class ConditionAlertEngine:
                         value = extract_metric(quote, metric)
                         # Store last-known for this specific leaf.
                         self._dep_last_values[(alert["alert_id"], cid)] = value
+                        self._dep_last_seen[(alert["alert_id"], cid)] = \
+                            self._quote_received_at(quote)
                     else:
-                        # Use stored last-known value (may be None).
-                        value = self._dep_last_values.get(
-                            (alert["alert_id"], cid))
+                        # Use the stored last-known value - but ONLY while it
+                        # is FRESH. A stale value can never satisfy a
+                        # condition (the alert fails closed).
+                        value, value_stale = self._stored_value(
+                            alert["alert_id"], cid)
                     # Quote leaves: a new tick is driven by this leaf's own
                     # quote dependency producing the current update.
                     is_new_tick = (leaf_dep is not None
@@ -521,7 +805,8 @@ class ConditionAlertEngine:
                                     and (alert["alert_id"], cid)
                                     in self._analytics_seen),
                     prev_value=prev_value,
-                    is_new_tick=is_new_tick)
+                    is_new_tick=is_new_tick,
+                    value_stale=value_stale)
                 changed = (new_leaf_state["last_result"] != prev_leaf_state["last_result"]
                            or new_leaf_state["crossing_side"] != prev_leaf_state["crossing_side"])
                 if changed:
@@ -649,6 +934,9 @@ class ConditionAlertEngine:
                 sub_leaf_dep = sub_child.get("_dependency_key")
                 sub_quote_dep = f"quote:{self._resolver.resolve_quote(quote) or ''}"
                 last_seen = self._dep_last_values.get((alert["alert_id"], sub_cid))
+                # Whether the value used for this leaf is a STALE stored
+                # observation (it can never satisfy a condition).
+                value_stale = False
                 # Dependency-driven freshness (mirrors _evaluate_group).
                 if (METRIC_SOURCE.get(metric) == "analytics"
                         and self._analytics is not None
@@ -680,9 +968,14 @@ class ConditionAlertEngine:
                     if sub_leaf_dep and sub_leaf_dep == sub_quote_dep:
                         value = extract_metric(quote, metric)
                         self._dep_last_values[(alert["alert_id"], sub_cid)] = value
+                        self._dep_last_seen[(alert["alert_id"], sub_cid)] = \
+                            self._quote_received_at(quote)
                     else:
-                        value = self._dep_last_values.get(
-                            (alert["alert_id"], sub_cid))
+                        # The stored last-known value is used only while it
+                        # is FRESH (a stale value can never satisfy a
+                        # condition).
+                        value, value_stale = self._stored_value(
+                            alert["alert_id"], sub_cid)
                     sub_is_new_tick = (sub_leaf_dep is not None
                                        and sub_leaf_dep == sub_quote_dep)
                 prev = self._get_subgroup_state(state, sub_cid)
@@ -696,7 +989,8 @@ class ConditionAlertEngine:
                                     and (alert["alert_id"], sub_cid)
                                     in self._analytics_seen),
                     prev_value=sub_prev_value,
-                    is_new_tick=sub_is_new_tick)
+                    is_new_tick=sub_is_new_tick,
+                    value_stale=value_stale)
                 changed = (new_state["last_result"] != prev["last_result"]
                            or new_state["crossing_side"] != prev["crossing_side"])
                 if changed:
@@ -716,6 +1010,7 @@ class ConditionAlertEngine:
         analytics_seen: bool = False,
         prev_value: float | None = None,
         is_new_tick: bool = True,
+        value_stale: bool = False,
     ) -> dict[str, str]:
         """Evaluate a single leaf node, returning new state.
 
@@ -725,6 +1020,10 @@ class ConditionAlertEngine:
         re-evaluation caused by a *different* leaf's dep matching the
         incoming tick — in that case crossing leaves must reset to avoid
         phantom fires across instruments.
+
+        value_stale marks a value that was observed longer ago than the
+        freshness window: it describes the PAST, not the present, so it
+        can never satisfy a condition (the leaf contributes UNKNOWN).
         """
         if operator in CROSSING_OPERATORS:
             # Dependency-driven freshness: a crossing leaf only evaluates a
@@ -772,15 +1071,24 @@ class ConditionAlertEngine:
             }
         else:
             new_result = prev_state["last_result"]
-            if value is not None:
+            tick_result = new_result
+            if value_stale:
+                # The observation is older than the freshness window: it
+                # describes the PAST, not the present. It can never satisfy
+                # a condition - the leaf contributes UNKNOWN to this
+                # evaluation (the alert fails closed).
+                tick_result = LAST_RESULT_UNKNOWN
+            elif value is not None:
                 new_result = _compare(operator, value, threshold)
+                tick_result = new_result
             elif analytics_seen:
                 # Analytics snapshot disappeared after having a value → UNKNOWN.
                 new_result = LAST_RESULT_UNKNOWN
+                tick_result = LAST_RESULT_UNKNOWN
             return {
                 "last_result": new_result,
                 "crossing_side": prev_state["crossing_side"],
-                "tick_result": new_result,
+                "tick_result": tick_result,
             }
 
     @staticmethod

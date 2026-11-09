@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/api/market", () => ({
   searchMarketInstruments: vi.fn(),
+  browseInstruments: vi.fn(),
   getOptionChainView: vi.fn(),
   resolveMarketInstrument: vi.fn(),
 }));

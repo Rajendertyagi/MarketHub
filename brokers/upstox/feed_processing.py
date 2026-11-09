@@ -19,18 +19,19 @@ no HasField probing, no REST cross-checks, no MessageToDict.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Mapping
+from typing import Any
 
 from brokers.upstox.feed_protocol import (
-    ProtobufDecodeError,
     decode_feed_response,
     feed_type,
     iter_instrument_feeds,
 )
 from market.normalize.upstox import (
     depth_from_ws,
+    quote_fields_from_ws_first_level_with_greeks,
     quote_fields_from_ws_full,
     quote_fields_from_ws_ltpc,
 )
@@ -73,7 +74,6 @@ class FrameResult:
 # ---------------------------------------------------------------------------
 # Per-instrument normalization
 # ---------------------------------------------------------------------------
-
 
 # The only intervals the V3 market-data feed documents in marketOHLC.
 _OHLC_INTERVAL_MINUTES = {"I1": 1, "1d": 1440}
@@ -189,6 +189,24 @@ def _normalize_full_market(
                              depth=depth, bars=extract_market_ohlc_bars(market_ff))
 
 
+def _normalize_first_level_with_greeks(
+    flwg: dict[str, Any],
+    *,
+    instrument_key: str,
+    exchange: str,
+    tradingsymbol: str,
+    received_ts: datetime,
+) -> InstrumentOutcome:
+    fields = quote_fields_from_ws_first_level_with_greeks(
+        flwg,
+        instrument_key=instrument_key,
+        received_ts=received_ts,
+        tradingsymbol=tradingsymbol,
+    )
+    patch = _build_patch(fields)
+    return InstrumentOutcome(instrument_key=instrument_key, patch=patch)
+
+
 def _normalize_instrument(
     key: str,
     feed_dict: dict[str, Any],
@@ -215,6 +233,12 @@ def _normalize_instrument(
                 inner["indexFF"], instrument_key=key, exchange=exchange,
                 tradingsymbol=tradingsymbol, received_ts=received_ts,
             )
+    if "firstLevelWithGreeks" in feed_dict:
+        return _normalize_first_level_with_greeks(
+            feed_dict["firstLevelWithGreeks"], instrument_key=key,
+            exchange=exchange, tradingsymbol=tradingsymbol,
+            received_ts=received_ts,
+        )
     return InstrumentOutcome(instrument_key=key, error="unsupported")
 
 
@@ -292,7 +316,7 @@ def process_binary_frame(
                 key, feed_dict, exchange=exchange,
                 tradingsymbol=tradingsymbol, received_ts=received_ts,
             )
-        except Exception as exc:
+        except Exception:
             outcome = InstrumentOutcome(
                 instrument_key=key, error="normalize"
             )

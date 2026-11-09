@@ -13,11 +13,12 @@ never fabricated or re-labeled to make a list look populated.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any, Callable
+from typing import Any
 
-from .market_universe import Member, resolve_universe
+from .market_universe import resolve_universe
 from .sector_classification import sector_for_symbol
 
 _EPS = 1e-9
@@ -183,7 +184,7 @@ class ScannerEngine:
         try:
             members = resolve_universe(universe, self._catalog)
         except ValueError as exc:
-            raise ValueError(str(exc))
+            raise ValueError(str(exc)) from exc
         limit = max(1, min(int(limit), _MAX_LIMIT))
         atm_range = max(0, min(int(atm_range), 50))
         if option_type not in ("CE", "PE", "both"):

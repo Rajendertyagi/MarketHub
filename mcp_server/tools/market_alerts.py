@@ -76,7 +76,7 @@ def register_market_alert_tools(mcp, services, **kwargs) -> None:
         try:
             threshold = float(threshold)
         except (TypeError, ValueError):
-            raise ValidationError("threshold must be a number")
+            raise ValidationError("threshold must be a number") from None
         inst = await _resolve(instrument_query)
         if inst is None:
             raise ValidationError(

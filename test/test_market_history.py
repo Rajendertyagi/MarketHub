@@ -36,16 +36,16 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
+from starlette.requests import Request
 
-from app.market_data import (  # noqa: E402
+from api.product_routes import build_market_data_routes
+from app.market_data import (
     ProviderMarketData,
     ProviderMarketDataError,
     _infer_provider,
     upstox_interval_token,
 )
-from api.product_routes import build_market_data_routes  # noqa: E402
-from starlette.requests import Request  # noqa: E402
 
 
 class _FakeCreds:
@@ -388,6 +388,7 @@ async def test_mcp_parity(runner: R) -> None:
 
 async def test_testcenter_shape(runner: R) -> None:
     import inspect
+
     from app import diagnostics as _dg
     src = inspect.getsource(_dg.DiagnosticsRunner._check_history)
     runner.assert_in("tc-pass", "history_available", src)

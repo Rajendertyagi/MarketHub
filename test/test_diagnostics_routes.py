@@ -2,7 +2,6 @@
 """Route-level tests for the diagnostics endpoints."""
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -24,10 +23,11 @@ def _make_runner():
 
 def test_quick_mode_returns_summary(runner: R) -> None:
     from starlette.testclient import TestClient
+
     from api.diagnostics_routes import build_diagnostics_run_routes
 
     r = _make_runner()
-    app = TestClient(build_diagnostics_run_routes(r).pop().app if hasattr(build_diagnostics_run_routes(r).pop(), 'app') else None)
+    TestClient(build_diagnostics_run_routes(r).pop().app if hasattr(build_diagnostics_run_routes(r).pop(), 'app') else None)
 
     # Just verify the route module imports correctly and runner exists
     checks = r.list_checks()
@@ -50,10 +50,10 @@ def test_checks_list_endpoint(runner: R) -> None:
 
 
 def test_unknown_mode_returns_error(runner: R) -> None:
-    from app.diagnostics import DiagnosticsRunner
-    from api.diagnostics_routes import build_diagnostics_run_routes
     from starlette.applications import Starlette
     from starlette.testclient import TestClient
+
+    from api.diagnostics_routes import build_diagnostics_run_routes
 
     r = _make_runner()
     routes = build_diagnostics_run_routes(r)

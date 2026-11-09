@@ -17,17 +17,40 @@ Design contract (see package docstring):
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import date, datetime, timezone
-from typing import Any, Callable
+from typing import Any
 
 from app.market_indices import MAJOR_INDICES
 
 logger = logging.getLogger(__name__)
 
+
+def _active_manager() -> Any:
+    """The active lease manager (the owner of the subscribed set)."""
+    try:
+        from app.subscriptions.manager import get_active_manager
+        return get_active_manager()
+    except Exception:
+        return None
+
 # Safety cap: reject resolutions that would subscribe more than this many
 # instruments per provider (protects broker feed limits; surfaced honestly
 # in API/WebUI instead of silently truncating).
-MAX_INSTRUMENTS_PER_PROVIDER = 500
+# NOTE: there is deliberately NO application-level instrument cap here.
+# The provider's VERIFIED limit (providers.capacity) is the ceiling, and it
+# is enforced by the subscription manager - not by this preference layer.
+# A demand that exceeds a provider's ceiling is reported as
+# ``capacity_limited`` with the reason, never raised away here (one
+# oversized provider must not abort the whole reconciliation).
+
+# Provider runtime states that mean the provider CANNOT serve a request
+# right now (not authenticated / not started / stopped / failed).
+_UNAVAILABLE_STATES = frozenset({
+    "stopped", "not_started", "not started", "auth_required",
+    "unauthorized", "unauthenticated", "failed", "error", "disconnected",
+    "not_configured", "disabled", "inactive", "no_session", "login_required",
+})
 
 
 class SubscriptionLimitError(RuntimeError):
@@ -38,13 +61,21 @@ def _today_iso() -> str:
     return date.today().isoformat()
 
 
-def _provider_of(key: str) -> str:
+def _provider_of(key: str, catalog: Any = None) -> str:
     """Feed-provider routing for a concrete instrument key.
 
     Upstox keys embed a pipe segment (``NSE_INDEX|Nifty 50``); Fyers keys
     are ``EXCH:SYMBOL``. Mirrors app.market_data._infer_provider semantics
     without importing it (no cross-module dependency).
     """
+    if catalog is not None:
+        try:
+            from providers.registry import get_registry
+            provider = get_registry().provider_for_key(key, catalog=catalog)
+            if provider:
+                return str(provider)
+        except Exception:
+            pass
     if "|" in key:
         return "upstox"
     if ":" in key:
@@ -60,12 +91,29 @@ class SubscriptionService:
         store: Any,
         catalog: Any,
         spot_provider: Callable[[str, str], Any] | None = None,
+        registry: Any = None,
+        identity_resolver: Any = None,
+        status_provider: Callable[[str], str | None] | None = None,
     ) -> None:
         self._store = store
         self._catalog = catalog
         self._spot_provider = spot_provider
+        self._registry = registry
+        # Optional canonical identity resolver (alias -> canonical id). Used
+        # to expose ``canonical_id`` additively; the native ``key`` remains
+        # the backend mutation contract.
+        self._identity_resolver = identity_resolver
+        # Optional per-provider runtime status (e.g. the source manager's
+        # state). Used to prefer a provider that can actually serve a
+        # request; NEVER a hardcoded provider.
+        self._status_provider = status_provider
         # Last reconciliation result (per provider), for status projection.
         self._last_apply: dict[str, Any] = {}
+        # The lease manager this service applies its demand through. It
+        # must share THIS service's catalogue: a manager left over from
+        # another owner would resolve the demand (and the tick metadata)
+        # against the wrong catalogue.
+        self._manager = self._bind_manager()
         # ACTIVE-VIEW owner: ephemeral per-runtime keys required by the
         # currently open F&O workspace (spot + futures + bounded option
         # window). NEVER persisted — the desired set is the UNION of
@@ -80,6 +128,50 @@ class SubscriptionService:
         # shrinks this owner back to zero without ever unsubscribing a key
         # another owner still needs.
         self._analytics_universe: dict[str, list[str]] = {}
+        # DERIVATIVES-UNIVERSE owner: ephemeral, additive. Holds the routed
+        # instrument keys for the whole canonical F&O universe selected by
+        # FnoCoverageService (apply/release). Never persisted; replaced on each
+        # apply. Union semantics keep baseline/persistent/F&O active-view and
+        # analytics owners untouched, so releasing F&O coverage shrinks this
+        # owner back to zero without ever unsubscribing a key another owner
+        # still needs.
+        self._derivatives_universe: dict[str, list[str]] = {}
+
+    # -- provider registry (lazy; broker-neutral) -------------------------------
+
+    def _bind_manager(self) -> Any:
+        """The lease manager this service applies the demand through.
+
+        The manager must share THIS service's catalogue: a manager left
+        over from another owner would resolve the demand (and the tick
+        metadata) against the wrong catalogue.
+        """
+        active = _active_manager()
+        if active is None:
+            return None
+        if getattr(active, "_catalog", None) is self._catalog:
+            return active
+        try:
+            from app.subscriptions.manager import SubscriptionManager
+
+            return SubscriptionManager(catalog=self._catalog,
+                                       registry=self._registry,
+                                       status_provider=self._status_provider)
+        except Exception:
+            return active
+
+    @property
+    def registry(self) -> Any:
+        """Provider capability/capacity registry.
+
+        Resolved lazily from the broker-neutral ``providers`` package so this
+        module never imports broker adapter code. ``None`` is a valid injected
+        value for tests that exercise owners without a registry.
+        """
+        if self._registry is None:
+            from providers.registry import get_registry
+            self._registry = get_registry()
+        return self._registry
 
     # -- active view (ephemeral, additive owner) ---------------------------------
 
@@ -107,6 +199,27 @@ class SubscriptionService:
 
     def analytics_universe_keys(self) -> dict[str, list[str]]:
         return {p: list(v) for p, v in self._analytics_universe.items()}
+
+    # -- derivatives universe (ephemeral, additive owner) ----------------------
+
+    def set_derivatives_universe(
+            self, keys_by_provider: dict[str, list[str]]) -> None:
+        """Replace the routed F&O universe key set (bounded).
+
+        Keys come from ``FnoCoverageService`` routing and are already
+        provider-qualified. Replacing this owner never touches the persistent,
+        active-view or analytics owners.
+        """
+        self._derivatives_universe = {
+            p: list(dict.fromkeys(k for k in v if k))
+            for p, v in (keys_by_provider or {}).items() if v
+        }
+
+    def clear_derivatives_universe(self) -> None:
+        self._derivatives_universe = {}
+
+    def derivatives_universe_keys(self) -> dict[str, list[str]]:
+        return {p: list(v) for p, v in self._derivatives_universe.items()}
 
     # -- preferences -----------------------------------------------------------
 
@@ -138,7 +251,14 @@ class SubscriptionService:
         if self._store.get_source_state("subscriptions", marker):
             return {"imported": 0, "skipped": 0, "ran": False}
         imported = skipped = 0
-        by_key = {e["upstox_key"]: e for e in MAJOR_INDICES}
+        # Index keys from BOTH providers map to the same canonical index
+        # (Upstox ``NSE_INDEX|Nifty 50`` and Fyers ``NSE:NIFTY50-INDEX``).
+        # A Fyers index key must NOT be miscategorized as a stock.
+        by_key: dict[str, dict[str, str]] = {}
+        for e in MAJOR_INDICES:
+            for alias in (e.get("upstox_key"), e.get("fyers_symbol")):
+                if alias:
+                    by_key[alias] = e
         for feed in (sources_cfg or {}).values():
             if not isinstance(feed, dict):
                 continue
@@ -172,8 +292,77 @@ class SubscriptionService:
                 "(%d already present)", imported, skipped)
         return {"imported": imported, "skipped": skipped, "ran": True}
 
+    def _equity_provider_candidates(self, reg: Any) -> list[str]:
+        """Enabled providers to try for the equity identity, best first.
+
+        Order: the project's provider preference (a TIE-BREAK, not a routing
+        gate), skipping providers whose runtime status says they are
+        unavailable. A provider with no runtime status is still eligible.
+        """
+        try:
+            enabled = list(reg.enabled_ids())
+        except Exception:
+            enabled = []
+        try:
+            preference = list(reg.preference_order())
+        except Exception:
+            preference = []
+
+        def _rank(pid: str) -> int:
+            try:
+                return preference.index(pid)
+            except ValueError:
+                return len(preference)
+
+        def _available(pid: str) -> bool:
+            status: Any = None
+            if self._status_provider is not None:
+                try:
+                    status = self._status_provider(pid)
+                except Exception:
+                    status = None
+            if status is None:
+                try:
+                    status = reg.status(pid)
+                except Exception:
+                    status = None
+            if not status:
+                return True          # unknown status -> still eligible
+            text = str(status).strip().lower()
+            if text in _UNAVAILABLE_STATES:
+                return False         # explicitly not serving right now
+            return True
+
+        ordered = sorted(enabled, key=_rank)
+        return [p for p in ordered if _available(p)] + \
+            [p for p in ordered if not _available(p)]
+
+    def _index_canonical_id(self, label: str) -> str | None:
+        """Canonical id for a canonical index label (registry-driven)."""
+        try:
+            from market.index_registry import canonical_index
+        except Exception:
+            return None
+        entry = canonical_index(label)
+        if entry is None:
+            return None
+        return f"{entry.exchange}:INDEX:{entry.label}"
+
+    def _stock_canonical_id(self, key: str) -> str | None:
+        """Canonical id for a stock subscription key (resolver-driven)."""
+        if self._identity_resolver is None:
+            return None
+        try:
+            return self._identity_resolver.resolve(key)
+        except Exception:
+            return None
+
     def preferences(self) -> dict[str, Any]:
-        """Full preference projection for API/WebUI (canonical registry ∪ DB)."""
+        """Full preference projection for API/WebUI (canonical registry ∪ DB).
+
+        Adds an additive ``canonical_id`` (cross-provider identity) while
+        RETAINING the native ``key`` (the backend mutation contract).
+        """
         rows = self._store.list_md_subscriptions()
         db_by_key = {(r["category"], r["key"]): r for r in rows}
 
@@ -184,11 +373,13 @@ class SubscriptionService:
                 "label": entry["label"],
                 "key": entry["upstox_key"],
                 "fyers_symbol": entry["fyers_symbol"],
+                "canonical_id": self._index_canonical_id(entry["label"]),
                 "enabled": bool(row["enabled"]) if row else True,
                 "canonical": True,
             })
         stocks = [
             {"key": r["key"], "label": r["label"] or r["key"],
+             "canonical_id": self._stock_canonical_id(r["key"]),
              "enabled": bool(r["enabled"])}
             for r in rows if r["category"] == "stock"
         ]
@@ -265,18 +456,64 @@ class SubscriptionService:
     # -- resolution ------------------------------------------------------------
 
     def _index_keys(self) -> list[dict[str, str]]:
-        """Enabled canonical indices → concrete Upstox feed keys."""
+        """Enabled canonical indices -> ONE provider-routed feed key each.
+
+        * The key comes from the CATALOGUE (the authority on which
+          provider published which identifier); the static table is only a
+          fallback for an index the catalogue does not list.
+        * Each canonical index is routed to ONE provider at a time - the
+          first enabled provider (configuration order) that lists it. A
+          contract is never subscribed on both providers.
+        """
         out = []
         enabled = {r["key"] for r in self._store.list_md_subscriptions()
                    if r["category"] == "index" and r["enabled"]}
         for entry in MAJOR_INDICES:
-            if entry["label"] in enabled:
-                out.append({"key": entry["upstox_key"],
-                            "label": entry["label"], "provider": "upstox",
-                            "kind": "index", "underlying": entry["label"],
-                            "expiry": None, "strike": None,
-                            "option_type": None})
+            if entry["label"] not in enabled:
+                continue
+            key, provider = self._routed_index_key(entry)
+            if not key:
+                continue
+            out.append({"key": key,
+                        "label": entry["label"], "provider": provider,
+                        "kind": "index", "underlying": entry["label"],
+                        "expiry": None, "strike": None,
+                        "option_type": None})
         return out
+
+    def _routed_index_key(self, entry: dict[str, str]) -> tuple[str | None,
+                                                               str]:
+        """The routed feed key for one canonical index.
+
+        Catalogue first, then the provider registry's configuration order.
+        The static table is the documented fallback.
+        """
+        label = entry.get("label") or ""
+        try:
+            from app.market_indices import index_provider_keys
+            keys = index_provider_keys(self._catalog, label)
+        except Exception:
+            keys = {}
+        if keys:
+            try:
+                from providers.registry import get_registry
+                reg = get_registry()
+                enabled = list(reg.enabled_ids())
+                preference = list(reg.preference_order())
+            except Exception:
+                enabled, preference = [], []
+            order = [p for p in preference if p in enabled]
+            order += [p for p in enabled if p not in order]
+            for provider in order:
+                key = keys.get(provider)
+                if key:
+                    return str(key), provider
+            # Only a disabled provider lists it - keep the key so the
+            # caller can report it as unrouted.
+            provider = next(iter(keys))
+            return str(keys[provider]), provider
+        # Fallback: the static table (a fallback only).
+        return entry.get("upstox_key"), "upstox"
 
     def _stock_keys(self) -> list[dict[str, str]]:
         """Enabled stocks → their concrete feed keys (provider-routed)."""
@@ -285,7 +522,7 @@ class SubscriptionService:
             if r["category"] == "stock" and r["enabled"]:
                 key = r["key"]
                 out.append({"key": key, "label": r["label"] or key,
-                            "provider": _provider_of(key),
+                            "provider": _provider_of(key, self._catalog),
                             "kind": "stock", "underlying": r["label"] or key,
                             "expiry": None, "strike": None,
                             "option_type": None})
@@ -293,28 +530,184 @@ class SubscriptionService:
 
     def _unexpired_expiries(self, underlying: str, instrument_type: str,
                             count: int) -> list[str]:
-        """First `count` listed expiries >= today (natural rollover)."""
+        """First `count` listed expiries >= today (natural rollover).
+
+        Served by the canonical read model
+        (``market.derivatives_universe.expiries_for``), which memoizes the
+        catalogue read per (underlying, class, exchange) and is invalidated
+        from the catalogue-epoch boundary. Exchange-scoped so the lookup
+        uses the covering index instead of scanning the whole catalogue.
+        """
+        exchange = self._exchange_for(underlying)
         try:
-            expiries = self._catalog.derivative_expiries(
-                underlying, instrument_type)
+            from market.derivatives_universe import expiries_for
+            expiries = expiries_for(self._catalog, underlying,
+                                     instrument_type, exchange=exchange)
         except Exception:
-            return []
+            try:
+                expiries = self._catalog.derivative_expiries(
+                    underlying, instrument_type, exchange=exchange)
+            except Exception:
+                return []
         today = _today_iso()
         return [e for e in expiries if (e or "") >= today][:count]
+
+    @staticmethod
+    def _exchange_for(underlying: str) -> str:
+        """The exchange an underlying's F&O contracts are listed on.
+
+        Canonical index identities come from the broker-neutral registry
+        (``market.index_registry``: SENSEX/BANKEX -> BSE, the NSE indices
+        -> NSE), so a SENSEX rule resolves BSE contracts instead of the
+        pre-existing hardcoded NSE. MarketHub's stock F&O scope is NSE
+        equity derivatives (``market.derivatives_universe``) — the
+        documented default for a non-index underlying.
+        """
+        from market.index_registry import canonical_index
+
+        key = (underlying or "").strip().upper()
+        entry = canonical_index(key)
+        if entry is None:
+            from app.market_indices import label_for_underlying
+            label = label_for_underlying(key)
+            entry = canonical_index(label) if label else None
+        return entry.exchange if entry is not None else "NSE"
+
+    @staticmethod
+    def _feed_key(row: dict[str, Any]) -> str | None:
+        """The provider's FEED key for a catalogue row.
+
+        The feed key is the key the provider's stream subscribes with and
+        the key the quote store is written under — the same key the
+        coverage plan routes with, so the workspace and the futures board
+        address the SAME contract.
+        """
+        try:
+            from app.canonical_identity import provider_quote_key
+            key = provider_quote_key(row)
+        except Exception:
+            key = None
+        if key:
+            return str(key)
+        return row.get("provider_symbol") or row.get("instrument_token")
+
+    def _option_strikes(self, underlying: str, expiry: str) -> list[dict]:
+        """Option contracts for one underlying + expiry, exchange-scoped.
+
+        The exchange is passed so the catalogue uses its covering index
+        instead of scanning the whole catalogue; a catalogue that does
+        not accept it (a light-weight double) is still supported.
+        """
+        exchange = self._exchange_for(underlying)
+        try:
+            return list(self._catalog.option_strikes(
+                underlying, expiry, exchange=exchange) or [])
+        except TypeError:
+            return list(self._catalog.option_strikes(underlying, expiry) or [])
+
+    def _all_expiries(self, underlying: str, instrument_type: str) -> list[str]:
+        """All listed expiries for an underlying (exchange-scoped, memoized)."""
+        exchange = self._exchange_for(underlying)
+        try:
+            from market.derivatives_universe import expiries_for
+            return list(expiries_for(self._catalog, underlying,
+                                     instrument_type, exchange=exchange))
+        except Exception:
+            try:
+                return list(self._catalog.derivative_expiries(
+                    underlying, instrument_type, exchange=exchange) or [])
+            except Exception:
+                return []
+
+    def _futures_for(self, underlying: str, expiry: str) -> list[dict[str, Any]]:
+        """Futures rows for one underlying + expiry, from the bulk index.
+
+        Served from the canonical bulk futures index (ONE catalogue read
+        for all expiries) — never a per-expiry search. A catalogue without
+        the bulk read model (a light-weight double) falls back to the
+        per-underlying search.
+        """
+        symbol = underlying.strip().upper()
+        exchange = self._exchange_for(underlying)
+        try:
+            from market.derivatives_universe import futures_index
+            index = futures_index(self._catalog, exchange=exchange)
+        except Exception:
+            index = {}
+        rows = list(index.get((symbol, expiry), []))
+        if rows:
+            return rows
+        try:
+            return list(self._catalog.search(
+                underlying=underlying, instrument_type="FUTURE",
+                expiry=expiry, exchange=exchange, limit=50) or [])
+        except TypeError:
+            return list(self._catalog.search(
+                underlying=underlying, instrument_type="FUTURE",
+                expiry=expiry, limit=50) or [])
+        except Exception:
+            return []
+
+    def _select_one_provider(self, rows: list[dict[str, Any]],
+                             reg: Any) -> list[dict[str, Any]]:
+        """Keep ONE row per logical contract, from the routed provider.
+
+        When both providers list the same contract (same underlying,
+        expiry, strike and option type), only the row belonging to the
+        SELECTED provider is kept — a logical contract is never emitted
+        twice, and its data can never be attributed to the wrong provider.
+        """
+        by_contract: dict[tuple, dict[str, Any]] = {}
+        for row in rows:
+            key = (str(row.get("underlying") or "").upper(),
+                   str(row.get("expiry") or ""),
+                   row.get("strike"),
+                   row.get("option_type"))
+            current = by_contract.get(key)
+            if current is None:
+                by_contract[key] = row
+                continue
+            if self._row_provider_rank(row, reg) < \
+                    self._row_provider_rank(current, reg):
+                by_contract[key] = row
+        return list(by_contract.values())
+
+    def _row_provider_rank(self, row: dict[str, Any], reg: Any) -> int:
+        """Provider preference rank for a catalogue row (lower wins)."""
+        provider = str(row.get("provider") or "")
+        try:
+            order = list(reg.preference_order())
+        except Exception:
+            order = []
+        try:
+            enabled = list(reg.enabled_ids())
+        except Exception:
+            enabled = []
+        if provider not in enabled:
+            return len(order) + 2
+        try:
+            return order.index(provider)
+        except ValueError:
+            return len(order) + 1
 
     def _resolve_futures(self, underlying: str, count: int,
                          contracts: list[dict[str, Any]],
                          notes: list[str]) -> None:
+        """Resolve futures contracts from the canonical bulk read model.
+
+        ONE catalogue read serves every expiry (the bulk futures index),
+        and ONE provider is selected per logical contract — so the same
+        contract is never subscribed twice.
+        """
         expiries = self._unexpired_expiries(underlying, "FUTURE", count)
         if not expiries:
             notes.append(f"{underlying}: no listed futures")
             return
         for expiry in expiries:
-            rows = self._catalog.search(underlying=underlying,
-                                        instrument_type="FUTURE",
-                                        expiry=expiry, limit=10)
-            for row in rows or []:
-                key = row.get("provider_symbol") or row.get("instrument_token")
+            rows = self._select_one_provider(
+                self._futures_for(underlying, expiry), self.registry)
+            for row in rows:
+                key = self._feed_key(row)
                 if not key:
                     continue
                 contracts.append({
@@ -342,7 +735,11 @@ class SubscriptionService:
             notes.append(f"{underlying}: no listed options")
             return
         for expiry in expiries:
-            rows = self._catalog.option_strikes(underlying, expiry) or []
+            rows = self._option_strikes(underlying, expiry)
+            # ONE provider per logical contract: when both providers list
+            # the same (expiry, strike, CE/PE), only the routed provider's
+            # row is kept — never a duplicate logical contract.
+            rows = self._select_one_provider(rows, self.registry)
             # Actual listed strikes only — never fabricated.
             try:
                 listed = sorted({float(r["strike"]) for r in rows
@@ -370,8 +767,7 @@ class SubscriptionService:
                     continue
                 if otype == "PE" and not puts:
                     continue
-                key = row.get("provider_symbol") \
-                    or row.get("instrument_token")
+                key = self._feed_key(row)
                 if not key:
                     continue
                 contracts.append({
@@ -386,35 +782,47 @@ class SubscriptionService:
     def _atm_strike(self, underlying: str) -> float | None:
         """Current spot LTP for an underlying (index or stock).
 
-        Indices resolve through the canonical registry key; stock
-        underlyings resolve through their subscribed stock key. Returns
-        None when spot is unavailable — callers keep the saved rule and
-        report pending resolution; no ATM is ever fabricated.
+        Indices resolve through the shared canonical index path
+        (``app.market_indices.resolve_spot``), which asks the CATALOGUE for
+        each provider's own feed key — so SENSEX resolves on BSE exactly
+        like NIFTY resolves on NSE. Stock underlyings resolve through their
+        subscribed stock key. Returns None when spot is unavailable —
+        callers keep the saved rule and report pending resolution; no ATM
+        is ever fabricated.
         """
         if self._spot_provider is None:
             return None
-        entry = next((e for e in MAJOR_INDICES
-                      if e["label"] == underlying), None)
-        if entry is not None:
-            exchange, token = (entry["upstox_exchange"], entry["upstox_key"])
-        else:
-            # Stock underlying: the RULE names the underlying, but the
-            # subscription key holds the concrete instrument. Resolve via
-            # exact key match, then via label match (user-facing symbols).
-            row = self._store.get_md_subscription(category="stock",
-                                                  key=underlying)
-            if row is None:
-                match = next((s for s in self._store.list_md_subscriptions()
-                              if s["category"] == "stock"
-                              and (s["label"] or "").upper() == underlying),
-                             None)
-                row = match
-            if row is not None and "|" in row["key"]:
-                exchange, token = row["key"].split("|", 1)
-                exchange = exchange.rsplit("_", 1)[0] \
-                    if "_" in exchange else exchange
-            else:
+        from app.market_indices import label_for_underlying, resolve_spot
+
+        if label_for_underlying(underlying) is not None:
+            identity_resolve = getattr(self._identity_resolver, "resolve", None)
+            try:
+                spot = resolve_spot(underlying, self._catalog,
+                                    self._spot_provider, identity_resolve)
+            except Exception:
+                spot = {}
+            quote = spot.get("quote") if isinstance(spot, dict) else None
+            ltp = getattr(quote, "ltp", None) if quote is not None else None
+            if ltp is None or ltp <= 0:
                 return None
+            return float(ltp)
+        # Stock underlying: the RULE names the underlying, but the
+        # subscription key holds the concrete instrument. Resolve via
+        # exact key match, then via label match (user-facing symbols).
+        row = self._store.get_md_subscription(category="stock",
+                                              key=underlying)
+        if row is None:
+            match = next((s for s in self._store.list_md_subscriptions()
+                          if s["category"] == "stock"
+                          and (s["label"] or "").upper() == underlying),
+                         None)
+            row = match
+        if row is not None and "|" in row["key"]:
+            exchange, token = row["key"].split("|", 1)
+            exchange = exchange.rsplit("_", 1)[0] \
+                if "_" in exchange else exchange
+        else:
+            return None
         try:
             quote = self._spot_provider(exchange, token)
         except Exception:
@@ -437,7 +845,7 @@ class SubscriptionService:
         expiries = self._unexpired_expiries(underlying, "OPTION", 1)
         if not expiries:
             return None
-        rows = self._catalog.option_strikes(underlying, expiries[0]) or []
+        rows = self._option_strikes(underlying, expiries[0])
         try:
             listed = sorted({float(r["strike"]) for r in rows
                              if r.get("strike") is not None})
@@ -459,33 +867,77 @@ class SubscriptionService:
         (CE/PE) for live subscription. Uses ONLY catalog-listed strikes.
         Raises SubscriptionLimitError via resolve() bounds; window is
         additionally bounded by the caller.
+
+        Catalogue reads go through the canonical read model
+        (``market.derivatives_universe``) so the workspace, the coverage
+        plan and the futures board share ONE cached, exchange-scoped,
+        epoch-invalidated read — never a per-underlying/per-expiry search.
+
+        ONE provider is selected per logical contract: when both providers
+        list the same contract, only the routed provider's leg is emitted,
+        so a logical contract is never duplicated.
         """
         symbol = (symbol or "").strip().upper()
         future_count = max(0, min(int(future_count), 3))
         option_expiry_count = max(0, min(int(option_expiry_count), 2))
         strikes_below = max(0, min(int(strikes_below), 25))
         strikes_above = max(0, min(int(strikes_above), 25))
+        reg = self.registry
         out: dict[str, Any] = {
             "symbol": symbol, "equity_key": None, "futures": [],
             "option_expiries": [], "selected_expiry": None,
             "atm": None, "atm_basis": None, "options": [],
             "by_provider": {}, "notes": [],
         }
-        # Equity identity (canonical catalog row).
-        eq_rows = self._catalog.search(q=symbol, provider="upstox",
-                                       instrument_type="EQUITY", limit=5)
-        eq = next((r for r in eq_rows
-                   if (r.get("tradingsymbol") or "").upper() == symbol), None)
+        # Equity identity (canonical catalog row). The provider is NOT
+        # hardcoded: candidates are resolved through the ENABLED provider
+        # registry, ordered by the project's provider preference, and a
+        # provider whose runtime status says it is UNAVAILABLE is skipped.
+        # Downstream the key decides the provider for the option chain, so a
+        # hardcoded (or blindly first) provider would break the workspace
+        # whenever that provider is logged out.
+        #
+        # The match is EXACT on the canonical symbol: the catalogue search
+        # is a substring LIKE, so a short symbol (e.g. "LT") would
+        # otherwise match an unrelated equity.
+        eq = None
+        for pid in self._equity_provider_candidates(reg):
+            # The catalogue search is a substring LIKE, so the EXACT-symbol
+            # read model is used to resolve the equity identity (a short
+            # symbol such as "LT" would otherwise match an unrelated
+            # equity or fall outside the limit window).
+            match = None
+            try:
+                rows = self._catalog.search(
+                    q=symbol, provider=pid, instrument_type="EQUITY",
+                    exchange="NSE", limit=5)
+                match = next((r for r in rows
+                              if (r.get("tradingsymbol") or "").upper()
+                              == symbol), None)
+            except Exception:
+                rows = []
+            if match is None:
+                try:
+                    match = self._catalog.find_equity(
+                        symbol, provider=pid, exchange="NSE")
+                except Exception:
+                    match = None
+            if match is not None:
+                eq = match
+                break
         if eq is not None:
-            out["equity_key"] = eq.get("instrument_token")
-        # Futures (non-expired, catalog-ordered).
+            out["equity_key"] = self._feed_key(eq)
+        # Futures (non-expired, catalog-ordered) from the canonical bulk
+        # futures index — ONE read for all expiries, exchange-scoped.
+        # ONE provider per logical contract: when both providers list the
+        # same (underlying, expiry), only the routed provider's row is
+        # kept, so the workspace never subscribes the same contract twice.
         expiries = self._unexpired_expiries(symbol, "FUTURE", future_count)
         for expiry in expiries:
-            for row in self._catalog.search(underlying=symbol,
-                                            instrument_type="FUTURE",
-                                            expiry=expiry, limit=5):
-                key = row.get("provider_symbol") \
-                    or row.get("instrument_token")
+            rows = self._select_one_provider(
+                self._futures_for(symbol, expiry), reg)
+            for row in rows:
+                key = self._feed_key(row)
                 if key:
                     out["futures"].append({
                         "key": key,
@@ -498,8 +950,9 @@ class SubscriptionService:
         # stocks); ATM snaps to an actual listed strike.
         opt_expiries = self._unexpired_expiries(symbol, "OPTION",
                                                 option_expiry_count)
-        out["option_expiries"] = self._catalog.derivative_expiries(
-            symbol, "OPTION")
+        # ALL listed option expiries (not just the unexpired window) for the
+        # expiry picker — served by the same memoized read model.
+        out["option_expiries"] = self._all_expiries(symbol, "OPTION")
         out["selected_expiry"] = opt_expiries[0] if opt_expiries else None
         atm = None
         atm_basis = None
@@ -524,8 +977,7 @@ class SubscriptionService:
             # Deterministic fallback (existing project convention): middle
             # listed strike, clearly labeled — the workspace stays usable
             # when the market is closed; nothing is fabricated.
-            rows = self._catalog.option_strikes(symbol,
-                                                out["selected_expiry"]) or []
+            rows = self._option_strikes(symbol, out["selected_expiry"])
             try:
                 listed = sorted({float(r["strike"]) for r in rows
                                  if r.get("strike") is not None})
@@ -634,21 +1086,52 @@ class SubscriptionService:
                         "strike": None, "option_type": None,
                     })
 
+        # DERIVATIVES-UNIVERSE union: the routed canonical F&O universe joins
+        # the desired set additively. Applying coverage replaces this owner;
+        # releasing shrinks it to zero. Baseline indices / persistent stocks /
+        # derivative rules / active-view / analytics owners are never affected.
+        der_count = sum(len(v) for v in self._derivatives_universe.values())
+        if der_count:
+            for provider, keys in self._derivatives_universe.items():
+                for key in keys:
+                    contracts.append({
+                        "key": key, "label": key,
+                        "provider": provider if provider in ("upstox",
+                                                             "fyers")
+                        else _provider_of(key),
+                        "kind": "derivatives",
+                        "underlying": None, "expiry": None,
+                        "strike": None, "option_type": None,
+                    })
+
         by_provider: dict[str, list[str]] = {}
         for c in contracts:
             by_provider.setdefault(c["provider"], [])
             if c["key"] not in by_provider[c["provider"]]:
                 by_provider[c["provider"]].append(c["key"])
 
+        # Capacity is enforced by the subscription manager against the
+        # provider's VERIFIED limit. This layer only reports the demand per
+        # provider so the manager can allocate it by priority.
+        overflow: dict[str, dict[str, Any]] = {}
         for provider, keys in by_provider.items():
-            if len(keys) > MAX_INSTRUMENTS_PER_PROVIDER:
-                raise SubscriptionLimitError(
-                    f"subscription limit exceeded: {len(keys)} instruments "
-                    f"resolved for {provider} (max "
-                    f"{MAX_INSTRUMENTS_PER_PROVIDER})")
+            try:
+                from providers.capacity import resolve_entitlement
+                ent = resolve_entitlement(provider)
+                limit = ent.symbols
+            except Exception:
+                limit = None
+            if limit is not None and len(keys) > limit:
+                overflow[provider] = {
+                    "requested": len(keys),
+                    "verified_limit": limit,
+                    "reason": "demand exceeds the provider's verified "
+                              "subscription limit",
+                }
 
         return {"contracts": contracts, "by_provider": by_provider,
-                "notes": notes, "atm": atm_map, "pending": pending}
+                "notes": notes, "atm": atm_map, "pending": pending,
+                "capacity_overflow": overflow}
 
     # -- runtime reconciliation -------------------------------------------------
 
@@ -690,6 +1173,27 @@ class SubscriptionService:
         """
         resolved = self.resolve()
         results: dict[str, Any] = {}
+        # The SUBSCRIBED set has ONE owner: the lease manager. It applies
+        # the demand with the provider's capacity, the runtime
+        # availability and the failover rules; a second applier with its
+        # own view of the demand would unsubscribe what the other one
+        # subscribed (the symptom: a live provider's demand-derived
+        # instruments disappearing after an API-triggered apply).
+        manager = getattr(self, "_manager", None) or _active_manager()
+        if manager is not None:
+            manager.apply_demand(self.lease_requests())
+            # The caller's feed lookup wins: the manager applies the demand
+            # to the feeds THIS reconcile is about.
+            outcome = await manager.reconcile(feed_provider)
+            results = dict(outcome.get("results") or {})
+            self._last_apply = {
+                "at": datetime.now(timezone.utc).isoformat(),
+                "desired_total": len(resolved["contracts"]),
+                "results": results,
+                "pending": resolved["pending"],
+                "notes": resolved["notes"],
+            }
+            return {"resolved": resolved, "apply": self._last_apply}
         # Every provider with a resolved desired set appears in the result —
         # including ones whose feed is unavailable (honest, not hidden).
         all_providers = set(resolved["by_provider"]) | {"upstox", "fyers"}
@@ -735,6 +1239,49 @@ class SubscriptionService:
             "notes": resolved["notes"],
         }
         return {"resolved": resolved, "apply": self._last_apply}
+
+    def lease_requests(self) -> list[dict[str, Any]]:
+        """The DEMAND as lease requests (the manager's input).
+
+        Every concrete contract the preferences resolve to is a demand -
+        nothing else is ever subscribed. The owner/priority says how
+        important the demand is (baseline coverage, an open workspace,
+        analytics).
+        """
+        try:
+            from app.subscriptions.manager import (
+                OWNER_OTHER,
+                OWNER_REQUIRED,
+                OWNER_WORKSPACE,
+                PRIORITY_OTHER,
+                PRIORITY_REQUIRED,
+                PRIORITY_WORKSPACE,
+            )
+        except Exception:
+            OWNER_OTHER = OWNER_REQUIRED = OWNER_WORKSPACE = "other"
+            PRIORITY_OTHER = PRIORITY_REQUIRED = PRIORITY_WORKSPACE = 10
+        resolved = self.resolve()
+        out: list[dict[str, Any]] = []
+        for contract in resolved["contracts"]:
+            kind = contract.get("kind")
+            if kind in ("index", "stock"):
+                owner_kind, priority = OWNER_REQUIRED, PRIORITY_REQUIRED
+            elif kind in ("future", "option"):
+                owner_kind, priority = OWNER_REQUIRED, PRIORITY_REQUIRED
+            elif kind == "active_view":
+                owner_kind, priority = OWNER_WORKSPACE, PRIORITY_WORKSPACE
+            else:
+                owner_kind, priority = OWNER_OTHER, PRIORITY_OTHER
+            out.append({
+                "key": contract["key"],
+                "provider": contract.get("provider"),
+                "canonical_id": contract.get("canonical_id"),
+                "owner_kind": owner_kind,
+                "owner_id": owner_kind,
+                "priority": priority,
+                "kind": kind,
+            })
+        return out
 
     def status(self) -> dict[str, Any]:
         """Read-only health projection for Test Center (no secrets)."""

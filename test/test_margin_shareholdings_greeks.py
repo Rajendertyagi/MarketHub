@@ -24,17 +24,16 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
+from starlette.requests import Request
 
-from market.models import (  # noqa: E402
+from api.product_routes import build_market_data_routes
+from app.market_data import ProviderMarketData
+from market.models import (
     MarginBasket,
-    Shareholdings,
     OptionGreekSnapshot,
+    Shareholdings,
 )
-from app.market_data import ProviderMarketData  # noqa: E402
-from api.product_routes import build_market_data_routes  # noqa: E402
-from starlette.requests import Request  # noqa: E402
-
 
 # --------------------------------------------------------------------------
 # Fakes: stand in for the live Upstox REST client + credentials.
@@ -155,7 +154,7 @@ async def test_bg2_margin_validation(runner: R) -> None:
     raised = False
     try:
         await md.margin(instruments=[])
-    except Exception as exc:  # noqa: BLE001 - intentionally broad
+    except Exception as exc:
         raised = True
         runner.assert_in("BG2-err-msg", "instruments", str(exc))
     runner.assert_true("BG2-raised", raised)

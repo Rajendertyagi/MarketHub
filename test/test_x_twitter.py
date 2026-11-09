@@ -29,6 +29,7 @@ import sqlite3
 import sys
 import tempfile
 import uuid
+from datetime import datetime, timezone
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_DIR = os.path.dirname(_SCRIPT_DIR)
@@ -36,7 +37,7 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 
 def _mk_store():
@@ -81,8 +82,8 @@ def _tweet(tid, text, handle="elonmusk", likes=0, retweets=0):
         "metrics": {"likes": likes, "retweets": retweets, "replies": 0,
                     "views": 0, "bookmarks": 0},
         "is_retweet": False,
-        "posted_at": "2026-09-22T00:00:00+00:00",
-        "fetched_at": "2026-09-22T00:01:00+00:00",
+        "posted_at": datetime.now(timezone.utc).isoformat(),
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -539,7 +540,7 @@ def test_xt8_contract_registry_routes(runner: R) -> None:
     from mcp_server import contract as C
     from mcp_server import registry as R_
 
-    runner.assert_eq("XT8-contract", C.CONTRACT_VERSION, "2.7.0")
+    runner.assert_eq("XT8-contract", C.CONTRACT_VERSION, "2.8.0")
     expected = ["twitter_feed", "twitter_search", "twitter_tweet",
                 "twitter_article", "twitter_bookmarks", "twitter_user_posts",
                 "twitter_user_profile"]

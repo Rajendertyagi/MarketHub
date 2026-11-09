@@ -69,7 +69,55 @@ def create_news_tables(conn: Any) -> None:
             deleted_at TEXT NOT NULL
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS news_source_health (
+            source_id      TEXT PRIMARY KEY,
+            last_attempt_at TEXT,
+            last_success_at TEXT,
+            last_error     TEXT,
+            items_seen     INTEGER NOT NULL DEFAULT 0,
+            items_added    INTEGER NOT NULL DEFAULT 0,
+            updated_at     TEXT NOT NULL
+        )
+    """)
+    ensure_source_health_schema(conn)
     create_news_items_table(conn)
+
+
+def ensure_source_health_schema(conn: Any) -> None:
+    """Make the source-health table match the house schema (idempotent).
+
+    The health table is written on EVERY source refresh, so a missing
+    column is not a cosmetic difference: the write fails and the source's
+    health is silently lost (the caller only sees "record failed").
+
+    The house shape carries ``updated_at`` (NOT NULL) like every other
+    durable table. A table created by an older revision - or by a revision
+    whose DDL drifted - is repaired here: the column is added, existing
+    rows are back-filled with their last attempt time, and the write path
+    can then supply it.
+    """
+    try:
+        rows = list(conn.execute(
+            "PRAGMA table_info(news_source_health)").fetchall())
+    except Exception:
+        return
+    if not rows:
+        return
+    columns = {str(r[1]) for r in rows}
+    if "updated_at" in columns:
+        return
+    try:
+        conn.execute(
+            "ALTER TABLE news_source_health "
+            "ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
+        conn.execute(
+            "UPDATE news_source_health SET updated_at = "
+            "COALESCE(NULLIF(last_attempt_at, ''), "
+            "NULLIF(last_success_at, ''), '') WHERE updated_at = ''")
+        conn.commit()
+    except Exception:
+        logger.warning("news source-health schema repair failed", exc_info=True)
 
 
 def create_news_items_table(conn: Any) -> None:
@@ -418,6 +466,43 @@ def query_news_items(
     return [dict(zip(cols, r, strict=True)) for r in rows]
 
 
+def get_news_item(conn: Any, item_id: str) -> dict[str, Any] | None:
+    """Fetch one persisted news item by primary key (None when unknown)."""
+    if not item_id:
+        return None
+    row = conn.execute(f"""
+        SELECT {", ".join(_ITEM_COLUMNS)} FROM news_items WHERE item_id = ?
+    """, (item_id,)).fetchone()
+    if row is None:
+        return None
+    return dict(zip(_ITEM_COLUMNS, row, strict=True))
+
+
+def get_news_item_by_public_id(
+    conn: Any, public_id: str,
+) -> dict[str, Any] | None:
+    """Resolve an MCP-visible item id to its row (None when unknown).
+
+    The MCP layer exposes a *public* id (the provider guid, the link, or
+    the title) rather than the internal primary key, so this resolves the
+    internal key first and then matches the public identity.
+    """
+    if not public_id:
+        return None
+    row = get_news_item(conn, public_id)
+    if row is not None:
+        return row
+    found = conn.execute(f"""
+        SELECT {", ".join(_ITEM_COLUMNS)} FROM news_items
+        WHERE url = ? OR title = ?
+        ORDER BY COALESCE(published_at, fetched_at) DESC, item_id ASC
+        LIMIT 1
+    """, (public_id, public_id)).fetchone()
+    if found is None:
+        return None
+    return dict(zip(_ITEM_COLUMNS, found, strict=True))
+
+
 def update_news_sentiments(
     conn: Any, scored: list[tuple[str, float, str]]
 ) -> int:
@@ -459,6 +544,89 @@ def prune_news_items(conn: Any, max_age_days: int,
             break
         total += cur.rowcount
     return total
+
+
+# ---------------------------------------------------------------------------
+# Source health + freshness
+# ---------------------------------------------------------------------------
+
+
+def record_source_health(conn: Any, *, source_id: str, success: bool,
+                         error: str | None = None, seen: int = 0,
+                         added: int = 0, now_iso: str) -> None:
+    """Record one source's fetch attempt (success or failure).
+
+    A successful attempt advances ``last_success_at`` and clears the error.
+    A failed attempt records the error and leaves ``last_success_at``
+    untouched (the last known good fetch is never lost).
+    """
+    # An installation whose table was created without ``updated_at`` (an
+    # older DDL) heals itself here, before the write that would fail.
+    ensure_source_health_schema(conn)
+    conn.execute("""
+        INSERT INTO news_source_health (
+            source_id, last_attempt_at, last_success_at, last_error,
+            items_seen, items_added, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source_id) DO UPDATE SET
+            last_attempt_at = excluded.last_attempt_at,
+            last_success_at = CASE
+                WHEN excluded.last_success_at IS NOT NULL
+                THEN excluded.last_success_at
+                ELSE news_source_health.last_success_at END,
+            last_error = excluded.last_error,
+            items_seen = excluded.items_seen,
+            items_added = excluded.items_added,
+            updated_at = excluded.updated_at
+    """, (source_id, now_iso, now_iso if success else None,
+          None if success else (error or ""), int(seen or 0), int(added or 0),
+          now_iso))
+
+
+def get_source_health(conn: Any,
+                      source_id: str | None = None) -> list[dict[str, Any]]:
+    """Health rows for one source (or all). Empty list when none."""
+    if source_id is None:
+        rows = conn.execute("""
+            SELECT source_id, last_attempt_at, last_success_at, last_error,
+                   items_seen, items_added
+            FROM news_source_health ORDER BY source_id
+        """).fetchall()
+    else:
+        rows = conn.execute("""
+            SELECT source_id, last_attempt_at, last_success_at, last_error,
+                   items_seen, items_added
+            FROM news_source_health WHERE source_id = ?
+        """, (source_id,)).fetchall()
+    return [{
+        "source_id": r[0],
+        "last_attempt_at": r[1],
+        "last_success_at": r[2],
+        "last_error": (r[3] or None) if r[3] is not None else None,
+        "items_seen": int(r[4] or 0),
+        "items_added": int(r[5] or 0),
+    } for r in rows]
+
+
+def last_successful_fetch_at(conn: Any) -> str | None:
+    """Newest ``last_success_at`` across all sources (None when never)."""
+    row = conn.execute("""
+        SELECT MAX(last_success_at) FROM news_source_health
+    """).fetchone()
+    return row[0] if row and row[0] else None
+
+
+def latest_fetched_at(conn: Any) -> str | None:
+    """Newest ``fetched_at`` across stored news items (None when empty)."""
+    row = conn.execute("SELECT MAX(fetched_at) FROM news_items").fetchone()
+    return row[0] if row and row[0] else None
+
+
+def latest_published_at(conn: Any) -> str | None:
+    """Newest ``published_at`` across stored news items (None when empty)."""
+    row = conn.execute(
+        "SELECT MAX(published_at) FROM news_items").fetchone()
+    return row[0] if row and row[0] else None
 
 
 # ---------------------------------------------------------------------------

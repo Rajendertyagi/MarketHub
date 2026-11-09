@@ -1,14 +1,13 @@
 """Unit tests for the generic scanner engine (Phase C / D)."""
 
-import sys
 import types
 from datetime import datetime, timezone
 
 import pytest
 
 import market.scanner as scanner_mod
+from market.models import OptionGreeks, Quote
 from market.scanner import ScannerEngine, _status_of
-from market.models import Quote, OptionGreeks
 
 
 class FakeCatalog:

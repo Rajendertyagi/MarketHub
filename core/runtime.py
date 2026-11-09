@@ -108,7 +108,6 @@ class BackgroundTaskManager:
     async def shutdown_all(self, timeout: float = 10.0) -> None:
         """Cancel all running tasks and wait bounded time for cleanup."""
         async with self._lock:
-            names = list(self._tasks.keys())
             tasks = list(self._tasks.values())
             self._tasks.clear()
 
@@ -203,7 +202,7 @@ def make_lifespan(
     ctx._source_manager = source_manager
 
     @asynccontextmanager
-    async def lifespan(app: Any):  # noqa: ARG001
+    async def lifespan(app: Any):
         logger.info("lifespan startup: store=%s", store.db_path)
 
         # Initialize and start sources (if any)

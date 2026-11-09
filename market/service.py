@@ -62,10 +62,11 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from types import MappingProxyType
-from typing import Any, Awaitable, Callable, Mapping
+from typing import Any
 
 from market.models import Depth, Quote, merge_greeks
 from market.normalize.common import QUOTE_FIELD_NAMES
@@ -183,8 +184,10 @@ _QuoteCallback = Callable[[Quote], Any]  # sync return or awaitable
 class MarketService:
     """In-process market state owner. See module docstring for semantics."""
 
-    def __init__(self, *, on_quote_update: _QuoteCallback | None = None) -> None:
+    def __init__(self, *, on_quote_update: _QuoteCallback | None = None,
+                 identity_resolver: Any = None) -> None:
         self._on_quote_update = on_quote_update
+        self._identity_resolver = identity_resolver
         self._lock = asyncio.Lock()
         self._quotes: dict[tuple[str, str], Quote] = {}
         self._depths: dict[tuple[str, str], Depth] = {}
@@ -196,6 +199,10 @@ class MarketService:
             "accepted_depth_updates": 0,
             "stale_depth_updates": 0,
         }
+
+    def set_identity_resolver(self, resolver: Any) -> None:
+        """Inject the identity resolver after construction (composition wiring)."""
+        self._identity_resolver = resolver
 
     def get_quote_now(self, exchange: str,
                       instrument_token: str) -> Quote | None:
@@ -241,6 +248,13 @@ class MarketService:
                 values[name] = merge_greeks(current.greeks, value)
             else:
                 values[name] = value  # None clears; a value replaces
+        # Resolve canonical_id via identity resolver (if available).
+        canonical_id = current.canonical_id
+        if canonical_id is None and self._identity_resolver is not None:
+            try:
+                canonical_id = self._identity_resolver.resolve_quote(current)
+            except Exception:
+                canonical_id = None
         return Quote(
             instrument_token=current.instrument_token,
             exchange=current.exchange,
@@ -253,17 +267,31 @@ class MarketService:
             exchange_ts=(
                 patch.exchange_ts if patch.exchange_ts is not None else current.exchange_ts
             ),
+            canonical_id=canonical_id,
             **values,
         )
 
     def _build_initial_quote(self, patch: QuotePatch) -> Quote:
         values = {name: patch.reported_fields.get(name) for name in PATCH_FIELD_NAMES}
+        # Resolve canonical_id via identity resolver (if available).
+        canonical_id = None
+        if self._identity_resolver is not None:
+            try:
+                from types import SimpleNamespace
+                tmp = SimpleNamespace(
+                    instrument_token=patch.instrument_token,
+                    tradingsymbol=patch.tradingsymbol or "",
+                )
+                canonical_id = self._identity_resolver.resolve_quote(tmp)
+            except Exception:
+                canonical_id = None
         return Quote(
             instrument_token=patch.instrument_token,
             exchange=patch.exchange,
             tradingsymbol=str(patch.tradingsymbol),
             received_ts=patch.received_ts,
             exchange_ts=patch.exchange_ts,
+            canonical_id=canonical_id,
             **values,
         )
 

@@ -36,9 +36,10 @@ for _p in (_PROJECT_DIR, _TEST_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from core import events  # noqa: E402
-from core.persistence.store import EventStore  # noqa: E402
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
+
+from core import events
+from core.persistence.store import EventStore
 
 
 class _StubBus:

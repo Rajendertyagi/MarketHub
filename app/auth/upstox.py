@@ -9,11 +9,13 @@ accessed only through injected provider callbacks.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any
 
 from app.auth.models import AuthState, RestoreOutcome, is_expired, parse_expiry_iso
 from app.auth.storage import AuthStorage
+from app.auth.upstox_session import UpstoxSessionLifecycle
 from brokers.upstox.auth import (
     UpstoxCredentials,
     UpstoxOAuth,
@@ -32,10 +34,17 @@ class UpstoxAuthService:
         *,
         feed_provider: Callable[[], Any] | None = None,
         restart_fn: Callable[[], Any] | None = None,
+        now_fn: Callable[[], Any] | None = None,
     ) -> None:
         self._storage = storage
         self._feed_provider = feed_provider
         self._restart_fn = restart_fn
+        # The session lifecycle has ONE owner (app/auth/upstox_session.py):
+        # restore, login persistence, the explicit (idempotent) invalidation
+        # on a genuine broker rejection and the logout.
+        self._session = UpstoxSessionLifecycle(
+            storage=storage, feed_provider=feed_provider,
+            restart_fn=restart_fn, now_fn=now_fn)
 
     # -- helpers ----------------------------------------------------------
     def _feed(self) -> Any:
@@ -64,25 +73,10 @@ class UpstoxAuthService:
           5. install into runtime feed (None-safe)
           6. attempt feed (re)start -- failure is FEED-only, never auth
         """
-        token = getattr(creds, "access_token", "")
-        expires_at = getattr(creds, "expires_at", None)
-        expires_iso = expires_at.isoformat() if expires_at is not None else None
-        self._storage.save_upstox_session(
-            token, expires_iso,
-            issued_at_iso=datetime.now(timezone.utc).isoformat())
-        self._storage.save_status("upstox", AuthState.AUTHENTICATED)
-        feed = self._feed()
-        if feed is not None:
-            try:
-                feed.update_credentials(creds)
-            except Exception:
-                logger.exception("upstox login: failed to install credentials")
-        if self._restart_fn is not None and feed is not None:
-            try:
-                await self._restart_fn()
-            except Exception:
-                logger.exception("upstox login: feed restart failed")
-        return {"authenticated": True, "session_persisted": True}
+        # The order and the ownership live in the session lifecycle owner
+        # (app/auth/upstox_session.py); this is the thin adapter the
+        # routes call.
+        return await self._session.apply_session(creds)
 
     # -- login input (thin-route entry points; routes parse, service owns) --
     def build_login_url(self, oauth_cfg: dict, state: str) -> str:
@@ -132,35 +126,11 @@ class UpstoxAuthService:
         """Startup restore: inject a still-valid persisted token into config.
 
         Never raises: failures yield restored=False so server boot continues.
+        A restore that cannot be APPLIED (the feed is not configured yet)
+        KEEPS the stored session - a configuration problem must never
+        destroy valid credentials.
         """
-        out = RestoreOutcome(provider="upstox")
-        session = self._storage.load_upstox_session()
-        if not session or not (session.get("access_token") or "").strip():
-            out.reason = "no_session"
-            return out
-        token = session["access_token"].strip()
-        exp = parse_expiry_iso(session.get("expires_at"))
-        expired = is_expired(exp)
-        if exp is not None and expired:
-            self._storage.clear_upstox_session()
-            self._storage.save_status("upstox", AuthState.EXPIRED)
-            out.reason = "expired"
-            return out
-        cfg = (sources_cfg or {}).get("upstox")
-        if not isinstance(cfg, dict):
-            self._storage.clear_upstox_session()
-            self._storage.save_status("upstox", AuthState.EXPIRED)
-            out.reason = "no_source_config"
-            return out
-        updated = dict(cfg)
-        updated["access_token"] = token
-        if session.get("expires_at"):
-            updated["access_token_expires_at"] = session["expires_at"]
-        sources_cfg["upstox"] = updated
-        self._storage.save_status("upstox", AuthState.RESTORED)
-        out.restored = True
-        out.reason = "restored"
-        return out
+        return self._session.restore_session(sources_cfg)
 
     # -- genuine rejection --------------------------------------------------
     def rejection_evidence(self) -> dict[str, Any]:
@@ -171,23 +141,7 @@ class UpstoxAuthService:
         at authorize). Generic ``auth_required`` state or exit-reason
         strings are NEVER treated as rejection evidence here.
         """
-        feed = self._feed()
-        if feed is None:
-            return {}
-        probe = getattr(feed, "auth_rejection", None)
-        if callable(probe):
-            try:
-                result = probe()
-                return dict(result) if isinstance(result, dict) else {}
-            except Exception:
-                return {}
-        # Legacy doubles without the latch: fall back to the historic
-        # broker-rejected exit signal (same semantics, narrower source).
-        fstate = self._feed_status_dict(feed)
-        if (fstate.get("state") == "auth_required"
-                and fstate.get("last_exit_reason") == "broker_rejected_token"):
-            return {"rejected": True, "at": None, "legacy": True}
-        return {"rejected": False, "at": None, "legacy": True}
+        return self._session.rejection_evidence()
 
     def invalidate_on_rejection(
         self, restore_state: dict | None = None,
@@ -199,37 +153,12 @@ class UpstoxAuthService:
         the runtime credential is cleared to None. Returns True when the
         session was invalidated.
         """
-        evidence = self.rejection_evidence()
-        if not evidence.get("rejected"):
-            return False
-        feed = self._feed()
-        if feed is not None:
-            try:
-                feed.update_credentials(None)
-            except Exception:
-                logger.exception("upstox: failed to clear rejected runtime")
-        try:
-            self._storage.clear_upstox_session()
-            self._storage.save_status("upstox", AuthState.REJECTED)
-        except Exception:
-            logger.exception("upstox: failed to clear rejected session")
-        if restore_state is not None:
-            restore_state["upstox_restored"] = False
-        return True
+        return self._session.note_rejection(restore_state)
 
     # -- logout -------------------------------------------------------------
     def logout(self, restore_state: dict | None = None) -> dict[str, Any]:
-        self._storage.clear_upstox_session()
-        self._storage.save_status("upstox", AuthState.FORGOTTEN)
-        feed = self._feed()
-        if feed is not None:
-            try:
-                feed.update_credentials(None)
-            except Exception:
-                logger.exception("failed to reset upstox runtime creds")
-        if restore_state is not None:
-            restore_state["upstox_restored"] = False
-        return {"ok": True}
+        """Forget the stored session (the API credentials are untouched)."""
+        return self._session.logout(restore_state)
 
     # -- status ---------------------------------------------------------------
     def status(self, sources_cfg: dict | None,
@@ -256,8 +185,14 @@ class UpstoxAuthService:
         }
         base["auth_code_pending"] = self._storage.has_pending_auth_code()
 
-        # 1) Genuine rejection wins: invalidate first so every projected
-        # field reflects the resulting storage/runtime state.
+        # 1) Genuine rejection wins. A broker that REFUSED the token must
+        # not leave a dead session in place, so the session IS rolled back
+        # here. The invalidation is TOKEN-SPECIFIC and IDEMPOTENT
+        # (``note_rejection``): it only ever clears the token the broker
+        # actually refused, a session issued AFTER the rejection survives,
+        # and repeated polls of the SAME rejection do nothing. That is what
+        # stops a status poll from wiping a freshly stored token and
+        # driving the user into a login loop.
         if self.rejection_evidence().get("rejected"):
             self.invalidate_on_rejection(restore_state)
             base.update({
@@ -276,6 +211,17 @@ class UpstoxAuthService:
                 "session_restored": False,
                 "last_auth_status": self._storage.load_status("upstox"),
             })
+            # The feed facts live BESIDE the auth decision (never inside
+            # it): a rejected session still reports whether the feed is
+            # authorized, so a feed problem is never presented as "log in
+            # again".
+            base["user_login_required"] = True
+            base["feed_authorized"] = fstate.get("state") == "streaming"
+            base["last_authorize_attempt"] = fstate.get("last_connected_at")
+            base["connect_attempts"] = fstate.get("connect_attempts")
+            base["reconnect_count"] = fstate.get("reconnect_count")
+            base["consecutive_rejections"] = self._session.rejection_count()
+            base["last_rejection_at"] = self._session.last_rejection_at()
             self._project_feed(base, feed, fstate)
             return base
 
@@ -335,6 +281,20 @@ class UpstoxAuthService:
         base["auth_state"] = auth_state
         base["authenticated"] = (auth_state == AuthState.AUTHENTICATED)
         base["login_required"] = (auth_state != AuthState.AUTHENTICATED)
+        # A USER login is required only when there is no usable session at
+        # all. The market-data feed authorization is a SEPARATE step (a
+        # one-time authorized WebSocket URI per connection) and is reported
+        # on its own, so a feed problem is never presented as "log in
+        # again".
+        base["user_login_required"] = not bool(
+            runtime_usable or (session is not None and not durable_expired))
+        base["feed_authorized"] = fstate.get("state") == "streaming"
+        base["feed_state"] = fstate.get("state", "unknown")
+        base["last_authorize_attempt"] = fstate.get("last_connected_at")
+        base["connect_attempts"] = fstate.get("connect_attempts")
+        base["reconnect_count"] = fstate.get("reconnect_count")
+        base["consecutive_rejections"] = self._session.rejection_count()
+        base["last_rejection_at"] = self._session.last_rejection_at()
         self._project_feed(base, feed, fstate)
         return base
 

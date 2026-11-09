@@ -44,12 +44,40 @@ logger = logging.getLogger(__name__)
 # Default refresh cadence.
 DEFAULT_REFRESH_INTERVAL_SECONDS = 60.0
 MIN_REFRESH_INTERVAL_SECONDS = 30.0
-DEFAULT_STALE_AFTER_SECONDS = 300.0
+# The freshness window of the analytics snapshot. It follows the SHARED
+# canonical quote service's default window, so an analytics verdict and a
+# quote payload never disagree about whether a value is fresh.
+DEFAULT_STALE_AFTER_SECONDS = 120.0
 DEFAULT_MAX_CONCURRENT_REFRESHES = 4
 
 # Retry backoff constants.
 INITIAL_RETRY_DELAY = 5.0
 MAX_RETRY_DELAY = 60.0
+
+# The chain-key prefix used by the condition-alert engine.
+ANALYTICS_KEY_PREFIX = "analytics:"
+
+
+def parse_chain_key(chain_key: str) -> tuple[str, str]:
+    """Split a chain key into ``(canonical_id, expiry)``.
+
+    The chain key is ``"analytics:<canonical_id>:<expiry>"``. A canonical
+    id itself contains colons (e.g.
+    ``NSE:OPTION:ADANIGREEN:2026-10-27:1300:CE``), so the two fields are
+    separated on their LAST delimiter — splitting on the FIRST delimiter
+    truncated the canonical id and corrupted the expiry.
+
+    Returns ``("", "")`` for an unparseable key.
+    """
+    key = (chain_key or "").strip()
+    if key.startswith(ANALYTICS_KEY_PREFIX):
+        key = key[len(ANALYTICS_KEY_PREFIX):]
+    if ":" not in key:
+        return "", ""
+    canonical_id, _, expiry = key.rpartition(":")
+    if not canonical_id or not expiry:
+        return "", ""
+    return canonical_id, expiry
 
 
 class MarketAnalyticsService:
@@ -59,12 +87,17 @@ class MarketAnalyticsService:
         self,
         market_service: Any,
         instrument_catalog: Any = None,
+        chain_service: Any = None,
         refresh_interval: float = DEFAULT_REFRESH_INTERVAL_SECONDS,
         stale_after: float = DEFAULT_STALE_AFTER_SECONDS,
         max_concurrent_refreshes: int = DEFAULT_MAX_CONCURRENT_REFRESHES,
     ) -> None:
         self._market_service = market_service
         self._instrument_catalog = instrument_catalog
+        # The service that FETCHES a chain snapshot. It is NOT the quote
+        # store (MarketService has no option_chain method); it is the
+        # provider-backed market-data service.
+        self._chain_service = chain_service or market_service
         self._refresh_interval = max(
             MIN_REFRESH_INTERVAL_SECONDS, refresh_interval)
         self._stale_after = stale_after
@@ -89,6 +122,18 @@ class MarketAnalyticsService:
     @property
     def stale_after_seconds(self) -> float:
         return self._stale_after
+
+    # ── Chain service ───────────────────────────────────────────────────────
+
+    def set_chain_service(self, chain_service: Any) -> None:
+        """Wire the service that FETCHES chain snapshots.
+
+        The quote store (``MarketService``) exposes no ``option_chain``
+        method, so it can never be the chain source; the provider-backed
+        market-data service is.
+        """
+        if chain_service is not None:
+            self._chain_service = chain_service
 
     # ── Chain registry ──────────────────────────────────────────────────────
 
@@ -194,48 +239,68 @@ class MarketAnalyticsService:
                     "analytics refresh failed for %s: %s",
                     chain_key, type(exc).__name__)
 
+    def _resolve_underlying_row(self, exchange: str,
+                                underlying: str) -> dict[str, Any] | None:
+        """The catalogue row for a canonical id's underlying.
+
+        The EXACT-symbol read model is used: the general catalogue search is
+        a substring LIKE with a LIMIT, so a lookup for "NSE" (or a short
+        symbol) could resolve to an unrelated row — a bond, a different
+        instrument — and the chain would then be fetched for the wrong
+        instrument entirely.
+        """
+        catalog = self._instrument_catalog
+        if catalog is None:
+            return None
+        want = (underlying or "").strip().upper()
+        if not want:
+            return None
+        for instrument_type in ("INDEX", "EQUITY"):
+            try:
+                if instrument_type == "INDEX":
+                    row = catalog.find_index(want, exchange=exchange)
+                else:
+                    row = catalog.find_equity(want, exchange=exchange)
+            except Exception:
+                row = None
+            if row:
+                return row
+        return None
+
     async def _do_refresh(self, chain_key: str) -> None:
-        """Fetch chain from MarketService and compute analytics."""
-        # Parse chain_key: "analytics:canonical_id:expiry"
-        key = chain_key
-        if key.startswith("analytics:"):
-            key = key[len("analytics:"):]
-        parts = key.split(":", 1)
-        if len(parts) != 2:
+        """Fetch chain from the chain service and compute analytics.
+
+        The chain identity is parsed STRUCTURALLY: the canonical id and
+        the expiry are separated on their LAST delimiter, because a
+        canonical id itself contains colons
+        (``NSE:OPTION:ADANIGREEN:2026-10-27:1300:CE``). Splitting on the
+        first colon truncated the canonical id to ``NSE`` and turned the
+        expiry into the rest of the id — the chain then resolved to a
+        random catalogue row (a bond) instead of the intended underlying.
+        """
+        canonical_id, expiry = parse_chain_key(chain_key)
+        if not canonical_id or not expiry:
             logger.error("invalid chain_key format: %r", chain_key)
             return
-        canonical_id, expiry = parts
         # Extract exchange and underlying from canonical_id.
         # Format: "EXCHANGE:TYPE:SYMBOL" or "EXCHANGE:TYPE:SYMBOL:EXPIRY:STRIKE:OPT"
         id_parts = canonical_id.split(":")
         exchange = id_parts[0] if id_parts else ""
         underlying = id_parts[-1] if id_parts else ""
 
-        # Look up the provider instrument key from catalog.
-        # We need the instrument_token for the MarketService call.
-        # For now, use the canonical_id's exchange + underlying to search.
-        rows = []
+        # Look up the provider instrument key from the catalogue.
+        target = None
         if self._instrument_catalog is not None:
-            rows = self._instrument_catalog.search(
-                exchange=exchange, q=underlying, limit=5)
-        if not rows:
+            target = self._resolve_underlying_row(exchange, underlying)
+        if target is None:
             logger.warning("no catalog match for chain %s", chain_key)
             return
-
-        # Pick the best match (exact symbol match preferred).
-        target = None
-        for row in rows:
-            if (row.get("tradingsymbol") or "").upper() == underlying.upper():
-                target = row
-                break
-        if target is None:
-            target = rows[0]
 
         instrument_key = target.get("instrument_token", "")
         tradingsymbol = target.get("tradingsymbol", "")
 
         try:
-            snapshot = await self._market_service.option_chain(
+            snapshot = await self._chain_service.option_chain(
                 instrument_key=instrument_key,
                 exchange=exchange,
                 tradingsymbol=tradingsymbol,
@@ -255,6 +320,15 @@ class MarketAnalyticsService:
         mp_result = compute_max_pain(snapshot)
         iv_result = compute_iv_skew(snapshot)
 
+        # The provider-reported aggregate OI (whole-expiry when the
+        # provider's aggregate scope is proven) is a DIFFERENT scope from
+        # the returned legs — it is carried alongside, never mixed into
+        # the window-scoped values.
+        aggregate_scope = getattr(snapshot, "aggregate_scope",
+                                  "aggregate-unverified")
+        aggregate_call_oi = getattr(snapshot, "call_oi", None)
+        aggregate_put_oi = getattr(snapshot, "put_oi", None)
+
         now = datetime.now(timezone.utc)
         analytics = OptionChainAnalyticsSnapshot(
             chain_key=chain_key,
@@ -267,6 +341,12 @@ class MarketAnalyticsService:
             pcr_volume=pcr_vol_result.get("pcr_volume"),
             max_pain=mp_result.get("max_pain"),
             iv_skew=iv_result.get("skew"),
+            scope=snapshot.scope,
+            provider=getattr(snapshot, "provider", None),
+            aggregate_scope=aggregate_scope,
+            aggregate_call_oi=aggregate_call_oi,
+            aggregate_put_oi=aggregate_put_oi,
+            contracts_considered=len(getattr(snapshot, "strikes", ()) or ()),
             received_ts=now,
             calculated_at=now,
             stale_after_seconds=self._stale_after,
@@ -357,6 +437,9 @@ class MarketAnalyticsService:
                     ),
                     "max_pain": (
                         self._cache[k].max_pain if k in self._cache else None
+                    ),
+                    "scope": (
+                        self._cache[k].scope if k in self._cache else None
                     ),
                 }
                 for k in list(self._dependents.keys())[:20]

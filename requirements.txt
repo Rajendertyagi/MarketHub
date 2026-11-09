@@ -24,6 +24,14 @@ feedparser>=6.0.0,<7.0.0
 # Lower bound: stable Fernet API present since 42; upper bound: next major.
 cryptography>=44.0,<51
 
+# Yahoo Finance AI research capability (yfinance_service/).
+# Unofficial client for Yahoo's public endpoints. AI research/data source ONLY:
+# separate from the broker-authoritative feed, MarketService, and the F&O path.
+# No credentials, no polling loop, no vendored source. yfinance pulls in
+# pandas/numpy/requests transitively, which this capability relies on for
+# DataFrame normalization.
+yfinance>=0.2.54,<2.0
+
 # Test dependencies (required by test/run_all.py and individual test files)
 pytest>=8.0.0
 pytest-asyncio>=1.0.0

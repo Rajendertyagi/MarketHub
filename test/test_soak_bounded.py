@@ -33,7 +33,7 @@ def _rss_mb() -> float:
     except ImportError:
         pass
     try:
-        import win32process  # noqa: F401
+        import win32process  # noqa: F401  (availability probe only)
     except ImportError:
         pass
 
@@ -63,9 +63,8 @@ def _rss_mb() -> float:
 
 
 async def main() -> bool:
-    from market.service import MarketService, QuotePatch
     from app.alerts import AlertEngine
-    from market.models import Quote
+    from market.service import MarketService, QuotePatch
 
     runner = R()
 

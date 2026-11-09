@@ -2,9 +2,8 @@
 
 import pytest
 
-from market.sector_classification import sector_for_symbol, UNCLASSIFIED, known_sectors
+from market.sector_classification import UNCLASSIFIED, known_sectors, sector_for_symbol
 from market.sector_heatmap import compute_sector_heatmap
-from market.market_universe import resolve_universe
 from test.helpers.market_breadth_fakes import (
     FakeCatalog,
     FakeQuoteReader,
@@ -153,7 +152,8 @@ def test_api_contract():
             return {"universe": "FNO", "members": "1"}.get(k, d)
     class Req:
         query_params = QP()
-    import asyncio, json
+    import asyncio
+    import json
     resp = asyncio.run(handler(Req()))
     body = json.loads(resp.body)
     for k in ("universe", "sector_count", "classified_count", "unclassified_count",

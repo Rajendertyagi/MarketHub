@@ -11,14 +11,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from market.models import (
+    DIIActivity,
+    DIIRecord,
+    FIIActivity,
+    FIIRecord,
     FuturesSmartlist,
     FuturesSmartlistEntry,
-    FIIRecord,
-    FIIActivity,
-    DIIRecord,
-    DIIActivity,
 )
-
 
 # ---------------------------------------------------------------------------
 # Futures Smartlist

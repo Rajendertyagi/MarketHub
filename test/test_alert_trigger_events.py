@@ -36,7 +36,7 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 
 def _mk_quote(ltp, token="T1", exchange="NSE", symbol="AAA"):

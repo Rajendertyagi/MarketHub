@@ -9,8 +9,8 @@ from __future__ import annotations
 from typing import Any
 
 from market.models import (
-    ShareholdingRecord,
     ShareholdingCategory,
+    ShareholdingRecord,
     Shareholdings,
 )
 

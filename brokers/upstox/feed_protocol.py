@@ -29,7 +29,8 @@ MessageToDict int64-to-string conversion).
 
 from __future__ import annotations
 
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 from google.protobuf.message import Message
 
@@ -48,7 +49,7 @@ class ProtobufDecodeError(ValueError):
     """A WebSocket frame could not be parsed as a V3 FeedResponse."""
 
 
-def decode_feed_response(buffer: bytes) -> "pb.FeedResponse":
+def decode_feed_response(buffer: bytes) -> pb.FeedResponse:
     """Parse a binary WS frame into a FeedResponse.
 
     Empty frames and undecodable payloads raise ProtobufDecodeError —
@@ -66,12 +67,12 @@ def decode_feed_response(buffer: bytes) -> "pb.FeedResponse":
     return response
 
 
-def feed_type(response: "pb.FeedResponse") -> str:
+def feed_type(response: pb.FeedResponse) -> str:
     """Message type name: 'initial_feed' | 'live_feed' | 'market_info'."""
     return pb.Type.Name(response.type)
 
 
-def which_feed_union(feed_message: "pb.Feed") -> str | None:
+def which_feed_union(feed_message: pb.Feed) -> str | None:
     """Active oneof branch for a Feed message: 'ltpc'|'fullFeed'|
     'firstLevelWithGreeks', or None when nothing is set."""
     return feed_message.WhichOneof("FeedUnion")
@@ -123,7 +124,7 @@ def _message_to_presence_dict(message: Any) -> dict[str, Any]:
 
 
 def iter_instrument_feeds(
-    response: "pb.FeedResponse",
+    response: pb.FeedResponse,
 ) -> Iterator[tuple[str, dict[str, Any]]]:
     """Yield ``(instrument_key, feed_dict)`` for every instrument in the
     frame. ``feed_dict`` carries only wire-present keys (P-ZERO); branch

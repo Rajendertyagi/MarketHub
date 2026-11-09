@@ -146,7 +146,7 @@ async def t9_replay_order(runner: R) -> None:
     await call("consumer_register", {"consumer_id": cid})
 
     seqs = []
-    for i in range(5):
+    for _i in range(5):
         resp = await publish_event(
             "test.t9", source="test", persistent=True,
         )
@@ -381,13 +381,12 @@ async def p8t9_graceful_shutdown(runner: R) -> None:
 
 async def main() -> int:
     runner = R()
-    proc = None
     try:
         # ONE server for the whole file: test_source ON (transient ticks are
         # safe for the persistent-only replay used by T9/T11/T12), http_poller
         # OFF (avoids dead-port noise). P8T7's http-poller check lives in
         # test_source_dedup.py as a direct, server-less test.
-        proc = await start_server({
+        await start_server({
             "sources": {
                 "http_poller": {"enabled": False},
                 "test_source": {

@@ -36,15 +36,14 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from core.persistence import store as store_mod  # noqa: E402
-from sources.http_poller import HttpJsonPoller  # noqa: E402
-from sources import create_publisher  # noqa: E402
-from mcp.server.subscriptions import InMemorySubscriptionBus  # noqa: E402
+from helpers.mock_http import start_mock
+from helpers.runner import R
+from helpers.wait import wait_for_value
+from mcp.server.subscriptions import InMemorySubscriptionBus
 
-from helpers.runner import R  # noqa: E402
-from helpers.mock_http import start_mock  # noqa: E402
-from helpers.wait import wait_for_value  # noqa: E402
-
+from core.persistence import store as store_mod
+from sources import create_publisher
+from sources.http_poller import HttpJsonPoller
 
 # ---------------------------------------------------------------------------
 # DB helpers

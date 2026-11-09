@@ -9,19 +9,23 @@ if _PROJECT_DIR not in sys.path:
 
 import os as _os
 import sys as _sys
+
 _sd = _os.path.dirname(_os.path.abspath(__file__))
 _pd = _os.path.dirname(_sd)
 for _p in (_pd, _sd):
-    if _p not in _sys.path: _sys.path.insert(0, _p)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
 from helpers.runner import R
 
 
 def test_fyers_auth_and_adapters(runner: R) -> None:
+    from app.market_data import ProviderMarketData, ProviderMarketDataError
     from brokers.fyers.auth import FyersAuth, app_id_hash
     from market.normalize.fyers import (
-        candles_from_history, option_chain_from_rest, fyers_resolution,
+        candles_from_history,
+        fyers_resolution,
+        option_chain_from_rest,
     )
-    from app.market_data import ProviderMarketData, ProviderMarketDataError
 
     # Auth: URL + hash + exchange via fake transport.
     auth = FyersAuth(app_id="APP-1", secret_id="SEC",
@@ -62,7 +66,7 @@ def test_fyers_auth_and_adapters(runner: R) -> None:
     runner.assert_true("FH-tz-aware", cs[0].timestamp.tzinfo is not None)
 
     oc = option_chain_from_rest(
-        {"data": {"options": [
+        {"data": {"optionsChain": [
             {"strike_price": 24500, "option_type": "", "ltp": 24510.5},
             {"strike_price": 24500, "option_type": "CE", "ltp": 120.5,
              "oi": 1500000, "prev_oi": 1400000, "oich": 100000,

@@ -33,7 +33,7 @@ translation, exchange-specific rules, session logic — is deferred.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 __all__ = [
@@ -255,6 +255,15 @@ class Quote:
     #                                           reported separately from the
     #                                           provider feed timestamp
     greeks: OptionGreeks | None = None    # option risk metrics (options only)
+    canonical_id: str | None = None       # provider-neutral canonical id
+    # (resolved via MarketInstrumentIdentityResolver)
+    # ── CAS (Closing Auction Session) fields (Upstox V3) ──────────────────
+    cas_eligible: bool | None = None
+    indicative_equilibrium_price: float | None = None
+    reference_price: float | None = None
+    indicative_equilibrium_qty: float | None = None
+    indicative_imbalance_qty: float | None = None
+    market_indicative_imbalance_qty: float | None = None
 
     def __post_init__(self) -> None:
         _require_identity("Quote", self)
@@ -369,7 +378,13 @@ class Candle:
 
 @dataclass(frozen=True, slots=True)
 class OptionContractData:
-    """Market data + greeks for one option contract (CE or PE)."""
+    """Market data + greeks for one option contract (CE or PE).
+
+    ``provider`` and ``native_key`` carry the PROVENANCE of this leg: the
+    provider that supplied it and the provider-native identifier of the
+    contract. They are what makes a leg attributable — a strike alone
+    identifies neither the expiry, the side, nor the provider's contract.
+    """
 
     ltp: float | None = None
     volume: int | None = None
@@ -378,6 +393,8 @@ class OptionContractData:
     oi: float | None = None
     previous_oi: float | None = None
     oi_change: float | None = None
+    oi_change_percent: float | None = None   # OI-change %, when the provider
+    #                                       reports it (Fyers ``oichp``)
     close: float | None = None
     iv: float | None = None
     delta: float | None = None
@@ -386,6 +403,10 @@ class OptionContractData:
     vega: float | None = None
     pop: float | None = None   # probability of profit, when provider supplies
 
+    # Provenance of THIS leg.
+    provider: str | None = None
+    native_key: str | None = None
+
 
 @dataclass(frozen=True, slots=True)
 class OptionStrikeRow:
@@ -393,6 +414,9 @@ class OptionStrikeRow:
     call: OptionContractData | None = None
     put: OptionContractData | None = None
     atm: bool = False
+    # Provenance of the row's legs (the provider that supplied them).
+    provider: str | None = None
+    native_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -404,6 +428,40 @@ class OptionChainSnapshot:
     spot_price: float | None = None
     atm_strike: float | None = None
     strikes: tuple[OptionStrikeRow, ...] = ()
+
+    # ---- Provenance (Phase D) -------------------------------------------
+    # The provider that served this chain, and the provider-native
+    # identifier of the UNDERLYING it was requested for. A chain is
+    # single-provider: these identify WHICH provider's data this is.
+    provider: str | None = None
+    native_underlying_key: str | None = None
+    # The provider-neutral canonical id of the underlying.
+    canonical_underlying_id: str | None = None
+    # The expiry the provider ACTUALLY served (may differ from the
+    # requested expiry — the response is checked, never assumed).
+    actual_expiry: str | None = None
+    # When the chain was received (freshness provenance).
+    received_at: datetime | None = None
+
+    # Provider-reported aggregate OI for the requested expiry. Scope is
+    # UNVERIFIED (never labelled whole-expiry) — the analytics layer labels
+    # the scope (``aggregate-unverified``) explicitly.
+    call_oi: float | None = None
+    put_oi: float | None = None
+
+    # Analytics scope of this chain's source: ``window`` (returned strike
+    # rows), ``whole-expiry`` (full chain), or ``aggregate-unverified``
+    # (provider-reported aggregate). Carried so analytics results can be
+    # labelled honestly; never implied by strike count.
+    scope: str = "window"
+
+    # Scope of the PROVIDER-REPORTED aggregate OI (call_oi/put_oi).
+    # Distinct from ``scope`` (the scope of the returned strike rows).
+    # ``whole-expiry`` is claimed only where the provider's aggregate is
+    # EVIDENCED to cover the full expiry (Fyers: the aggregate is
+    # constant across every strikecount while the leg-sum varies, and it
+    # exceeds the widest window).
+    aggregate_scope: str = "aggregate-unverified"
 
     def __post_init__(self) -> None:
         if not isinstance(self.tradingsymbol, str):
@@ -531,6 +589,23 @@ class OptionChainAnalyticsSnapshot:
     pcr_volume: float | None = None
     max_pain: float | None = None
     iv_skew: float | None = None
+
+    # Scope of the analytics inputs: ``window`` | ``aggregate-unverified``
+    # | ``whole-expiry``. Never implied by strike count.
+    scope: str = "window"
+
+    # Provenance of the analytics inputs: the provider that supplied the
+    # chain, and the scope of the provider-reported aggregate OI (which is
+    # a DIFFERENT axis from ``scope`` — the scope of the returned legs).
+    provider: str | None = None
+    aggregate_scope: str = "aggregate-unverified"
+    # The provider-reported aggregate OI totals (whole-expiry when the
+    # provider's aggregate scope is proven). None when the provider does
+    # not report them.
+    aggregate_call_oi: float | None = None
+    aggregate_put_oi: float | None = None
+    # Number of contracts that contributed to the computed analytics.
+    contracts_considered: int = 0
 
     # Freshness metadata.
     received_ts: datetime | None = None
@@ -758,18 +833,6 @@ class NewsPagination:
     page_number: int | None = None
     page_size: int | None = None
     total_pages: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class NewsSnapshot:
-    """Enhanced news response with pagination."""
-    instrument_token: str | None = None
-    category: str | None = None
-    articles: tuple[NewsArticle, ...] = ()
-    pagination: NewsPagination | None = None
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "articles", tuple(self.articles))
 
 # ---------------------------------------------------------------------------
 # Margin Calculator models

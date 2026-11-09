@@ -8,8 +8,6 @@ app/server.py special-casing.
 
 from __future__ import annotations
 
-import inspect
-import json
 import os
 import sys
 
@@ -20,7 +18,7 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 TOKEN = "SYNTHETIC_ACCESS_TOKEN_XYZ"
 KEY = "NSE_EQ|INE848E01016"
@@ -126,7 +124,7 @@ def test_registry_bad_mode(runner: R) -> None:
     name = "W4-bad-mode"
     from sources import SourceConfigError, build_source_manager
 
-    cfg = {"upstox": _make_config(mode="option_greeks")}
+    cfg = {"upstox": _make_config(mode="mega")}
     _expect_raises(runner, name + "-bad-mode", SourceConfigError,
                    lambda: build_source_manager(cfg, market_service=object()))
 
@@ -164,8 +162,7 @@ def test_no_publish_event_in_feed(runner: R) -> None:
 # ---------------------------------------------------------------------------
 
 
-import os  # noqa: E402
-
+import os
 
 # ---------------------------------------------------------------------------
 # Main

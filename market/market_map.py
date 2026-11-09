@@ -15,9 +15,10 @@ independent aggregation engine.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any
 
 from .breadth import compute_breadth, effective_change
 from .sector_classification import UNCLASSIFIED, sector_for_symbol

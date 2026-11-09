@@ -9,8 +9,9 @@ flow, runtime token owned by FyersRuntimeAuth, durable material encrypted.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any
 
 from app.auth.models import (
     AuthState,

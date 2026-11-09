@@ -122,29 +122,61 @@ class ConfigError(Exception):
     """Raised when configuration is invalid."""
 
 
+#: Explicit per-run overrides for the listen address.
+#:
+#: ``config.json`` is the source of truth for the host and the port. These
+#: environment variables exist so an ISOLATED run (the test suite, a
+#: second instance) can bind a different port WITHOUT ever rewriting the
+#: user's config file - rewriting it is what used to leave a random test
+#: port behind in config.json.
+HOST_ENV = "MARKETHUB_HOST"
+PORT_ENV = "MARKETHUB_PORT"
+
+
+def _env_override(config: dict[str, Any]) -> dict[str, Any]:
+    """Apply the explicit per-run host/port overrides (if any)."""
+    host = os.environ.get(HOST_ENV, "").strip()
+    if host:
+        config["host"] = host
+        logger.info("listen host overridden by %s: %s", HOST_ENV, host)
+    port = os.environ.get(PORT_ENV, "").strip()
+    if port:
+        try:
+            config["port"] = int(port)
+        except ValueError:
+            raise ConfigError(
+                f"{PORT_ENV} must be an integer (got {port!r})") from None
+        logger.info("listen port overridden by %s: %s", PORT_ENV, port)
+    return config
+
+
 def load_config(config_path: str) -> dict[str, Any]:
     """
     Load and validate configuration from config.json.
 
     Returns a merged dict: explicit config values override defaults.
     Missing file is not an error — defaults are used.
+
+    The listen host and port come from ``config.json``; an explicit
+    per-run override (``MARKETHUB_HOST`` / ``MARKETHUB_PORT``) wins over
+    the file without ever modifying it.
     """
     config: dict[str, Any] = {k: dict(v) if isinstance(v, dict) else v for k, v in DEFAULTS.items()}
 
     if not os.path.isfile(config_path):
         logger.info("config.json not found — using built-in defaults")
-        return config
+        return _env_override(config)
 
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             user_config = json.load(f)
     except json.JSONDecodeError as exc:
         raise ConfigError(
-            "config.json contains invalid JSON: {0}".format(exc)
+            f"config.json contains invalid JSON: {exc}"
         ) from exc
     except OSError as exc:
         raise ConfigError(
-            "Unable to read config.json: {0}".format(exc)
+            f"Unable to read config.json: {exc}"
         ) from exc
 
     if not isinstance(user_config, dict):
@@ -167,7 +199,7 @@ def load_config(config_path: str) -> dict[str, Any]:
         else:
             config[key] = value
 
-    return config
+    return _env_override(config)
 
 
 def validate_config(config: dict[str, Any]) -> None:
@@ -179,8 +211,8 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ConfigError("'host' must be a non-empty string")
     if host in ("0.0.0.0", "::", "*"):
         raise ConfigError(
-            "Refusing to bind to '{0}': this exposes the server to the network. "
-            "Set 'host' to 127.0.0.1 (or a specific LAN IP) in config.json.".format(host)
+            f"Refusing to bind to '{host}': this exposes the server to the network. "
+            "Set 'host' to 127.0.0.1 (or a specific LAN IP) in config.json."
         )
 
     port = config.get("port")
@@ -191,7 +223,7 @@ def validate_config(config: dict[str, Any]) -> None:
     log_level = config.get("log_level", "INFO").upper()
     if log_level not in valid_levels:
         raise ConfigError(
-            "'log_level' must be one of: {0}".format(", ".join(valid_levels))
+            "'log_level' must be one of: {}".format(", ".join(valid_levels))
         )
 
     base_url = config.get("public_base_url", "http://localhost:7070")
@@ -286,7 +318,7 @@ def _normalize_base_url(raw: Any) -> str:
     _netloc = _parts.netloc.lower()
     if _scheme not in ("http", "https") or not _netloc:
         return ""
-    return "{0}://{1}".format(_scheme, _netloc)
+    return f"{_scheme}://{_netloc}"
 
 
 def get_public_base_url(config: dict[str, Any]) -> str:
@@ -309,4 +341,4 @@ def oauth_callback_url(base_url: str, provider: str) -> str:
     so trailing slashes / stray paths cannot produce mismatched redirects.
     """
     base = _normalize_base_url(base_url) or _DEFAULT_BASE_URL
-    return "{0}/auth/{1}/callback".format(base, provider)
+    return f"{base}/auth/{provider}/callback"

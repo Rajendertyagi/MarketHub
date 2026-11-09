@@ -19,13 +19,13 @@ _PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_DIR not in sys.path:
     sys.path.insert(0, _PROJECT_DIR)
 
-from app.instruments import (  # noqa: E402
+from app.instruments import (
     InstrumentCatalog,
     fyers_master_records,
     upstox_master_records,
 )
-from core.persistence.store import EventStore  # noqa: E402
-from market import derivatives_universe as du  # noqa: E402
+from core.persistence.store import EventStore
+from market import derivatives_universe as du
 
 _FYERS_EXPIRY = "1790706600"
 

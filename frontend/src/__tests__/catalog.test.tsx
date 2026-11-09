@@ -1,16 +1,40 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/api/market", () => ({
   searchMarketInstruments: vi.fn(),
+  browseInstruments: vi.fn(),
   getOptionChainView: vi.fn(),
   resolveMarketInstrument: vi.fn(),
 }));
 
-import { searchMarketInstruments } from "@/api/market";
+import { browseInstruments, searchMarketInstruments } from "@/api/market";
 import { CatalogView } from "@/features/catalog/CatalogView";
-import type { MarketInstrument } from "@/types";
+import type { BrowseResponse, MarketInstrument } from "@/types";
+
+const RELIANCE: MarketInstrument = {
+  instrument_key: "NSE:NSE:RELIANCE-EQ",
+  provider: "fyers",
+  provider_token: "NSE:RELIANCE-EQ",
+  native_key: "NSE:RELIANCE-EQ",
+  canonical_id: "nse_eq:RELIANCE",
+  symbol: "RELIANCE",
+  display_name: "Reliance Industries",
+  exchange: "NSE",
+  type: "EQUITY",
+  lot_size: 1,
+};
+
+const NIFTY: MarketInstrument = {
+  instrument_key: "NSE:NSE:NIFTY",
+  provider: "fyers",
+  provider_token: "NSE:NIFTY",
+  symbol: "NIFTY",
+  display_name: "Nifty 50",
+  exchange: "NSE",
+  type: "INDEX",
+};
 
 const OPTION: MarketInstrument = {
   instrument_key: "NFO:NFO:RELIANCE26OCT1500CE",
@@ -30,6 +54,11 @@ const OPTION: MarketInstrument = {
 };
 
 const mockSearch = searchMarketInstruments as ReturnType<typeof vi.fn>;
+const mockBrowse = browseInstruments as ReturnType<typeof vi.fn>;
+
+function page(results: MarketInstrument[]): BrowseResponse {
+  return { count: results.length, results, next_cursor: null, total: results.length };
+}
 
 function ChartProbe() {
   const loc = useLocation();
@@ -55,16 +84,54 @@ async function pickRelianceOption() {
   fireEvent.click(await screen.findByRole("option", { name: /RELIANCE26OCT1500CE/ }));
 }
 
+beforeEach(() => {
+  mockBrowse.mockResolvedValue(page([]));
+});
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
 });
 
 describe("CatalogView", () => {
-  it("starts empty and asks for a query", () => {
+  it("opens browse-first: instruments load without a search query", async () => {
+    mockBrowse.mockResolvedValue(page([NIFTY, RELIANCE]));
     renderCatalog();
-    expect(screen.getByText(/Type a symbol to browse the canonical catalog/)).toBeInTheDocument();
-    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+
+    expect(await screen.findByRole("option", { name: /NIFTY/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /RELIANCE/ })).toBeInTheDocument();
+    expect(mockBrowse).toHaveBeenCalledWith(
+      expect.objectContaining({ types: ["INDEX", "EQUITY", "ETF", "FUTURE"], limit: 50 }),
+      expect.anything(),
+    );
+    expect(mockSearch).not.toHaveBeenCalled();
+    expect(screen.getByRole("tab", { name: "All" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("switches category through the backend and resets the page", async () => {
+    mockBrowse.mockImplementation((params: { types?: string[] }) =>
+      Promise.resolve(
+        page(
+          params.types?.length === 1 && params.types[0] === "INDEX" ? [NIFTY] : [NIFTY, RELIANCE],
+        ),
+      ),
+    );
+    renderCatalog();
+    await screen.findByRole("option", { name: /RELIANCE/ });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Indices" }));
+
+    await waitFor(() =>
+      expect(mockBrowse).toHaveBeenLastCalledWith(
+        expect.objectContaining({ types: ["INDEX"] }),
+        expect.anything(),
+      ),
+    );
+    expect(mockBrowse.mock.calls.at(-1)?.[0].cursor).toBeUndefined();
+    await waitFor(() =>
+      expect(screen.queryByRole("option", { name: /^RELIANCE/ })).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("tab", { name: "Indices" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("renders the selected row from the compact canonical fields", async () => {
@@ -102,17 +169,49 @@ describe("CatalogView", () => {
     expect(params.get("key")).not.toBe(OPTION.instrument_key);
   });
 
-  it("returns focus to the search input after picking a result", async () => {
+  it("searches beyond the loaded browse page and clears back to the category", async () => {
+    mockBrowse.mockResolvedValue(page([NIFTY]));
     renderCatalog();
-    await pickRelianceOption();
-    expect(searchBox()).toHaveFocus();
+    await screen.findByRole("option", { name: /NIFTY/ });
+
+    mockSearch.mockResolvedValue([RELIANCE]);
+    fireEvent.change(searchBox(), { target: { value: "RELIANCE" } });
+    expect(await screen.findByRole("option", { name: /RELIANCE/ })).toBeInTheDocument();
+    expect(mockSearch).toHaveBeenCalledWith(
+      expect.objectContaining({ q: "RELIANCE" }),
+      expect.anything(),
+    );
+    expect(mockSearch.mock.calls.at(-1)?.[0].types).toBeUndefined();
+    expect(screen.queryByRole("option", { name: /NIFTY/ })).not.toBeInTheDocument();
+
+    fireEvent.change(searchBox(), { target: { value: "" } });
+    expect(await screen.findByRole("option", { name: /NIFTY/ })).toBeInTheDocument();
   });
 
-  it("clears the selection back to the empty state", async () => {
+  it("applies the exchange filter on the backend", async () => {
+    mockBrowse.mockResolvedValue(page([NIFTY]));
     renderCatalog();
-    await pickRelianceOption();
+    await screen.findByRole("option", { name: /NIFTY/ });
+
+    fireEvent.change(screen.getByLabelText("Filter by exchange"), { target: { value: "BSE" } });
+
+    await waitFor(() =>
+      expect(mockBrowse).toHaveBeenLastCalledWith(
+        expect.objectContaining({ exchange: "BSE" }),
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("clears the selection while keeping the browse list available", async () => {
+    mockBrowse.mockResolvedValue(page([RELIANCE]));
+    renderCatalog();
+    fireEvent.click(await screen.findByRole("option", { name: /RELIANCE/ }));
     fireEvent.click(screen.getByRole("button", { name: "Clear" }));
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
-    expect(screen.getByText(/Type a symbol to browse the canonical catalog/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Pick an instrument above to inspect its canonical identity/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /RELIANCE/ })).toBeInTheDocument();
   });
 });

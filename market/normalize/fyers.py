@@ -24,7 +24,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from market.models import Depth, DepthLevel, Instrument, OptionGreeks, Quote
+from market.models import (
+    Depth,
+    DepthLevel,
+    Instrument,
+    OptionContractData,
+    OptionGreeks,
+    Quote,
+)
 from market.normalize.common import (
     NormalizationError,
     apply_derived_change,
@@ -456,15 +463,15 @@ def candles_from_history(payload: dict[str, Any]):
             continue
         try:
             ts = parse_timestamp(row[0], unit="s", field="history.ts")
-            o, h, l, c = (to_float(row[1], field="h.o"),
-                          to_float(row[2], field="h.h"),
-                          to_float(row[3], field="h.l"),
-                          to_float(row[4], field="h.c"))
+            o, h, low, c = (to_float(row[1], field="h.o"),
+                            to_float(row[2], field="h.h"),
+                            to_float(row[3], field="h.l"),
+                            to_float(row[4], field="h.c"))
         except NormalizationError:
             continue
         vol = to_int(row[5], field="h.v") \
             if len(row) > 5 and row[5] is not None else None
-        out.append(Candle(timestamp=ts, open=o, high=h, low=l, close=c,
+        out.append(Candle(timestamp=ts, open=o, high=h, low=low, close=c,
                           volume=vol))
     return out
 
@@ -474,10 +481,8 @@ def candles_from_history(payload: dict[str, Any]):
 # ---------------------------------------------------------------------------
 
 
-def _leg_contract(leg: dict[str, Any]) -> "OptionContractData | None":
-    from market.models import OptionContractData
-
-
+def _leg_contract(leg: dict[str, Any], *, provider: str = "fyers",
+                  ) -> OptionContractData | None:
     def num(key: str, src=None) -> float | None:
         raw = (src or leg).get(key)
         try:
@@ -491,28 +496,46 @@ def _leg_contract(leg: dict[str, Any]) -> "OptionContractData | None":
         return int(f) if f is not None else None
 
     greeks = leg.get("greeks") if isinstance(leg.get("greeks"), dict) else {}
+    # Fyers options-chain reports IV as a PERCENT (14.2 = 14.2%); the canonical
+    # contract is a decimal FRACTION (0.142). Convert at this boundary.
     iv_raw = greeks.get("iv")
+    iv = None
+    if iv_raw is not None:
+        try:
+            iv = float(iv_raw) / 100.0
+        except (TypeError, ValueError):
+            iv = None
     return OptionContractData(
         ltp=num("ltp"), volume=integer("volume"),
         bid=num("bid"), ask=num("ask"),
         oi=num("oi"), previous_oi=num("prev_oi"),
-        oi_change=num("oich"),
+        oi_change=num("oich"), oi_change_percent=num("oichp"),
         close=None,
-        iv=num("iv", greeks),
+        iv=iv,
         delta=num("delta", greeks), gamma=num("gamma", greeks),
         theta=num("theta", greeks), vega=num("vega", greeks),
         pop=None,
+        provider=provider,
+        native_key=(leg.get("symbol") or None),
     )
 
 
 def option_chain_from_rest(payload: dict[str, Any], *,
                            instrument_token: str, exchange: str,
-                           tradingsymbol: str = "", expiry: str):
+                           tradingsymbol: str = "", expiry: str,
+                           provider: str = "fyers",
+                           native_underlying_key: str | None = None,
+                           received_at: Any = None):
     """Normalize a Fyers options-chain-v3 response into the SAME canonical
     OptionChainSnapshot used for Upstox (cross-provider equivalence).
 
     Spot price comes from the underlying leg (option_type == "").
     ATM is the strike nearest to spot (deterministic).
+
+    The snapshot carries the PROVENANCE of the chain: the provider that
+    served it, the provider-native identifier of the underlying, and the
+    expiry the provider ACTUALLY reported. Every leg is attributed to that
+    provider.
     """
     if not isinstance(payload, dict):
         raise NormalizationError("fyers option chain: expected object")
@@ -522,7 +545,7 @@ def option_chain_from_rest(payload: dict[str, Any], *,
 
     by_strike: dict[float, dict[str, OptionContractData | None]] = {}
     spot: float | None = None
-    for leg in data.get("options") or []:
+    for leg in data.get("optionsChain") or []:
         if not isinstance(leg, dict):
             continue
         opt_type = leg.get("option_type")
@@ -535,11 +558,20 @@ def option_chain_from_rest(payload: dict[str, Any], *,
             continue
         slot = by_strike.setdefault(strike, {})
         if opt_type == "CE":
-            slot["call"] = _leg_contract(leg)
+            slot["call"] = _leg_contract(leg, provider=provider)
         elif opt_type == "PE":
-            slot["put"] = _leg_contract(leg)
+            slot["put"] = _leg_contract(leg, provider=provider)
 
     from market.models import OptionChainSnapshot, OptionStrikeRow
+
+    # Provider-reported aggregate OI for the requested expiry (scope
+    # UNVERIFIED — never labelled whole-expiry by the analytics layer).
+    call_oi = num_or_none(data.get("callOi"))
+    put_oi = num_or_none(data.get("putOi"))
+    if call_oi is None:
+        call_oi = num_or_none(payload.get("callOi"))
+    if put_oi is None:
+        put_oi = num_or_none(payload.get("putOi"))
 
     strikes = sorted(by_strike.keys())
     atm_strike = None
@@ -549,12 +581,26 @@ def option_chain_from_rest(payload: dict[str, Any], *,
         OptionStrikeRow(strike=s,
                         call=by_strike[s].get("call"),
                         put=by_strike[s].get("put"),
-                        atm=(s == atm_strike))
+                        atm=(s == atm_strike),
+                        provider=provider)
         for s in strikes)
+    # The expiry the PROVIDER actually reported for this chain (the
+    # response's own ``date``), not the requested one assumed.
+    actual_expiry = _response_expiry_date(payload) or expiry
     return OptionChainSnapshot(
         instrument_token=instrument_token, exchange=exchange,
-        tradingsymbol=tradingsymbol, expiry=expiry,
-        spot_price=spot, atm_strike=atm_strike, strikes=rows)
+        tradingsymbol=tradingsymbol, expiry=actual_expiry,
+        spot_price=spot, atm_strike=atm_strike, strikes=rows,
+        call_oi=call_oi, put_oi=put_oi, scope="window",
+        # Fyers' callOi/putOi are the FULL-EXPIRY totals: the value is
+        # identical for every strikecount while the sum of the returned
+        # legs varies, and it exceeds the widest returned window (whose
+        # strike range is narrower than the expiry's full listed strikes).
+        aggregate_scope="whole-expiry",
+        provider=provider,
+        native_underlying_key=native_underlying_key or instrument_token,
+        actual_expiry=actual_expiry,
+        received_at=received_at)
 
 
 def num_or_none(v: Any) -> float | None:
@@ -562,4 +608,26 @@ def num_or_none(v: Any) -> float | None:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _response_expiry_date(payload: Any) -> str | None:
+    """The expiry the provider reported for the returned chain (ISO date).
+
+    The chain response carries ``data.date`` (DD-MM-YYYY). When present it
+    is the authoritative expiry for the returned legs — the requested
+    expiry is never assumed.
+    """
+    if not isinstance(payload, dict):
+        return None
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return None
+    date_str = data.get("date")
+    if isinstance(date_str, str) and date_str.strip():
+        try:
+            d, m, y = date_str.strip().split("-")
+            return f"{y}-{m}-{d}"
+        except ValueError:
+            return None
+    return None
 

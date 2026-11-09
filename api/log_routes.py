@@ -12,10 +12,10 @@ import json
 import logging
 from typing import Any
 
+from sse_starlette.sse import EventSourceResponse
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
-from sse_starlette.sse import EventSourceResponse
 
 from core.log_redaction import redact_record
 

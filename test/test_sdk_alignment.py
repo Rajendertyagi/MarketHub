@@ -166,7 +166,12 @@ async def test_extensibility_proof_original_tools_present(runner: R) -> None:
     ]
     for tool in expected_tools:
         runner.assert_in(name + f"-{tool}", tool, tools)
-    runner.assert_eq(name + "-count", len(tools), len(expected_tools))
+    # The registry grows with every product feature: the proof is that all
+    # originally expected tools are STILL present (not that the count is
+    # frozen at the value it had when this test was written).
+    missing = [tool for tool in expected_tools if tool not in tools]
+    runner.assert_eq(name + "-missing", missing, [])
+    runner.assert_ge(name + "-count", len(tools), len(expected_tools))
 
 
 # ---------------------------------------------------------------------------

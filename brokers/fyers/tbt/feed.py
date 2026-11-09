@@ -27,18 +27,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
+from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Optional, Set
+from typing import Any
 
 import websockets
-import httpx
 from websockets.client import connect as ws_connect
 
 from brokers.fyers.tbt.normalizer import normalize_tbt_depth
-from brokers.fyers.tbt.order_book import LocalOrderBook, OrderBookStore
+from brokers.fyers.tbt.order_book import OrderBookStore
 from brokers.fyers.tbt.proto import msg_pb2
-from market.models import Depth
 from market.normalize.common import NormalizationError
 
 logger = logging.getLogger(__name__)
@@ -80,9 +78,9 @@ class FyersTbtFeed:
 
         # State
         self._state = "disconnected"
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
-        self._desired_symbols: Set[str] = set()
+        self._desired_symbols: set[str] = set()
         self._lock = asyncio.Lock()
 
         # Order book state
@@ -106,7 +104,7 @@ class FyersTbtFeed:
         self._ws_url = None
 
         # Channel management
-        self._channel_map: Dict[str, int] = {}  # symbol -> channel
+        self._channel_map: dict[str, int] = {}  # symbol -> channel
         self._next_channel = 1
 
     # -------------------------------------------------------------------------
@@ -146,7 +144,7 @@ class FyersTbtFeed:
             self._state = "stopped"
             logger.info("TBT feed: stopped")
 
-    async def _run_session(self, stop_event: asyncio.Event) -> Optional[str]:
+    async def _run_session(self, stop_event: asyncio.Event) -> str | None:
         """Single connection session with reconnect logic."""
         try:
             # Get auth token
@@ -378,7 +376,7 @@ class FyersTbtFeed:
     # WebSocket URL fetch
     # -------------------------------------------------------------------------
 
-    async def _fetch_ws_url(self, token: str) -> Optional[str]:
+    async def _fetch_ws_url(self, token: str) -> str | None:
         """Fetch dynamic WebSocket URL from Fyers API."""
         try:
             import httpx
@@ -461,7 +459,7 @@ class FyersTbtFeed:
         return self._state == "connected"
 
     @property
-    def desired_symbols(self) -> Set[str]:
+    def desired_symbols(self) -> set[str]:
         """Get desired symbols set."""
         return self._desired_symbols.copy()
 

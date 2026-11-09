@@ -2,11 +2,8 @@
 """Unit tests for the diagnostics runner — classification, redaction, batching."""
 from __future__ import annotations
 
-import json
 import asyncio
 import sys
-import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -140,7 +137,7 @@ class TestSecretRedaction:
 
 class TestBatching:
     def test_one_failure_does_not_abort_batch(self, runner: R) -> None:
-        from app.diagnostics import DiagnosticsRunner, DiagnosticResult
+        from app.diagnostics import DiagnosticResult
         runner_instance = _make_runner()
 
         async def _good_check(_self):
@@ -173,7 +170,7 @@ class TestBatching:
         runner.assert_in("batch_contains_fail", "FAIL", statuses)
 
     def test_summary_counts_all_results(self, runner: R) -> None:
-        from app.diagnostics import DiagnosticsRunner, DiagnosticResult
+        from app.diagnostics import DiagnosticResult, DiagnosticsRunner
         results = [
             DiagnosticResult(id="a", name="A", category="X", layer="Y",
                              status="PASS", message="ok", duration_ms=1),
@@ -194,7 +191,7 @@ class TestBatching:
         runner.assert_eq("sum-skipped", summary.get("SKIPPED"), 1)
 
     def test_timeout_result_becomes_fail(self, runner: R) -> None:
-        from app.diagnostics import DiagnosticsRunner, DiagnosticResult
+        from app.diagnostics import DiagnosticResult
         runner_instance = _make_runner()
 
         async def _slow_check(_self):
@@ -205,8 +202,8 @@ class TestBatching:
                 classification_reason="ok",
             )
 
-        import types
         import asyncio
+        import types
         checks = [types.SimpleNamespace(
             id="slow", name="Slow", category="SYSTEM", layer="SERVICE",
             mode=("quick",), description="", fn=_slow_check, safe_for_auto_run=True,
@@ -262,7 +259,6 @@ class TestParityLogic:
 
 class TestCheckMetadata:
     def test_list_checks_returns_definitions(self, runner: R) -> None:
-        from app.diagnostics import DiagnosticsRunner
         runner_instance = _make_runner()
         checks = runner_instance.list_checks()
         runner.assert_true("checks-not-empty", len(checks) > 0, f"got {len(checks)} checks")
@@ -280,7 +276,7 @@ class TestCheckMetadata:
             runner.assert_in(f"quick-has-{exp}", exp, ids)
 
     def test_full_mode_contains_quick_checks(self, runner: R) -> None:
-        from app.diagnostics import _QUICK_CHECKS, _FULL_CHECKS
+        from app.diagnostics import _FULL_CHECKS, _QUICK_CHECKS
         quick_ids = {c.id for c in _QUICK_CHECKS}
         full_ids = {c.id for c in _FULL_CHECKS}
         runner.assert_true("full-superset", quick_ids.issubset(full_ids),
@@ -293,7 +289,7 @@ class TestCheckMetadata:
         runner.assert_not_in("no-sse-in-python", "sse_connection", ids)
 
     def test_fyers_in_full_only(self, runner: R) -> None:
-        from app.diagnostics import _QUICK_CHECKS, _FULL_CHECKS
+        from app.diagnostics import _FULL_CHECKS, _QUICK_CHECKS
         quick_ids = {c.id for c in _QUICK_CHECKS}
         full_ids = {c.id for c in _FULL_CHECKS}
         runner.assert_true("fyers-in-full", "fyers_feed" in full_ids)
@@ -302,7 +298,7 @@ class TestCheckMetadata:
 
 class TestFullCoverage:
     def test_full_meaningfully_broader_than_quick(self, runner: R) -> None:
-        from app.diagnostics import _QUICK_CHECKS, _FULL_CHECKS
+        from app.diagnostics import _FULL_CHECKS, _QUICK_CHECKS
         quick_ids = {c.id for c in _QUICK_CHECKS}
         full_ids = {c.id for c in _FULL_CHECKS}
         extra = full_ids - quick_ids
@@ -331,7 +327,7 @@ class TestFullCoverage:
                            f"got {set(indices)}")
 
     def test_indices_coverage_in_full(self, runner: R) -> None:
-        from app.diagnostics import _QUICK_CHECKS, _FULL_CHECKS
+        from app.diagnostics import _FULL_CHECKS, _QUICK_CHECKS
         quick_ids = {c.id for c in _QUICK_CHECKS}
         full_ids = {c.id for c in _FULL_CHECKS}
         runner.assert_in("indices-in-full", "indices_coverage", full_ids)
@@ -356,26 +352,22 @@ class TestFullCoverage:
 
 class TestRepresentativeClassification:
     def test_equity_quote_classifies_unavailable_when_no_instrument(self, runner: R) -> None:
-        from app.diagnostics import DiagnosticsRunner, DiagnosticResult
         inst = _make_runner()
 
         async def _no_inst(_self):
             return None
 
-        import types
         inst._resolve_equity = _no_inst
         res = asyncio.run(inst._quote_instrument(None, "equity"))
         runner.assert_eq("equity-unavailable", res.status, "UNAVAILABLE")
 
     def test_option_detail_classifies_legs_present(self, runner: R) -> None:
-        from app.diagnostics import DiagnosticsRunner
         inst = _make_runner()
 
         fake_chain = {"rows": [
             {"strike": 1, "call": {"instrument_key": "X", "oi": 10},
              "put": {"instrument_key": "Y"}},
         ]}
-        import types
         async def _get(path):
             return fake_chain
         inst._get = _get
@@ -386,7 +378,6 @@ class TestRepresentativeClassification:
         runner.assert_in("option-detail-oi-exposed", "oi", res.data["fields_exposed"])
 
     def test_indices_coverage_fails_on_missing(self, runner: R) -> None:
-        from app.diagnostics import DiagnosticsRunner
         inst = _make_runner()
         async def _get(path):
             return {"indices": [{"label": "NIFTY", "symbol": "NSE:NIFTY50-INDEX",

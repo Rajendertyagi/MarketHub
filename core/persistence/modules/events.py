@@ -140,13 +140,13 @@ def list_relevant_events(
     where += " ORDER BY pe.sequence ASC LIMIT ?"
     params.append(min(limit, max_replay_limit))
 
-    rows = conn.execute("""
+    rows = conn.execute(f"""
         SELECT pe.sequence, pe.id, pe.type, pe.source, pe.timestamp,
                pe.data, pe.routing, pe.created_at
         FROM persistent_events pe
         JOIN consumer_event_state ces ON ces.event_id = pe.id
         {where}
-    """.format(where=where), params).fetchall()
+    """, params).fetchall()
 
     return [row_to_event_fn(r) for r in rows]
 

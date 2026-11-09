@@ -12,11 +12,9 @@ These tests manage the subprocess server lifecycle themselves (no module
 
 from __future__ import annotations
 
-import asyncio
 import socket
 
 import pytest
-
 from helpers import lifecycle
 from helpers.lifecycle import (
     get_server_url,
@@ -39,7 +37,9 @@ def _port_is_open(host: str, port: int) -> bool:
 async def _ping_ok() -> bool:
     """Return True if a fresh MCP client can initialize + system_ping."""
     from mcp import ClientSession
-    from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
+    from mcp.client.streamable_http import (
+        streamable_http_client as streamablehttp_client,
+    )
 
     url = get_server_url()
     try:
@@ -96,7 +96,7 @@ async def test_five_start_stop_cycles() -> None:
 async def test_clean_shutdown() -> None:
     """restore_environment(): subprocess terminated, port released, state reset."""
     proc = await start_server()
-    url = get_server_url()
+    get_server_url()
     port = lifecycle._server_port
 
     # Verify running before shutdown.

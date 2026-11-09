@@ -18,14 +18,10 @@ if _PROJECT_DIR not in sys.path:
     sys.path.insert(0, _PROJECT_DIR)
 
 from helpers.runner import R
+
 from core import events
-from core.persistence.store import EventStore
 from core.persistence.modules.replay import get_consumer_inbox_status
-from core.errors import (
-    ConsumerNotFoundError,
-    EventNotFoundError,
-    EventNotRelevantError,
-)
+from core.persistence.store import EventStore
 
 
 class _StubBus:
@@ -174,6 +170,45 @@ async def t5_ack_10000(runner: R) -> None:
 # ===================================================================
 # Main
 # ===================================================================
+
+async def t4_ack_errors(runner: R) -> None:
+    """Unknown consumer / event / irrelevant event raise, never corrupt state."""
+    name = "T4-ack-errors"
+    store, tmp = _mk_store()
+    bus = _StubBus()
+    try:
+        ids = await _publish_n(store, bus, 3)
+
+        # Unknown event id -> EventNotFoundError.
+        try:
+            store.acknowledge_event("c1", "no-such-event")
+            runner.assert_true(name + "-unknown-event-raised", False)
+        except Exception as exc:
+            runner.assert_true(
+                name + "-unknown-event-raised",
+                type(exc).__name__ == "EventNotFoundError",
+                f"expected EventNotFoundError, got {type(exc).__name__}")
+
+        # Unknown consumer -> ConsumerNotFoundError.
+        try:
+            store.acknowledge_event("no-such-consumer", ids[0])
+            runner.assert_true(name + "-unknown-consumer-raised", False)
+        except Exception as exc:
+            runner.assert_true(
+                name + "-unknown-consumer-raised",
+                type(exc).__name__ == "ConsumerNotFoundError",
+                f"expected ConsumerNotFoundError, got {type(exc).__name__}")
+
+        # A failed ACK must not change the pending count.
+        status = get_consumer_inbox_status(store._open(store._db_path), "c1")
+        runner.assert_eq(name + "-pending-intact", status["pending_count"], 3)
+
+        # A valid ACK still works after the failures.
+        ok = store.acknowledge_event("c1", ids[0])
+        runner.assert_true(name + "-valid-ack", ok is True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
 
 async def main() -> int:
     runner = R()

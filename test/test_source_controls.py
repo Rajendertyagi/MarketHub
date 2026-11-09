@@ -31,8 +31,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import struct
 import os
+import struct
 import sys
 import tempfile
 
@@ -42,7 +42,7 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 TOKEN = "SYNTHETIC_ACCESS_TOKEN_XYZ"
 URI_1 = "wss://feeder.example/feeds?requestId=R1&code=CODE1"
@@ -53,6 +53,7 @@ KEYS = ["NSE_EQ|INE001TEST01", "NSE_EQ|INE002TEST02"]
 def _valid_creds():
     """Fresh, non-expired Upstox credentials for runtime start tests."""
     from datetime import datetime, timedelta, timezone
+
     from brokers.upstox.auth import UpstoxCredentials
     return UpstoxCredentials(
         access_token=TOKEN,
@@ -113,8 +114,9 @@ def mk_upstox_feed(token=TOKEN, rest=None, keys=None, market_service=None,
     lists (frames or exceptions); connection N gets list N (default empty).
     """
     from datetime import datetime, timedelta, timezone
-    from brokers.upstox.feed import UpstoxFeed
+
     from brokers.upstox.auth import UpstoxCredentials
+    from brokers.upstox.feed import UpstoxFeed
 
     connections: list[ScriptedWS] = []
 
@@ -144,8 +146,8 @@ def mk_upstox_feed(token=TOKEN, rest=None, keys=None, market_service=None,
 
 async def mk_manager(*sources):
     """SourceManager wired to a real BackgroundTaskManager."""
-    from sources import SourceManager
     from core.runtime import BackgroundTaskManager
+    from sources import SourceManager
 
     mgr = SourceManager()
     for s in sources:
@@ -191,6 +193,7 @@ async def test_sc1_start_single_task(runner: R) -> None:
 
     # Operator supplies today's token (runtime-only), then clicks Start.
     from datetime import datetime, timedelta, timezone
+
     from brokers.upstox.auth import UpstoxCredentials
     feed.update_credentials(UpstoxCredentials(
         access_token=TOKEN,
@@ -358,6 +361,7 @@ async def test_sc9_concurrent_starts_one_task(runner: R) -> None:
     mgr = await mk_manager(feed)
     await mgr.start_all({"upstox": {"enabled": True}})
     from datetime import datetime, timedelta, timezone
+
     from brokers.upstox.auth import UpstoxCredentials
     feed.update_credentials(UpstoxCredentials(
         access_token=TOKEN,
@@ -605,6 +609,7 @@ def _close_all_root_handlers() -> None:
 def test_log1_rotating_handler_configured(runner: R) -> None:
     """LOG1: rotating handler configured with locked size/count/encoding."""
     import logging.handlers
+
     from app.logging_setup import setup_logging
 
     try:
@@ -642,7 +647,7 @@ async def test_log2_transition_reason_logged(runner: R) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = setup_logging(tmp, console=False, force=True)
             await scenario()
-            with open(path, "r", encoding="utf-8") as fh:
+            with open(path, encoding="utf-8") as fh:
                 blob = fh.read()
             # Release the file BEFORE the temp dir cleanup runs (Windows).
             _close_all_root_handlers()
@@ -670,7 +675,7 @@ async def test_log3_no_secrets_in_log(runner: R) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = setup_logging(tmp, console=False, force=True)
             await scenario()
-            with open(path, "r", encoding="utf-8") as fh:
+            with open(path, encoding="utf-8") as fh:
                 blob = fh.read()
             # Release the file BEFORE the temp dir cleanup runs (Windows).
             _close_all_root_handlers()
@@ -807,6 +812,7 @@ async def test_sm1_startup_matrix(runner: R) -> None:
 
     # CASE C: expired token at construction -> gated, then start after refresh
     from datetime import datetime, timedelta, timezone
+
     from brokers.upstox.auth import UpstoxCredentials
     expired = UpstoxCredentials(
         access_token=TOKEN,

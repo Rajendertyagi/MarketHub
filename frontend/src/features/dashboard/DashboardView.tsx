@@ -8,7 +8,7 @@ import { TickerStrip } from "./components/TickerStrip";
 import { useMarketQuotes } from "./useMarketQuotes";
 
 export function DashboardView() {
-  const { quotes, connected } = useMarketQuotes();
+  const { quotes, byCanonical, connected } = useMarketQuotes();
 
   return (
     <div className="dash">
@@ -18,7 +18,7 @@ export function DashboardView() {
       <TickerStrip quotes={quotes} />
 
       <section className="dash-hero" aria-label="Major indices">
-        <IndicesWidget quotes={quotes} />
+        <IndicesWidget quotes={quotes} byCanonical={byCanonical} />
       </section>
 
       <section className="dash-secondary" aria-label="Market detail">

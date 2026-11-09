@@ -7,10 +7,8 @@ maximum size.  No SQLite persistence — this is purely in-memory.
 from __future__ import annotations
 
 import threading
-import time
 from collections import deque
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
 from typing import Any
 
 

@@ -25,7 +25,6 @@ vi.mock("@/api/market", () => ({
   getHistory: vi.fn(),
   listScanners: vi.fn(),
   runScanner: vi.fn(),
-  searchInstruments: vi.fn(),
   resolveInstrument: vi.fn(),
   getBreadth: vi.fn(),
   getSectorHeatmap: vi.fn(),
@@ -165,7 +164,7 @@ describe("MarketMapView", () => {
     });
     await waitFor(() =>
       expect(mockNavigate).toHaveBeenCalledWith(
-        expect.stringContaining("/charts?key=1&sym=RELIANCE&ex=NSE&type=EQUITY"),
+        expect.stringContaining("/chart?key=1&sym=RELIANCE&ex=NSE&type=EQUITY"),
       ),
     );
   });
@@ -190,7 +189,7 @@ describe("MarketMapView", () => {
     });
     await waitFor(() =>
       expect(mockNavigate).toHaveBeenCalledWith(
-        expect.stringContaining("/charts?sym=X&ex=NSE&type=EQUITY"),
+        expect.stringContaining("/chart?sym=X&ex=NSE&type=EQUITY"),
       ),
     );
     expect(mockNavigate).not.toHaveBeenCalledWith(expect.stringContaining("key="));

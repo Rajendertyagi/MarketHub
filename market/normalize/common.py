@@ -22,8 +22,9 @@ Field-map presence contract (B1 patch representation):
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any
 
 __all__ = [
     "NormalizationError",
@@ -219,6 +220,13 @@ QUOTE_FIELD_NAMES = frozenset({
     "previous_oi",
     "last_trade_time",
     "greeks",
+    # CAS (Closing Auction Session) fields (Upstox V3)
+    "cas_eligible",
+    "indicative_equilibrium_price",
+    "reference_price",
+    "indicative_equilibrium_qty",
+    "indicative_imbalance_qty",
+    "market_indicative_imbalance_qty",
 })
 
 

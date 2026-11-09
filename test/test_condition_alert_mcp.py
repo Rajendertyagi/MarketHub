@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sqlite3
 import sys
 import tempfile
 from typing import Any
@@ -143,7 +142,6 @@ def _make_mock_services(store: EventStore) -> MagicMock:
 
 def _mk_store():
     """Create an in-memory EventStore for testing."""
-    import tempfile
     tmp = tempfile.TemporaryDirectory()
     return EventStore(os.path.join(tmp.name, "t.db")), tmp
 
@@ -753,6 +751,7 @@ _TESTS = [
 
 async def main() -> None:
     import atexit
+
     from helpers.lifecycle import restore_environment
     atexit.register(restore_environment)
     runner = R()

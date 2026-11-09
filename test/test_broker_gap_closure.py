@@ -13,15 +13,18 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
-from market.models import (  # noqa: E402
-    MarginEntry, MarginBasket,
-    ShareholdingRecord, ShareholdingCategory, Shareholdings,
-    OptionGreekEntry, OptionGreekSnapshot,
+
+from market.models import (
+    MarginBasket,
+    MarginEntry,
+    OptionGreekEntry,
+    OptionGreekSnapshot,
+    ShareholdingRecord,
+    Shareholdings,
 )
-from market.normalize.upstox_margins import margin_from_rest  # noqa: E402
-from market.normalize.upstox_shareholdings import shareholdings_from_rest  # noqa: E402
-from market.normalize.upstox_option_greeks import option_greeks_from_rest  # noqa: E402
+from market.normalize.upstox_margins import margin_from_rest
+from market.normalize.upstox_option_greeks import option_greeks_from_rest
+from market.normalize.upstox_shareholdings import shareholdings_from_rest
 
 
 class TestMarginCalculator:

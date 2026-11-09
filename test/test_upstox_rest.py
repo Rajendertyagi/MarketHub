@@ -37,9 +37,9 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from datetime import datetime, timezone  # noqa: E402
+from datetime import datetime, timezone
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 UTC = timezone.utc
 
@@ -147,7 +147,6 @@ async def _expect_raises_async(runner: R, label: str, exc_type: type, coro_fn, n
 async def test_authorize_success(runner: R) -> None:
     """UR1: GET/endpoint/Bearer/Accept/no-body/10s + full URI returned."""
     name = "UR1-authorize-success"
-    from brokers.upstox import UpstoxRest
 
     rest = _make_rest(lambda i: _ok(
         {"status": "success",
@@ -188,7 +187,7 @@ async def test_authorize_envelope_violations(runner: R) -> None:
         ("error-envelope-on-200", error_on_200, "UDAPI100057"),
     ]
     for label, payload, needle in cases:
-        rest = UpstoxRest(sync_transport=lambda *a: _ok(payload),
+        rest = UpstoxRest(sync_transport=lambda *a, _p=payload: _ok(_p),
                           utc_now=lambda: FIXED_NOW)
         try:
             await rest.authorize_market_feed(_creds())
@@ -227,7 +226,10 @@ async def test_authorize_http_failures(runner: R) -> None:
     malformed JSON — plus secret/URI leakage guards."""
     name = "UR3-http-failures"
     from brokers.upstox import (
-        UpstoxAuthError, UpstoxRateLimitError, UpstoxRest, UpstoxRestError,
+        UpstoxAuthError,
+        UpstoxRateLimitError,
+        UpstoxRest,
+        UpstoxRestError,
     )
 
     err_env = {"status": "error", "error_codes": ["UDAPI100050"],
@@ -272,6 +274,12 @@ async def test_authorize_http_failures(runner: R) -> None:
     assert exc is not None
     runner.assert_eq(name + "-garbage-ra-none", exc.retry_after_seconds, None)
 
+    # A 429 activates the provider's shared request budget (by design:
+    # the client must not keep calling into a restriction). Reset it so the
+    # remaining cases exercise the error mapping, not the block.
+    from providers.rate import get_budget_manager
+    get_budget_manager().reset()
+
     # 500 -> retryable RestError.
     rest = UpstoxRest(sync_transport=lambda *a: _resp(500, body=b"Internal Server Error"))
     exc = await _expect_raises_async(runner, name + "-500", UpstoxRestError,
@@ -313,7 +321,7 @@ def _exchange_ok_responder(*a):
 async def test_exchange_success(runner: R) -> None:
     """UR4: POST/form/grant_type/15s; token mapped; expiry from clock."""
     name = "UR4-exchange-success"
-    from brokers.upstox import UpstoxCredentials, UpstoxRest
+    from brokers.upstox import UpstoxCredentials
 
     rest = _make_rest(_exchange_ok_responder)
     creds = await rest.exchange_authorization_code(

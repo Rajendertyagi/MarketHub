@@ -67,7 +67,7 @@ def _catalog_version(catalog: Any) -> Any:
     fn = getattr(catalog, "catalog_epoch", None)
     try:
         return fn() if callable(fn) else None
-    except Exception:  # noqa: BLE001 — a broken epoch must never break reads
+    except Exception:
         return None
 
 
@@ -104,8 +104,24 @@ def _cached(key: Any, version: Any, build: Any,
 
 def _build_futures_index(catalog: Any, *,
                          exchange: str) -> dict[tuple[str, str], list[dict]]:
-    rows = catalog.list_future_contracts(
-        exchange=exchange, limit=20000) or []
+    rows: list[dict[str, Any]] = []
+    lister = getattr(catalog, "list_future_contracts", None)
+    if callable(lister):
+        try:
+            rows = lister(exchange=exchange, limit=20000) or []
+        except TypeError:
+            # A catalogue that does not accept the ``exchange`` argument (a
+            # light-weight double) is still supported.
+            rows = lister(limit=20000) or []
+    else:
+        # A catalogue without the bulk read model: fall back to the
+        # per-underlying search so the read model still resolves the
+        # contracts. The bulk read remains the production path.
+        try:
+            rows = catalog.search(instrument_type=FUTURE, exchange=exchange,
+                                  limit=20000) or []
+        except Exception:
+            rows = []
     index: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for row in rows:
         und = str(row.get("underlying") or "").strip().upper()
@@ -133,9 +149,20 @@ def futures_index(catalog: Any, *, exchange: str = NSE,
 
 
 def _option_expiries(catalog: Any, underlying: str, instrument_type: str,
-                     exchange: str) -> list[str]:
-    return list(catalog.derivative_expiries(
-        underlying, instrument_type, exchange=exchange) or [])
+                     exchange: str = NSE) -> list[str]:
+    """Option expiries for one underlying, exchange-scoped.
+
+    The exchange is passed to the catalogue so the lookup uses the
+    covering index (``idx_instr_lookup``) instead of scanning the whole
+    catalogue. A catalogue that does not accept the ``exchange``
+    argument (a light-weight double) is still supported.
+    """
+    try:
+        return list(catalog.derivative_expiries(
+            underlying, instrument_type, exchange=exchange) or [])
+    except TypeError:
+        return list(catalog.derivative_expiries(
+            underlying, instrument_type) or [])
 
 
 def clear_universe_cache() -> None:
@@ -252,11 +279,21 @@ def expiries_for(catalog: Any, underlying: str, instrument_type: str,
     per-underlying query). Option expiries use the catalog's indexed lookup
     with the canonical exchange so ``idx_instr_lookup`` is used instead of a
     full catalog scan.
+
+    When the catalogue does not expose the bulk futures read model, the
+    catalogue's own expiry lookup is used instead — so the read model
+    still resolves the expiries for a light-weight catalogue.
     """
     symbol = underlying.strip().upper()
     if instrument_type == FUTURE:
         idx = futures_index(catalog, exchange=exchange)
-        return sorted({exp for (und, exp) in idx if und == symbol})
+        found = sorted({exp for (und, exp) in idx if und == symbol})
+        if found:
+            return found
+        # No bulk read model (or no futures for this underlying): fall
+        # back to the catalogue's expiry lookup.
+        return _option_expiries(catalog, underlying, instrument_type,
+                                exchange)
     # Option expiries: index-backed lookup, memoized per catalog epoch so the
     # several identical reads inside one workspace request coalesce.
     version = _catalog_version(catalog)

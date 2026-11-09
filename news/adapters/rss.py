@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import calendar
-import hashlib
 import html
 import logging
 import re

@@ -18,7 +18,6 @@ import json
 import logging
 import os
 import sys
-from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
@@ -46,6 +45,7 @@ from app.config import (
     oauth_callback_url,
     validate_config,
 )
+from app.fyers_index_source import FyersIndexSource as _FyersIndexSource
 from app.lifecycle import print_banner, print_shutdown
 
 # ---------------------------------------------------------------------------
@@ -71,11 +71,18 @@ from app.lifecycle import print_banner, print_shutdown
 # is preserved; everything INFO+ is also persisted to data/logs/markethub.log
 # so an incident's final event survives the console window closing.
 from app.logging_setup import log_startup_diagnostics, setup_logging
+from app.market_indices import MAJOR_INDICES as _MAJOR_INDICES
 from app.paths import CONFIG_PATH, PROJECT_ROOT
+from app.quote_service import QuoteService as _QuoteService
+from app.runtime_paths import describe_runtime as _describe_runtime
+from app.runtime_paths import runtime_data_dir as _runtime_data_dir
+from app.runtime_paths import runtime_db_path as _runtime_db_path
+from app.subscriptions.manager import SubscriptionManager as _SubscriptionManager
 from core import events, runtime
 from core.alerts import AlertEvaluator
 from core.sse_broker import EventBroker
 from market.models import Quote
+from market.quote_coordinator import QuoteCoordinator as _QuoteCoordinator
 from market.serialization import quote_to_dict
 from market.service import MarketService
 from mcp_server.contract import (
@@ -98,10 +105,12 @@ from mcp_server.tools import (
     register_market_alert_tools,
     register_market_intel_tools,
     register_market_tools,
+    register_news_tools,
     register_options_analytics_tools,
     register_replay_tools,
     register_system_tools,
     register_twitter_tools,
+    register_yahoo_tools,
 )
 from sources import SourceConfigError, SourceManager, build_source_manager
 
@@ -137,7 +146,13 @@ LISTEN_HOST = _config["host"]
 LISTEN_PORT = _config["port"]
 LOG_LEVEL = _config["log_level"]
 MAX_REQUEST_BODY_SIZE = _config["max_request_body_size"]
-DATA_DIR = _config["data_dir"]
+# Runtime data directory: the CANONICAL root (PROJECT_ROOT/"data") owns ALL
+# persistent application data (db, master key, credential store). The
+# configured ``data_dir`` is preserved in config.json but must not relocate
+# runtime state - a diverging value is reported as overridden, never
+# silently honoured (no mixed paths).
+_RUNTIME_PATHS = _describe_runtime(_config.get("data_dir"))
+DATA_DIR = str(_RUNTIME_PATHS["data_dir"])
 TIMEOUTS = _config["timeouts"]
 REPLAY_CFG = _config["replay"]
 SOURCES_CFG = _config.get("sources", {})
@@ -168,7 +183,7 @@ SOURCES_RESOURCE_URI = RESOURCE_SOURCES_STATUS
 # EVENT STORE
 # ============================================================
 
-_db_path = os.path.join(str(PROJECT_ROOT), DATA_DIR, "events.db")
+_db_path = str(_runtime_db_path(_config.get("data_dir")))
 _store = runtime.event_store_module.EventStore(_db_path)
 _app_logger.info("event store: %s", _store.db_path)
 
@@ -208,9 +223,9 @@ _market_event_broker = EventBroker()
 
 
 # ── L1: WebUI live log buffer + SSE broker ──────────────────────────────────
+from app.logging_setup import attach_webui_handler as _attach_webui_handler
 from core.log_buffer import LogBuffer as _LogBuffer
 from core.sse_broker import EventBroker as _LogEventBroker
-from app.logging_setup import attach_webui_handler as _attach_webui_handler
 
 _log_buffer = _LogBuffer(max_size=1000)
 _log_sse_broker = _LogEventBroker()
@@ -218,10 +233,10 @@ _webui_handler = _attach_webui_handler(_log_buffer, broker=_log_sse_broker)
 
 
 # ── News & Sentiment service ────────────────────────────────────────────────
-from news.service import NewsService as _NewsService
-from news.adapters.rss import RSSAdapter as _RSSAdapter
-from news.adapters.reddit import RedditAdapter as _RedditAdapter
 from app.config import DEFAULTS as _DEFAULTS
+from news.adapters.reddit import RedditAdapter as _RedditAdapter
+from news.adapters.rss import RSSAdapter as _RSSAdapter
+from news.service import NewsService as _NewsService
 
 _news_service = _NewsService(store=_store)
 _news_service.register_adapter(_RSSAdapter())
@@ -410,6 +425,17 @@ def _on_source_state_change(
         _event_broker.broadcast(json.dumps(envelope, ensure_ascii=False))
     except Exception:  # pragma: no cover - broadcast must never break a feed
         _app_logger.debug("source state change broadcast failed", exc_info=True)
+    # A genuine broker rejection is a LIFECYCLE event, not a status read:
+    # the session owner acts on it exactly once here. A status poll must
+    # never destroy a stored session (that is what turned one rejection
+    # into a repeated-login loop).
+    if provider == "upstox" and new_state == "auth_required" \
+            and reason == "broker_rejected_token":
+        try:
+            if _auth_service is not None:
+                _auth_service.upstox.note_rejection()
+        except Exception:  # pragma: no cover - never break the feed
+            _app_logger.debug("upstox rejection handling failed", exc_info=True)
 
 
 # ── Fyers source runtime registration (no restart required) ──────────────────
@@ -441,7 +467,7 @@ def _persist_fyers_source_config(feed_cfg: dict[str, Any] | None = None) -> None
     """
     import tempfile
     try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as _f:
+        with open(CONFIG_PATH, encoding="utf-8") as _f:
             _cfg = json.load(_f)
     except Exception:
         # Never wipe a config we cannot read — leave the file untouched.
@@ -586,7 +612,20 @@ _instrument_catalog = _InstrumentCatalog(_store)
 # storage keys (config keys) to catalog identities so ONE real
 # instrument has ONE quote state across feed/REST/intel/option-chain.
 _identity_registry = _IdentityRegistry()
+_market_service.set_identity_resolver(_identity_registry)
 
+# Read-side canonical quote coordinator (S7): deterministic, freshness-gated
+# selection over the existing native-keyed store. No second store.
+_market_quote_coordinator = _QuoteCoordinator(_market_service)
+
+# The unified canonical quote service: ONE read path for REST, SSE, MCP,
+# indices, analytics and alerts (same selection, freshness verdict and
+# provenance everywhere).
+_quote_service = _QuoteService(
+    _market_service,
+    identity_registry=_identity_registry,
+    catalog=_instrument_catalog,
+)
 
 def _register_config_identities() -> None:
     """Bind config instrument keys to catalog identities (best-effort).
@@ -626,11 +665,35 @@ def _register_config_identities() -> None:
                             aliases.add(token)
                         break
             except Exception:
-                logger.warning("identity lookup failed for %s", key)
+                _app_logger.warning("identity lookup failed for %s", key)
             _identity_registry.register(key, aliases)
 
 
+def _register_catalog_identities() -> None:
+    """Bind every catalogue row's identifiers to its quote storage key.
+
+    The catalogue is the authority on which provider published which
+    identifier. Registering every row (token, provider symbol,
+    tradingsymbol, underlying AND the provider-neutral canonical id)
+    means a lookup by ANY of them reaches the same quote state — and that
+    a canonical id resolves to the provider's own storage key.
+
+    Runs at startup; safe to re-run (idempotent bindings).
+    """
+    try:
+        rows = _store.list_all_instruments()
+    except Exception:
+        _app_logger.warning("catalog identity load failed", exc_info=True)
+        return
+    try:
+        _identity_registry.register_catalog_rows(rows or [])
+    except Exception:
+        _app_logger.warning("catalog identity registration failed",
+                            exc_info=True)
+
+
 _register_config_identities()
+_register_catalog_identities()
 
 
 _alert_engine = _AlertEngine(_store, bus=_subscription_bus)
@@ -648,26 +711,39 @@ except Exception:
         "condition identity resolver population failed", exc_info=True)
 
 from app.market_analytics import MarketAnalyticsService as _AnalyticsService
+
 _analytics_service = _AnalyticsService(
     _market_service, instrument_catalog=_instrument_catalog)
+# The chain-fetch service (provider-backed market data) is wired once it
+# exists — see below. MarketService is the QUOTE store and exposes no
+# option_chain method, so it can never be the chain source.
 
 _condition_alert_engine = _ConditionAlertEngine(
     _store, resolver=_identity_resolver, bus=_subscription_bus,
     analytics_service=_analytics_service)
 
-from api.product_routes import (
-    build_market_data_routes as _build_market_data_routes,
+from api.ai_alert_routes import build_ai_alert_routes as _build_ai_alert_routes
+from api.diagnostics_routes import build_diagnostics_run_routes as _build_diag_routes
+from api.fno_coverage_routes import (
+    build_fno_coverage_routes as _build_fno_coverage_routes,
 )
+from api.fno_routes import build_fno_routes as _build_fno_routes
+from api.futures_heatmap import (
+    build_futures_heatmap_routes as _build_futures_heatmap_routes,
+)
+from api.log_routes import build_log_routes as _build_log_routes
 from api.market_bars_routes import (
     build_market_bars_routes as _build_market_bars_routes,
 )
-from api.ai_alert_routes import build_ai_alert_routes as _build_ai_alert_routes
-from api.log_routes import build_log_routes as _build_log_routes
 from api.news_routes import build_news_routes as _build_news_routes
-from api.diagnostics_routes import build_diagnostics_run_routes as _build_diag_routes
-from api.subscription_routes import build_subscription_routes as _build_subscription_routes
-from api.fno_routes import build_fno_routes as _build_fno_routes
+from api.product_routes import (
+    build_market_data_routes as _build_market_data_routes,
+)
+from api.subscription_routes import (
+    build_subscription_routes as _build_subscription_routes,
+)
 from api.x_routes import build_x_routes as _build_x_routes
+from app.fno_coverage import FnoCoverageService as _FnoCoverageService
 from app.market_data import ProviderMarketData as _ProviderMarketData
 
 
@@ -685,7 +761,82 @@ def _upstox_auth_context():
     return rest, creds
 
 
-_provider_market_data = _ProviderMarketData(_upstox_auth_context)
+# Fyers REST client + adapter (Phase 1 of F&O plan).
+from brokers.fyers.rest import FyersMarketDataAdapter as _FyersMarketDataAdapter
+from brokers.fyers.rest import FyersRest as _FyersRest
+
+_fyers_rest = _FyersRest()
+
+def _fyers_auth_context():
+    """Return the live Fyers access token, or None when unauthenticated."""
+    token = _fyers_runtime_auth.get_access_token()
+    if not token:
+        return None
+    return token
+
+_fyers_market_data_adapter = _FyersMarketDataAdapter(
+    _fyers_rest, _fyers_auth_context, catalog=_instrument_catalog)
+# The catalogue + provider registry decide which provider owns an
+# instrument key — the key's string shape is only a last-resort fallback.
+_provider_market_data = _ProviderMarketData(
+    _upstox_auth_context, fyers_adapter=_fyers_market_data_adapter,
+    catalog=_instrument_catalog)
+# The analytics refresh fetches CHAINS from the provider-backed market-data
+# service (MarketService is the quote store and has no chain method).
+_analytics_service.set_chain_service(_provider_market_data)
+
+# Guarded Fyers REST index source (Fyers-only fallback for index quotes when
+# Upstox is unavailable). Bounded: <=5 rps shared bucket, >=60 s interval,
+# market-hours gated, 5-minute freshness, duplicate-request suppression.
+def _fyers_index_symbols_needed() -> list[str]:
+    """The FYERS index symbols that are NOT already served live elsewhere.
+
+    The FYERS index poller is a FALLBACK: it must not spend the FYERS
+    request budget on an index another provider is already delivering
+    live. The set is therefore computed per cycle from the actual data
+    recency of the other provider's index quote.
+    """
+    from datetime import datetime, timezone
+
+    from market.quote_coordinator import DEFAULT_STALE_SECONDS
+
+    out: list[str] = []
+    now = datetime.now(timezone.utc)
+    for entry in _MAJOR_INDICES:
+        symbol = entry.get("fyers_symbol")
+        if not symbol:
+            continue
+        up_key = entry.get("upstox_key") or ""
+        served_live = False
+        if "|" in up_key:
+            exchange = up_key.split("|", 1)[0].rsplit("_", 1)[0]
+            try:
+                quote = _market_service.get_quote_now(exchange, up_key)
+            except Exception:
+                quote = None
+            received = getattr(quote, "received_ts", None) if quote else None
+            if received is not None:
+                try:
+                    age = (now - received).total_seconds()
+                    served_live = age <= DEFAULT_STALE_SECONDS
+                except TypeError:
+                    served_live = False
+        if not served_live:
+            out.append(symbol)
+    return out
+
+
+_fyers_index_source = _FyersIndexSource(
+    rest=_fyers_rest, auth=_fyers_runtime_auth,
+    symbols=_fyers_index_symbols_needed)
+
+# Production owners for the two background components that must have an
+# explicit lifecycle (start / stop / truthful status).
+_fyers_index_poller_task: Any = None
+_fyers_index_poll_interval_seconds = 30.0
+_previous_oi_recorder: Any = None
+_previous_oi_recorder_task: Any = None
+_previous_oi_stop_event: Any = None
 
 
 class _FeedSubscription:
@@ -711,8 +862,8 @@ class _FeedSubscription:
                         metadata[token] = (str(ex), str(sym))
                     break
         except Exception:
-            logger.warning("runtime identity registration failed for %s",
-                           token)
+            _app_logger.warning("runtime identity registration failed for %s",
+                                token)
         feed = _feed_ref.get("feed")
         if feed is not None and hasattr(feed, "add_instruments"):
             await feed.add_instruments([token], metadata=metadata or None)
@@ -743,13 +894,14 @@ from app.secrets_store import (
 )
 
 _credential_store = _CredentialStore(
-    _store, data_dir=PROJECT_ROOT / DATA_DIR)
+    _store, data_dir=_runtime_data_dir(_config.get("data_dir")))
 
 # ── X/Twitter service (twitter-cli adapter boundary) ─────────────────────
 # Single owner of the CLI + X rule evaluation input. Credentials resolve
 # server-side from the encrypted store (provider "x"); MCP/React never see
 # them. Poll loop starts in lifespan (BackgroundTaskManager).
 from x_twitter.service import XTwitterService as _XTwitterService
+
 _x_twitter_service = _XTwitterService(
     store=_store, cred_store=_credential_store,
     bus=_subscription_bus, metrics=_metrics)
@@ -798,13 +950,12 @@ for _src_name, _src in _source_manager.enabled_sources.items():
 
 # Chart bars: served from the v24 store, backfilled through the canonical
 # provider REST adapters, with the live feed's forming bar folded in.
-# Fyers backfill is deferred: BarService is constructed without a Fyers
-# adapter, so Fyers instruments serve stored bars only.
 from app.market_bars import BarService as _BarService
 
 _bar_service = _BarService(
     _store,
     auth_context_fn=_upstox_auth_context,
+    fyers_adapter=_fyers_market_data_adapter,
     catalog=_instrument_catalog,
     live=_bar_recorders.get("upstox"),
 )
@@ -850,6 +1001,7 @@ except Exception:
 
 # ── Diagnostics runner ───────────────────────────────────────────────────────
 from app.diagnostics import DiagnosticsRunner as _DiagnosticsRunner
+
 _diagnostics_runner = _DiagnosticsRunner(
     base_url=f"http://{LISTEN_HOST}:{LISTEN_PORT}",
     mcp_url=f"http://{LISTEN_HOST}:{LISTEN_PORT}/mcp",
@@ -1025,8 +1177,37 @@ def _feed_for_provider(name: str):
     return None
 
 
+def _provider_runtime_status(provider: str) -> str | None:
+    """Whether one provider can serve a market-data request RIGHT NOW.
+
+    This is a SIGNAL, not a hardcoded routing rule: it reports the
+    provider's live session state so a workspace can prefer a provider that
+    can actually answer. An unknown state leaves every enabled provider
+    eligible.
+    """
+    if provider == "fyers":
+        return "ready" if _fyers_runtime_auth.has_access_token() else "stopped"
+    if provider == "upstox":
+        try:
+            feed = _feed_ref.get("feed")
+        except Exception:
+            feed = None
+        if feed is None:
+            return "stopped"
+        try:
+            creds = getattr(feed, "credentials_snapshot", None)
+            if creds is not None and creds.status().get("token_present"):
+                return "ready"
+        except Exception:
+            pass
+        return "stopped"
+    return None
+
+
 _subscription_service = _SubscriptionService(
-    _store, _instrument_catalog, spot_provider=_intel_spot)
+    _store, _instrument_catalog, spot_provider=_intel_spot,
+    identity_resolver=_identity_registry,
+    status_provider=_provider_runtime_status)
 try:
     _subscription_service.ensure_defaults()
     _sub_migration = _subscription_service.migrate_from_config(SOURCES_CFG)
@@ -1036,10 +1217,45 @@ try:
 except Exception:
     _app_logger.exception("subscription bootstrap failed")
 
+# ── Subscription manager (leases, allocation, failover) ─────────────
+# Composition only: the manager owns the lease registry, the allocation
+# against each provider's VERIFIED ceiling and the runtime state of every
+# instrument. The subscription service above remains the owner of the
+# user's PREFERENCES (the demand).
+_subscription_manager = _SubscriptionManager(
+    catalog=_instrument_catalog,
+    feed_provider=_feed_for_provider,
+    status_provider=_provider_runtime_status,
+)
+_condition_alert_engine.set_leaser(_subscription_manager)
+_services.subscription_manager = _subscription_manager
+_services.quote_service = _quote_service
+
+# ── F&O coverage service (broker-neutral routing plan) ───────────────────────
+# Composition only: owns no broker session, no credential and no feed
+# lifecycle. The provider registry resolves lazily from the broker-neutral
+# `providers` package (a process-wide singleton), so no broker adapter is
+# imported here and SubscriptionService picks up the same instance on demand.
+#
+# The persisted, validated `fno_config` row is the user's declared intent
+# (provider preference/fallback, expiry policy, index selection, stock
+# mode) — it is read here so the plan honours it instead of silently
+# using hardcoded defaults.
+def _fno_config_reader() -> dict:
+    try:
+        return _store.get_fno_config() or {}
+    except Exception:
+        _app_logger.warning("fno config read failed", exc_info=True)
+        return {}
+
+
+_fno_coverage_service = _FnoCoverageService(
+    _instrument_catalog, config_reader=_fno_config_reader)
+
 # ── N1: News & Sentiment service ────────────────────────────────────────────
-from news.service import NewsService as _NewsService
-from news.adapters.rss import RSSAdapter as _RSSAdapter
 from news.adapters.reddit import RedditAdapter as _RedditAdapter
+from news.adapters.rss import RSSAdapter as _RSSAdapter
+from news.service import NewsService as _NewsService
 
 _news_service = _NewsService(store=_store)
 _news_service.register_adapter(_RSSAdapter())
@@ -1061,6 +1277,19 @@ if _news_cfg.get("enabled", True):
 
 _services.news_service = _news_service
 _services.x_twitter = _x_twitter_service
+
+# ── Yahoo Finance research service (yfinance) ──────────────────────────────
+# AI research/data capability. Completely separate from the broker feed,
+# MarketService, and the F&O path: on-demand reads only, no quotes written,
+# no feed, no polling loop, no credentials. If yfinance is missing the tools
+# still register and return service_unavailable rather than breaking startup.
+from yfinance_service.service import YahooFinanceService as _YahooFinanceService
+
+_yahoo_service = _YahooFinanceService()
+_services.yahoo_service = _yahoo_service
+if not _yahoo_service.available():
+    _app_logger.warning(
+        "yfinance not importable — Yahoo Finance research tools disabled")
 
 # Chat tool registry: same services, same semantics as REST/MCP.
 _chat_tools = _ChatToolRegistry(
@@ -1112,6 +1341,8 @@ register_options_analytics_tools(mcp, _services)
 register_market_alert_tools(mcp, _services)
 register_condition_alert_tools(mcp, _services)
 register_twitter_tools(mcp, _services)
+register_yahoo_tools(mcp, _services)
+register_news_tools(mcp, _services)
 
 # ============================================================
 # ASGI APPLICATION (top-level Starlette + Uvicorn)
@@ -1163,7 +1394,123 @@ async def _event_stream(request: Request) -> Response:
     )
 
 
-@asynccontextmanager
+async def _restore_fno_coverage() -> None:
+    """Reconstruct the desired F&O state at startup (S9).
+
+    The desired set is derived from the durable F&O config + catalogue +
+    provider registry — NOT from a manual ``POST /api/fno/apply`` and NOT
+    from a new persistence field. Uses the EXISTING plan/universe/reconcile
+    methods; a plan failure never breaks startup.
+    """
+    try:
+        plan = await asyncio.to_thread(_fno_coverage_service.plan)
+        _subscription_service.set_derivatives_universe(plan.keys_by_provider)
+        _subscription_manager.apply_demand(
+            _subscription_service.lease_requests())
+        await _subscription_manager.reconcile()
+        _app_logger.info(
+            "fno coverage restored at startup: %d contract(s) routed",
+            plan.desired)
+    except Exception:
+        _app_logger.warning("fno coverage restore failed", exc_info=True)
+
+
+async def _start_fyers_index_poller() -> None:
+    """Start the guarded Fyers REST index poller (Fyers-only fallback).
+
+    The poller publishes index quotes under the provider's API symbol —
+    the same storage key the Fyers feed uses — so a reader never has to
+    guess. It is bounded by the source's own guards and only runs while
+    the application is up.
+    """
+    global _fyers_index_poller_task
+    if _fyers_index_poller_task is not None:
+        return
+    try:
+        from app.fyers_index_source import run_fyers_index_poll_loop
+        _fyers_index_poller_task = asyncio.create_task(
+            run_fyers_index_poll_loop(
+                _fyers_index_source, _market_service,
+                interval_seconds=_fyers_index_poll_interval_seconds),
+            name="fyers_index_poller")
+        _app_logger.info("fyers index poller started")
+    except Exception:
+        _app_logger.warning("fyers index poller start failed", exc_info=True)
+
+
+async def _stop_fyers_index_poller() -> None:
+    """Stop the Fyers index poller cleanly."""
+    global _fyers_index_poller_task
+    task = _fyers_index_poller_task
+    _fyers_index_poller_task = None
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        _app_logger.debug("fyers index poller raised during stop",
+                          exc_info=True)
+
+
+async def _start_previous_oi_recorder() -> None:
+    """Start the previous-session OI recorder.
+
+    The recorder observes the live futures OI and persists a batched
+    prior-session baseline, which is the documented FALLBACK for the OI
+    change when a provider does not report a previous OI (Upstox's WS
+    wire does not). It is a production component with an explicit
+    lifecycle — never a constructed-but-idle object.
+    """
+    global _previous_oi_recorder_task, _previous_oi_recorder
+    if _previous_oi_recorder_task is not None:
+        return
+    try:
+        from app.previous_oi import PreviousOiRecorder
+        _previous_oi_recorder = PreviousOiRecorder(_store)
+        try:
+            rows = _instrument_catalog.list_future_contracts(
+                exchange="NSE", limit=20000)
+        except Exception:
+            rows = []
+        mapped = _previous_oi_recorder.refresh_identity(rows or [])
+        stop_event = asyncio.Event()
+        _previous_oi_stop_event = stop_event
+        _previous_oi_recorder_task = asyncio.create_task(
+            _previous_oi_recorder.run(stop_event), name="previous_oi_recorder")
+        _app_logger.info(
+            "previous-OI recorder started (%d futures contracts mapped)",
+            mapped)
+    except Exception:
+        _app_logger.warning("previous-OI recorder start failed", exc_info=True)
+
+
+async def _stop_previous_oi_recorder() -> None:
+    """Stop the previous-session OI recorder (flushes one last time)."""
+    global _previous_oi_recorder_task, _previous_oi_stop_event
+    event = _previous_oi_stop_event
+    _previous_oi_stop_event = None
+    if event is not None:
+        try:
+            event.set()
+        except Exception:
+            pass
+    task = _previous_oi_recorder_task
+    _previous_oi_recorder_task = None
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        _app_logger.debug("previous-OI recorder raised during stop",
+                          exc_info=True)
+
+
 async def _lifespan(app: Starlette) -> None:
     """
     Top-level lifespan owner.
@@ -1201,9 +1548,24 @@ async def _lifespan(app: Starlette) -> None:
     # apply — desired set restored after every restart, feed failures
     # never roll preferences back).
     try:
-        await _subscription_service.reconcile(_feed_for_provider)
+        # The demand (the user's preferences) becomes LEASES; the manager
+        # allocates them against each provider's verified ceiling and
+        # applies the result to the live feeds.
+        _subscription_manager.apply_demand(
+            _subscription_service.lease_requests())
+        await _subscription_manager.reconcile()
     except Exception:
         _app_logger.warning("subscription reconcile failed", exc_info=True)
+
+    # Reconstruct the desired F&O state from the durable config + catalogue
+    # (startup restoration; no manual apply required, no new state field).
+    await _restore_fno_coverage()
+
+    # Start the Fyers index fallback poller and the previous-OI recorder.
+    # Both are production components with an explicit owner, start/stop
+    # lifecycle and a truthful status — never constructed-and-idle.
+    await _start_fyers_index_poller()
+    await _start_previous_oi_recorder()
 
     async with mcp_asgi_app.router.lifespan_context(app):
         yield
@@ -1213,6 +1575,37 @@ async def _lifespan(app: Starlette) -> None:
         await _analytics_service.stop(_bg_task_manager)
     except Exception:
         _app_logger.warning("analytics service shutdown failed", exc_info=True)
+
+    # Stop the Fyers index poller and the previous-OI recorder.
+    await _stop_fyers_index_poller()
+    await _stop_previous_oi_recorder()
+
+
+def _lifecycle_status_snapshot_fn() -> dict[str, Any]:
+    """Read-only lifecycle status of the background components (no secrets).
+
+    Each component reports whether it is actually RUNNING, so a
+    constructed-but-idle component is visible instead of silent.
+    """
+    out: dict[str, Any] = {}
+    task = _fyers_index_poller_task
+    out["fyers_index_poller"] = {
+        "running": bool(task is not None and not task.done()),
+        "interval_seconds": _fyers_index_poll_interval_seconds,
+    }
+    try:
+        state = _fyers_index_source.snapshot_state()
+    except Exception:
+        state = {}
+    if isinstance(state, dict):
+        out["fyers_index_poller"]["ready"] = state.get("ready")
+        out["fyers_index_poller"]["last_fetch"] = state.get("last_fetch")
+        out["fyers_index_poller"]["symbols"] = state.get("symbols")
+    rec_task = _previous_oi_recorder_task
+    out["previous_oi_recorder"] = {
+        "running": bool(rec_task is not None and not rec_task.done()),
+    }
+    return out
 
 
 def _auth_health_snapshot_fn() -> dict[str, Any]:
@@ -1254,6 +1647,7 @@ app = Starlette(
         index_catalog=_instrument_catalog,
         subscriptions=_subscription_service,
         feed_provider=_feed_for_provider,
+        quote_coordinator=_market_quote_coordinator,
         # Merged view: source status + task liveness + exit forensics, so the
         # UI can distinguish "streaming" from "dead task with stale state".
         source_status_fn=lambda: [
@@ -1282,7 +1676,8 @@ app = Starlette(
     )
     + _build_intel_routes(_market_intel, provider_md=_provider_market_data)
     + _build_instrument_routes(_instrument_catalog, store=_store)
-    + _build_watchlist_routes(_store, subscription=_feed_subscription)
+    + _build_watchlist_routes(_store, subscription=_feed_subscription,
+                              identity_resolver=_identity_registry)
     + _build_watchlist_portability_routes(_store)
     + _build_alert_routes(_store, _alert_engine)
     + _build_alert_history_routes(_store)
@@ -1294,7 +1689,12 @@ app = Starlette(
         _instrument_catalog, subscriptions=_subscription_service,
         market_service=_market_service, feed_provider=_feed_for_provider,
         provider_md=_provider_market_data)
-    + _build_admin_routes(_store, PROJECT_ROOT / DATA_DIR)
+    + _build_fno_coverage_routes(
+        _instrument_catalog, _subscription_service,
+        _fno_coverage_service, feed_provider=_feed_for_provider)
+    + _build_futures_heatmap_routes(
+        _fno_coverage_service, _market_service, _store)
+    + _build_admin_routes(_store, _runtime_data_dir(_config.get("data_dir")))
     + _build_fyers_auth_routes(
         _credential_store,
         runtime_auth=_fyers_runtime_auth,
@@ -1322,6 +1722,9 @@ app = Starlette(
         lambda: get_public_base_url(_config),
         # Read-only broker auth-health (Test Center observes; never mutates).
         auth_status_fn=_auth_health_snapshot_fn,
+        # Read-only lifecycle status of the background components that must
+        # have a real owner (never secrets).
+        lifecycle_status_fn=_lifecycle_status_snapshot_fn,
     )
     + _build_api_meta_routes()
     + _build_ai_alert_routes(_store, mcp)

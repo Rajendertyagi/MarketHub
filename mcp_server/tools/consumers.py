@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.errors import ValidationError, StorageError, ConsumerNotFoundError
+from core.errors import ConsumerNotFoundError, StorageError, ValidationError
 from mcp_server.contract import (
     TOOL_CONSUMER_REGISTER,
     TOOL_CONSUMER_TOPIC_ADD,

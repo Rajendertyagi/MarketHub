@@ -32,10 +32,10 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from datetime import datetime, timedelta, timezone  # noqa: E402
-from types import MappingProxyType  # noqa: E402
+from datetime import datetime, timedelta, timezone
+from types import MappingProxyType
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 UTC = timezone.utc
 T0 = datetime(2026, 8, 23, 9, 0, 0, tzinfo=UTC)
@@ -461,7 +461,8 @@ async def test_ms18_depth_insert_and_replace(runner: R) -> None:
     d = await svc.get_depth(EXCHANGE, TOKEN)
     assert d is not None
     runner.assert_eq(name + "-replaced-wholesale",
-                     [(l.price, l.quantity) for l in d.bids], [(101.0, 10.0)])
+                     [(lvl.price, lvl.quantity) for lvl in d.bids],
+                     [(101.0, 10.0)])
     status = await svc.status()
     runner.assert_eq(name + "-single-entry", status["depth_count"], 1)
 
@@ -595,7 +596,7 @@ async def test_ms25_immutability(runner: R) -> None:
 async def test_ms26_reported_fields_immutable(runner: R) -> None:
     """MS26: reported_fields is a true snapshot — read-only after construction."""
     name = "MS26-patch-immutable"
-    from market.service import MarketService, QuotePatch
+    from market.service import MarketService
 
     original = {"ltp": 100.0, "volume": 500}
     p = make_patch(reported_fields=original)

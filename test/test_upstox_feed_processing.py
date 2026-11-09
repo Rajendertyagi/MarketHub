@@ -11,7 +11,6 @@ as D1 tests). No network, no credentials, no server.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sys
 
@@ -22,10 +21,11 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from datetime import datetime, timedelta, timezone  # noqa: E402
+from datetime import datetime, timedelta, timezone
 
-from helpers.runner import R  # noqa: E402
-from brokers.upstox.proto import MarketDataFeed_pb2 as pb  # noqa: E402
+from helpers.runner import R
+
+from brokers.upstox.proto import MarketDataFeed_pb2 as pb
 
 UTC = timezone.utc
 AWARE_UTC = datetime(2026, 8, 23, 12, 0, 0, tzinfo=UTC)
@@ -48,7 +48,10 @@ def _build_ltpc_response(key=KEY, ltp=219.3, cp=494.05,
     r.currentTs = ltt
     f = r.feeds[key]
     t = f.ltpc
-    t.ltp = ltp; t.ltt = ltt; t.ltq = ltq; t.cp = cp
+    t.ltp = ltp
+    t.ltt = ltt
+    t.ltq = ltq
+    t.cp = cp
     return r.SerializeToString()
 
 
@@ -60,13 +63,22 @@ def _build_full_response(key=KEY, *, ltp=141.0, cp=233.95,
     r.type = pb.Type.Value("live_feed")
     r.currentTs = 1740729566039
     ff = r.feeds[key].fullFeed.marketFF
-    ff.ltpc.ltp = ltp; ff.ltpc.cp = cp; ff.ltpc.ltt = 1740729552723
-    if vtt: ff.vtt = vtt
-    if oi: ff.oi = oi
-    if tbq: ff.tbq = tbq
-    if tsq: ff.tsq = tsq
+    ff.ltpc.ltp = ltp
+    ff.ltpc.cp = cp
+    ff.ltpc.ltt = 1740729552723
+    if vtt:
+        ff.vtt = vtt
+    if oi:
+        ff.oi = oi
+    if tbq:
+        ff.tbq = tbq
+    if tsq:
+        ff.tsq = tsq
     lvl = ff.marketLevel.bidAskQuote.add()
-    lvl.bidQ = bid_q; lvl.bidP = bid_p; lvl.askQ = ask_q; lvl.askP = ask_p
+    lvl.bidQ = bid_q
+    lvl.bidP = bid_p
+    lvl.askQ = ask_q
+    lvl.askP = ask_p
     return r.SerializeToString()
 
 
@@ -166,12 +178,17 @@ def test_pzero_zero_not_reported(runner: R) -> None:
 
     # Build two frames: one with oi=0 explicitly set, one without oi at all.
     from brokers.upstox.proto import MarketDataFeed_pb2 as pb
-    rz = pb.FeedResponse(); rz.type = pb.Type.Value("live_feed")
+    rz = pb.FeedResponse()
+    rz.type = pb.Type.Value("live_feed")
     fz = rz.feeds[KEY].fullFeed.marketFF
-    fz.ltpc.ltp = 100.0; fz.ltpc.cp = 90.0; fz.oi = 0.0
-    rn = pb.FeedResponse(); rn.type = pb.Type.Value("live_feed")
+    fz.ltpc.ltp = 100.0
+    fz.ltpc.cp = 90.0
+    fz.oi = 0.0
+    rn = pb.FeedResponse()
+    rn.type = pb.Type.Value("live_feed")
     fn = rn.feeds[KEY].fullFeed.marketFF
-    fn.ltpc.ltp = 100.0; fn.ltpc.cp = 90.0
+    fn.ltpc.ltp = 100.0
+    fn.ltpc.cp = 90.0
 
     runner.assert_eq(name + "-wire-identical",
                      rz.SerializeToString() == rn.SerializeToString(), True)
@@ -242,7 +259,8 @@ async def test_stale_update_rejected(runner: R) -> None:
     newer = _build_full_response(ltp=110.0, cp=95.0)
     # Patch the ltt to a known newer value.
     from brokers.upstox.proto import MarketDataFeed_pb2 as pb
-    nr = pb.FeedResponse(); nr.ParseFromString(newer)
+    nr = pb.FeedResponse()
+    nr.ParseFromString(newer)
     nr.feeds[KEY].fullFeed.marketFF.ltpc.ltt = 2000000000000
     newer = nr.SerializeToString()
 
@@ -253,7 +271,8 @@ async def test_stale_update_rejected(runner: R) -> None:
 
     # Older frame: ltt = 1000000000000 (earlier timestamp).
     older = _build_full_response(ltp=90.0, cp=95.0)
-    orr = pb.FeedResponse(); orr.ParseFromString(older)
+    orr = pb.FeedResponse()
+    orr.ParseFromString(older)
     orr.feeds[KEY].fullFeed.marketFF.ltpc.ltt = 1000000000000
     older = orr.SerializeToString()
 
@@ -271,15 +290,18 @@ async def test_stale_update_rejected(runner: R) -> None:
 async def test_bad_instrument_isolation(runner: R) -> None:
     """FP6: one unsupported instrument doesn't block a valid one."""
     name = "FP6-isolation"
-    from brokers.upstox.proto import MarketDataFeed_pb2 as pb
     from brokers.upstox.feed_processing import process_binary_frame
+    from brokers.upstox.proto import MarketDataFeed_pb2 as pb
 
     r = pb.FeedResponse()
     r.type = pb.Type.Value("live_feed")
-    greek = r.feeds[KEY].firstLevelWithGreeks
-    greek.ltpc.ltp = 100.0
+    # The BAD instrument carries no supported payload (an empty feed is
+    # genuinely unsupported - every documented payload type is supported
+    # now, so the isolation is proven with an empty one).
+    r.feeds[KEY].SetInParent()
     good = r.feeds["NSE_EQ|INE848E01016"].ltpc
-    good.ltp = 200.0; good.cp = 190.0
+    good.ltp = 200.0
+    good.cp = 190.0
 
     result = process_binary_frame(r.SerializeToString(),
                                   received_ts=AWARE_UTC,
@@ -296,8 +318,8 @@ async def test_bad_instrument_isolation(runner: R) -> None:
 def test_malformed_frame(runner: R) -> None:
     """FP7: malformed bytes raise ProtobufDecodeError."""
     name = "FP7-malformed"
-    from brokers.upstox.feed_protocol import ProtobufDecodeError
     from brokers.upstox.feed_processing import process_binary_frame
+    from brokers.upstox.feed_protocol import ProtobufDecodeError
 
     _expect_raises(runner, name + "-empty", ProtobufDecodeError,
                    lambda: process_binary_frame(b"", received_ts=AWARE_UTC, instrument_metadata=METADATA))
@@ -350,7 +372,8 @@ def test_canonical_identity(runner: R) -> None:
     r = pb.FeedResponse()
     r.type = pb.Type.Value("live_feed")
     t = r.feeds[key].ltpc
-    t.ltp = 100.0; t.cp = 90.0
+    t.ltp = 100.0
+    t.cp = 90.0
 
     result = process_binary_frame(r.SerializeToString(),
                                   received_ts=AWARE_UTC,
@@ -375,9 +398,11 @@ def test_unknown_instrument_dropped(runner: R) -> None:
     r = pb.FeedResponse()
     r.type = pb.Type.Value("live_feed")
     unknown = r.feeds["UNKNOWN|KEY123"].ltpc
-    unknown.ltp = 1.0; unknown.cp = 0.5
+    unknown.ltp = 1.0
+    unknown.cp = 0.5
     known = r.feeds[KEY].ltpc
-    known.ltp = 200.0; known.cp = 190.0
+    known.ltp = 200.0
+    known.cp = 190.0
 
     result = process_binary_frame(r.SerializeToString(),
                                   received_ts=AWARE_UTC,
@@ -395,8 +420,8 @@ def test_unknown_instrument_dropped(runner: R) -> None:
 async def test_metadata_end_to_end(runner: R) -> None:
     """FP12: canonical metadata flows through to MarketService state."""
     name = "FP12-metadata-e2e"
-    from market.service import MarketService
     from brokers.upstox.feed_processing import process_binary_frame
+    from market.service import MarketService
 
     svc = MarketService()
     key = "NSE_EQ|INE848E01016"

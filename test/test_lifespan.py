@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-import time
 
 # Ensure project root is importable.
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -22,15 +21,14 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers.lifecycle import (  # noqa: E402
+from helpers.lifecycle import (
     restore_environment,
     start_server,
 )
-from helpers.mcp_client import (  # noqa: E402
+from helpers.mcp_client import (
     call,
 )
-from helpers.runner import R  # noqa: E402
-
+from helpers.runner import R
 
 # ===================================================================
 # Lifespan Test
@@ -51,7 +49,7 @@ async def p7t19_app_context_lifespan(runner: R) -> None:
 
 
 async def main() -> bool:
-    proc = await start_server()
+    await start_server()
     runner = R()
     try:
         print("  Lifespan Test")

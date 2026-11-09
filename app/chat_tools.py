@@ -12,7 +12,8 @@ exist anywhere in this registry by design.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 
 def _quote_compact(quote) -> dict[str, Any] | None:
@@ -196,8 +197,7 @@ class ChatToolRegistry:
         inst = await self._resolve_one(args.get("query", ""))
         if inst is None:
             return {"error": f"no instrument matches '{args.get('query')}'"}
-        exchange, token = inst["instrument_key"].split(":", 1)
-        quote = await self._msvc.get_quote(exchange, token)
+        quote = self._quote_for(inst)
         out: dict[str, Any] = {"instrument": inst}
         compact = _quote_compact(quote)
         out["quote"] = compact
@@ -206,23 +206,64 @@ class ChatToolRegistry:
                 "stale": True,
                 "note": "no live data in market state; do not claim live"}
         else:
-            out["freshness"] = {"received_at":
-                                compact.get("received_ts"),
-                                "stale": False}
+            # The SHARED freshness verdict: a quote that exists is not
+            # evidence that it is live (the agent must never call a
+            # last-session value live).
+            from app.quote_service import quote_freshness
+            out["freshness"] = quote_freshness(
+                inst.get("canonical_id"), compact.get("received_ts"))
+            out["provider"] = inst.get("provider")
         return out
 
     async def _tool_market_depth(self, args: dict[str, Any]):
         inst = await self._resolve_one(args.get("query", ""))
         if inst is None:
             return {"error": f"no instrument matches '{args.get('query')}'"}
-        exchange, token = inst["instrument_key"].split(":", 1)
-        depth = await self._msvc.get_depth(exchange, token)
+        depth = self._depth_for(inst)
         if depth is None:
             return {"instrument": inst, "depth": None,
                     "availability": "unavailable for this instrument"}
         from market.serialization import depth_to_dict
-        return {"instrument": inst, "depth": depth_to_dict(depth),
+        payload = depth_to_dict(depth)
+        payload.setdefault("provider", inst.get("provider"))
+        return {"instrument": inst, "depth": payload,
                 "availability": "ok"}
+
+    def _quote_ref(self, inst: dict[str, Any]) -> tuple[str, str]:
+        """(exchange, quote-storage key) for a resolved instrument.
+
+        The compact search result carries the provider's QUOTE key
+        (``native_key``) - the key the quote state is written under.
+        Splitting ``instrument_key`` instead would address the provider's
+        TOKEN (a FYERS fyToken), which is NOT the quote storage key, so
+        the quote would never be found.
+        """
+        exchange = str(inst.get("exchange") or "")
+        key = inst.get("native_key")
+        if not key:
+            parts = str(inst.get("instrument_key") or "").split(":", 1)
+            if len(parts) == 2:
+                exchange = exchange or parts[0]
+                key = parts[1]
+        return exchange, str(key or "")
+
+    def _quote_for(self, inst: dict[str, Any]):
+        exchange, key = self._quote_ref(inst)
+        if not key:
+            return None
+        try:
+            return self._msvc.get_quote_now(exchange, key)
+        except Exception:
+            return None
+
+    def _depth_for(self, inst: dict[str, Any]):
+        exchange, key = self._quote_ref(inst)
+        if not key:
+            return None
+        try:
+            return self._msvc.get_depth_now(exchange, key)
+        except Exception:
+            return None
 
     async def _tool_futures_contracts(self, args: dict[str, Any]):
         return await asyncio.to_thread(

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 import sys
-import tempfile
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_DIR = os.path.dirname(_SCRIPT_DIR)
@@ -18,7 +17,7 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 
 def test_x_routes_registered_in_app_composition(runner: R) -> None:
@@ -34,8 +33,8 @@ def test_x_routes_registered_in_app_composition(runner: R) -> None:
 
 def test_x_status_endpoint_accessible(runner: R) -> None:
     """GET /api/x/status returns 200 with auth metadata (no crash)."""
-    from starlette.applications import Starlette
     from starlette.testclient import TestClient
+
     from app.server import app as _prod_app
     # Use the real app so service wiring is exercised.
     client = TestClient(_prod_app, raise_server_exceptions=False)
@@ -48,8 +47,8 @@ def test_x_status_endpoint_accessible(runner: R) -> None:
 
 def test_x_test_endpoint_accessible(runner: R) -> None:
     """POST /api/x/test returns 200 (may be not_configured if no creds)."""
-    from starlette.applications import Starlette
     from starlette.testclient import TestClient
+
     from app.server import app as _prod_app
     client = TestClient(_prod_app, raise_server_exceptions=False)
     resp = client.post("/api/x/test")
@@ -61,8 +60,8 @@ def test_x_test_endpoint_accessible(runner: R) -> None:
 
 def test_x_tweets_endpoint_accessible(runner: R) -> None:
     """GET /api/x/tweets returns 200 with empty list when cache is empty."""
-    from starlette.applications import Starlette
     from starlette.testclient import TestClient
+
     from app.server import app as _prod_app
     client = TestClient(_prod_app, raise_server_exceptions=False)
     resp = client.get("/api/x/tweets?limit=5")
@@ -74,8 +73,8 @@ def test_x_tweets_endpoint_accessible(runner: R) -> None:
 
 def test_settings_x_endpoint_accessible(runner: R) -> None:
     """GET /api/settings/x returns 200 with configured flag."""
-    from starlette.applications import Starlette
     from starlette.testclient import TestClient
+
     from app.server import app as _prod_app
     client = TestClient(_prod_app, raise_server_exceptions=False)
     resp = client.get("/api/settings/x")
@@ -86,8 +85,8 @@ def test_settings_x_endpoint_accessible(runner: R) -> None:
 
 def test_fyers_unchanged(runner: R) -> None:
     """Fyers routes still work after X wiring change."""
-    from starlette.applications import Starlette
     from starlette.testclient import TestClient
+
     from app.server import app as _prod_app
     client = TestClient(_prod_app, raise_server_exceptions=False)
     resp = client.get("/api/settings/fyers")

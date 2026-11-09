@@ -26,7 +26,7 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 NOW_S = 0.0
 
@@ -91,7 +91,6 @@ async def test_ld1_ld3_load(runner: R) -> None:
 
 async def test_ld2_stale_burst(runner: R) -> None:
     """Out-of-order received_ts must not corrupt state."""
-    from market.models import Quote
     from market.service import MarketService, QuotePatch
 
     async def run():
@@ -118,8 +117,8 @@ async def test_ld2_stale_burst(runner: R) -> None:
 
 
 async def test_ld4_to_ld6_churn(runner: R) -> None:
-    from brokers.upstox.feed import UpstoxFeed
     from brokers.upstox.auth import UpstoxCredentials
+    from brokers.upstox.feed import UpstoxFeed
 
     class _Rest:
         async def authorize_market_feed(self, c):
@@ -235,7 +234,7 @@ def json_dumps(v):
     return json.dumps(v)
 
 
-import json  # noqa: E402
+import json
 
 
 def _ts():

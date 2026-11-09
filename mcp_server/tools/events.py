@@ -7,11 +7,10 @@ The internal generate_event() helper remains available for tests/internal use.
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 from core import events
-from mcp_server.contract import TOOL_EVENT_PUBLISH, TOOL_EVENT_LIST
+from mcp_server.contract import TOOL_EVENT_LIST
 from mcp_server.registry import get_tool_description
 
 

@@ -8,7 +8,8 @@ modules). Credentials arrive per-call from the live feed via the injected
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger("event_server")
 
@@ -109,18 +110,57 @@ def _infer_provider(instrument_key: str) -> str:
 class ProviderMarketData:
     """History + option-chain access over canonical provider adapters.
 
-    Provider resolution is deterministic: an explicit ``provider`` argument
-    wins; when omitted it is inferred from the instrument key's format (see
-    :func:`_infer_provider`). Unknown providers are rejected loudly — never a
-    silent random fallback.
+    Provider resolution is deterministic:
+
+    1. an explicit ``provider`` argument always wins;
+    2. otherwise the CATALOGUE decides — it records which provider
+       published the instrument key, so the provider is never guessed from
+       the key's string shape;
+    3. the registry's adapter-declared key STYLE is the last-resort
+       fallback for a key the catalogue does not know.
+
+    Unknown providers are rejected loudly — never a silent random
+    fallback.
     """
 
     _PROVIDERS = ("upstox", "fyers")
 
     def __init__(self, upstox_auth_context_fn: Callable[[], Any],
-                 fyers_adapter: Any = None) -> None:
+                 fyers_adapter: Any = None,
+                 catalog: Any = None,
+                 registry: Any = None) -> None:
         self._upstox_auth_context_fn = upstox_auth_context_fn
         self._fyers = fyers_adapter   # optional; None until configured
+        # Optional catalogue/registry: the authority on which provider
+        # owns an instrument key.
+        self._catalog = catalog
+        self._registry = registry
+
+    def _reg(self) -> Any:
+        if self._registry is None:
+            try:
+                from providers.registry import get_registry
+                self._registry = get_registry()
+            except Exception:
+                self._registry = None
+        return self._registry
+
+    def _provider_for(self, instrument_key: str) -> str:
+        """The provider that owns an instrument key.
+
+        The CATALOGUE is authoritative. The registry's adapter-declared key
+        STYLE is only the fallback for a key the catalogue does not know.
+        """
+        reg = self._reg()
+        if reg is not None:
+            try:
+                pid = reg.provider_for_key(instrument_key,
+                                           catalog=self._catalog)
+                if pid:
+                    return str(pid)
+            except Exception:
+                pass
+        return _infer_provider(instrument_key)
 
     def _resolve(self, provider: str):
         if provider == "upstox":
@@ -146,7 +186,7 @@ class ProviderMarketData:
         from_date: str, to_date: str, provider: str | None = None,
     ) -> list[Any]:
         if provider is None:
-            provider = _infer_provider(instrument_key)
+            provider = self._provider_for(instrument_key)
         provider, _auth_src = self._resolve(provider)
         if provider == "fyers":
             from market.normalize.fyers import fyers_resolution
@@ -175,6 +215,7 @@ class ProviderMarketData:
 
         rest, creds = self._auth()
         from urllib.parse import quote
+
         from market.normalize.upstox import candles_from_rest
 
         # Path segments are encoded: raw `|`/spaces are rejected by the
@@ -202,9 +243,24 @@ class ProviderMarketData:
 
     async def option_chain(
         self, *, instrument_key: str, exchange: str,
-        tradingsymbol: str = "", expiry: str, provider: str = "upstox",
+        tradingsymbol: str = "", expiry: str, provider: str | None = None,
     ) -> Any:
+        # Provider routing follows the INSTRUMENT, not a hardcoded provider:
+        # when the caller does not name one, the CATALOGUE decides which
+        # provider published the key (the registry's key-style is only the
+        # fallback for a key the catalogue does not know). A Fyers key is
+        # therefore served by the Fyers adapter even when Upstox is logged
+        # out.
+        if provider is None:
+            provider = self._provider_for(instrument_key)
         provider, _auth_src = self._resolve(provider)
+        if provider == "upstox" and self._fyers is not None \
+                and self._upstox_auth_context_fn() is None:
+            # Upstox cannot serve the request (no session). The CONTRACT is
+            # provider-neutral, and the Fyers adapter resolves the same
+            # contract through the catalogue - so the chain is served by the
+            # provider that CAN, instead of failing the whole surface.
+            provider = "fyers"
         if provider == "fyers":
             return await self._fyers.option_chain(
                 instrument_key=instrument_key, exchange=exchange,
@@ -212,8 +268,9 @@ class ProviderMarketData:
         if not expiry or len(expiry) != 10:
             raise ProviderMarketDataError("expiry must be YYYY-MM-DD")
         rest, creds = self._auth()
-        from market.normalize.upstox import option_chain_from_rest
         from urllib.parse import urlencode
+
+        from market.normalize.upstox import option_chain_from_rest
 
         # Upstox serves the option chain as a REST snapshot (GET + query
         # params). It returns last-session OI/LTP/IV/greeks even when the
@@ -314,7 +371,10 @@ class ProviderMarketData:
         if provider != "upstox":
             raise ProviderMarketDataError("holidays not available from this provider")
         rest, creds = self._auth()
-        from market.normalize.upstox_market_info import holidays_from_rest, holiday_status_from_rest
+        from market.normalize.upstox_market_info import (
+            holiday_status_from_rest,
+            holidays_from_rest,
+        )
         url = f"{_HOLIDAYS_URL}/{date}" if date else _HOLIDAYS_URL
         payload = await rest.authenticated_request(
             method="GET", url=url, access_token=creds.access_token)
@@ -344,7 +404,9 @@ class ProviderMarketData:
         if provider != "upstox":
             raise ProviderMarketDataError("futures smartlist not available from this provider")
         rest, creds = self._auth()
-        from market.normalize.upstox_analytics_extended import futures_smartlist_from_rest
+        from market.normalize.upstox_analytics_extended import (
+            futures_smartlist_from_rest,
+        )
         payload = await rest.authenticated_request(
             method="GET", url=_FUTURES_SMARTLIST_URL,
             access_token=creds.access_token,

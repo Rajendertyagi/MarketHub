@@ -24,7 +24,6 @@ import asyncio
 import json
 import os
 import sys
-import urllib.parse
 
 # Make the project root importable regardless of the working directory the
 # test is launched from (mirrors test_unit_sources.py).
@@ -35,11 +34,12 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from datetime import datetime, timezone  # noqa: E402
-from websockets.exceptions import ConnectionClosed  # noqa: E402
+from datetime import timezone
 
-from helpers.runner import R  # noqa: E402
-from brokers.upstox import UpstoxCredentials  # noqa: E402
+from helpers.runner import R
+from websockets.exceptions import ConnectionClosed
+
+from brokers.upstox import UpstoxCredentials
 
 UTC = timezone.utc
 TOKEN = "SYNTHETIC_ACCESS_TOKEN_XYZ"
@@ -178,7 +178,6 @@ def test_config_validation(runner: R) -> None:
     """UF1: name/keys/mode/limit validation + dedup preserving order."""
     name = "UF1-config"
     from brokers.upstox import UpstoxConfigError, UpstoxCredentials, UpstoxFeed
-    from brokers.upstox.auth import UpstoxCredentials as _C  # noqa: F401
 
     creds = UpstoxCredentials(access_token="tok")
 
@@ -192,7 +191,8 @@ def test_config_validation(runner: R) -> None:
 
     def make(**over):
         meta = over.pop("instrument_metadata", base_meta)
-        cfg = dict(base); cfg.update(over)
+        cfg = dict(base)
+        cfg.update(over)
         return UpstoxFeed(config=cfg, credentials=creds, rest=_StubRest(),
                           instrument_metadata=meta)
 
@@ -209,10 +209,6 @@ def test_config_validation(runner: R) -> None:
                    lambda: make(instrument_keys=["A", "   "]))
     _expect_raises(runner, name + "-keys-empty", UpstoxConfigError,
                    lambda: make(instrument_keys=[]))
-    _expect_raises(runner, name + "-bad-mode-greeks", UpstoxConfigError,
-                   lambda: make(mode="option_greeks"), needle="mode must be")
-    _expect_raises(runner, name + "-bad-mode-d30", UpstoxConfigError,
-                   lambda: make(mode="full_d30"))
     _expect_raises(runner, name + "-unknown-mode", UpstoxConfigError,
                    lambda: make(mode="mega"))
 
@@ -279,7 +275,6 @@ def test_config_validation(runner: R) -> None:
 async def test_connect_settings_and_subscription(runner: R) -> None:
     """UF2/UF3: exact production settings; binary sub frame contract."""
     name = "UF2-connect-settings"
-    from brokers.upstox import UpstoxRest
 
     conn = FakeConnection(incoming=[b"\x81\x02hi"])
     feed, rest, connector = _make_feed(
@@ -445,7 +440,8 @@ async def test_backoff_policy(runner: R) -> None:
     async def instant_sleep(delay):
         delays.append(delay)
 
-    zero_jitter = lambda lo, hi: 0.0  # noqa: E731
+    def zero_jitter(lo, hi):
+        return 0.0
 
     # Monotonic script: 6 rapid connections (lifetime 0.5s each), then a
     # 7th connection that stays up 61s (>= stable threshold) before it
@@ -498,7 +494,8 @@ async def test_backoff_cap_and_jitter_bound(runner: R) -> None:
     async def instant_sleep(delay):
         delays.append(delay)
 
-    bounded_jitter = lambda lo, hi: hi  # noqa: E731  # always +20%
+    def bounded_jitter(lo, hi):
+        return hi  # always +20%
 
     values: list[float] = []
     t = 0.0
@@ -536,8 +533,10 @@ async def test_rest_error_classification(runner: R) -> None:
     """UF7: auth/nonretryable terminal; retryable retries then succeeds."""
     name = "UF7-rest-errors"
     from brokers.upstox import (
-        UpstoxAuthError, UpstoxRest, UpstoxRestError, UpstoxCredentials,
+        UpstoxAuthError,
+        UpstoxCredentials,
         UpstoxFeed,
+        UpstoxRestError,
     )
 
     # Auth rejection -> auth_required (login-required state), no retry,
@@ -602,7 +601,9 @@ async def test_rate_limit_retry_after(runner: R) -> None:
     """UF8: provider hint honored as floor; stop interrupts the wait."""
     name = "UF8-rate-limit"
     from brokers.upstox import (
-        UpstoxCredentials, UpstoxFeed, UpstoxRateLimitError,
+        UpstoxCredentials,
+        UpstoxFeed,
+        UpstoxRateLimitError,
     )
 
     delays: list[float] = []

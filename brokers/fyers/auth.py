@@ -41,7 +41,7 @@ class FyersAuthError(ValueError):
 def app_id_hash(app_id: str, app_secret: str) -> str:
     """sha256 hex of "appId:appSecret" per official spec."""
     return hashlib.sha256(
-        f"{app_id}:{app_secret}".encode("utf-8")).hexdigest()
+        f"{app_id}:{app_secret}".encode()).hexdigest()
 
 
 class FyersAuth:
@@ -126,10 +126,30 @@ class FyersAuth:
             "appIdHash": app_id_hash(self._app_id, self._secret),
             "code": auth_code.strip(),
         })
+        # Fyers does not return expires_at in the token response. Per official
+        # docs, access tokens are valid for the trading day (expire at end of
+        # session, ~15:30 IST). Derive a conservative expiry so auth state is
+        # honestly "authenticated" instead of "unknown".
+        expires_at = payload.get("expires_at")
+        if not expires_at:
+            from datetime import datetime, timedelta, timezone
+            # IST = UTC+5:30
+            ist = timezone(timedelta(hours=5, minutes=30))
+            now_ist = datetime.now(ist)
+            # Token valid until end of trading day (15:30 IST) or, if already
+            # past that, until end of next day.
+            if now_ist.hour < 15 or (now_ist.hour == 15 and now_ist.minute < 30):
+                expiry_ist = now_ist.replace(hour=15, minute=30, second=0,
+                                            microsecond=0)
+            else:
+                tomorrow = now_ist + timedelta(days=1)
+                expiry_ist = tomorrow.replace(hour=15, minute=30, second=0,
+                                             microsecond=0)
+            expires_at = expiry_ist.astimezone(timezone.utc).isoformat()
         return {
             "access_token": str(payload["access_token"]),
             "refresh_token": str(payload.get("refresh_token", "")),
-            "expires_at": payload.get("expires_at"),
+            "expires_at": expires_at,
         }
 
     async def refresh_access_token(self, refresh_token: str,
@@ -152,10 +172,23 @@ class FyersAuth:
         if pin:
             body["pin"] = str(pin).strip()
         payload = await self._post_json(_REFRESH_URL, body)
+        expires_at = payload.get("expires_at")
+        if not expires_at:
+            from datetime import datetime, timedelta, timezone
+            ist = timezone(timedelta(hours=5, minutes=30))
+            now_ist = datetime.now(ist)
+            if now_ist.hour < 15 or (now_ist.hour == 15 and now_ist.minute < 30):
+                expiry_ist = now_ist.replace(hour=15, minute=30, second=0,
+                                            microsecond=0)
+            else:
+                tomorrow = now_ist + timedelta(days=1)
+                expiry_ist = tomorrow.replace(hour=15, minute=30, second=0,
+                                             microsecond=0)
+            expires_at = expiry_ist.astimezone(timezone.utc).isoformat()
         return {
             "access_token": str(payload["access_token"]),
             "refresh_token": refresh_token.strip(),
-            "expires_at": payload.get("expires_at"),
+            "expires_at": expires_at,
         }
 
 

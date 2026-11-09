@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Fyers TBT depth channel tests (TBT1-TBT24)."""
 
 from __future__ import annotations
@@ -7,8 +7,7 @@ import asyncio
 import json
 import sys
 from datetime import datetime, timezone
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 _PROJECT_DIR = "."
 if _PROJECT_DIR not in sys.path:
@@ -19,7 +18,7 @@ import pytest_asyncio
 
 from brokers.fyers.tbt.feed import FyersTbtFeed
 from brokers.fyers.tbt.normalizer import normalize_tbt_depth
-from brokers.fyers.tbt.order_book import LocalOrderBook, OrderBookStore
+from brokers.fyers.tbt.order_book import LocalOrderBook
 from brokers.fyers.tbt.proto import msg_pb2
 from market.models import Depth, DepthLevel
 from market.service import MarketService, QuotePatch
@@ -274,10 +273,10 @@ class TestTBTProtocol:
     async def test_tbt10_sequence_gap_detected(self, tbt_feed):
         book = LocalOrderBook("NSE:RELIANCE-EQ", "NSE", "RELIANCE-EQ")
         
-        assert book.check_sequence(1) == True
+        assert book.check_sequence(1) is True
         book.last_sequence = 1
         
-        assert book.check_sequence(3) == False
+        assert book.check_sequence(3) is False
 
     @pytest.mark.asyncio
     async def test_tbt11_reconnect_invalidates_book(self, tbt_feed):
@@ -557,10 +556,10 @@ class TestOrderBook:
     def test_order_book_sequence_check(self):
         book = LocalOrderBook("NSE:RELIANCE-EQ", "NSE", "RELIANCE-EQ")
         
-        assert book.check_sequence(1) == True
+        assert book.check_sequence(1) is True
         book.last_sequence = 1
-        assert book.check_sequence(2) == True
-        assert book.check_sequence(4) == False
+        assert book.check_sequence(2) is True
+        assert book.check_sequence(4) is False
 
 
 class TestNormalizer:

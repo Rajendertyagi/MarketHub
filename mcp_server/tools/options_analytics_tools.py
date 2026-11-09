@@ -14,27 +14,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from mcp_server.contract import (
-    TOOL_ANALYZE_OPTION_CHAIN,
-    TOOL_COMPUTE_ATM,
-    TOOL_COMPUTE_FUTURES_BASIS,
-    TOOL_COMPUTE_GEX,
-    TOOL_COMPUTE_IV_SKEW,
-    TOOL_COMPUTE_MAX_PAIN,
-    TOOL_COMPUTE_OI_BUILDUP,
-    TOOL_COMPUTE_PCR,
-    TOOL_COMPUTE_STRADDLE,
-    TOOL_COMPUTE_SUPPORT_RESISTANCE,
-    TOOL_COMPUTE_TOP_OI_STRIKES,
-    TOOL_PRICE_BEAR_PUT_SPREAD,
-    TOOL_PRICE_BULL_CALL_SPREAD,
-    TOOL_PRICE_IRON_CONDOR,
-    TOOL_PRICE_LONG_BUTTERFLY,
-    TOOL_PRICE_LONG_STRADDLE,
-    TOOL_PRICE_LONG_STRANGLE,
-)
-from mcp_server.registry import get_tool_description
-
 from market.analytics.option_chain import (
     analyze_option_chain,
     compute_atm,
@@ -56,6 +35,26 @@ from market.analytics.strategies import (
     price_long_straddle,
     price_long_strangle,
 )
+from mcp_server.contract import (
+    TOOL_ANALYZE_OPTION_CHAIN,
+    TOOL_COMPUTE_ATM,
+    TOOL_COMPUTE_FUTURES_BASIS,
+    TOOL_COMPUTE_GEX,
+    TOOL_COMPUTE_IV_SKEW,
+    TOOL_COMPUTE_MAX_PAIN,
+    TOOL_COMPUTE_OI_BUILDUP,
+    TOOL_COMPUTE_PCR,
+    TOOL_COMPUTE_STRADDLE,
+    TOOL_COMPUTE_SUPPORT_RESISTANCE,
+    TOOL_COMPUTE_TOP_OI_STRIKES,
+    TOOL_PRICE_BEAR_PUT_SPREAD,
+    TOOL_PRICE_BULL_CALL_SPREAD,
+    TOOL_PRICE_IRON_CONDOR,
+    TOOL_PRICE_LONG_BUTTERFLY,
+    TOOL_PRICE_LONG_STRADDLE,
+    TOOL_PRICE_LONG_STRANGLE,
+)
+from mcp_server.registry import get_tool_description
 
 
 def register_options_analytics_tools(mcp, services, **kwargs) -> None:
@@ -88,6 +87,27 @@ def register_options_analytics_tools(mcp, services, **kwargs) -> None:
             instrument_key=token, exchange=exchange,
             tradingsymbol=tradingsymbol, expiry=chosen)
         return snap, None
+
+    def _aggregate_pcr(snap) -> dict[str, Any] | None:
+        """The provider-reported WHOLE-EXPIRY OI PCR, when proven.
+
+        Only offered when the provider's aggregate scope is EVIDENCED
+        ``whole-expiry`` (Fyers, proven by the 2026-10-20 live capture:
+        the aggregate is constant across every window width and exceeds
+        the widest window). It is a DIFFERENT scope from the window-scoped
+        ``compute_pcr`` and is returned separately — never mixed in.
+        """
+        if snap is None:
+            return None
+        if getattr(snap, "aggregate_scope", None) != "whole-expiry":
+            return None
+        call_oi = getattr(snap, "call_oi", None)
+        put_oi = getattr(snap, "put_oi", None)
+        if call_oi is None or put_oi is None:
+            return None
+        from market.analytics.option_chain import compute_pcr_aggregate
+        return compute_pcr_aggregate(call_oi=call_oi, put_oi=put_oi,
+                                      scope="whole-expiry")
 
     def _embed_chain(snap, max_strikes: int | None = None) -> dict[str, Any]:
         """Compact, readable chain view for embedding in analyze_option_chain."""
@@ -125,7 +145,14 @@ def register_options_analytics_tools(mcp, services, **kwargs) -> None:
         snap, err = await _snapshot_for(underlying, expiry)
         if err:
             return {"status": "error", **err}
-        return {"status": "ok", **compute_pcr(snap)}
+        out: dict[str, Any] = {"status": "ok", **compute_pcr(snap)}
+        # The provider's whole-expiry aggregate, when proven — a SEPARATE
+        # scope from the window-scoped value above.
+        aggregate = _aggregate_pcr(snap)
+        if aggregate is not None:
+            out["pcr_whole_expiry"] = aggregate
+        out["provider"] = getattr(snap, "provider", None)
+        return out
 
     @mcp.tool(name=TOOL_COMPUTE_MAX_PAIN, description=get_tool_description(TOOL_COMPUTE_MAX_PAIN))
     async def compute_max_pain_tool(underlying: str, expiry: str | None = None) -> dict[str, Any]:
@@ -210,15 +237,23 @@ def register_options_analytics_tools(mcp, services, **kwargs) -> None:
         contracts = fut.get("contracts") or []
         legs: list[dict[str, Any]] = []
         for c in contracts:
-            key = c.get("instrument_key") or ""
-            if ":" not in key:
-                continue
-            exch, tok = key.split(":", 1)
-            quote = mkt.get_quote_now(exch, tok) if hasattr(mkt, "get_quote_now") else None
+            # The provider's QUOTE key (``native_key``) is the key the
+            # quote state is written under; the instrument_key's token
+            # is the provider's token (a FYERS fyToken), which is NOT.
+            key = c.get("native_key") or ""
+            if not key:
+                parts = str(c.get("instrument_key") or "").split(":", 1)
+                if len(parts) != 2:
+                    continue
+                exch, key = parts
+            else:
+                exch = str(c.get("exchange") or "")
+            quote = mkt.get_quote_now(exch, key) if hasattr(mkt, "get_quote_now") else None
             ltp = getattr(quote, "ltp", None) if quote is not None else None
             if ltp is None:
                 continue
-            legs.append({"expiry": c.get("expiry"), "last_price": ltp})
+            legs.append({"expiry": c.get("expiry"), "last_price": ltp,
+                         "provider": c.get("provider")})
         return {"status": "ok", **compute_futures_basis(legs, spot)}
 
     # ── price_* strategy tools ──────────────────────────────────────────────────
@@ -285,7 +320,13 @@ def register_options_analytics_tools(mcp, services, **kwargs) -> None:
         data: dict[str, Any] = {
             "symbol": underlying,
             "analytics": analytics,
+            "provider": getattr(snap, "provider", None),
+            "scope": getattr(snap, "scope", None),
+            "expiry": getattr(snap, "expiry", None),
         }
+        aggregate = _aggregate_pcr(snap)
+        if aggregate is not None:
+            data["pcr_whole_expiry"] = aggregate
         if max_strikes is not None:
             data["chain"] = _embed_chain(snap, max_strikes=max_strikes)
         return {"status": "ok", **data}

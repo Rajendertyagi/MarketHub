@@ -47,16 +47,16 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
+from starlette.requests import Request
 
-from core.persistence.store import EventStore  # noqa: E402
-from app.instruments import (  # noqa: E402
+from api.product_routes import build_instrument_routes
+from app.instruments import (
     DEFAULT_SEGMENTS,
     InstrumentCatalog,
     InstrumentSyncError,
 )
-from api.product_routes import build_instrument_routes  # noqa: E402
-from starlette.requests import Request  # noqa: E402
+from core.persistence.store import EventStore
 
 
 def _u(key, seg, exch, itype, sym, **kw):
@@ -71,7 +71,6 @@ def _u(key, seg, exch, itype, sym, **kw):
 
 
 def _master_rows():
-    ms = 86400000
     return [
         # NSE equity
         _u("NSE_EQ|INE002A01018", "NSE_EQ", "NSE", "EQ", "RELIANCE",
@@ -148,7 +147,8 @@ def test_preferences(runner: R) -> None:
     enabled = env.catalog.get_enabled_segments()
     runner.assert_eq("pref-defaults", enabled, set(DEFAULT_SEGMENTS))
     runner.assert_eq("pref-default-set", enabled,
-                     {"NSE_EQ", "NSE_FO", "NSE_INDEX", "BSE_INDEX"})
+                     {"NSE_EQ", "NSE_FO", "NSE_INDEX", "BSE_INDEX",
+                      "BSE_FO"})
     # 2. round-trip + idempotent
     saved = env.catalog.set_enabled_segments(
         ["NSE_EQ", "NSE_FO", "NSE_INDEX", "BSE_INDEX", "MCX_FO"])
@@ -185,14 +185,15 @@ def test_upstox_filter(runner: R) -> None:
     result = cat.sync_upstox(fetch=lambda url: json.dumps(
         _master_rows()).encode())
     runner.assert_eq("ux-parsed", result["parsed"], 11)
-    runner.assert_eq("ux-kept", result["kept"], 5)
-    runner.assert_eq("ux-filtered", result["filtered"], 6)
+    runner.assert_eq("ux-kept", result["kept"], 6)
+    runner.assert_eq("ux-filtered", result["filtered"], 5)
     segs = result["segments"]
     runner.assert_eq("ux-nse-eq", segs.get("NSE_EQ"), 1)
     runner.assert_eq("ux-nse-fo", segs.get("NSE_FO"), 2)
     runner.assert_eq("ux-nse-index", segs.get("NSE_INDEX"), 1)
     runner.assert_eq("ux-bse-index", segs.get("BSE_INDEX"), 1)
-    for absent in ("NSE_COM", "MCX_FO", "BSE_EQ", "BSE_FO", "BCD_FO",
+    runner.assert_eq("ux-bse-fo", segs.get("BSE_FO"), 1)
+    for absent in ("NSE_COM", "MCX_FO", "BSE_EQ", "BCD_FO",
                    "NCD_FO"):
         runner.assert_eq(f"ux-absent-{absent}", segs.get(absent), None)
     # catalog state
@@ -222,12 +223,10 @@ def test_upstox_filter(runner: R) -> None:
     # 11. failed sync preserves previous catalog
     def _boom(url):
         raise InstrumentSyncError("download failed")
-    try:
-        cat.sync_upstox(fetch=_boom)
-        ok = False
-    except InstrumentSyncError:
-        ok = True
-    runner.assert_true("ux-fail-raised", ok)
+    failed = cat.sync_upstox(fetch=_boom)
+    runner.assert_true("ux-fail-reported", failed["aborted"] is True)
+    runner.assert_true("ux-fail-reason",
+                       "download failed" in failed["reason"])
     counts_after = cat.segment_counts()
     runner.assert_eq("ux-fail-preserved", counts_after.get("NSE_FO"),
                      r4["segments"].get("NSE_FO"))
@@ -246,7 +245,7 @@ def test_fyers_derived_filter(runner: R) -> None:
         "NSE_CM_sym_master.json": _fyers_master(),
         "NSE_FO_sym_master.json": {},
         "BSE_CM_sym_master.json": {},
-        "MCX_COM_sym_master.json": {},
+        "BSE_FO_sym_master.json": {},
     }
     result = cat.sync_fyers(fetch=lambda url: json.dumps(
         payloads[url.rsplit("/", 1)[-1]]).encode())
@@ -259,7 +258,7 @@ def test_fyers_derived_filter(runner: R) -> None:
     rows = cat.search(provider="fyers", limit=10)
     syms = {r["tradingsymbol"] for r in rows}
     runner.assert_true("fy-nifty-kept", "NSE:NIFTY50-INDEX" in syms)
-    runner.assert_true("fy-niftyce-kept", "NSE:NIFTY2690823800CE" in syms)
+    runner.assert_true("fy-niftyce-kept", "NIFTY2690823800CE" in syms)
     runner.assert_true("fy-sbin-dropped", "NSE:SBIN-EQ" not in syms)
     runner.assert_eq("fy-provider-preserved",
                      all(r["provider"] == "fyers" for r in rows), True)
@@ -336,6 +335,7 @@ def test_api(runner: R) -> None:
 
 def test_collision_logging(runner: R) -> None:
     import logging
+
     from app.market_identity import MarketInstrumentIdentityResolver
     records = []
     handler = logging.Handler()
@@ -366,7 +366,23 @@ def test_collision_logging(runner: R) -> None:
         rows = [row1, row2, dict(row1, instrument_token="MCX_FO|3"),
                 dict(row2, instrument_token="NSE_COM|4", exchange="NSE")]
         total = res2.register_catalog_rows(rows)
-        runner.assert_eq("col-summary-rejected", len(total["rejected"]), 2)
+        # Rows are GROUPED by canonical id, so the alias set is bound once
+        # per instrument. The only genuine ambiguity is the shared
+        # tradingsymbol "GOLD 147000 CE" (two different exchanges, two
+        # different real instruments) — the duplicate rows of the SAME
+        # instrument register cleanly instead of colliding.
+        runner.assert_eq("col-summary-rejected", len(total["rejected"]), 1)
+        runner.assert_in("col-summary-ambiguous", "GOLD 147000 CE",
+                         total["rejected"])
+        # Both rows of the SAME instrument are bound to their canonical id.
+        for token in ("MCX_FO|1", "MCX_FO|3"):
+            runner.assert_eq(f"col-same-instrument-{token}",
+                             res2.resolve(token),
+                             res2.canonical_id_for_row(row1))
+        for token in ("NSE_COM|2", "NSE_COM|4"):
+            runner.assert_eq(f"col-same-instrument-{token}",
+                             res2.resolve(token),
+                             res2.canonical_id_for_row(row2))
         warns = [r for r in records if r.levelno == logging.WARNING
                  and "collision" in r.getMessage()]
         runner.assert_eq("col-no-warning-spam", len(warns), 0)

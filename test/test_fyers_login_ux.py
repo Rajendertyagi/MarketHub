@@ -36,12 +36,12 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 
 def _tmp_store(tmp: str):
-    from core.persistence.store import EventStore
     from app.secrets_store import CredentialStore
+    from core.persistence.store import EventStore
     return CredentialStore(EventStore(os.path.join(tmp, "e.db")),
                            data_dir=tmp)
 
@@ -57,9 +57,9 @@ def _past(hours: float = 1) -> str:
 
 
 def _fsvc(store, rt=None, **kw):
-    from app.fyers_runtime_auth import FyersRuntimeAuth
     from app.auth.fyers import FyersAuthService
     from app.auth.storage import AuthStorage
+    from app.fyers_runtime_auth import FyersRuntimeAuth
     rt = rt if rt is not None else FyersRuntimeAuth()
     return FyersAuthService(AuthStorage(store), rt, **kw), rt
 
@@ -294,6 +294,7 @@ async def test_relogin_without_forget(runner: R) -> None:
 def _settings_app():
     from starlette.applications import Starlette
     from starlette.testclient import TestClient
+
     from api.product_routes import build_fyers_auth_routes
     tmp = tempfile.mkdtemp()
     store = _tmp_store(tmp)
@@ -359,6 +360,7 @@ class _FakeFyersAuth:
 def _login_app(fake):
     from starlette.applications import Starlette
     from starlette.testclient import TestClient
+
     from api.product_routes import build_fyers_auth_routes
     tmp = tempfile.mkdtemp()
     store = _tmp_store(tmp)

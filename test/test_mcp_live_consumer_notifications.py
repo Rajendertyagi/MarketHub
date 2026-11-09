@@ -51,26 +51,25 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from helpers.lifecycle import (  # noqa: E402
+from helpers.lifecycle import (
     get_server_url,
     restore_environment,
     start_server,
     stop_server,
 )
-from helpers.mcp_client import (  # noqa: E402
+from helpers.mcp_client import (
     call,
     read_res,
     wait_source_ready,
 )
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
+from mcp.client.client import Client
+from mcp.client.subscriptions import ResourceUpdated
+from mcp.shared.exceptions import MCPError
 
-from mcp.client.client import Client  # noqa: E402
-from mcp.client.subscriptions import ResourceUpdated  # noqa: E402
-from mcp.shared.exceptions import MCPError  # noqa: E402
-
-from mcp_server.contract import (  # noqa: E402
-    RESOURCE_EVENT_LATEST,
+from mcp_server.contract import (
     RESOURCE_CONSUMER_EVENTS_PREFIX,
+    RESOURCE_EVENT_LATEST,
     consumer_events_uri,
 )
 

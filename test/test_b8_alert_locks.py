@@ -19,10 +19,10 @@ if _PROJECT_DIR not in sys.path:
     sys.path.insert(0, _PROJECT_DIR)
 
 from helpers.runner import R
-from core.persistence.store import EventStore
+
 from app.condition_alerts import ConditionAlertEngine
 from app.market_identity import MarketInstrumentIdentityResolver
-
+from core.persistence.store import EventStore
 
 CANONICAL_ID = "NSE:EQUITY:INE002A01018"
 
@@ -121,7 +121,7 @@ async def t2_repeated_create_delete_no_growth(runner: R) -> None:
         resolver = _make_resolver(store)
         engine = ConditionAlertEngine(store, resolver)
 
-        for cycle in range(3):
+        for _cycle in range(3):
             alert_ids = []
             for i in range(50):
                 aid = _create_alert(store, threshold=20000.0 + i)

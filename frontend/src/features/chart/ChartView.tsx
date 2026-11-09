@@ -8,10 +8,9 @@
 // chart never substitutes one instrument class for another.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { resolveMarketInstrument, toInstrument } from "@/api/market";
 import { useTheme } from "@/app/ThemeProvider";
-import { InstrumentPicker } from "@/components/InstrumentPicker";
 import { Button } from "@/components/ui";
 import type { Instrument, InstrumentType } from "@/types";
 import { VelaChart } from "./VelaChart";
@@ -45,15 +44,7 @@ function errorText(err: unknown): string {
   return err instanceof Error && err.message ? err.message : "Request failed.";
 }
 
-function EmptyChart({
-  resolving,
-  onSelect,
-}: {
-  resolving: boolean;
-  onSelect: (next: Instrument) => void;
-}) {
-  const [query, setQuery] = useState("");
-
+function EmptyChart({ resolving }: { resolving: boolean }) {
   if (resolving) {
     return (
       <div className="state chart-empty">
@@ -67,18 +58,12 @@ function EmptyChart({
     <div className="state chart-empty">
       <h3>Select an instrument</h3>
       <p className="hint">
-        Search the catalog here, or open a chart from Scanners, Market Map or the Futures Board.
+        Open the catalog to choose an instrument, or open a chart from Scanners, Market Map or the Futures Board.
       </p>
       <div className="chart-empty-picker">
-        <InstrumentPicker
-          value={query}
-          onChange={setQuery}
-          onSelect={(row) => onSelect(toInstrument(row))}
-          placeholder="Search symbol or option (NIFTY, RELIANCE CE)…"
-          ariaLabel="Search instrument"
-          limit={15}
-          fno={false}
-        />
+        <Link to="/catalog">
+          <Button>Open Catalog</Button>
+        </Link>
       </div>
     </div>
   );
@@ -203,7 +188,7 @@ export function ChartView() {
             onError={setChartError}
           />
         ) : (
-          <EmptyChart resolving={resolving} onSelect={selectInstrument} />
+          <EmptyChart resolving={resolving} />
         )}
       </div>
     </div>

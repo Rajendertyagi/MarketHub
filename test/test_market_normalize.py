@@ -35,9 +35,9 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from datetime import datetime, timezone  # noqa: E402
+from datetime import datetime, timezone
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
 
 UTC = timezone.utc
 AWARE_UTC = datetime(2026, 8, 23, 9, 15, 0, tzinfo=UTC)
@@ -323,7 +323,7 @@ def test_upstox_quote_error_paths(runner: R) -> None:
                    needle="non-finite")
 
     name = "MN-U4-identity"
-    from market.normalize import NormalizationError, upstox_quote_from_rest
+    from market.normalize import NormalizationError
 
     nosym = dict(UPSTOX_NHPC)
     nosym.pop("symbol")
@@ -440,10 +440,10 @@ def test_upstox_ws_depth_and_master(runner: R) -> None:
     d = upstox_depth_from_ws(ml, instrument_key="NSE_FO|45450",
                              tradingsymbol="BANKNIFTY", received_ts=AWARE_UTC)
     runner.assert_eq(name + "-bids",
-                     [(l.price, l.quantity, l.orders) for l in d.bids],
+                     [(lvl.price, lvl.quantity, lvl.orders) for lvl in d.bids],
                      [(141.0, 600.0, None)])
     runner.assert_eq(name + "-asks",
-                     [(l.price, l.quantity, l.orders) for l in d.asks],
+                     [(lvl.price, lvl.quantity, lvl.orders) for lvl in d.asks],
                      [(141.35, 50.0, None), (141.45, 25.0, None)])
     _expect_raises(runner, name + "-symbol-required", NormalizationError,
                    lambda: upstox_depth_from_ws(ml, instrument_key="NSE_FO|45450",
@@ -509,10 +509,19 @@ def test_protobuf_layer(runner: R) -> None:
     r.type = pb.Type.Value("initial_feed")
     r.currentTs = 1740729566039
     f = r.feeds["NSE_FO|45450"].fullFeed.marketFF
-    f.ltpc.ltp = 219.3; f.ltpc.ltt = 1740729552723; f.ltpc.ltq = 75; f.ltpc.cp = 494.05
+    f.ltpc.ltp = 219.3
+    f.ltpc.ltt = 1740729552723
+    f.ltpc.ltq = 75
+    f.ltpc.cp = 494.05
     lvl = f.marketLevel.bidAskQuote.add()
-    lvl.bidQ = 600; lvl.bidP = 141.0; lvl.askQ = 50; lvl.askP = 141.35
-    f.vtt = 1234; f.oi = 15000.0; f.tbq = 600; f.tsq = 50
+    lvl.bidQ = 600
+    lvl.bidP = 141.0
+    lvl.askQ = 50
+    lvl.askP = 141.35
+    f.vtt = 1234
+    f.oi = 15000.0
+    f.tbq = 600
+    f.tsq = 50
     resp = decode_feed_response(r.SerializeToString())
     runner.assert_eq(name + "-type", feed_type(resp), "initial_feed")
     pairs = list(iter_instrument_feeds(resp))
@@ -538,10 +547,13 @@ def test_protobuf_layer(runner: R) -> None:
     name = "MN-P3-pzero"
     rz = pb.FeedResponse()
     fz = rz.feeds["NSE_FO|45450"].fullFeed.marketFF
-    fz.atp = 52.5; fz.vtt = 1234; fz.oi = 0.0          # explicit zero
+    fz.atp = 52.5
+    fz.vtt = 1234
+    fz.oi = 0.0  # explicit zero
     rn = pb.FeedResponse()
     fn = rn.feeds["NSE_FO|45450"].fullFeed.marketFF
-    fn.atp = 52.5; fn.vtt = 1234                        # oi unset
+    fn.atp = 52.5
+    fn.vtt = 1234  # oi unset
     runner.assert_eq(name + "-wire-identical",
                      rz.SerializeToString() == rn.SerializeToString(), True)
     _, fdz = list(iter_instrument_feeds(decode_feed_response(rz.SerializeToString())))[0]
@@ -557,7 +569,10 @@ def test_protobuf_layer(runner: R) -> None:
     r = pb.FeedResponse()
     r.type = pb.Type.Value("live_feed")
     t = r.feeds["NSE_EQ|INE002A01018"].ltpc
-    t.ltp = 101.25; t.ltt = 1740729552723; t.ltq = 10; t.cp = 100.0
+    t.ltp = 101.25
+    t.ltt = 1740729552723
+    t.ltq = 10
+    t.cp = 100.0
     resp = decode_feed_response(r.SerializeToString())
     key, fd = list(iter_instrument_feeds(resp))[0]
     runner.assert_eq(name + "-union", which_feed_union(resp.feeds[key]), "ltpc")
@@ -572,7 +587,8 @@ def test_protobuf_layer(runner: R) -> None:
     r = pb.FeedResponse()
     r.type = pb.Type.Value("live_feed")
     idx = r.feeds["NSE_INDEX|Nifty 50"].fullFeed.indexFF
-    idx.ltpc.ltp = 22000.5; idx.ltpc.cp = 21900.0
+    idx.ltpc.ltp = 22000.5
+    idx.ltpc.cp = 21900.0
     key, fd = list(iter_instrument_feeds(decode_feed_response(r.SerializeToString())))[0]
     ff_branches = fd.get("fullFeed") or {}
     runner.assert_true(name + "-index-branch",
@@ -680,10 +696,10 @@ def test_fyers_depth_and_master(runner: R) -> None:
                      (d.instrument_token, d.exchange, d.tradingsymbol),
                      ("NSE:SBIN-EQ", "NSE", "SBIN-EQ"))
     runner.assert_eq(name + "-bids",
-                     [(l.price, l.quantity, l.orders) for l in d.bids],
+                     [(lvl.price, lvl.quantity, lvl.orders) for lvl in d.bids],
                      [(100.5, 0.0, 1)])
     runner.assert_eq(name + "-asks",
-                     [(l.price, l.quantity, l.orders) for l in d.asks],
+                     [(lvl.price, lvl.quantity, lvl.orders) for lvl in d.asks],
                      [(101.0, 300.0, 2)])
     runner.assert_eq(name + "-supplemental", sorted(supp.keys()),
                      sorted(["total_buy_qty", "total_sell_qty", "ltp",

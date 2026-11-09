@@ -31,9 +31,10 @@ for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from core import events  # noqa: E402
-from core.persistence.store import EventStore  # noqa: E402
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
+
+from core import events
+from core.persistence.store import EventStore
 
 
 class _StubBus:
@@ -193,7 +194,6 @@ async def p7t22_checkpoint_suite(runner: R, store: EventStore, bus: _StubBus) ->
     produce sequence drift. A fresh DB per suite keeps each sub-test's
     expectations (computed from its own published sequences) valid.
     """
-    name = "P7T22-checkpoint-suite"
     tmp = tempfile.mkdtemp(prefix="p7t22_")
     suite_db = os.path.join(tmp, "events.db")
     suite_store = EventStore(suite_db)

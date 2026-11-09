@@ -17,7 +17,7 @@
     font-size: var(--font-size-sm);
   }
   .catalog-search {
-    max-width: 640px;
+    max-width: 900px;
   }
 
   .catalog-detail {

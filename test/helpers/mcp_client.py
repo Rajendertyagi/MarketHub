@@ -23,9 +23,9 @@ from typing import Any
 
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
+from mcp_result import observe_structured_output, to_payload
 
-from mcp_result import normalize_tool_result, observe_structured_output, to_payload
-from .lifecycle import get_server_url, get_server_port
+from .lifecycle import get_server_url
 
 # Hard cap for any single MCP tool call / resource read. Tune as needed.
 MCP_CALL_TIMEOUT = 30.0
@@ -167,12 +167,12 @@ async def publish_event(
     if _PROJECT_DIR not in sys.path:
         sys.path.insert(0, _PROJECT_DIR)
 
-    from core.persistence.store import EventStore  # noqa: E402
-    from core import events as events_mod  # noqa: E402
+    from core import events as events_mod
+    from core.persistence.store import EventStore
 
     # Access data_dir dynamically (not at import time) to get the current
     # server state set by helpers/lifecycle.start_server().
-    from . import lifecycle as _lc  # noqa: E402
+    from . import lifecycle as _lc
     actual_data_dir = getattr(_lc, "_server_data_dir", "") or "data_test"
     db_path = os.path.join(_PROJECT_DIR, actual_data_dir, "events.db")
 

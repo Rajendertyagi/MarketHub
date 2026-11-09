@@ -1,0 +1,21 @@
+{
+  "captured_at": "2026-10-21T17:34:52+00:00",
+  "symbol": "NSE:NIFTY26OCT19500CE",
+  "hsm_topic": "sf|nse_fo|51190",
+  "index_topic_map_entry": null,
+  "frame": {
+    "topic": "sf|nse_fo|51190",
+    "raw_hex": "0097060000000100015300000f73667c6e73655f666f7c353131393015000534c600000000800000006ad5fe1e000000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000004517d0006180f00000000000534c60026000102066e73655f666f053531313930154e53453a4e4946545932364f435431393530304345",
+    "raw_len": 153,
+    "captured_at": "2026-10-21T17:34:50+00:00"
+  },
+  "reference": {
+    "source": "FYERS REST GET /data/quotes",
+    "symbol": "NSE:NIFTY26OCT19500CE",
+    "ltp": 3411.9,
+    "prev_close": 3411.9,
+    "exch_feed_time": null,
+    "fetched_at": "2026-10-21T17:34:52+00:00"
+  },
+  "provider": "fyers"
+}

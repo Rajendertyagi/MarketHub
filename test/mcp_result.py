@@ -20,6 +20,7 @@ Design goals (per the Phase-8.2 harness-repair spec):
 from __future__ import annotations
 
 import asyncio
+import builtins
 import json
 import os
 import socket
@@ -32,6 +33,11 @@ _PROJECT_DIR = os.path.dirname(_SCRIPT_DIR)
 for _p in (_PROJECT_DIR, _SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+
+# ``ExceptionGroup`` is a Python 3.11+ builtin; the project still supports
+# 3.10, so the symbol is resolved defensively (an empty tuple on 3.10,
+# where such groups simply cannot be raised).
+_EXCEPTION_GROUP = getattr(builtins, "ExceptionGroup", ())
 
 
 def normalize_tool_result(result: Any) -> dict[str, Any]:
@@ -124,7 +130,9 @@ async def observe_structured_output(
     caller is responsible for a running server at ``url``.
     """
     from mcp import ClientSession
-    from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
+    from mcp.client.streamable_http import (
+        streamable_http_client as streamablehttp_client,
+    )
 
     async with streamablehttp_client(url) as (r, w):
         async with ClientSession(r, w) as session:
@@ -245,7 +253,7 @@ def safe_teardown(
         func(*args, **kwargs)
     except (KeyboardInterrupt, SystemExit):
         raise  # never suppress
-    except ExceptionGroup as exc_group:
+    except _EXCEPTION_GROUP as exc_group:
         unexpected = tuple(
             e for e in exc_group.exceptions if not _is_expected_teardown_error(e)
         )
@@ -255,7 +263,7 @@ def safe_teardown(
                     _log_unexpected_cleanup(func.__qualname__, e)
                 return
             # Re-raise unexpected members so the test fails.
-            raise ExceptionGroup("cleanup", unexpected) from None
+            raise _EXCEPTION_GROUP("cleanup", unexpected) from None
         return  # all members were expected
     except BaseException as exc:
         if _is_expected_teardown_error(exc):

@@ -90,13 +90,13 @@ def list_recent_events(
     conn.row_factory = sqlite3.Row
     order = "DESC" if newest_first else "ASC"
     rows = conn.execute(
-        """
+        f"""
         SELECT event_id, type, source, timestamp, data_json,
                persistent, persistent_sequence, routing_json
         FROM recent_events
         ORDER BY recent_sequence {order}
         LIMIT ?
-        """.format(order=order),
+        """,
         (limit,),
     ).fetchall()
     return [row_to_recent_event(r) for r in rows]

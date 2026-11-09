@@ -43,15 +43,15 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from helpers.runner import R  # noqa: E402
+from helpers.runner import R
+from starlette.requests import Request
 
-from app.market_data import (  # noqa: E402
+from api.product_routes import build_market_data_routes
+from app.market_data import (
     ProviderMarketData,
     ProviderMarketDataError,
     _infer_provider,
 )
-from api.product_routes import build_market_data_routes  # noqa: E402
-from starlette.requests import Request  # noqa: E402
 
 
 class _FakeCreds:
@@ -333,8 +333,7 @@ async def test_mcp_contract_shape(runner: R) -> None:
     fake = _FakeMCP()
     import mcp_server.tools.market as _mt
     _mt.register_market_tools(fake, services)
-    from mcp_server.tools.market_intel_tools import (
-        register_market_intel_tools)
+    from mcp_server.tools.market_intel_tools import register_market_intel_tools
     register_market_intel_tools(fake, services)
     # No standalone-Greeks tool: MCP Greeks ride the canonical chain tool.
     runner.assert_true("mcp-no-standalone-greeks",

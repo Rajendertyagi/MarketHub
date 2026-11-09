@@ -1,15 +1,21 @@
 """B8 heavy verification — ACK measurement + thread-safety stress."""
 from __future__ import annotations
-import asyncio, os, shutil, sys, tempfile, time, uuid, threading
+
+import asyncio
+import os
+import shutil
+import sys
+import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 _PROJECT_DIR = "."
 if _PROJECT_DIR not in sys.path:
     sys.path.insert(0, _PROJECT_DIR)
 
-from core.persistence.store import EventStore
 from core import events
 from core.persistence.modules.replay import get_consumer_inbox_status
+from core.persistence.store import EventStore
 
 
 class _StubBus:
@@ -26,7 +32,8 @@ def _make_store():
 def _percentile(vals, p):
     s = sorted(vals)
     k = (len(s) - 1) * p / 100.0
-    f = int(k); c = min(f + 1, len(s) - 1)
+    f = int(k)
+    c = min(f + 1, len(s) - 1)
     return s[f] + (k - f) * (s[c] - s[f])
 
 
@@ -182,7 +189,7 @@ def test_thread_safety():
 
     # Test 2: Repeated open/close cycles
     print("  Test: repeated open/close cycles...")
-    for i in range(100):
+    for _i in range(100):
         c = store._open(db_path)
         c.execute("SELECT 1")
         c.close()
@@ -221,7 +228,7 @@ def test_thread_safety():
     tmp3 = tempfile.mkdtemp(prefix="b8rapid_")
     db3 = os.path.join(tmp3, "test.db")
     locked_errors = 0
-    for i in range(200):
+    for _i in range(200):
         try:
             s = EventStore(db3)
             s.register_consumer("c1")

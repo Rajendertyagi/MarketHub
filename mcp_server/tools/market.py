@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from market.normalize.upstox import exchange_from_segment
 from mcp_server.contract import (
     TOOL_INSTRUMENT_SEARCH,
     TOOL_MARKET_DEPTH,
@@ -21,7 +22,6 @@ from mcp_server.contract import (
     TOOL_MARKET_STATUS,
     TOOL_WATCHLISTS,
 )
-from market.normalize.upstox import exchange_from_segment
 from mcp_server.registry import get_tool_description
 
 
@@ -48,8 +48,13 @@ def _split_identity(ident: str) -> tuple[str, str] | None:
             exchange = ident.split(":", 1)[0].strip()
             token = ident.split(":", 1)[1].strip()
         else:
-            segment = ident.split("|", 1)[0].strip()
-            exchange = exchange_from_segment(segment)
+            head = ident.split("|", 1)[0].strip()
+            if head.upper() in ("NSE", "BSE", "MCX", "NCD", "BCD"):
+                # EXCH|TOKEN: the caller passed the BASE exchange and the
+                # instrument token (not a segment) - e.g. the reference a
+                # catalogue row yields ("NSE|INE002A01018").
+                return head.upper(), ident.split("|", 1)[1].strip()
+            exchange = exchange_from_segment(head)
             token = ident
         return (exchange, token) if exchange else None
 
@@ -117,6 +122,21 @@ def _parse_instrument_ref(
     return None
 
 
+def _canonical_id_for(instrument_ref: str, services) -> str:
+    """Resolve any instrument reference to its canonical id."""
+    for attr in ("condition_identity_resolver", "identity_resolver"):
+        resolver = getattr(services, attr, None)
+        if resolver is None:
+            continue
+        try:
+            resolved = resolver.resolve(instrument_ref)
+        except Exception:
+            resolved = None
+        if resolved:
+            return str(resolved)
+    return str(instrument_ref)
+
+
 def register_market_tools(mcp, services, **kwargs) -> None:
     """Register read-only market data tools."""
 
@@ -136,6 +156,16 @@ def register_market_tools(mcp, services, **kwargs) -> None:
         svc = services.market_service
         if svc is None:
             return {"error": "market service not available"}
+        # The shared quote service is the authoritative read path (same
+        # selection, freshness verdict and provenance as the WebUI/REST).
+        quote_service = getattr(services, "quote_service", None)
+        if quote_service is not None:
+            canonical_id = _canonical_id_for(instrument_ref, services)
+            payload = await quote_service.quote(canonical_id)
+            if payload is None:
+                return {"error": "quote not found",
+                        "instrument_ref": instrument_ref}
+            return {"status": "ok", "quote": payload}
         resolved = _parse_instrument_ref(instrument_ref, services)
         if resolved is None:
             return {"error": "could not resolve instrument reference",
@@ -162,6 +192,16 @@ def register_market_tools(mcp, services, **kwargs) -> None:
         svc = services.market_service
         if svc is None:
             return {"error": "market service not available"}
+        # The shared quote service is the authoritative read path: the same
+        # identity, provenance and timestamps as the REST depth route.
+        quote_service = getattr(services, "quote_service", None)
+        if quote_service is not None:
+            canonical_id = _canonical_id_for(instrument_ref, services)
+            payload = await quote_service.depth(canonical_id)
+            if payload is None:
+                return {"error": "depth not found",
+                        "instrument_ref": instrument_ref}
+            return {"status": "ok", "depth": payload}
         resolved = _parse_instrument_ref(instrument_ref, services)
         if resolved is None:
             return {"error": "could not resolve instrument reference",

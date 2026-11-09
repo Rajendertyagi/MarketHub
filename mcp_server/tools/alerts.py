@@ -12,13 +12,13 @@ import asyncio
 import uuid
 from typing import Any
 
+from core import alerts as alert_engine
 from core.errors import (
     AlertNotFoundError,
     ConsumerNotFoundError,
     StorageError,
     ValidationError,
 )
-from core import alerts as alert_engine
 from mcp_server.contract import (
     TOOL_ALERT_CREATE,
     TOOL_ALERT_DISABLE,

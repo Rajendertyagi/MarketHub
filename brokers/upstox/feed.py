@@ -35,13 +35,12 @@ import random
 import time
 import uuid
 from collections import deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from websockets.asyncio.client import connect as _websockets_connect
 
-from brokers.upstox.feed_processing import process_binary_frame
 from brokers.upstox.auth import UpstoxCredentials
 from brokers.upstox.errors import (
     UpstoxAuthError,
@@ -49,6 +48,7 @@ from brokers.upstox.errors import (
     UpstoxRateLimitError,
     UpstoxRestError,
 )
+from brokers.upstox.feed_processing import process_binary_frame
 
 if TYPE_CHECKING:
     from brokers.upstox.rest import UpstoxRest
@@ -61,8 +61,13 @@ __all__ = ["UpstoxFeed"]
 # Provider limits / locked settings (official docs, Aug 2026)
 # ---------------------------------------------------------------------------
 
-SUPPORTED_MODES = ("ltpc", "full")
-_MODE_KEY_LIMITS = {"ltpc": 5000, "full": 2000}  # individual per-mode limits
+SUPPORTED_MODES = ("ltpc", "option_greeks", "full", "full_d30")
+_MODE_KEY_LIMITS = {
+    "ltpc": 5000,
+    "option_greeks": 3000,
+    "full": 2000,
+    "full_d30": 50,
+}  # individual per-mode limits (official docs, Aug 2026)
 
 _WS_SETTINGS: dict[str, Any] = {
     "open_timeout": 10,
@@ -84,6 +89,13 @@ _RETRY_AFTER_CEILING_S = 120.0    # safety ceiling on provider Retry-After hints
 
 _STATES = ("stopped", "authorizing", "connecting", "streaming",
            "reconnecting", "failed")
+
+#: LIVENESS window (seconds). The provider's feed delivers frames (and
+#: heartbeats) continuously while the socket is open; a gap this long means
+#: the feed STOPPED delivering - the socket staying open is not evidence of
+#: market data. It matches the shared quote freshness window so the feed
+#: liveness and the quote freshness never disagree.
+_LIVENESS_WINDOW_S = 120.0
 
 _TERMINAL = object()   # sentinel: terminal failure inside _run_session
 
@@ -110,6 +122,30 @@ def _safe_ws_summary(exc: BaseException) -> str:
     except Exception:  # pragma: no cover - classification must never raise
         pass
     return "websocket operation failed"
+
+
+def _socket_is_open(ws: Any) -> bool:
+    """True when the socket can still be written to.
+
+    Duck-typed on purpose: the websocket library exposes ``state``
+    (OPEN / CLOSING / CLOSED) and older versions expose ``closed``; a test
+    double may expose either. An unknown shape is treated as open - the
+    send itself is still guarded and its failure is reported through the
+    feed state, never as an exception.
+    """
+    if ws is None:
+        return False
+    state = getattr(ws, "state", None)
+    if state is not None:
+        name = str(getattr(state, "name", state)).upper()
+        if "OPEN" in name:
+            return True
+        if name:
+            return False
+    closed = getattr(ws, "closed", None)
+    if isinstance(closed, bool):
+        return not closed
+    return True
 
 
 def _default_ws_connect(uri: str, **settings: Any):
@@ -304,6 +340,13 @@ class UpstoxFeed:
         }
         self._last_connected_at: str | None = None
         self._last_message_at: str | None = None
+        # The evidence that DATA is flowing (a connected socket is not).
+        self._last_frame_at: str | None = None
+        self._last_frame_mono: float | None = None
+        # Per-instrument evidence that DATA arrived for it (the only basis
+        # for reporting an instrument as live).
+        self._last_data_at: dict[str, str] = {}
+        self._last_data_mono: dict[str, float] = {}
         self._started_at: str | None = None
         self._connected_at: str | None = None
         self._connect_attempts: int = 0
@@ -312,6 +355,12 @@ class UpstoxFeed:
         self._subscribed_instruments: int | None = None
         self._last_error: str | None = None
         self._last_error_at: str | None = None
+        # Subscription mutations that could NOT be sent (the socket was
+        # closed/replaced). Surfaced through the status, never as repeated
+        # exceptions.
+        self._mutation_failures = 0
+        self._last_mutation_error: str | None = None
+        self._last_mutation_error_at: str | None = None
         self._segment_status: dict[str, str] | None = None
 
     # -- helpers --------------------------------------------------------------
@@ -364,6 +413,19 @@ class UpstoxFeed:
             self._live_ws = None
         if ws is not None:
             await self._close_quietly(ws)
+
+    async def _retire_socket(self, ws: Any) -> None:
+        """Retire a session socket: clear the live reference FIRST.
+
+        The reference is cleared UNDER the subscription lock, so a
+        concurrent mutation can never pick up a socket that is being
+        closed; the socket itself is closed afterwards. Every close path
+        of a session goes through this helper.
+        """
+        async with self._sub_lock:
+            if self._live_ws is ws:
+                self._live_ws = None
+        await self._close_quietly(ws)
 
     def _utc_now_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -442,14 +504,24 @@ class UpstoxFeed:
                           allow_nan=False).encode("utf-8")
 
     async def _send_mutation(self, frame: bytes) -> bool:
-        """Send one frame on the live socket under the mutation lock.
+        """Send one frame on the ACTIVE, OPEN socket under the mutation lock.
+
+        The socket is verified under the lock: it must still be the live
+        socket and it must still be open, so a mutation can never be
+        written to a socket that is being retired (the "socket.send()
+        raised exception" flood).
 
         Returns True when sent; False when no live socket exists (the
-        desired set is already updated, so the next reconnect picks it up).
+        desired set is already updated, so the next reconnect picks it up)
+        or when the socket could not be written to - the refusal is
+        reported through the feed state, not as an exception.
         """
         async with self._sub_lock:
             ws = self._live_ws
             if ws is None:
+                return False
+            if not _socket_is_open(ws):
+                self._note_mutation_failure("socket_not_open")
                 return False
             try:
                 await ws.send(frame)
@@ -457,9 +529,18 @@ class UpstoxFeed:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.debug("upstox feed %s: sub-mutation send failed: %s",
-                             self._name, type(exc).__name__)
+                self._note_mutation_failure(type(exc).__name__)
                 return False
+
+    def _note_mutation_failure(self, reason: str) -> None:
+        """Record a refused subscription mutation (truthful, no exception)."""
+        self._mutation_failures += 1
+        self._last_mutation_error = reason
+        self._last_mutation_error_at = self._utc_now_iso()
+        if self._mutation_failures <= 3 or self._mutation_failures % 50 == 0:
+            logger.warning(
+                "upstox feed %s: subscription mutation not sent (%s) "
+                "- failure #%d", self._name, reason, self._mutation_failures)
 
     async def add_instruments(self, keys: list[str],
                               metadata: Mapping[str, tuple[str, str]]
@@ -487,8 +568,10 @@ class UpstoxFeed:
                 if metadata:
                     for k in fresh:
                         md = metadata.get(k)
-                        if md is not None and k not in \
-                                self._instrument_metadata_mutable:
+                        if md is not None:
+                            # The binding is REFRESHED: a re-added key must
+                            # get the identity of the instrument it names
+                            # now, not the one it used to be.
                             self._instrument_metadata_mutable[k] = md
         if fresh and self._state == "streaming":
             await self._send_mutation(self._mutation_frame("sub", fresh))
@@ -507,6 +590,12 @@ class UpstoxFeed:
             if not remaining:
                 return 0   # keep at least one key subscribed
             self._instrument_keys = tuple(sorted(remaining))
+            # The identity binding goes WITH the key: a re-added key must
+            # not keep the binding of the instrument it used to be.
+            for k in gone:
+                self._instrument_metadata_mutable.pop(k, None)
+                self._last_data_at.pop(k, None)
+                self._last_data_mono.pop(k, None)
         if gone and self._state == "streaming":
             await self._send_mutation(
                 self._mutation_frame("unsub", gone))
@@ -621,14 +710,15 @@ class UpstoxFeed:
             return self._next_backoff()
 
         self._connected_at = self._utc_now_iso()
-        self._live_ws = ws
+        async with self._sub_lock:
+            self._live_ws = ws
         connection_started_mono = self._monotonic()
         try:
             try:
                 await ws.send(self._subscription_frame())
             except Exception as exc:
                 self._note_error(_safe_ws_summary(exc))
-                await self._close_quietly(ws)
+                await self._retire_socket(ws)
                 self._set_state("reconnecting", reason="subscribe_send_failed")
                 logger.warning("upstox feed %s: subscription send failed - %s",
                                self._name, self._last_error)
@@ -640,11 +730,11 @@ class UpstoxFeed:
             # Close the LOCAL socket here: the finally below clears
             # ``_live_ws`` while unwinding, BEFORE run()'s cancellation
             # handler could read it — cancellation must never leak the socket.
-            await self._close_quietly(ws)
+            await self._retire_socket(ws)
             raise
         except Exception:
             # Unexpected internal error escaping the session: still close.
-            await self._close_quietly(ws)
+            await self._retire_socket(ws)
             raise
         finally:
             # The live-socket reference must never outlive the session, even
@@ -654,7 +744,7 @@ class UpstoxFeed:
 
         lifetime = self._monotonic() - connection_started_mono
         self._reset_backoff_if_stable(lifetime)
-        await self._close_quietly(ws)
+        await self._retire_socket(ws)
         if reason == "stopped" or stop_event.is_set():
             if self._state != "auth_required":
                 # A clean stop (operator Stop / shutdown) reaches here with
@@ -712,6 +802,9 @@ class UpstoxFeed:
         elif isinstance(message, str):
             self._counters["text_frames"] += 1
         self._last_message_at = self._utc_now_iso()
+        # The evidence that DATA is flowing (a connected socket is not).
+        self._last_frame_at = self._last_message_at
+        self._last_frame_mono = self._monotonic()
 
     async def _process_frame(self, message: Any) -> None:
         """D3.2 market-data processing seam.
@@ -749,8 +842,11 @@ class UpstoxFeed:
 
         for outcome in result.instruments:
             if outcome.error is not None:
-                key = "normalization_errors"
+                key = f"normalization_errors_{outcome.error}"
                 self._counters[key] = self._counters.get(key, 0) + 1
+                # Back-compat aggregate.
+                self._counters["normalization_errors"] = (
+                    self._counters.get("normalization_errors", 0) + 1)
                 continue
             # Fault isolation: one bad apply (e.g. a MarketService internal
             # error) must never kill the recv loop — count it and continue.
@@ -763,6 +859,12 @@ class UpstoxFeed:
                     if mo.stale:
                         key = "quote_stale"
                         self._counters[key] = self._counters.get(key, 0) + 1
+                    token = getattr(outcome.patch, "instrument_token", None)
+                    if token:
+                        # Per-instrument data evidence: the only basis for
+                        # reporting an instrument as LIVE.
+                        self._last_data_at[str(token)] = self._utc_now_iso()
+                        self._last_data_mono[str(token)] = self._monotonic()
                 if outcome.depth is not None:
                     do = await self._market_service.apply_depth(outcome.depth)
                     if do.accepted:
@@ -904,8 +1006,52 @@ class UpstoxFeed:
             "auth_rejected": self._auth_rejected,
             "auth_rejected_at": self._auth_rejected_at,
             "recent_transitions": list(self._transitions),
+            # LIVENESS: a socket connection alone is NOT market-data
+            # delivery. "awaiting_data" means the feed is connected but no
+            # valid market-data frame has arrived yet; "stale" means
+            # frames stopped arriving (the socket stayed open, the data
+            # did not).
+            "awaiting_data": bool(self._state == "streaming"
+                                  and not self._counters.get("frames_received")),
+            "data_flowing": self._frames_fresh(),
+            "liveness": self._liveness(),
+            "last_frame_at": self._last_frame_at,
+            "stale": bool(self._state == "streaming"
+                          and self._counters.get("frames_received")
+                          and not self._frames_fresh()),
+            # Per-instrument data evidence (never a proxy for "connected").
+            "last_data_at": dict(self._last_data_at),
+            # Subscription mutations that could not be sent.
+            "mutation_failures": self._mutation_failures,
+            "last_mutation_error": self._last_mutation_error,
+            "last_mutation_error_at": self._last_mutation_error_at,
         })
         return status
+
+    def _frames_fresh(self) -> bool:
+        """True when a frame arrived within the liveness window.
+
+        A CONNECTED socket is not evidence of delivery: a feed that
+        received frames and then went silent is NOT live.
+        """
+        if not self._counters.get("frames_received"):
+            return False
+        if self._last_frame_mono is None:
+            return False
+        age = self._monotonic() - self._last_frame_mono
+        return age <= _LIVENESS_WINDOW_S
+
+    def _liveness(self) -> str:
+        """The feed liveness: live / awaiting_data / stale / not_connected."""
+        if self._frames_fresh():
+            return "live"
+        if self._state != "streaming":
+            return "not_connected"
+        if self._counters.get("frames_received"):
+            # Frames arrived, then stopped: the socket is open but the data
+            # is stale.
+            return "stale"
+        return "awaiting_data"
 
     def readiness_reason(self) -> str | None:
         """Why this feed cannot start right now, or None if ready (WP2).

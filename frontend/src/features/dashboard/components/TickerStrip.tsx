@@ -19,7 +19,7 @@ export function TickerStrip({ quotes }: Props) {
           <span
             key={`${q.exchange}:${q.instrument_token}`}
             className={`ticker-item${stale ? " is-stale" : ""}`}
-            title={stale ? "Stale — no tick within the last 5 minutes" : undefined}
+            title={stale ? "Stale - no fresh tick for this instrument" : undefined}
           >
             <span className="ticker-sym">{q.tradingsymbol ?? q.instrument_token}</span>
             <span className="ticker-ltp">{fmtNum(q.ltp)}</span>

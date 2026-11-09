@@ -1,10 +1,12 @@
-// Canonical instrument catalog — the shared picker's first full-page host.
+// Canonical instrument catalog — browse-first discovery over the shared picker.
 //
-// The page owns no search of its own: InstrumentPicker performs the ranked,
-// deduped GET /api/market/search call (and the structured F&O mode). Selecting
-// a row commits that exact canonical identity here, and "Open chart" carries it
-// to the chart route: the BARE `provider_token` (never the composite display
-// `instrument_key`) plus the owning provider.
+// The page owns no search or browse of its own: InstrumentPicker (browse mode)
+// loads the Phase 1 canonical browse on open, applies category/exchange filters
+// server-side, paginates by cursor, and falls back to ranked canonical search
+// while a query is typed. Selecting a row commits that exact canonical identity
+// here, and "Open chart" carries it to the chart route: the BARE
+// `provider_token` (never the composite display `instrument_key`) plus the
+// owning provider.
 
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -63,8 +65,9 @@ export function CatalogView() {
       <header className="catalog-header">
         <h1>Instrument Catalog</h1>
         <p className="muted">
-          Search the canonical catalog. Results are provider-deduped by the backend, so one row is
-          one instrument with the provider that owns its token.
+          Browse the canonical catalog by category, or search every instrument by symbol or name.
+          Rows are provider-deduped by the backend, so one row is one instrument with the provider
+          that owns its token.
         </p>
       </header>
 
@@ -78,8 +81,8 @@ export function CatalogView() {
           onSelect={setSelected}
           placeholder="Search the catalog (RELIANCE, NIFTY, BANKNIFTY 25000 CE)…"
           ariaLabel="Search the instrument catalog"
+          browse
           limit={50}
-          autoFocus
         />
       </div>
 
@@ -122,7 +125,7 @@ export function CatalogView() {
       ) : (
         <div className="state catalog-empty">
           <span className="muted">
-            Type a symbol to browse the canonical catalog, or pick one from the results.
+            Pick an instrument above to inspect its canonical identity and open its chart.
           </span>
         </div>
       )}

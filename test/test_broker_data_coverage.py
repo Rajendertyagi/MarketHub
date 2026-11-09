@@ -21,19 +21,17 @@ if _PROJECT_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from datetime import datetime, timezone  # noqa: E402
+from datetime import datetime, timezone
 
-from helpers.runner import R  # noqa: E402
-from market.normalize.fyers import (  # noqa: E402
-    quote_fields_from_symbol_update,
-    depth_from_ws_depth,
+from market.models import Depth
+from market.normalize.fyers import (
     _WS_SYMBOL_ALIASES,
+    depth_from_ws_depth,
+    quote_fields_from_symbol_update,
 )
-from market.normalize.upstox import (  # noqa: E402
+from market.normalize.upstox import (
     quote_from_rest,
 )
-from market.models import Depth, DepthLevel  # noqa: E402
-
 
 UTC = timezone.utc
 NOW = datetime(2026, 8, 26, 12, 0, 0, tzinfo=UTC)

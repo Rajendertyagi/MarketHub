@@ -13,7 +13,7 @@ import json
 import logging
 import re
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from market.models import (
@@ -26,6 +26,16 @@ from market.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Hard ceiling on the number of news items a single request may return.
+# The service clamps every per-source fetch to this bound, so it is the
+# single source of truth for the maximum page size.
+NEWS_HARD_MAX_LIMIT = 100
+
+# Tolerance for provider clock skew: an item published slightly ahead of
+# the local clock is accepted; anything further ahead is bad provider data
+# and is never stored.
+_FUTURE_SKEW_TOLERANCE = timedelta(minutes=5)
 
 # ── Default sentiment keywords ──────────────────────────────────────────────
 # Weighted keywords: positive → +score, negative → -score.
@@ -142,7 +152,8 @@ class NewsService:
         successful pass.  Returns a summary dict with per-source
         ``fetched`` / ``inserted`` / ``error`` entries.
         """
-        limit_per_source = max(1, min(int(limit_per_source or 50), 100))
+        limit_per_source = max(
+            1, min(int(limit_per_source or 50), NEWS_HARD_MAX_LIMIT))
         sources = self.list_sources(enabled_only=True)
         if source_ids:
             id_set = set(source_ids)
@@ -166,6 +177,9 @@ class NewsService:
                                    source.source_id, exc)
                     summary["errors"][source.source_id] = (
                         f"{type(exc).__name__}: {exc}")
+                    self._record_health(
+                        source.source_id, success=False,
+                        error=f"{type(exc).__name__}: {exc}")
                     continue
                 rows = [self._normalize_item(source, it, fetched_at)
                         for it in items]
@@ -177,7 +191,13 @@ class NewsService:
                                    source.source_id, exc)
                     summary["errors"][source.source_id] = (
                         f"persist failed: {type(exc).__name__}")
+                    self._record_health(
+                        source.source_id, success=False,
+                        error=f"persist failed: {type(exc).__name__}")
                     continue
+                self._record_health(
+                    source.source_id, success=True,
+                    seen=len(items), added=inserted)
                 summary["refreshed"].append(source.source_id)
                 summary["inserted"] += inserted
 
@@ -188,6 +208,18 @@ class NewsService:
             logger.warning("news retention prune failed: %s", exc)
             summary["pruned"] = 0
         return summary
+
+    def _record_health(self, source_id: str, *, success: bool,
+                       error: str | None = None, seen: int = 0,
+                       added: int = 0) -> None:
+        """Record one source's fetch attempt (never breaks the refresh)."""
+        try:
+            self._store.record_news_source_health(
+                source_id=source_id, success=success, error=error,
+                seen=seen, added=added)
+        except Exception:
+            logger.warning("source health record failed for %s",
+                           source_id, exc_info=True)
 
     def prune_history(self, max_age_days: int | None = None) -> int:
         """Delete expired items (bounded, transaction-safe).
@@ -264,6 +296,75 @@ class NewsService:
             sources_queried=tuple(sources_queried),
             filtered=filters is not None,
         )
+
+    # ── Item resolution + freshness ─────────────────────────────────────────
+
+    async def get_item(self, item_ref: str) -> tuple[Any, Any] | None:
+        """Resolve ONE news item by primary key, public id, or URL.
+
+        Returns ``(article, sentiment)`` — the same pair shape the MCP
+        tools consume — or ``None`` when the reference resolves to nothing.
+        An empty reference never resolves (no accidental first-item match).
+        """
+        ref = (item_ref or "").strip()
+        if not ref:
+            return None
+        row = self._store.get_news_item(ref)
+        if row is None:
+            row = self._store.get_news_item_by_public_id(ref)
+        if row is None:
+            return None
+        names = {s.source_id: s.name for s in self.list_sources()}
+        article = self._row_to_item(row, names.get(row.get("source_id")))
+        if article is None:
+            return None
+        sentiment = None
+        score = row.get("sentiment_score")
+        label = row.get("sentiment_label")
+        if score is not None or label is not None:
+            sentiment = SentimentResult(
+                item_id=row.get("item_id") or "",
+                sentiment=label or "neutral",
+                score=float(score or 0.0),
+                matched=[],
+            )
+        return (article, sentiment)
+
+    async def freshness(self) -> dict[str, Any]:
+        """Freshness snapshot: newest publish, last successful fetch, age.
+
+        ``sources`` carries the per-source health rows so a caller can tell a
+        stale source from a healthy one.  Never raises on missing data -
+        unknown values are reported as ``None``.
+        """
+        latest_published = self._store.latest_news_published_at()
+        last_success = self._store.last_news_successful_fetch_at()
+
+        def _age_minutes(value: str | None) -> float | None:
+            if not value:
+                return None
+            try:
+                ts = datetime.fromisoformat(value)
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                return round(
+                    (datetime.now(timezone.utc) - ts).total_seconds() / 60.0,
+                    3)
+            except (TypeError, ValueError):
+                return None
+
+        return {
+            "latest_published_at": latest_published,
+            "latest_fetched_at": self._store.latest_news_fetched_at(),
+            "last_successful_fetch": last_success,
+            "publish_age_minutes": _age_minutes(latest_published),
+            "fetch_age_minutes": _age_minutes(last_success),
+            "sources": list(self._store.get_news_source_health()),
+        }
+
+    async def last_refresh_at(self) -> str | None:
+        """Newest successful source fetch (None when never fetched)."""
+        return self._store.last_news_successful_fetch_at()
 
     # ── Sentiment analysis ──────────────────────────────────────────────────
 
@@ -528,11 +629,21 @@ class NewsService:
     def _normalize_item(cls, source: NewsSourceConfig,
                         item: RSSEntry | RedditPost,
                         fetched_iso: str) -> dict[str, Any] | None:
-        """Map an adapter item to a news_items row dict."""
+        """Map an adapter item to a news_items row dict.
+
+        Returns ``None`` for an item that must NOT be stored: one with no
+        title, or one published in the future beyond a small clock-skew
+        tolerance (bad provider data must never enter the history).
+        """
         try:
             now_iso = datetime.now(timezone.utc).isoformat()
             published = (item.published if isinstance(item, RSSEntry)
                          else item.created_utc)
+            if published is not None:
+                pub = published if published.tzinfo else published.replace(
+                    tzinfo=timezone.utc)
+                if pub > datetime.now(timezone.utc) + _FUTURE_SKEW_TOLERANCE:
+                    return None
             published_iso = published.isoformat() if published else None
             if isinstance(item, RSSEntry):
                 provider = {
