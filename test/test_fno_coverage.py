@@ -7,6 +7,9 @@ import asyncio
 import os
 import sys
 import tempfile
+from datetime import date
+
+import pytest
 
 _PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_DIR not in sys.path:
@@ -18,6 +21,19 @@ from app.fno_coverage import (
     UNSUBSCRIBED,
     FnoCoverageService,
 )
+
+
+# Fixture expiries are 2026-10-27; pin "today" so tests stay deterministic.
+class _FixedDate(date):
+    @classmethod
+    def today(cls):
+        return cls(2026, 9, 1)
+
+
+@pytest.fixture(autouse=True)
+def _pin_today(monkeypatch):
+    import app.fno_coverage as fno_cov
+    monkeypatch.setattr(fno_cov, "date", _FixedDate)
 from app.subscriptions.service import SubscriptionService
 from core.persistence.store import EventStore
 from providers.capabilities import (

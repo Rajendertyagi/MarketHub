@@ -255,11 +255,16 @@ def _opt_quote(sym, strike, ot, iv, ltp=10.0):
         open_interest=500, greeks=OptionGreeks(iv=iv))
 
 
+# Fixed reference date: fixture expiries are 2026-10-30/2026-11-27; keep tests
+# deterministic regardless of when they run.
+_TODAY = "2026-09-01"
+
+
 def test_futures_oi_uses_future_instruments():
     eng = ScannerEngine(FakeDerivCatalog())
     quotes = [_fut_quote("RELIANCE", 1000), _fut_quote("INFY", 3000),
               _fut_quote("TCS", 2000)]
-    res = eng.scan("futures_oi", "NIFTY50", _fut_reader(quotes), limit=10)
+    res = eng.scan("futures_oi", "NIFTY50", _fut_reader(quotes), limit=10, today=_TODAY)
     assert res.eligible == 5 and res.quoted == 3
     assert [r.symbol for r in res.rows] == ["INFY", "TCS", "RELIANCE"]
     assert all(r.contract and r.contract.endswith("FUT") for r in res.rows)
@@ -271,21 +276,21 @@ def test_futures_oi_change_pct_ranking():
     quotes = [_fut_quote("RELIANCE", 1000, oicp=5.0),
               _fut_quote("INFY", 1000, oicp=-2.0)]
     res = eng.scan("futures_oi_change_pct", "NIFTY50", _fut_reader(quotes),
-                   limit=10)
+                   limit=10, today=_TODAY)
     assert [r.symbol for r in res.rows] == ["RELIANCE", "INFY"]
 
 
 def test_futures_oi_missing_oi_excluded():
     eng = ScannerEngine(FakeDerivCatalog())
     quotes = [_fut_quote("RELIANCE", 1000), _fut_quote("INFY", None)]
-    res = eng.scan("futures_oi", "NIFTY50", _fut_reader(quotes), limit=10)
+    res = eng.scan("futures_oi", "NIFTY50", _fut_reader(quotes), limit=10, today=_TODAY)
     assert res.quoted == 2
     assert [r.symbol for r in res.rows] == ["RELIANCE"]
 
 
 def test_futures_stale_unavailable():
     eng = ScannerEngine(FakeDerivCatalog())
-    res = eng.scan("futures_oi", "NIFTY50", _fut_reader([]), limit=10)
+    res = eng.scan("futures_oi", "NIFTY50", _fut_reader([]), limit=10, today=_TODAY)
     assert res.eligible == 5 and res.quoted == 0 and res.matched == 0
 
 
@@ -295,7 +300,7 @@ def test_option_iv_uses_option_instruments():
               _opt_quote("INFY", 120, "CE", 0.35),
               _opt_quote("TCS", 120, "CE", 0.10)]
     res = eng.scan("option_iv", "NIFTY50", _fut_reader(quotes), limit=10,
-                   atm_range=2)
+                   atm_range=2, today=_TODAY)
     assert res.quoted == 3
     assert [r.symbol for r in res.rows] == ["INFY", "RELIANCE", "TCS"]
     assert all(r.option_type == "CE" for r in res.rows)
@@ -306,7 +311,7 @@ def test_option_iv_zero_iv_valid():
     eng = ScannerEngine(FakeDerivCatalog())
     quotes = [_opt_quote("RELIANCE", 120, "CE", 0.0),
               _opt_quote("INFY", 120, "CE", 0.30)]
-    res = eng.scan("option_iv", "NIFTY50", _fut_reader(quotes), limit=10)
+    res = eng.scan("option_iv", "NIFTY50", _fut_reader(quotes), limit=10, today=_TODAY)
     assert [r.symbol for r in res.rows] == ["INFY", "RELIANCE"]
     assert res.rows[-1].iv == 0.0
 
@@ -315,7 +320,7 @@ def test_option_iv_gt_100pct_valid_canonical_fraction():
     eng = ScannerEngine(FakeDerivCatalog())
     quotes = [_opt_quote("RELIANCE", 120, "CE", 1.5),
               _opt_quote("INFY", 120, "CE", 0.30)]
-    res = eng.scan("option_iv", "NIFTY50", _fut_reader(quotes), limit=10)
+    res = eng.scan("option_iv", "NIFTY50", _fut_reader(quotes), limit=10, today=_TODAY)
     assert res.rows[0].iv == 1.5
 
 
@@ -326,7 +331,7 @@ def test_option_iv_missing_iv_excluded():
               received_ts=datetime(2026, 9, 9, 10, 0, 0, tzinfo=timezone.utc),
               ltp=10, greeks=OptionGreeks(iv=None))
     res = eng.scan("option_iv", "NIFTY50", _fut_reader([q, _opt_quote("INFY", 120, "CE", 0.30)]),
-                   limit=10)
+                   limit=10, today=_TODAY)
     assert [r.symbol for r in res.rows] == ["INFY"]
 
 
@@ -335,10 +340,10 @@ def test_option_iv_atm_range():
     quotes = [_opt_quote("RELIANCE", 100, "CE", 0.10),
               _opt_quote("RELIANCE", 140, "CE", 0.40)]
     none = eng.scan("option_iv", "NIFTY50", _fut_reader(quotes), limit=10,
-                    atm_range=0)
+                    atm_range=0, today=_TODAY)
     assert none.quoted == 0  # only ATM strike (120) selected, no quote there
     both = eng.scan("option_iv", "NIFTY50", _fut_reader(quotes), limit=10,
-                    atm_range=2)
+                    atm_range=2, today=_TODAY)
     assert both.quoted == 2
 
 
@@ -347,25 +352,25 @@ def test_option_iv_ce_pe_filter():
     quotes = [_opt_quote("RELIANCE", 120, "CE", 0.20),
               _opt_quote("RELIANCE", 120, "PE", 0.50)]
     res = eng.scan("option_iv", "NIFTY50", _fut_reader(quotes), limit=10,
-                   option_type="PE")
+                   option_type="PE", today=_TODAY)
     assert res.quoted == 1 and res.rows[0].option_type == "PE"
 
 
 def test_option_iv_expiry_selection():
     eng = ScannerEngine(FakeDerivCatalog())
     none = eng.scan("option_iv", "NIFTY50", _fut_reader([]), limit=10,
-                     expiry="2030-01-01")
+                     expiry="2030-01-01", today=_TODAY)
     assert none.quoted == 0
     res = eng.scan("option_iv", "NIFTY50",
                    _fut_reader([_opt_quote("RELIANCE", 120, "CE", 0.20)]),
-                   limit=10, expiry="2026-10-30")
+                   limit=10, expiry="2026-10-30", today=_TODAY)
     assert res.quoted == 1 and res.rows[0].expiry == "2026-10-30"
 
 
 def test_no_cross_instrument_substitution():
     eng = ScannerEngine(FakeDerivCatalog())
     res = eng.scan("futures_oi", "NIFTY50",
-                   _fut_reader([_fut_quote("RELIANCE", 1000)]), limit=10)
+                   _fut_reader([_fut_quote("RELIANCE", 1000)]), limit=10, today=_TODAY)
     assert all(r.option_type == "FUT" and r.contract.endswith("FUT")
                for r in res.rows)
     res2 = eng.scan("option_iv", "NIFTY50",

@@ -34,6 +34,9 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from datetime import date
+
+import pytest
 
 _PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_DIR not in sys.path:
@@ -43,6 +46,29 @@ import tempfile
 
 from app.instruments import InstrumentCatalog
 from core.persistence.store import EventStore
+
+
+# Fixture expiries span 2026-10-27..2026-12-29; pin "today" for determinism.
+class _FixedDate(date):
+    @classmethod
+    def today(cls):
+        return cls(2026, 9, 1)
+
+
+@pytest.fixture(autouse=True)
+def _pin_today(monkeypatch):
+    import app.fno_coverage as fno_cov
+    monkeypatch.setattr(fno_cov, "date", _FixedDate)
+    try:
+        import market.derivatives_universe as du
+        monkeypatch.setattr(du, "date", _FixedDate)
+    except Exception:
+        pass
+    try:
+        import app.subscriptions.service as sub_svc
+        monkeypatch.setattr(sub_svc, "date", _FixedDate)
+    except Exception:
+        pass
 
 # ---------------------------------------------------------------------------
 # A catalogue that mirrors the real shape.
