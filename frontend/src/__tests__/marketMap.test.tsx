@@ -3,43 +3,41 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import type { ReactNode } from "react";
 import type * as RR from "react-router-dom";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-const { echartsMock } = vi.hoisted(() => {
-  const onHandlers: Record<string, (p: unknown) => void> = {};
-  const instance = {
-    setOption: vi.fn(),
-    resize: vi.fn(),
-    dispose: vi.fn(),
-    on: vi.fn((ev: string, cb: (p: unknown) => void) => {
-      onHandlers[ev] = cb;
-    }),
-  };
-  const init = vi.fn(() => instance);
-  return { echartsMock: { init, instance, onHandlers } };
-});
-
-vi.mock("echarts", () => ({ init: echartsMock.init }));
-
+// MarketMapView is a pure React/CSS treemap (no echarts). Mock the data and
+// side-effect hooks to test the current rendering/navigation contract.
 vi.mock("@/api/market", () => ({
-  getHistory: vi.fn(),
-  listScanners: vi.fn(),
-  runScanner: vi.fn(),
-  resolveInstrument: vi.fn(),
-  getBreadth: vi.fn(),
-  getSectorHeatmap: vi.fn(),
   getMarketMap: vi.fn(),
 }));
-
-vi.mock("@/api/analytics", () => ({
-  ensureAnalyticsCoverage: vi.fn(() => Promise.resolve()),
-  clearAnalyticsCoverage: vi.fn(() => Promise.resolve()),
+vi.mock("@/features/analytics/useAnalyticsCoverage", () => ({
+  useAnalyticsCoverage: vi.fn(),
 }));
 
 const mockNavigate = vi.fn();
 vi.mock("react-router-dom", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof RR;
   return { ...actual, useNavigate: () => mockNavigate };
+});
+
+// The treemap layout depends on element size reported by ResizeObserver.
+// jsdom doesn't provide layout, so stub it to emit a usable size.
+beforeAll(() => {
+  class ResizeObserverStub {
+    private cb: ResizeObserverCallback;
+    constructor(cb: ResizeObserverCallback) {
+      this.cb = cb;
+    }
+    observe(target: Element) {
+      this.cb(
+        [{ contentRect: { width: 800, height: 500 } } as ResizeObserverEntry],
+        this as unknown as ResizeObserver,
+      );
+    }
+    unobserve() {}
+    disconnect() {}
+  }
+  vi.stubGlobal("ResizeObserver", ResizeObserverStub);
 });
 
 import { getMarketMap } from "@/api/market";
@@ -121,22 +119,22 @@ const SNAP = {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
-  echartsMock.onHandlers.click = undefined as unknown as (p: unknown) => void;
 });
 
 describe("MarketMapView", () => {
-  it("renders the treemap for the universe", async () => {
+  it("renders the treemap tiles for the universe", async () => {
     (getMarketMap as ReturnType<typeof vi.fn>).mockResolvedValue(SNAP);
     renderWithProviders(<MarketMapView />);
-    await waitFor(() => expect(echartsMock.init).toHaveBeenCalled());
-    // The canonical snapshot was mapped into the chart option.
-    expect(echartsMock.instance.setOption).toHaveBeenCalled();
+    // Tiles render as buttons with the stock symbol.
+    expect(await screen.findByRole("button", { name: /RELIANCE/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /X/ })).toBeTruthy();
+    expect(screen.getByText("Market Heatmap")).toBeTruthy();
   });
 
   it("switches universe and refetches", async () => {
     (getMarketMap as ReturnType<typeof vi.fn>).mockResolvedValue(SNAP);
     renderWithProviders(<MarketMapView />);
-    await waitFor(() => expect(echartsMock.init).toHaveBeenCalled());
+    await screen.findByRole("button", { name: /RELIANCE/ });
     const select = (await screen.findByDisplayValue("FNO")) as HTMLSelectElement;
     fireEvent.change(select, { target: { value: "NIFTY50" } });
     await waitFor(() =>
@@ -147,21 +145,8 @@ describe("MarketMapView", () => {
   it("navigates to Charts preserving exact instrument identity on tile click", async () => {
     (getMarketMap as ReturnType<typeof vi.fn>).mockResolvedValue(SNAP);
     renderWithProviders(<MarketMapView />);
-    await waitFor(() => expect(echartsMock.onHandlers.click).toBeTypeOf("function"));
-    const onClick = echartsMock.onHandlers.click;
-    if (!onClick) throw new Error("expected click handler");
-    onClick({
-      data: {
-        _meta: {
-          symbol: "RELIANCE",
-          exchange: "NSE",
-          token: "1",
-          change: 0.4,
-          status: "advance",
-          fno: true,
-        },
-      },
-    });
+    const tile = await screen.findByRole("button", { name: /RELIANCE/ });
+    fireEvent.click(tile);
     await waitFor(() =>
       expect(mockNavigate).toHaveBeenCalledWith(
         expect.stringContaining("/chart?key=1&sym=RELIANCE&ex=NSE&type=EQUITY"),
@@ -172,21 +157,9 @@ describe("MarketMapView", () => {
   it("falls back to symbol resolution when the token is absent", async () => {
     (getMarketMap as ReturnType<typeof vi.fn>).mockResolvedValue(SNAP);
     renderWithProviders(<MarketMapView />);
-    await waitFor(() => expect(echartsMock.onHandlers.click).toBeTypeOf("function"));
-    const onFallbackClick = echartsMock.onHandlers.click;
-    if (!onFallbackClick) throw new Error("expected click handler");
-    onFallbackClick({
-      data: {
-        _meta: {
-          symbol: "X",
-          exchange: "NSE",
-          token: null,
-          change: null,
-          status: "unavailable",
-          fno: false,
-        },
-      },
-    });
+    // The unavailable tile still renders and is clickable (symbol-only fallback).
+    const tile = await screen.findByRole("button", { name: /^X/ });
+    fireEvent.click(tile);
     await waitFor(() =>
       expect(mockNavigate).toHaveBeenCalledWith(
         expect.stringContaining("/chart?sym=X&ex=NSE&type=EQUITY"),

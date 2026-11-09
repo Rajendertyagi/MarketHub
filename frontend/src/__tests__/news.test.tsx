@@ -4,33 +4,24 @@ import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const api = vi.hoisted(() => ({
-  getNews: vi.fn(),
-  getNewsSentiment: vi.fn(),
-  getNewsSources: vi.fn(),
-  refreshNews: vi.fn(),
-  createNewsSource: vi.fn(),
-  updateNewsSource: vi.fn(),
-  deleteNewsSource: vi.fn(),
-  setNewsSourceEnabled: vi.fn(),
-  testNewsSource: vi.fn(),
+// NewsView consumes the hook layer (useNewsSentiment/useNewsSources/
+// useNewsMutations). Mock the hooks to test the current 3-column reader UI
+// contract without coupling to hook internals or module-resolution quirks.
+const hooks = vi.hoisted(() => ({
+  useNewsSentiment: vi.fn(),
+  useNewsSources: vi.fn(),
+  useNewsMutations: vi.fn(),
 }));
-vi.mock("@/features/news/api", () => ({
-  getNews: api.getNews,
-  getNewsSentiment: api.getNewsSentiment,
-  getNewsSources: api.getNewsSources,
-  refreshNews: api.refreshNews,
-  createNewsSource: api.createNewsSource,
-  updateNewsSource: api.updateNewsSource,
-  deleteNewsSource: api.deleteNewsSource,
-  setNewsSourceEnabled: api.setNewsSourceEnabled,
-  testNewsSource: api.testNewsSource,
+vi.mock("@/features/news/useNews", () => ({
+  useNewsSentiment: hooks.useNewsSentiment,
+  useNewsSources: hooks.useNewsSources,
+  useNewsMutations: hooks.useNewsMutations,
 }));
 
 import { NewsView } from "@/features/news";
 
 const RSS_ARTICLE = {
-  type: "rss",
+  type: "rss" as const,
   item_id: "rss-1",
   source_id: "src-a",
   source_name: "MoneyControl",
@@ -41,7 +32,7 @@ const RSS_ARTICLE = {
   author: "Desk",
 };
 const REDDIT_ARTICLE = {
-  type: "reddit",
+  type: "reddit" as const,
   item_id: "rd-1",
   source_id: "src-b",
   source_name: "r/IndiaInvestments",
@@ -65,7 +56,7 @@ const SENTIMENT = {
 const SOURCE = {
   source_id: "src-a",
   name: "MoneyControl",
-  source_type: "rss",
+  source_type: "rss" as const,
   category: "general",
   enabled: true,
   config_json: { url: "https://example.com/feed" },
@@ -84,119 +75,158 @@ function renderWithProviders(ui: ReactNode) {
   );
 }
 
+function setupHooks(overrides?: {
+  news?: Partial<ReturnType<typeof hooks.useNewsSentiment>>;
+  sources?: Partial<ReturnType<typeof hooks.useNewsSources>>;
+  mutations?: Partial<ReturnType<typeof hooks.useNewsMutations>>;
+}) {
+  const refetch = vi.fn().mockResolvedValue(undefined);
+  const refresh = vi.fn().mockResolvedValue({ status: "ok" });
+  const setSourceEnabled = vi.fn().mockResolvedValue({ status: "ok" });
+  const createSource = vi.fn().mockResolvedValue({ status: "ok" });
+  const deleteSource = vi.fn().mockResolvedValue({ status: "ok", deleted: "src-a" });
+  hooks.useNewsSentiment.mockReturnValue({
+    data: { articles: [], sentiments: [], count: 0, sources_queried: [] },
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch,
+    ...overrides?.news,
+  });
+  hooks.useNewsSources.mockReturnValue({
+    data: { sources: [] },
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+    ...overrides?.sources,
+  });
+  hooks.useNewsMutations.mockReturnValue({
+    refresh,
+    createSource,
+    updateSource: vi.fn(),
+    deleteSource,
+    setSourceEnabled,
+    testSource: vi.fn(),
+    ...overrides?.mutations,
+  });
+  return { refetch, refresh, setSourceEnabled, createSource, deleteSource };
+}
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
 });
 
 describe("NewsView", () => {
-  it("renders RSS and Reddit articles from the backend (exact identity)", async () => {
-    api.getNews.mockResolvedValue({
-      status: "ok",
-      count: 2,
-      sources_queried: ["src-a", "src-b"],
-      articles: [RSS_ARTICLE, REDDIT_ARTICLE],
+  it("renders RSS and Reddit articles with source identity and sentiment", async () => {
+    setupHooks({
+      news: {
+        data: {
+          articles: [RSS_ARTICLE, REDDIT_ARTICLE],
+          sentiments: [SENTIMENT],
+          count: 2,
+          sources_queried: ["src-a", "src-b"],
+        },
+      },
+      sources: { data: { sources: [SOURCE] } },
     });
     renderWithProviders(<NewsView />);
-    expect(await screen.findByText("Markets close higher")).toBeTruthy();
-    expect(screen.getByText("My portfolio review")).toBeTruthy();
-    expect(screen.getByText("MoneyControl")).toBeTruthy();
-    expect(screen.getByText("r/IndiaInvestments")).toBeTruthy();
+    // Title appears in the article list and the reader pane (selected article).
+    expect((await screen.findAllByText("Markets close higher")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("My portfolio review").length).toBeGreaterThan(0);
+    // Source identity appears in the list/reader; sentiment is rendered.
+    expect(screen.getAllByText("MoneyControl").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/positive/).length).toBeGreaterThan(0);
   });
 
   it("shows error state on load failure", async () => {
-    api.getNews.mockRejectedValue(new Error("news load failed"));
+    setupHooks({
+      news: {
+        data: undefined,
+        isError: true,
+        error: { message: "news load failed" },
+      },
+    });
     renderWithProviders(<NewsView />);
     expect(await screen.findByText(/news load failed/)).toBeTruthy();
   });
 
-  it("builds the correct filter query (symbol + keywords + limit)", async () => {
-    api.getNews.mockResolvedValue({
-      status: "ok",
-      count: 0,
-      sources_queried: [],
-      articles: [],
-    });
+  it("applies symbol and keyword filters through the sources pane", async () => {
+    setupHooks();
     renderWithProviders(<NewsView />);
-    await screen.findByText("News & Sentiment");
-    const symbol = screen.getByPlaceholderText("e.g. RELIANCE") as HTMLInputElement;
+    await screen.findByText("News");
+    const symbol = screen.getByLabelText("Filter by symbol") as HTMLInputElement;
     fireEvent.change(symbol, { target: { value: "RELIANCE" } });
-    const kw = screen.getByPlaceholderText("comma separated") as HTMLInputElement;
-    fireEvent.change(kw, { target: { value: "gain, rise" } });
-    await waitFor(() =>
-      expect(api.getNews).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          symbol: "RELIANCE",
-          keywords_include: ["gain", "rise"],
-        }),
-        expect.anything(),
-      ),
-    );
+    const search = screen.getByLabelText("Search articles") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "gain rise" } });
+    await waitFor(() => {
+      const last = hooks.useNewsSentiment.mock.calls.at(-1)?.[0];
+      expect(last?.symbol).toBe("RELIANCE");
+      expect(last?.keywords_include).toEqual(["gain", "rise"]);
+    });
   });
 
-  it("refresh triggers a sync of sources", async () => {
-    api.getNews.mockResolvedValue({ status: "ok", count: 0, sources_queried: [], articles: [] });
-    api.refreshNews.mockResolvedValue({ status: "ok", fetched: 5 });
+  it("refresh triggers a source sync and refetches articles", async () => {
+    const { refresh, refetch } = setupHooks();
     renderWithProviders(<NewsView />);
-    await screen.findByText("News & Sentiment");
-    fireEvent.click(screen.getByText("Refresh sources"));
-    await waitFor(() => expect(api.refreshNews).toHaveBeenCalled());
-    expect(await screen.findByText(/Refresh ok/)).toBeTruthy();
+    await screen.findByText("News");
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    await waitFor(() => expect(refetch).toHaveBeenCalled());
   });
 
-  it("sentiment tab pairs articles with persisted scores", async () => {
-    api.getNewsSentiment.mockResolvedValue({
-      status: "ok",
-      count: 1,
-      sources_queried: ["src-a"],
-      articles: [RSS_ARTICLE],
-      sentiments: [SENTIMENT],
+  it("shows persisted sentiment and matched keywords in the reader", async () => {
+    setupHooks({
+      news: {
+        data: {
+          articles: [RSS_ARTICLE],
+          sentiments: [SENTIMENT],
+          count: 1,
+          sources_queried: ["src-a"],
+        },
+      },
     });
     renderWithProviders(<NewsView />);
-    fireEvent.click(await screen.findByText("Sentiment"));
-    expect(await screen.findByText("positive 0.80")).toBeTruthy();
-    expect(screen.getByText(/matched: gain/)).toBeTruthy();
+    expect((await screen.findAllByText("Markets close higher")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/positive/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Matched:/)).toBeTruthy();
+    expect(screen.getByText("gain")).toBeTruthy();
   });
 
-  it("manages sources: enable toggle, add, delete", async () => {
-    const requireCard = (): HTMLElement => {
-      const card = screen.getByText("Add news source").closest(".card");
-      if (!(card instanceof HTMLElement)) throw new Error("expected Add news source card");
-      return card;
-    };
-    api.getNewsSources.mockResolvedValue({ status: "ok", sources: [SOURCE] });
-    api.setNewsSourceEnabled.mockResolvedValue({ status: "ok" });
-    api.createNewsSource.mockResolvedValue({ status: "ok" });
-    api.deleteNewsSource.mockResolvedValue({ status: "ok", deleted: "src-a" });
+  it("manages sources via the modal: enable toggle, add, delete", async () => {
+    const { setSourceEnabled, createSource, deleteSource } = setupHooks({
+      sources: { data: { sources: [SOURCE] } },
+    });
     renderWithProviders(<NewsView />);
-    fireEvent.click(await screen.findByText("Sources"));
-    expect(await screen.findByText("MoneyControl")).toBeTruthy();
+    await screen.findByText("News");
+    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    const dialog = await screen.findByRole("dialog", { name: "Manage news sources" });
 
-    // Toggle enabled off.
-    const toggle = screen.getByRole("checkbox") as HTMLInputElement;
+    // Toggle enabled off (scoped to the sources table, not the add form).
+    const table = within(dialog).getByRole("table");
+    const toggle = within(table).getByRole("checkbox") as HTMLInputElement;
     fireEvent.click(toggle);
     await waitFor(() =>
-      expect(api.setNewsSourceEnabled).toHaveBeenCalledWith({
-        id: "src-a",
-        enabled: false,
-      }),
+      expect(setSourceEnabled).toHaveBeenCalledWith({ id: "src-a", enabled: false }),
     );
 
     // Add a new source.
-    fireEvent.change(screen.getByPlaceholderText("My RSS Feed"), {
+    fireEvent.change(within(dialog).getByPlaceholderText("My RSS Feed"), {
       target: { value: "New Feed" },
     });
-    fireEvent.click(within(requireCard()).getByText("Add"));
+    fireEvent.change(within(dialog).getByPlaceholderText("my-rss-feed"), {
+      target: { value: "new-feed" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
     await waitFor(() =>
-      expect(api.createNewsSource).toHaveBeenCalledWith(
+      expect(createSource).toHaveBeenCalledWith(
         expect.objectContaining({ name: "New Feed", source_type: "rss" }),
       ),
     );
 
     // Delete existing source.
-    const delBtn = screen.getAllByText("Delete")[0];
-    if (!delBtn) throw new Error("expected Delete button");
-    fireEvent.click(delBtn);
-    await waitFor(() => expect(api.deleteNewsSource).toHaveBeenCalledWith("src-a"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(deleteSource).toHaveBeenCalledWith("src-a"));
   });
 });

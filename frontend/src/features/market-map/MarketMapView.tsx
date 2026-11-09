@@ -128,21 +128,20 @@ function squarify(weights: number[], rect: Rect): Rect[] {
 }
 
 function useElementSize() {
-  const ref = useRef<HTMLDivElement | null>(null);
+  const [node, setNode] = useState<HTMLDivElement | null>(null);
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
+    if (!node) return;
     const ro = new ResizeObserver((entries) => {
       const first = entries[0];
       if (!first) return;
       const cr = first.contentRect;
       setSize({ w: cr.width, h: cr.height });
     });
-    ro.observe(el);
+    ro.observe(node);
     return () => ro.disconnect();
-  }, []);
-  return [ref, size] as const;
+  }, [node]);
+  return [setNode, size] as const;
 }
 
 function fmtChange(v: number | null): string {
