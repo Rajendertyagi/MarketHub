@@ -272,10 +272,14 @@ class ScannerEngine:
 
     def _scan_futures(self, defn, members, reader, today, expiry):
         # One catalog query for all futures, then group by underlying — avoids
-        # N sequential per-underlying lookups (the `underlying` column is not
-        # indexed, so per-symbol scans are slow over large universes).
+        # N sequential per-underlying lookups. Prefer the bulk futures read model
+        # (higher limit, purpose-built) over generic search (capped for UI).
         try:
-            all_futs = self._catalog.search(instrument_type="FUTURE") or []
+            lister = getattr(self._catalog, "list_future_contracts", None)
+            if lister is not None:
+                all_futs = lister(limit=20000) or []
+            else:
+                all_futs = self._catalog.search(instrument_type="FUTURE", limit=20000) or []
         except Exception:
             all_futs = []
         by_und: dict[str, list[dict]] = {}

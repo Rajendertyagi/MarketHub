@@ -378,9 +378,14 @@ def build_market_routes(
             except asyncio.CancelledError:
                 def _release(_fut: Any) -> None:
                     try:
-                        _scanner_sem.release()
-                    except Exception:
+                        _fut.exception()
+                    except (asyncio.CancelledError, Exception):
                         pass
+                    finally:
+                        try:
+                            _scanner_sem.release()
+                        except Exception:
+                            pass
                 fut.add_done_callback(_release)
                 released = True
                 raise

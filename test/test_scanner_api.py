@@ -48,6 +48,7 @@ class _SlowEngine:
     started = threading.Event()
     release = threading.Event()
     calls = 0
+    fail_after_release = False
 
     def __init__(self, catalog):
         self.catalog = catalog
@@ -59,6 +60,7 @@ class _SlowEngine:
         cls.started = threading.Event()
         cls.release = threading.Event()
         cls.calls = 0
+        cls.fail_after_release = False
 
     def list_scanners(self):
         return ScannerEngine(self.catalog).list_scanners()
@@ -71,6 +73,8 @@ class _SlowEngine:
         _SlowEngine.started.set()
         try:
             _SlowEngine.release.wait(timeout=5)
+            if _SlowEngine.fail_after_release:
+                raise RuntimeError("worker failed after cancellation")
             return ScanResult(
                 scanner=name, universe=universe, as_of=None,
                 eligible=0, quoted=0, matched=0, rows=[],
@@ -379,6 +383,46 @@ def test_cancellation_never_releases_permit_before_worker_completion():
                     with _SlowEngine.lock:
                         assert _SlowEngine.active == 1
                     assert sem._value == 1, "permit released while worker still running"
+                _SlowEngine.release.set()
+                deadline = time.time() + 3
+                while time.time() < deadline and sem._value != 2:
+                    await asyncio.sleep(0.01)
+                assert sem._value == 2
+                with _SlowEngine.lock:
+                    assert _SlowEngine.active == 0
+
+    asyncio.run(_run())
+
+
+def test_cancellation_releases_permit_when_worker_later_fails():
+    """Regression: cancelled request's worker may fail later; callback must
+    retrieve the exception and still release the semaphore reliably."""
+
+    async def _run():
+        _SlowEngine.reset()
+        _SlowEngine.release.clear()
+        _SlowEngine.fail_after_release = True
+        with _app(engine_cls=_SlowEngine) as app:
+            sem = _get_sem(app)
+            from httpx import ASGITransport, AsyncClient
+
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+                task = asyncio.create_task(ac.get("/api/market/scanner/gainers"))
+                for _ in range(100):
+                    if _SlowEngine.started.is_set():
+                        break
+                    await asyncio.sleep(0.01)
+                assert _SlowEngine.started.is_set()
+                assert sem._value == 1
+                task.cancel()
+                with pytest.raises((asyncio.CancelledError, Exception)):
+                    await task
+                # Worker still running; permit held.
+                await asyncio.sleep(0.05)
+                with _SlowEngine.lock:
+                    assert _SlowEngine.active == 1
+                assert sem._value == 1
+                # Worker unblocks and raises; permit must still be released.
                 _SlowEngine.release.set()
                 deadline = time.time() + 3
                 while time.time() < deadline and sem._value != 2:

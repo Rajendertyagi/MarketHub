@@ -72,6 +72,9 @@ function ScannerCard({
         },
         signal,
       ),
+    // Fetch only when expanded: avoids firing all scanner requests on mount
+    // while preserving on-demand scan behavior and backend concurrency safety.
+    enabled: open,
   });
 
   const onRowClick = async (row: ScanRow) => {

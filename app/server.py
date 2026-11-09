@@ -267,21 +267,23 @@ async def _on_market_quote_update(quote: Quote) -> None:
         _app_logger.warning("market quote failed canonical JSON encoding; dropped")
         return
     _market_event_broker.broadcast(line)
-    # Alert engine consumes the same canonical quote (never polls REST).
-    # Market-alert triggers publish canonical durable alert.triggered events
-    # through the shared event pipeline (SSE fan-out included).
-    try:
-        await _alert_engine.evaluate(quote)
-    except Exception:
-        _app_logger.warning("alert evaluation failed", exc_info=True)
-    # B2: market_condition alert engine — same canonical quote, provider-
-    # neutral identity resolution, atomic trigger persistence. Error-isolated
-    # so a condition-engine failure never breaks the market-alert path.
-    try:
-        await _condition_alert_engine.evaluate(quote)
-    except Exception:
-        _app_logger.warning(
-            "condition alert evaluation failed", exc_info=True)
+    # Alert engines consume the same canonical quote (never polls REST).
+    # They are independent; evaluate concurrently to reduce ingestion-path
+    # latency while preserving per-engine error isolation and alert semantics.
+    async def _eval_market_alerts() -> None:
+        try:
+            await _alert_engine.evaluate(quote)
+        except Exception:
+            _app_logger.warning("alert evaluation failed", exc_info=True)
+
+    async def _eval_condition_alerts() -> None:
+        try:
+            await _condition_alert_engine.evaluate(quote)
+        except Exception:
+            _app_logger.warning(
+                "condition alert evaluation failed", exc_info=True)
+
+    await asyncio.gather(_eval_market_alerts(), _eval_condition_alerts())
 
 
 _market_service = MarketService(on_quote_update=_on_market_quote_update)
