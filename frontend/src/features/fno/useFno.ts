@@ -151,7 +151,7 @@ export function normalizeEquityOptions(options: FnoOption[], atm: number | null)
   if (atm != null) {
     for (const r of rows) r.atm = r.strike === atm;
   }
-  rows.sort((a, b) => b.strike - a.strike);
+  rows.sort((a, b) => a.strike - b.strike);
   return rows;
 }
 
