@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import sys
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
@@ -1511,7 +1512,8 @@ async def _stop_previous_oi_recorder() -> None:
                           exc_info=True)
 
 
-async def _lifespan(app: Starlette) -> None:
+@asynccontextmanager
+async def _lifespan(app: Starlette):
     """
     Top-level lifespan owner.
 
@@ -1767,6 +1769,7 @@ def main() -> None:
         host=LISTEN_HOST,
         port=LISTEN_PORT,
         log_level=LOG_LEVEL.lower(),
+        ws="websockets-sansio",
     )
     server = uvicorn.Server(config)
 
