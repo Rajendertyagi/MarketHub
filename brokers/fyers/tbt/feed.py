@@ -129,7 +129,8 @@ class FyersTbtFeed:
                 if self._state == "auth_required":
                     logger.info("TBT feed: auth required, stopping until re-login")
                     break
-                # Transient failure - reconnect with backoff.
+                # Transient failure - reconnect with backoff. Interruptible so
+                # explicit shutdown is responsive even during backoff.
                 delay = self._calculate_backoff()
                 logger.warning(
                     "TBT feed: reconnecting in %.1fs (attempt %d)",
@@ -137,7 +138,11 @@ class FyersTbtFeed:
                     self._stats["reconnects"] + 1,
                 )
                 self._stats["reconnects"] += 1
-                await asyncio.sleep(delay)
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=delay)
+                    break
+                except asyncio.TimeoutError:
+                    pass
 
         finally:
             await self._cleanup()

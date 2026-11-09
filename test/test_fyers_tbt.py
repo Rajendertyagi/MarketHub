@@ -492,15 +492,21 @@ class TestTBTLifecycle:
     @pytest.mark.asyncio
     async def test_tbt24_shutdown_during_backoff(self, tbt_feed):
         stop_event = asyncio.Event()
-        tbt_feed._stats["reconnects"] = 5
-        
+        # Force the transient-failure -> backoff path without a real network call.
+        async def _no_url(_token):
+            return None
+        tbt_feed._fetch_ws_url = _no_url
+        tbt_feed._stats["reconnects"] = 0
+
         task = asyncio.create_task(tbt_feed.run(None, stop_event))
-        await asyncio.sleep(0.1)
-        
+        # Let the session fail and enter backoff.
+        await asyncio.sleep(0.05)
         stop_event.set()
-        await asyncio.sleep(0.2)
-        
-        assert task.done() or tbt_feed._state == "stopped"
+        # Shutdown must be responsive during backoff (interruptible sleep).
+        await asyncio.wait_for(task, timeout=3.0)
+
+        assert task.done()
+        assert tbt_feed._state == "stopped"
 
 
 class TestOrderBook:

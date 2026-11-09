@@ -88,15 +88,11 @@ describe("AlertsView", () => {
       offset: 0,
     });
     renderWithProviders(<AlertsView />);
-    expect(await screen.findByText("RELIANCE")).toBeTruthy();
-    expect(
-      screen.getByText(
-        (content, element) =>
-          element?.tagName === "TD" &&
-          content.includes("Last Traded Price") &&
-          content.includes("2500"),
-      ),
-    ).toBeTruthy();
+    // Wait for the alerts table to render (RELIANCE also appears in the form datalist).
+    expect(await screen.findByText("Configured alerts")).toBeTruthy();
+    expect(screen.getAllByText("RELIANCE").length).toBeGreaterThan(0);
+    // Condition renders via formatCondition (e.g. "Last Traded Price > 2500").
+    expect(screen.getByText("Last Traded Price > 2500")).toBeTruthy();
     expect(screen.getByText("inactive")).toBeTruthy();
   });
 
@@ -123,7 +119,7 @@ describe("AlertsView", () => {
     api.createAlert.mockResolvedValue({ status: "ok" });
     renderWithProviders(<AlertsView />);
     await screen.findByText("New alert");
-    fireEvent.change(screen.getByPlaceholderText("e.g. NSE_EQ|RELIANCE"), {
+    fireEvent.change(screen.getByPlaceholderText("NSE_EQ|RELIANCE"), {
       target: { value: "NSE_EQ|RELIANCE" },
     });
     fireEvent.click(screen.getByText("Add alert"));
