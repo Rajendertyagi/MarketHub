@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Plan ID** | `MH-UCP-2026-10-27` |
-| **Status** | Phases 0–1 committed (`329edd0`, `2025f1b`, `df98203`); Phase 1.5–3 implemented and uncommitted with the chart work; **Phase 4 (backend indicator catalog for scanners/alerts) deferred 2026-10-28**; Phase 5 is a backlog awaiting scheduling |
+| **Status** | Phases 0–1 committed (`329edd0`, `2025f1b`, `df98203`); Phase 1.5–3 implemented and uncommitted with the chart work; **Phase 4 (backend indicator catalog for scanners/alerts) deferred 2026-10-28** (design proposal drafted in `e95ac21`, no code authorized); Phase 5 is a backlog awaiting scheduling |
 | **Prepared** | 2026-10-27 |
 | **Revision** | v2.0 (Phase 4 deferred; indicator catalog scoped chart-only) |
 | **Branch** | `fno-provider-agnostic` |
@@ -707,6 +707,68 @@ proposed a shared JSON spec, evaluators keyed by catalog id, user-preference tab
 parity fixtures and scanner/alert integration. It is retained here only as context
 for a future proposal; nothing in it is approved.
 
+**Drafted proposal (merged from `e95ac21`, not authorized; Phase 4 remains deferred):**
+
+### Phase 4 — App-wide indicator catalog (condition alerts first)
+
+**Status:** design proposal for owner review; no implementation authorized by this section.
+
+**Goal:** make one versioned catalog the authority for chart indicator identity and backend-evaluable indicator behavior, without making the database a definition store.
+
+**Proposed owner decisions (pending explicit approval)**
+
+- **Evaluator v1:** SMA, EMA and RSI, plus explicit cross-above / cross-below operators. MACD and Bollinger Bands remain chart-only until their own parity fixtures pass.
+- **First consumer:** condition alerts. Scanner integration is deferred; scanners are universe-ranking screens and need a separate evaluation/cost design.
+- **Catalog authority:** a checked-in JSON spec is the shared, versioned contract. The database stores user preferences only (favorites, defaults, last-used and templates), never indicator definitions or formulas.
+
+**Changes**
+
+1. Add a checked-in JSON catalog spec. Each indicator entry has a stable catalog ID and version, Vela native type, display metadata, category, parameter schema/defaults, required input series, warm-up/missing-value policy, and an evaluator key or an explicit `chartOnly` state. Cross operators are a separately typed, allow-listed operator set; they are not arbitrary formulas.
+2. Validate the same JSON in TypeScript and Python:
+   - TypeScript validates the schema and confirms every declared Vela native type exists in the installed Vela descriptor registry and is supported by the active chart.
+   - Python validates the schema and confirms every non-chart-only evaluator key resolves to a registered evaluator with compatible parameters.
+   - Invalid JSON, unknown native types, duplicate IDs, unknown evaluator keys, or invalid parameter defaults fail CI/startup clearly. A chart-only entry is valid without a backend evaluator.
+3. Add a pure indicator math module under `core/` with no I/O, provider imports, adapters, or database access. Add an app-level adapter/registry that maps catalog IDs to the pure evaluator functions.
+4. Add read-only `GET /api/indicators`, generated from the checked-in spec and merged with user preference state where that state is available. Never accept formulas, Python expressions, arbitrary evaluator names, or catalog definitions from API callers.
+5. Add deterministic parity fixtures: fixed OHLCV inputs and parameter sets, Vela native outputs captured/verified against the same bars, Python outputs, declared warm-up behavior, and per-indicator numerical tolerances. Include flat, rising, falling, missing/short-history and boundary cases. Do not mark an evaluator backend-ready until its fixtures pass.
+6. Integrate catalog IDs into condition-alert validation/evaluation. Reject chart-only indicators and unsupported parameters with a clear validation error before evaluation. Keep existing quote-only alert behavior backward compatible.
+7. Store only user-specific preferences in the existing persistence mechanisms if a suitable supported surface exists. Any schema migration is a separate explicit approval; do not introduce a new table merely for catalog definitions.
+8. Defer scanner integration. Revisit it after condition-alert semantics, evaluator cost, history requirements and universe-scale evaluation have been measured.
+
+**Semantics that must be explicit before parity can pass**
+
+- SMA/EMA/RSI input series and parameter defaults.
+- EMA seed/warm-up behavior and RSI smoothing/initialization convention.
+- Output alignment and how warm-up values are represented (null/absent, never silently coerced to zero).
+- Missing bars, zero/invalid prices, insufficient history, and numeric tolerance per evaluator.
+- Cross operators compare current and previous valid values and define behavior across missing values; they do not trigger on an uninitialized prior value.
+
+**Allowed surface**
+
+New versioned catalog JSON; a pure `core/` indicator module; app-level evaluator registry/adapter; read-only indicator route; TypeScript catalog validation; targeted tests and parity fixtures. Condition-alert integration is a separate subtask in its own zone.
+
+**Zone**
+
+New `core/` module (pure math) + app-level adapter + `TRANSPORT/API` + `WEBUI FEATURES`. `app/condition_alerts.py` is a red-zone file and requires a separate explicit task declaration/approval before it is changed. No scanner files in this phase.
+
+**Prerequisites**
+
+- Commit the verified chart work (shared picker/chart integration/indicator menu) as a scoped commit before implementation, so the Phase 4 diff is reviewable and does not mix unrelated changes.
+- Confirm the exact installed Vela descriptor IDs and how parity fixtures can deterministically capture native outputs. Documentation and types alone are not evidence of numeric parity.
+- Baseline the existing alert tests and architecture-boundary tests before editing.
+
+**Acceptance**
+
+- One checked-in JSON spec is consumed by both TS and Python; no DB-backed definition source exists.
+- TS rejects catalog native types absent/unsupported in Vela; Python rejects unknown evaluator keys and invalid parameter definitions.
+- `GET /api/indicators` is read-only and emits stable catalog IDs, metadata, parameters, and capability status.
+- SMA, EMA, RSI and cross operators are enabled for backend use only after deterministic parity fixtures pass within their declared tolerances.
+- Chart-only indicators are rejected by condition alerts with a clear message and no runtime formula execution.
+- Existing quote-only alert behavior remains unchanged.
+- Architecture-boundary tests, targeted backend/frontend tests, type checks and frontend build pass; login/auth smoke checks remain green.
+- Scanner integration and all Phase 5 W1–W17 items remain deferred unless separately approved.
+
+
 ---
 
 ### Phase 5 — Chart and bars gaps (existing list)
@@ -835,6 +897,7 @@ be mistaken for regressions.
   `registerWidgetAttachment` for the in-chart picker lifecycle; replace fuzzy
   scanner navigation with the exact resolver; classify the 7,121 untyped debt-like
   rows instead of treating them as equities.
+- 2026-10-28 (v1.6) — Expanded Phase 4 as a review-only design proposal: code-first JSON catalog, TS/Python validation, pure core math + app adapter, read-only API, parity semantics, proposed SMA/EMA/RSI + cross operators, condition-alert-first scope, explicit red-zone approval and chart-work commit prerequisite. No implementation authorized; owner decisions remain pending. Phase 5 W1–W17 remains deferred.
 - 2026-10-27 (v1.2) — Second code-read pass with measurements:
   - found that generic search does **not** dedupe (`_select_one_provider` is used
     only by futures/option chains), so Phase 0 adds an explicit canonical-id dedupe;
