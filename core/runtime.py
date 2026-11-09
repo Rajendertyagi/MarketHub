@@ -62,6 +62,9 @@ class BackgroundTaskManager:
         async with self._lock:
             if name in self._tasks:
                 logger.warning("background task '%s' already running", name)
+                # Avoid leaking an unawaited coroutine when callers pass one.
+                if asyncio.iscoroutine(coro):
+                    coro.close()
                 return
             task = asyncio.create_task(coro, name=name)
             self._tasks[name] = task

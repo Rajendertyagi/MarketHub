@@ -871,7 +871,7 @@ async def test_bt13_concurrent_quote_analytics(runner: R) -> None:
         results = []
 
         async def evaluate_quote():
-            barrier.wait()
+            await barrier.wait()
             fired = await engine.evaluate(_FakeQuote(25100, token="2887", tsym="NIFTY"))
             results.extend(fired)
 

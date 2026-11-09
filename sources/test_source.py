@@ -41,6 +41,8 @@ class TestSource:
     }
     """
 
+    __test__ = False  # helper/source class, not a pytest test case
+
     def __init__(self, cfg: dict[str, Any]) -> None:
         self._interval: float = cfg.get("interval_seconds", 2.0)
         self._event_type: str = cfg.get("event_type", "test.source.tick")

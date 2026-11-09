@@ -16,6 +16,7 @@ transient error during warm-up does not abort the wait.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -28,7 +29,7 @@ _Probe = Callable[[], Any] | Callable[[], Awaitable[Any]]
 
 
 def _is_awaitable_fn(fn: _Probe) -> bool:
-    return asyncio.iscoroutinefunction(fn)
+    return inspect.iscoroutinefunction(fn)
 
 
 async def _eval(probe: _Probe) -> Any:

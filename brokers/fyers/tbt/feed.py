@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import websockets
-from websockets.client import connect as ws_connect
+from websockets.asyncio.client import connect as ws_connect
 
 from brokers.fyers.tbt.normalizer import normalize_tbt_depth
 from brokers.fyers.tbt.order_book import OrderBookStore
