@@ -129,8 +129,9 @@ describe("SectorHeatmapView", () => {
     renderWithProviders(<SectorHeatmapView />);
     // Chart rendered (treemap built from canonical sectors).
     await waitFor(() => expect(echartsMock.init).toHaveBeenCalled());
-    // Summary reflects canonical counts (Unclassified preserved as a stat).
-    expect(await screen.findByText("Unclassified")).toBeInTheDocument();
+    // Summary reflects canonical counts (Unclassified preserved as a stat and
+    // may also appear as a sector label in the heatmap/cards).
+    expect((await screen.findAllByText("Unclassified")).length).toBeGreaterThan(0);
     expect(screen.getByText("Sector Heatmap")).toBeInTheDocument();
     expect(screen.getByText("Advances")).toBeInTheDocument();
   });

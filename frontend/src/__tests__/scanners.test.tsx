@@ -55,45 +55,12 @@ const DEFS = [
   },
 ];
 
-afterEach(() => {
-  cleanup();
-  vi.clearAllMocks();
-});
-
-describe("ScannersView", () => {
-  it("renders the scanner list and result rows", async () => {
-    (listScanners as ReturnType<typeof vi.fn>).mockResolvedValue(DEFS);
-    (runScanner as ReturnType<typeof vi.fn>).mockResolvedValue({
-      scanner: "top_gainers",
-      universe: "FNO",
-      as_of: null,
-      eligible: 1,
-      quoted: 1,
-      matched: 1,
-      rows: [
-        {
-          symbol: "RELIANCE",
-          sector: "ENERGY",
-          ltp: 2500,
-          change: 10,
-          change_percent: 0.4,
-          volume: 1000,
-          oi: null,
-          iv: null,
-          status: "ok",
-          freshness: "1s",
-        },
-      ],
-    });
-
-    renderWithProviders(<ScannersView />);
-    expect(await screen.findByText("RELIANCE")).toBeInTheDocument();
-  });
-
-  it("shows derivative (option) controls only for option scanners", async () => {
-    (listScanners as ReturnType<typeof vi.fn>).mockResolvedValue(DEFS);
-    (runScanner as ReturnType<typeof vi.fn>).mockResolvedValue({
-      scanner: "option_iv",
+function mockRunScannerByName(results: Record<string, unknown>) {
+  (runScanner as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {
+    const r = results[name];
+    if (r) return Promise.resolve(r);
+    return Promise.resolve({
+      scanner: name,
       universe: "FNO",
       as_of: null,
       eligible: 0,
@@ -101,82 +68,137 @@ describe("ScannersView", () => {
       matched: 0,
       rows: [],
     });
+  });
+}
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
+
+describe("ScannersView", () => {
+  it("renders scanner cards and result rows", async () => {
+    (listScanners as ReturnType<typeof vi.fn>).mockResolvedValue(DEFS);
+    mockRunScannerByName({
+      top_gainers: {
+        scanner: "top_gainers",
+        universe: "FNO",
+        as_of: null,
+        eligible: 1,
+        quoted: 1,
+        matched: 1,
+        rows: [
+          {
+            symbol: "RELIANCE",
+            sector: "ENERGY",
+            ltp: 2500,
+            change: 10,
+            change_percent: 0.4,
+            volume: 1000,
+            oi: null,
+            iv: null,
+            status: "ok",
+            freshness: "1s",
+          },
+        ],
+      },
+    });
 
     renderWithProviders(<ScannersView />);
-    // Default selection is the first scanner (equity) -> option controls hidden.
-    expect(screen.queryByText("Expiry")).not.toBeInTheDocument();
+    // Card grid renders scanner titles; result row/summary shows the symbol.
+    expect((await screen.findAllByText("Top Gainers")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Option IV").length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("RELIANCE")).length).toBeGreaterThan(0);
+  });
 
-    // Switch to the Option IV scanner.
-    const select = (await screen.findByDisplayValue("Top Gainers")) as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "option_iv" } });
+  it("shows derivative controls when option scanners are present", async () => {
+    (listScanners as ReturnType<typeof vi.fn>).mockResolvedValue(DEFS);
+    mockRunScannerByName({});
 
-    await waitFor(() => expect(screen.getByText("Expiry")).toBeInTheDocument());
+    renderWithProviders(<ScannersView />);
+    await screen.findByText("Top Gainers");
+    // Global option filters are shown when any option scanner is loaded.
+    expect(screen.getByText("Expiry")).toBeInTheDocument();
     expect(screen.getByText("ATM Range")).toBeInTheDocument();
     expect(screen.getByText("CE/PE")).toBeInTheDocument();
   });
 
+  it("hides derivative controls when no option scanners are loaded", async () => {
+    (listScanners as ReturnType<typeof vi.fn>).mockResolvedValue([DEFS[0]]);
+    mockRunScannerByName({});
+
+    renderWithProviders(<ScannersView />);
+    await screen.findByText("Top Gainers");
+    expect(screen.queryByText("Expiry")).not.toBeInTheDocument();
+    expect(screen.queryByText("ATM Range")).not.toBeInTheDocument();
+    expect(screen.queryByText("CE/PE")).not.toBeInTheDocument();
+  });
+
   it("displays canonical IV fraction as a percentage", async () => {
     (listScanners as ReturnType<typeof vi.fn>).mockResolvedValue(DEFS);
-    (runScanner as ReturnType<typeof vi.fn>).mockResolvedValue({
-      scanner: "option_iv",
-      universe: "FNO",
-      as_of: null,
-      eligible: 1,
-      quoted: 1,
-      matched: 1,
-      rows: [
-        {
-          symbol: "NIFTY",
-          sector: "",
-          ltp: 100,
-          change: null,
-          change_percent: null,
-          volume: null,
-          oi: 10,
-          iv: 0.1758,
-          status: "ok",
-          freshness: null,
-          contract: "NIFTY24xxxCE",
-          expiry: "2024-01-25",
-          option_type: "CE",
-          strike: 22000,
-        },
-      ],
+    mockRunScannerByName({
+      option_iv: {
+        scanner: "option_iv",
+        universe: "FNO",
+        as_of: null,
+        eligible: 1,
+        quoted: 1,
+        matched: 1,
+        rows: [
+          {
+            symbol: "NIFTY",
+            sector: "",
+            ltp: 100,
+            change: null,
+            change_percent: null,
+            volume: null,
+            oi: 10,
+            iv: 0.1758,
+            status: "ok",
+            freshness: null,
+            contract: "NIFTY24xxxCE",
+            expiry: "2024-01-25",
+            option_type: "CE",
+            strike: 22000,
+          },
+        ],
+      },
     });
 
     renderWithProviders(<ScannersView />);
-    const select = (await screen.findByDisplayValue("Top Gainers")) as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "option_iv" } });
+    expect((await screen.findAllByText("Option IV")).length).toBeGreaterThan(0);
     expect(await screen.findByText("17.58%")).toBeInTheDocument();
   });
 
   it("preserves exact instrument identity when navigating to Charts", async () => {
     (listScanners as ReturnType<typeof vi.fn>).mockResolvedValue(DEFS);
-    (runScanner as ReturnType<typeof vi.fn>).mockResolvedValue({
-      scanner: "option_iv",
-      universe: "FNO",
-      as_of: null,
-      eligible: 1,
-      quoted: 1,
-      matched: 1,
-      rows: [
-        {
-          symbol: "NIFTY",
-          sector: "",
-          ltp: 100,
-          change: null,
-          change_percent: null,
-          volume: null,
-          oi: 10,
-          iv: 0.2,
-          status: "ok",
-          freshness: null,
-          contract: "NIFTY24xxxCE",
-          expiry: "2024-01-25",
-          option_type: "CE",
-          strike: 22000,
-        },
-      ],
+    mockRunScannerByName({
+      option_iv: {
+        scanner: "option_iv",
+        universe: "FNO",
+        as_of: null,
+        eligible: 1,
+        quoted: 1,
+        matched: 1,
+        rows: [
+          {
+            symbol: "NIFTY",
+            sector: "",
+            ltp: 100,
+            change: null,
+            change_percent: null,
+            volume: null,
+            oi: 10,
+            iv: 0.2,
+            status: "ok",
+            freshness: null,
+            contract: "NIFTY24xxxCE",
+            expiry: "2024-01-25",
+            option_type: "CE",
+            strike: 22000,
+          },
+        ],
+      },
     });
     (resolveInstrument as ReturnType<typeof vi.fn>).mockResolvedValue({
       instrument_token: "OPT_NIFTY_CE",
@@ -186,8 +208,6 @@ describe("ScannersView", () => {
     });
 
     renderWithProviders(<ScannersView />);
-    const select = (await screen.findByDisplayValue("Top Gainers")) as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "option_iv" } });
     const row = await screen.findByText("NIFTY24xxxCE");
     const rowEl = row.closest("tr");
     if (!rowEl) throw new Error("expected scanner row");
