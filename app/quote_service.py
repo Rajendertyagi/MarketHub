@@ -24,6 +24,7 @@ Rules:
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -165,6 +166,10 @@ class QuoteService:
         # Cache of the store keys per reference (the resolution is a pure
         # function of the catalogue).
         self._keys_cache: dict[str, list[tuple[str, str]]] = {}
+        # Narrow lock for cache mutations: quote_now/storage_keys may run in
+        # worker threads (scanner offload). Protects epoch check/clear/read/write;
+        # catalog/market lookups happen outside the lock.
+        self._cache_lock = threading.RLock()
         self._catalog_epoch: Any = None
 
     def _refresh_catalog_cache(self) -> None:
@@ -174,10 +179,11 @@ class QuoteService:
             epoch = self._catalog.catalog_epoch() if self._catalog else None
         except Exception:
             epoch = None
-        if epoch != self._catalog_epoch:
-            self._catalog_epoch = epoch
-            self._row_cache.clear()
-            self._keys_cache.clear()
+        with self._cache_lock:
+            if epoch != self._catalog_epoch:
+                self._catalog_epoch = epoch
+                self._row_cache.clear()
+                self._keys_cache.clear()
 
     # -- freshness policy ----------------------------------------------------
 
@@ -237,7 +243,9 @@ class QuoteService:
         ref = str(reference or "").strip()
         if not ref or self._catalog is None:
             return None
-        cached = self._row_cache.get(ref)
+        self._refresh_catalog_cache()
+        with self._cache_lock:
+            cached = self._row_cache.get(ref)
         if cached is not None:
             return cached or None
         row = None
@@ -253,9 +261,15 @@ class QuoteService:
                     row = rows[0] if rows else None
             except Exception:
                 row = None
-        if len(self._row_cache) > 4096:
-            self._row_cache.clear()
-        self._row_cache[ref] = row or {}
+        with self._cache_lock:
+            try:
+                epoch = int(self._catalog.catalog_epoch()) if self._catalog else 0
+            except Exception:
+                epoch = 0
+            if epoch == self._catalog_epoch:
+                if len(self._row_cache) > 4096:
+                    self._row_cache.clear()
+                self._row_cache[ref] = row or {}
         return row
 
     def canonical_id_for(self, reference: str | None) -> str | None:
@@ -351,7 +365,8 @@ class QuoteService:
         if not ref:
             return out
         self._refresh_catalog_cache()
-        cached = self._keys_cache.get(ref)
+        with self._cache_lock:
+            cached = self._keys_cache.get(ref)
         if cached is not None:
             return list(cached)
         row = self._catalogue_row(ref)
@@ -387,9 +402,15 @@ class QuoteService:
         resolved = self.resolve_canonical(ref)
         if resolved:
             _add(None, resolved)
-        if len(self._keys_cache) > 4096:
-            self._keys_cache.clear()
-        self._keys_cache[ref] = list(out)
+        with self._cache_lock:
+            try:
+                epoch = int(self._catalog.catalog_epoch()) if self._catalog else 0
+            except Exception:
+                epoch = 0
+            if epoch == self._catalog_epoch:
+                if len(self._keys_cache) > 4096:
+                    self._keys_cache.clear()
+                self._keys_cache[ref] = list(out)
         return out
 
     def quote_now(self, reference: str | None,

@@ -14,6 +14,7 @@ import asyncio
 import gzip
 import json
 import logging
+import threading
 import time
 from collections.abc import Callable
 from datetime import date
@@ -324,6 +325,12 @@ def build_market_routes(
             return _read
         return market_service.get_quote_now
 
+    # Conservative fixed limit: bounds CPU/DB/threadpool pressure from parallel
+    # scanner fan-out (frontend can issue 9 requests on mount) while keeping
+    # compatibility (requests wait rather than fail). Permit is held until the
+    # worker thread actually finishes, even if the client disconnects/cancels.
+    _scanner_sem = asyncio.Semaphore(2)
+
     def _scanner_engine():
         if index_catalog is None:
             return None
@@ -353,12 +360,55 @@ def build_market_routes(
         except ValueError:
             atm_range = 5
         option_type = (request.query_params.get("option_type") or "both").upper()
+        reader = _reader()
+        await _scanner_sem.acquire()
+        released = False
         try:
-            result = engine.scan(
-                name, universe, _reader(), limit=limit,
-                expiry=expiry, atm_range=atm_range, option_type=option_type)
+            loop = asyncio.get_running_loop()
+            # Track actual worker-thread completion with a threading event.
+            # The asyncio Future from run_in_executor is marked cancelled
+            # immediately if the awaiter is cancelled, but the worker thread
+            # may still be running; the permit must stay held until it finishes.
+            done_evt = threading.Event()
+            scan_result: dict[str, Any] = {}
+            scan_error: list[BaseException] = []
+
+            def _run() -> None:
+                try:
+                    scan_result["value"] = engine.scan(
+                        name, universe, reader, limit=limit,
+                        expiry=expiry, atm_range=atm_range, option_type=option_type)
+                except BaseException as exc:
+                    scan_error.append(exc)
+                finally:
+                    done_evt.set()
+
+            fut = loop.run_in_executor(None, _run)
+            try:
+                await fut
+            except asyncio.CancelledError:
+                # Worker thread may still be running; keep permit until it
+                # actually finishes.
+                def _wait_and_release() -> None:
+                    done_evt.wait(timeout=300)
+                    try:
+                        loop.call_soon_threadsafe(_scanner_sem.release)
+                    except Exception:
+                        pass
+                threading.Thread(target=_wait_and_release, daemon=True).start()
+                released = True
+                raise
+            if scan_error:
+                err = scan_error[0]
+                if isinstance(err, ValueError):
+                    raise err
+                raise err
+            result = scan_result["value"]
         except ValueError as exc:
             return _json({"error": str(exc)}, 400)
+        finally:
+            if not released:
+                _scanner_sem.release()
         return _json({"status": "ok", **result.to_dict()})
 
     async def _breadth(request: Request) -> Response:
