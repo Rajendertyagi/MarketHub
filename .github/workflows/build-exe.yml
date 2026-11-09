@@ -5,14 +5,22 @@ name: Build Windows EXE (Nuitka)
 # (frontend/dist), and an initialized data/ directory (the app's database).
 #
 # Toolchain: Bun 1.4.4 (frontend) + Python 3.14 (Nuitka), latest packages.
-# Published to a GitHub Release (one release per run, marked "Latest") for easy download.
+# Release builds are versioned from v* tags (or an explicit ref via manual
+# dispatch). No automatic build on develop/main pushes. Existing releases/assets
+# are preserved (no overwrite, no make_latest).
 #
-# Triggers: push to the production-hardening branch, or manual dispatch.
+# Triggers: push of a version tag (v*), or manual dispatch.
 
 on:
   push:
-    branches: [b8-production-hardening]
-  workflow_dispatch: {}
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build (tag/branch/SHA). For releases, use a v* tag.'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -26,6 +34,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -113,24 +124,40 @@ jobs:
           }
           if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
 
+      - name: Resolve release metadata
+        id: meta
+        shell: pwsh
+        run: |
+          $ref = "${{ inputs.ref || github.ref }}"
+          $refName = "${{ github.ref_name }}"
+          $isTag = "${{ github.ref_type }}" -eq "tag"
+          if ($ref -match '^refs/tags/(v.+)$') { $refName = $Matches[1]; $isTag = $true }
+          elseif ($ref -match '^(v.+)$') { $refName = $Matches[1]; $isTag = $true }
+          $isPrerelease = $refName -match '(?i)(rc|alpha|beta|pre)'
+          "ref_name=$refName" >> $env:GITHUB_OUTPUT
+          "is_vtag=$($isTag -and $refName -match '^v')" >> $env:GITHUB_OUTPUT
+          "is_prerelease=$isPrerelease" >> $env:GITHUB_OUTPUT
+
       - name: Package zip
-        run: Compress-Archive -Path MarketHub -DestinationPath MarketHub-win64.zip
+        run: Compress-Archive -Path MarketHub -DestinationPath MarketHub-win64.zip -Force
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v5
         with:
-          name: MarketHub-win64
+          name: MarketHub-win64-${{ steps.meta.outputs.ref_name || github.run_number }}
           path: MarketHub-win64.zip
           retention-days: 14
 
-      - name: Publish to GitHub Release
+      - name: Publish to GitHub Release (version tags only)
+        if: steps.meta.outputs.is_vtag == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: exe-${{ github.run_id }}
-          name: MarketHub EXE build #${{ github.run_number }}
-          prerelease: true
-          make_latest: true
-          overwrite_files: true
+          tag_name: ${{ steps.meta.outputs.ref_name }}
+          name: MarketHub ${{ steps.meta.outputs.ref_name }}
+          prerelease: ${{ steps.meta.outputs.is_prerelease }}
+          make_latest: false
+          overwrite_files: false
+          fail_on_unmatched_files: true
           files: MarketHub-win64.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
