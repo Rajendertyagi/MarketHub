@@ -27,6 +27,7 @@ import asyncio
 import json
 import os
 import sys
+import tempfile
 
 # Make the project root importable regardless of the working directory.
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -41,17 +42,25 @@ from helpers.runner import R
 # -- helpers ------------------------------------------------------------------
 
 
-def _make_feed_ref() -> tuple[dict, object]:
-    """Build a feed_ref dict with a stub feed exposing update_credentials."""
+def _make_feed_ref(*, with_token: bool = False) -> tuple[dict, object]:
+    """Build a feed_ref dict with a stub feed exposing update_credentials.
+
+    ``with_token=False`` (default) represents no usable runtime token so the
+    current UpstoxAuthService contract reports token_configured=False.
+    ``with_token=True`` installs a pre-existing credential with a future
+    expiry (ENV-style / already-authenticated runtime state).
+    """
+    from datetime import datetime, timedelta, timezone
+
     from brokers.upstox.auth import UpstoxCredentials
 
     class _StubFeed:
         def __init__(self) -> None:
-            self._credentials = UpstoxCredentials(access_token="unset-placeholder")
+            self._credentials = None
             self._state = "stopped"
             self.name = "upstox"
 
-        def update_credentials(self, credentials: UpstoxCredentials) -> None:
+        def update_credentials(self, credentials) -> None:
             self._credentials = credentials
             if self._state == "failed":
                 self._state = "stopped"
@@ -59,13 +68,34 @@ def _make_feed_ref() -> tuple[dict, object]:
         def status(self) -> dict:
             return {"state": self._state}
 
-    ref: dict = {"feed": _StubFeed()}
-    return ref, ref["feed"]
+    feed = _StubFeed()
+    if with_token:
+        feed._credentials = UpstoxCredentials(
+            access_token="env-token-abc123",
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=12),
+        )
+    ref: dict = {"feed": feed}
+    return ref, feed
 
 
 def _build_auth_routes(feed_ref: dict):
+    """Build auth routes wired to the current UpstoxAuthService architecture.
+
+    Uses an isolated encrypted credential/event store per invocation so tests
+    exercise the real service contract (status projection, manual token
+    submission, persistence, runtime installation) without touching production
+    state or reintroducing direct feed credential mutation in routes.
+    """
     from api.routes import build_auth_routes
-    return build_auth_routes(feed_ref)
+    from app.secrets_store import CredentialStore
+    from core.persistence.store import EventStore
+
+    tmp = tempfile.mkdtemp()
+    cred_store = CredentialStore(
+        EventStore(os.path.join(tmp, "events.db")), data_dir=tmp)
+    sources_cfg = {"upstox": {"type": "upstox_feed", "enabled": True}}
+    return build_auth_routes(
+        feed_ref, cred_store=cred_store, sources_cfg=sources_cfg)
 
 
 def _find_route(routes, suffix: str):
@@ -105,7 +135,7 @@ async def _call(route, method: str, body: dict | None = None) -> tuple[int, dict
 async def test_wa1_status_no_token(runner: R) -> None:
     """WA1: auth status endpoint responds without a configured token."""
     async def run():
-        ref, _feed = _make_feed_ref()
+        ref, _feed = _make_feed_ref(with_token=False)
         routes = _build_auth_routes(ref)
         code, data = await _call(_find_route(routes, "/status"), "GET")
         return code, data
@@ -113,6 +143,8 @@ async def test_wa1_status_no_token(runner: R) -> None:
     code, data = await run()
     runner.assert_eq("WA1-code", code, 200)
     runner.assert_eq("WA1-configured-true", data.get("configured"), True)
+    runner.assert_false("WA1-token-not-configured",
+                        data.get("token_configured") is True)
     runner.assert_false("WA1-no-token-value",
                         any(k not in ("token_configured", "expiry_known")
                             and isinstance(v, str) and len(v) > 40
@@ -121,11 +153,16 @@ async def test_wa1_status_no_token(runner: R) -> None:
 
 async def test_wa2_env_token_status(runner: R) -> None:
     """WA2: pre-existing (ENV-style) credentials show token_configured."""
+    from datetime import datetime, timedelta, timezone
+
     from brokers.upstox.auth import UpstoxCredentials
 
     async def run():
-        ref, feed = _make_feed_ref()
-        feed._credentials = UpstoxCredentials(access_token="env-token-abc123")
+        ref, feed = _make_feed_ref(with_token=False)
+        feed._credentials = UpstoxCredentials(
+            access_token="env-token-abc123",
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=12),
+        )
         routes = _build_auth_routes(ref)
         return await _call(_find_route(routes, "/status"), "GET")
 
@@ -204,14 +241,19 @@ async def test_wa6_empty_token_rejected(runner: R) -> None:
 
 async def test_wa7_runtime_overrides_env(runner: R) -> None:
     """WA7: runtime submission replaces pre-existing ENV credentials."""
+    from datetime import datetime, timedelta, timezone
+
     from brokers.upstox.auth import UpstoxCredentials
 
     env_tok = "ENV-PREEXISTING-TOKEN"
     runtime_tok = "RUNTIME-OVERRIDE-TOKEN"
 
     async def run():
-        ref, feed = _make_feed_ref()
-        feed._credentials = UpstoxCredentials(access_token=env_tok)
+        ref, feed = _make_feed_ref(with_token=False)
+        feed._credentials = UpstoxCredentials(
+            access_token=env_tok,
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=12),
+        )
         routes = _build_auth_routes(ref)
         await _call(_find_route(routes, "/token"), "POST",
                     {"access_token": runtime_tok})

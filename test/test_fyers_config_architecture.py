@@ -224,6 +224,14 @@ def test_refresh_restore_and_failure(runner: R) -> None:
                          _srv._fyers_runtime_auth.get_access_token(),
                          "TOK-RESTORED")
         _srv._fyers_runtime_auth.clear_access_token()
+        # Isolate phases: the successful restore persisted an access token (no
+        # expires_at in the mock). Step 1 of restore_session() reuses a stored
+        # access token it considers still valid, so expire that stored access
+        # token to ensure the refresh-failure path is actually reached. Keep
+        # app credentials and the refresh token (required for the refresh
+        # attempt).
+        _store.save_fyers_access_token(
+            "EXPIRED-PHASE1", expires_at_iso="2000-01-01T00:00:00+00:00")
         _fauth.FyersAuth.refresh_access_token = _bad_refresh
         asyncio.run(_srv._try_restore_fyers_token())
         runner.assert_eq("RR-failure-no-token",

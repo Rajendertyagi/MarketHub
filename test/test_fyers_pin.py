@@ -112,17 +112,19 @@ def test_pin4_no_pin_still_safe_fallback(runner: R) -> None:
     fauth.FyersAuth.refresh_access_token = fake_refresh
     old_store = getattr(srv, "_credential_store", None)
     old_token = srv._fyers_runtime_auth.get_access_token()
+    post_restore_token = None
     try:
         srv._credential_store = cstore
         srv._fyers_runtime_auth.clear_access_token()
         asyncio.run(srv._try_restore_fyers_token())
+        # Capture runtime state before cleanup restores the previous token.
+        post_restore_token = srv._fyers_runtime_auth.get_access_token()
     finally:
         srv._credential_store = old_store
         srv._fyers_runtime_auth.set_access_token(old_token)
         fauth.FyersAuth.refresh_access_token = orig
 
-    runner.assert_eq("PIN4-safe-fallback-empty",
-                     srv._fyers_runtime_auth.get_access_token(), "")
+    runner.assert_eq("PIN4-safe-fallback-empty", post_restore_token, "")
 
 
 if __name__ == "__main__":
