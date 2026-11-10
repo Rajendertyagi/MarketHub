@@ -177,7 +177,6 @@ export type SettingsSection =
   | "general"
   | "brokers"
   | "news-sources"
-  | "market-sources"
   | "ai-mcp"
   | "data-retention"
   | "logging"
