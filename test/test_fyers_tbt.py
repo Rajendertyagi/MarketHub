@@ -84,7 +84,7 @@ def token_getter():
 
 @pytest.fixture
 def config():
-    return {"tbt_enabled": True, "instrument_keys": ["NSE:RELIANCE-EQ"], "app_id": "APP-TEST"}
+    return {"tbt_enabled": True, "instrument_keys": ["NSE:RELIANCE-EQ"], "app_id": "APP-TEST", "tbt_tier": "prime"}
 
 
 @pytest_asyncio.fixture
@@ -1377,7 +1377,7 @@ class TestTBTCorrectiveTaskB:
         feed._tbt_feed = None
         feed._tbt_task = None
         feed._access_token_getter = lambda: "rawtoken"
-        feed._config = {"tbt_enabled": True, "app_id": "APP-1"}
+        feed._config = {"tbt_enabled": True, "app_id": "APP-1", "tbt_tier": "prime"}
         feed._market_service = AsyncMock()
         feed._app_id = "APP-1"
         feed._credential_store = None
@@ -1483,7 +1483,7 @@ class TestTBTCorrectiveTaskB:
             return ws1 if calls["n"] == 1 else ws2
         monkeypatch.setattr(tbt_feed_mod, "ws_connect", _connector)
 
-        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP"}, AsyncMock())
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "prime"}, AsyncMock())
         feed._desired_symbols.update({"NSE:AAA-EQ", "NSE:BBB-EQ"})
         async def _url(_token):
             return "wss://tbt.example/ws"
@@ -1555,6 +1555,99 @@ class TestTBTCorrectiveTaskB:
         removed = await feed.remove_instruments(["NSE:CCC-EQ"])
         assert removed == 1
         assert "NSE:CCC-EQ" not in feed._desired
+
+
+class TestTBTEntitlementLimits:
+    @pytest.mark.asyncio
+    async def test_standard_tier_enforces_symbol_limit(self):
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "standard"}, AsyncMock())
+        ws = AsyncMock()
+        ws.open = True
+        feed._ws = ws
+        await feed.subscribe(["NSE:AAA-EQ", "NSE:BBB-EQ"])
+        assert feed.desired_symbols == {"NSE:AAA-EQ"}
+        assert feed._stats["last_error"] == "entitlement_limit_reached"
+        sub_msgs = [json.loads(c.args[0]) for c in ws.send.call_args_list if json.loads(c.args[0]).get("type") == 1 and json.loads(c.args[0])["data"].get("subs") == 1]
+        subscribed = set()
+        for m in sub_msgs:
+            subscribed.update(m["data"].get("symbols", []))
+        assert subscribed == {"NSE:AAA-EQ"}
+
+    @pytest.mark.asyncio
+    async def test_prime_tier_enforces_per_connection_symbol_limit(self):
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "prime"}, AsyncMock())
+        symbols = [f"NSE:SYM{i}-EQ" for i in range(6)]
+        await feed.subscribe(symbols)
+        assert len(feed.desired_symbols) == 5
+        assert feed._stats["last_error"] == "entitlement_limit_reached"
+
+    @pytest.mark.asyncio
+    async def test_channel_capacity_enforced_separately(self):
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "prime"}, AsyncMock())
+        # Force channel exhaustion independent of symbol entitlement for this unit check.
+        feed._next_channel = 51
+        ws = AsyncMock()
+        ws.open = True
+        feed._ws = ws
+        feed._desired_symbols.add("NSE:AAA-EQ")
+        ch = await feed._send_subscribe("NSE:AAA-EQ", ws=ws)
+        assert ch is None
+        assert feed._stats["last_error"] == "channel_capacity_reached"
+        assert ws.send.await_count == 0
+
+    @pytest.mark.asyncio
+    async def test_status_reports_tbt_limits(self):
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "prime"}, AsyncMock())
+        st = feed.status()
+        assert st["tbt_limits"]["tier"] == "prime"
+        assert st["tbt_limits"]["symbols_per_user"] == 15
+        assert st["tbt_limits"]["symbols_per_connection"] == 5
+        assert st["tbt_limits"]["channels_per_connection"] == 50
+
+    @pytest.mark.asyncio
+    async def test_missing_tier_hint_defaults_to_standard(self):
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP"}, AsyncMock())
+        limits = feed._resolve_tbt_limits()
+        assert limits["tier"] == "standard"
+        assert limits["symbols_per_user"] == 1
+        assert limits["symbols_per_connection"] == 1
+
+    @pytest.mark.asyncio
+    async def test_invalid_tier_hint_falls_back_to_standard(self):
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "gold"}, AsyncMock())
+        limits = feed._resolve_tbt_limits()
+        assert limits["tier"] == "standard"
+        assert limits["source"] == "invalid_tier_hint"
+        assert limits["symbols_per_user"] == 1
+
+    @pytest.mark.asyncio
+    async def test_conflicting_tier_hints_prefer_tbt_tier(self):
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "prime", "tier": "standard", "plan": "standard"}, AsyncMock())
+        limits = feed._resolve_tbt_limits()
+        assert limits["tier"] == "prime"
+        assert limits["symbols_per_user"] == 15
+
+    @pytest.mark.asyncio
+    async def test_channel_capacity_failure_does_not_leave_symbol_desired(self):
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "prime"}, AsyncMock())
+        feed._next_channel = 51  # exhaust channels
+        ws = AsyncMock()
+        ws.open = True
+        feed._ws = ws
+        await feed.subscribe(["NSE:AAA-EQ"])
+        assert "NSE:AAA-EQ" not in feed.desired_symbols
+        assert feed._stats["last_error"] == "channel_capacity_reached"
+
+    @pytest.mark.asyncio
+    async def test_reconnect_drops_unallocatable_desired_symbols(self):
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "prime"}, AsyncMock())
+        feed._desired_symbols.add("NSE:AAA-EQ")
+        feed._next_channel = 51  # cannot allocate
+        ws = AsyncMock()
+        ws.open = True
+        await feed._resubscribe_all(ws)
+        assert "NSE:AAA-EQ" not in feed.desired_symbols
+        assert feed._stats["last_error"] == "channel_capacity_reached"
 
 
 class TestTBTCorrectiveTaskC:

@@ -43,10 +43,27 @@ from market.normalize.common import NormalizationError
 
 logger = logging.getLogger(__name__)
 
-# Official rate limits (verified from fyers-apiv3 implementation/docs)
-MAX_CONNECTIONS_PER_USER = 3
-SYMBOLS_PER_CONNECTION = 5
+# Official TBT limits (FYERS docs: plans-and-limits, TBT channels/connection)
+# - Channels per connection: 50 (1-50)
+# - Connections per app per user: Standard 1, Prime 3
+# - Symbols per connection (market depth): Standard 1, Prime 5
+# - Symbols per user across all connections (TBT): Standard 1, Prime 15
+# Account-wide/per-user-across-connections enforcement beyond this feed instance
+# requires external coordination; this feed enforces documented per-connection and
+# per-user ceilings for its own desired/subscribed set and fails gracefully.
 MAX_CHANNELS_PER_CONNECTION = 50
+_TBT_TIER_LIMITS = {
+    "standard": {
+        "connections_per_user": 1,
+        "symbols_per_connection": 1,
+        "symbols_per_user": 1,
+    },
+    "prime": {
+        "connections_per_user": 3,
+        "symbols_per_connection": 5,
+        "symbols_per_user": 15,
+    },
+}
 
 # TBT protocol constants
 TBT_SUBSCRIBE_TYPE = 1
@@ -137,6 +154,9 @@ class FyersTbtFeed:
         self._channel_map: dict[str, int] = {}  # symbol -> channel
         self._next_channel = 1
         self._active_channels: set[int] = set()  # channels resumed on current connection
+
+        # Entitlement-aware limits (resolved lazily; tier may be provided in config)
+        self._tbt_limits: dict[str, Any] | None = None
 
     # -------------------------------------------------------------------------
     # Lifecycle
@@ -471,31 +491,63 @@ class FyersTbtFeed:
     # -------------------------------------------------------------------------
 
     async def subscribe(self, symbols: list[str]) -> None:
-        """Subscribe to additional symbols at runtime."""
+        """Subscribe to additional symbols at runtime (entitlement-aware)."""
+        limits = self._resolve_tbt_limits()
+        per_user = int(limits.get("symbols_per_user", 1))
+        per_conn = int(limits.get("symbols_per_connection", 1))
+        # This feed instance manages one TBT connection; enforce per-connection and
+        # per-user (for this instance's desired set) ceilings. Account-wide limits
+        # across multiple connections/users require external coordination (documented).
+        effective_limit = min(per_user, per_conn)
+
         async with self._lock:
             seen: set[str] = set()
-            new_symbols: list[str] = []
+            candidates: list[str] = []
             for s in symbols:
                 if s in seen or s in self._desired_symbols:
                     continue
                 seen.add(s)
-                new_symbols.append(s)
-            self._desired_symbols.update(new_symbols)
+                candidates.append(s)
+            available = max(0, effective_limit - len(self._desired_symbols))
+            accepted = candidates[:available]
+            rejected = candidates[available:]
+            self._desired_symbols.update(accepted)
 
-        # If connected, send subscribe immediately
+        if rejected:
+            logger.warning(
+                "TBT feed: entitlement limit reached (tier=%s, per_user=%d, per_connection=%d, effective=%d); "
+                "rejected %d symbol(s): %s",
+                limits.get("tier"), per_user, per_conn, effective_limit,
+                len(rejected), ", ".join(rejected[:5]),
+            )
+            self._stats["last_error"] = "entitlement_limit_reached"
+
+        # If connected, send subscribe immediately. If channel allocation fails,
+        # remove the symbol from desired state so it cannot be retried/subscribed
+        # accidentally on reconnect (channel capacity is enforced separately).
         async with self._ws_lock:
             ws = self._ws
+        subscribed_count = 0
         if ws and _socket_is_open(ws):
             channels_to_resume: set[int] = set()
-            for symbol in new_symbols:
+            for symbol in accepted:
                 ch = await self._send_subscribe(symbol, ws=ws)
                 if ch is not None:
                     channels_to_resume.add(ch)
+                    subscribed_count += 1
+                else:
+                    async with self._lock:
+                        self._desired_symbols.discard(symbol)
             if channels_to_resume:
                 await self._send_channel_control(ws, resume_channels=sorted(channels_to_resume))
+        else:
+            subscribed_count = len(accepted)
 
-        logger.info("TBT feed: subscribed to %d symbols (total: %d)", len(new_symbols), len(self._desired_symbols))
-        self._stats["subscribes"] += len(new_symbols)
+        logger.info(
+            "TBT feed: subscribed to %d symbols (total: %d, tier=%s, limit=%d)",
+            subscribed_count, len(self._desired_symbols), limits.get("tier"), effective_limit,
+        )
+        self._stats["subscribes"] += subscribed_count
 
     async def unsubscribe(self, symbols: list[str]) -> None:
         """Unsubscribe from symbols at runtime."""
@@ -524,16 +576,29 @@ class FyersTbtFeed:
             symbols = list(self._desired_symbols)
 
         channels: set[int] = set()
+        failed: list[str] = []
         for symbol in symbols:
             ch = await self._send_subscribe(symbol, ws=ws)
             if ch is not None:
                 channels.add(ch)
+            else:
+                failed.append(symbol)
+
+        # If channel allocation fails, drop from desired so rejected/unallocatable
+        # symbols cannot remain desired or be retried indefinitely on reconnect.
+        if failed:
+            async with self._lock:
+                for symbol in failed:
+                    self._desired_symbols.discard(symbol)
 
         # Official protocol: subscribing does not start stream; resume channels (type 2).
         if channels:
             await self._send_channel_control(ws, resume_channels=sorted(channels))
 
-        logger.info("TBT feed: resubscribed to %d symbols after reconnect", len(symbols))
+        logger.info(
+            "TBT feed: resubscribed to %d symbols after reconnect (dropped=%d)",
+            len(channels), len(failed),
+        )
 
     async def _resubscribe_symbol(self, symbol: str) -> None:
         """Resubscribe to a single symbol (after sequence gap)."""
@@ -555,6 +620,8 @@ class FyersTbtFeed:
             return None
 
         channel = self._get_or_create_channel(symbol)
+        if channel is None:
+            return None
         msg = {
             "type": TBT_SUBSCRIBE_TYPE,
             "data": {
@@ -623,16 +690,68 @@ class FyersTbtFeed:
                 return True
         return False
 
-    def _get_or_create_channel(self, symbol: str) -> int:
-        """Get or create a channel for a symbol."""
-        if symbol not in self._channel_map:
-            if self._next_channel <= MAX_CHANNELS_PER_CONNECTION:
-                self._channel_map[symbol] = self._next_channel
-                self._next_channel += 1
+    def _resolve_tbt_limits(self) -> dict[str, Any]:
+        """Resolve TBT entitlement limits (tier-aware) using existing resolution where possible.
+
+        Tier hints: `tbt_tier` preferred, then `tier`, then `plan` (first non-empty).
+        Missing/invalid/conflicting hints fall back to documented default (standard)
+        with TBT-specific limits; invalid tiers never escalate entitlements.
+        """
+        if self._tbt_limits is not None:
+            return self._tbt_limits
+
+        # Prefer explicit TBT hint; fall back to generic hints. First non-empty wins.
+        raw_hint = None
+        for key in ("tbt_tier", "tier", "plan"):
+            val = self._config.get(key)
+            if isinstance(val, str) and val.strip():
+                raw_hint = val.strip().lower()
+                break
+
+        resolved_tier = "standard"
+        source = "declared_default"
+        if raw_hint is not None:
+            if raw_hint in _TBT_TIER_LIMITS:
+                resolved_tier = raw_hint
+                source = "config"
+                # If provider entitlement resolution is available, keep its source
+                # semantics when it agrees; disagreement/unknown stays non-escalating.
+                try:
+                    from providers.capacity import resolve_entitlement
+                    ent = resolve_entitlement("fyers", tier=raw_hint)
+                    ent_tier = str(getattr(ent, "tier", "") or "").lower()
+                    if ent_tier == raw_hint:
+                        source = str(getattr(ent, "source", source) or source)
+                except Exception:
+                    pass
             else:
-                # Reuse channel 1 (shouldn't happen with proper limits)
-                self._channel_map[symbol] = 1
-        return self._channel_map[symbol]
+                # Invalid/unknown tier hint: do not escalate; use documented default.
+                resolved_tier = "standard"
+                source = "invalid_tier_hint"
+
+        limits = dict(_TBT_TIER_LIMITS.get(resolved_tier, _TBT_TIER_LIMITS["standard"]))
+        limits["tier"] = resolved_tier
+        limits["source"] = source
+        limits["channels_per_connection"] = MAX_CHANNELS_PER_CONNECTION
+        self._tbt_limits = limits
+        return limits
+
+    def _get_or_create_channel(self, symbol: str) -> int | None:
+        """Get or create a channel for a symbol, enforcing channel capacity."""
+        if symbol in self._channel_map:
+            return self._channel_map[symbol]
+        limits = self._resolve_tbt_limits()
+        max_channels = int(limits.get("channels_per_connection", MAX_CHANNELS_PER_CONNECTION))
+        if self._next_channel <= max_channels:
+            self._channel_map[symbol] = self._next_channel
+            self._next_channel += 1
+            return self._channel_map[symbol]
+        logger.warning(
+            "TBT feed: channel capacity reached (%d/%d), cannot allocate channel for %s",
+            max_channels, max_channels, symbol,
+        )
+        self._stats["last_error"] = "channel_capacity_reached"
+        return None
 
     # -------------------------------------------------------------------------
     # WebSocket URL fetch
@@ -709,6 +828,7 @@ class FyersTbtFeed:
 
     def status(self) -> dict[str, Any]:
         """Return current status and statistics."""
+        limits = self._resolve_tbt_limits()
         return {
             "enabled": self._config.get("tbt_enabled", False),
             "state": self._state,
@@ -723,6 +843,14 @@ class FyersTbtFeed:
             "last_message_at": self._stats["last_message_at"],
             "safe_last_error": self._stats["last_error"],
             "symbols": list(self._desired_symbols),
+            "tbt_limits": {
+                "tier": limits.get("tier"),
+                "source": limits.get("source"),
+                "symbols_per_user": limits.get("symbols_per_user"),
+                "symbols_per_connection": limits.get("symbols_per_connection"),
+                "channels_per_connection": limits.get("channels_per_connection"),
+                "connections_per_user": limits.get("connections_per_user"),
+            },
         }
 
     @property

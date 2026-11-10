@@ -4,7 +4,7 @@
 **Repository:** `Rajendertyagi/MarketHub`
 **Branch:** `review/scanner-phase1`
 **HEAD:** `bab6d1a7869ad8aeb7a2431e32e997596adbce90` (unchanged)
-**Status:** TBT-01/02/03 complete; TBT-04 (shutdown + corrective recv-task cleanup), TBT-05 (authentication), TBT-06 (channel protocol), TBT-05a (symbol propagation/runtime sync), TBT-08 (fresh-snapshot gating after invalidation) implemented and tested with mocks (no live broker verification). Remaining: TBT-07 limits, TBT-09 full regression/runtime verification.
+**Status:** TBT-01/02/03 complete; TBT-04 (shutdown + corrective recv-task cleanup), TBT-05 (authentication), TBT-06 (channel protocol), TBT-05a (symbol propagation/runtime sync), TBT-08 (fresh-snapshot gating after invalidation), TBT-07 (entitlement-aware limits) implemented and tested with mocks (no live broker verification). Remaining: TBT-09 live runtime verification (broader mocked regression recorded).
 **Scope:** FYERS TBT only. Minimal corrective changes to fix identified integration gaps.
 **Source of truth:** This document. Must be updated immediately after every individual task.
 
@@ -437,20 +437,33 @@ All tasks are individually numbered. Status must be updated after each task. Do 
 - **Notes:** Original plan listed this as TBT-05; completed here as corrective Task B / TBT-05a.
 
 ### TBT-07: Enforce entitlement-aware limits (separate channel capacity from entitlements)
-- **Status:** NOT STARTED
-- **Scope:** Minimal code change
-- **Affected files:** `brokers/fyers/tbt/feed.py`, `brokers/fyers/feed.py` (if needed)
+- **Status:** DONE (audited + hardened)
+- **Scope:** Minimal code change + focused tests + plan update
+- **Affected files:** `brokers/fyers/tbt/feed.py`, `test/test_fyers_tbt.py`, `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`
 - **Dependencies:** TBT-03, TBT-05a
-- **Work:**
-  1. Enforce symbol/connection limits based on resolved entitlements (Standard/Prime) using existing resolution where possible.
-  2. Enforce channel capacity (50/connection) separately.
-  3. Handle account-wide limits if coordination required (document approach).
-  4. Fail gracefully with clear logging.
-- **Acceptance criteria:**
-  - Limits enforced correctly by entitlement.
-  - Channel capacity enforced separately.
-  - No new global entitlement systems.
-- **Required tests:** Run `python -m pytest test/test_fyers_tbt.py -q`.
+- **Work completed:**
+  1. Added TBT-specific entitlement limit resolution using existing provider tier resolution where possible (`providers.capacity.resolve_entitlement("fyers", tier=...)` when available) with config tier hints (`tbt_tier` preferred, then `tier`, then `plan`; first non-empty wins), mapped to documented TBT limits: Standard (1 symbol/user across connections, 1 symbol/connection, 1 connection/user) and Prime (15 symbols/user across connections, 5 symbols/connection, 3 connections/user).
+  2. Enforced symbol limits in `subscribe()` (per-connection and per-user ceilings for this feed instance's desired set) with graceful rejection and clear logging (`entitlement_limit_reached`); deduplication preserved.
+  3. Enforced channel capacity (50/connection) separately in channel allocation (`channel_capacity_reached`) without conflating with symbol entitlements.
+  4. Hardened rejection/reconnect behavior: entitlement-rejected symbols never enter desired state; if channel allocation fails for an accepted symbol (connected subscribe or reconnect resubscribe), the symbol is removed from desired state so it cannot remain desired or be retried/subscribed accidentally on reconnect.
+  5. Exposed resolved TBT limits in `status()` for observability. No new global entitlement systems, no hardcoded account-plan assumptions beyond documented tier mapping, no dependency/config schema/DB/auth changes.
+- **Audit findings (feed construction/ownership/lifecycle):**
+  - `FyersFeed` owns exactly one `FyersTbtFeed` instance (`_tbt_feed`) when `tbt_enabled`; started in `_start_tbt_channel()` during `FyersFeed.run()` and stopped in `_stop_tbt_channel()` (idempotent/exception-safe). TBT is seeded from the parent feed's current desired instrument set and kept in sync on add/remove/reconnect.
+  - `FyersTbtFeed` manages one TBT WebSocket connection per instance (`_ws`/`_ws_lock`, single run loop). No multi-connection fanout exists inside a single TBT feed instance.
+  - Multiple `FyersFeed`/`FyersTbtFeed` instances can exist if multiple FYERS feed sources are configured/instantiated (source construction is per configured source). **Account-wide/per-user-across-connections limits are therefore not globally enforceable within this process without external coordination**; this implementation enforces documented ceilings locally per TBT feed instance/connection and fails gracefully.
+- **Tier resolution verification (missing/invalid/conflicting hints):**
+  - Missing hints: default to `standard` with documented default semantics.
+  - Invalid/unknown tier hint: falls back to `standard` with `source=invalid_tier_hint` (non-escalating).
+  - Conflicting hints: first non-empty of `tbt_tier`, `tier`, `plan` wins (`tbt_tier` preferred). Cached after first resolution for the feed instance.
+- **Locally enforced vs genuinely account-wide enforced limits:**
+  - **Locally enforced (this feed instance/connection):** channels per connection (50), symbols per connection (tier-mapped), symbols per user for this instance's desired set (tier-mapped ceiling applied as `min(per_user, per_connection)`), graceful rejection/logging, no accidental desired-state retention on channel-allocation failure.
+  - **Not globally/account-wide enforced here:** symbols per user across multiple connections/apps/users, connections per user across multiple feed instances/processes. These require external coordination (documented); status reports documented tier limits including `connections_per_user` for visibility only.
+- **Acceptance criteria:** Satisfied by implementation and mocked tests (tier-aware symbol limits enforced locally, channel capacity enforced separately, graceful logging/errors, rejected/unallocatable symbols do not remain desired or resubscribe on reconnect, no new global entitlement systems). Runtime/live broker behavior remains unverified.
+- **Required tests:** `python -m pytest test/test_fyers_tbt.py -q` → **81 passed, 1 skipped**. `python -m pytest test/test_fyers_feed.py -q` → **12 passed**. `python -m pytest test/test_architecture_boundaries.py -q` → **17 passed**.
+- **Commands executed:** `git status --short`; `git rev-parse --short HEAD`; source inspection (`brokers/fyers/feed.py`, `brokers/fyers/tbt/feed.py`, `sources/registry.py`, `providers/capacity.py`, `brokers/fyers/capabilities.py`); `python -m pytest test/test_fyers_tbt.py -q`; `python -m pytest test/test_fyers_feed.py -q`; `python -m pytest test/test_architecture_boundaries.py -q`; broader TBT-09 suites (see §9/§13).
+- **Exact results:** TBT **81 passed, 1 skipped**. FYERS feed **12 passed**. Architecture boundaries **17 passed**. Broader FYERS **203 passed, 1 skipped**. Source-manager **33 passed**. Subscription **52 passed**. WebSocket/socket lifecycle **13 passed**. No failures/regressions observed.
+- **Failures and unresolved issues:** None in executed suites. Account-wide coordination across multiple connections/users not implemented (documented). Dynamic URL discovery auth contract and server subscribe/resume ack semantics remain **UNRESOLVED** (preserved). Live runtime verification pending.
+- **Decisions and rationale:** Reused existing FYERS tier resolution where possible; applied TBT-specific documented limits (distinct from HSM capabilities); enforced per-instance ceilings with clear diagnostics; hardened desired-state handling so rejected/unallocatable symbols cannot persist or reconnect-subscribe; kept changes minimal/localized. Existing tests/configs updated to specify `tbt_tier` where multi-symbol behavior is required (explicit entitlement context).
 
 ### TBT-08: Fix reconnect recovery (invalidate stale books + require fresh snapshots) (implemented, corrective Task C)
 - **Status:** DONE
@@ -473,7 +486,7 @@ All tasks are individually numbered. Status must be updated after each task. Do 
 ### TBT-09: Verification & regression
 - **Status:** IN PROGRESS (partial)
 - **Scope:** Verification only
-- **Affected files:** None (or test files only if fixes needed)
+- **Affected files:** `docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (plan update only; no implementation code changes)
 - **Dependencies:** TBT-04, TBT-05, TBT-06, TBT-05a, TBT-08 (and remaining tasks as applicable)
 - **Work completed (prior session):**
   1. Ran TBT tests: `python -m pytest test/test_fyers_tbt.py -q` → **52 passed, 1 skipped**.
@@ -484,11 +497,29 @@ All tasks are individually numbered. Status must be updated after each task. Do 
   2. Ran FYERS feed regression: `python -m pytest test/test_fyers_feed.py -q` → **12 passed**.
   3. Ran architecture boundaries: `python -m pytest test/test_architecture_boundaries.py -q` → **17 passed**.
   4. Reviewed diff scope (FYERS TBT/feed + order book + focused tests + plan only).
+- **Work completed (broader regression session, HEAD `2833138`, no implementation changes):**
+  1. **Architecture:** `python -m pytest test/test_architecture_boundaries.py -q` → **17 passed**.
+  2. **FYERS (broader):** `python -m pytest test/test_fyers_bse_fo_catalogue.py test/test_fyers_capabilities.py test/test_fyers_chain_request_form.py test/test_fyers_chain_symbol.py test/test_fyers_config_architecture.py test/test_fyers_decoder.py test/test_fyers_dynamic_subscriptions.py test/test_fyers_expiry_timestamp.py test/test_fyers_feed.py test/test_fyers_greeks_oi.py test/test_fyers_index_source.py test/test_fyers_integration.py test/test_fyers_login_ux.py test/test_fyers_pin.py test/test_fyers_reconnect_mapping.py test/test_fyers_socket_lifecycle.py test/test_fyers_tbt.py -q` → **194 passed, 1 skipped**.
+  3. **Source-manager:** `python -m pytest test/test_source_controls.py test/test_source_dedup.py test/test_source_lifecycle.py -q` → **33 passed**.
+  4. **Subscription:** `python -m pytest test/test_subscription_demand.py test/test_subscription_failover_lifecycle.py test/test_subscription_manager.py test/test_subscription_reconcile_lifecycle.py test/test_subscriptions.py test/test_md_subscriptions.py test/test_runtime_subscriptions.py -q` → **52 passed**.
+  5. **WebSocket/socket lifecycle:** `python -m pytest test/test_fyers_socket_lifecycle.py test/test_upstox_socket_lifecycle.py -q` → **13 passed** (note: `test_fyers_socket_lifecycle.py` also included in FYERS batch; results consistent).
+- **Exact results summary (broader regression session):** No failures. No regressions observed in executed suites; no pre-existing failures to distinguish.
+- **Work completed (TBT-07 audit/hardening + TBT-09 rerun, HEAD `2833138` baseline, uncommitted):**
+  1. Audited feed construction/ownership/lifecycle: `FyersFeed` owns one `FyersTbtFeed` per feed instance (one TBT WS connection per TBT feed); multiple feed instances can exist per configured source, so account-wide limits across connections/users require external coordination (documented). Local per-instance enforcement implemented.
+  2. Verified tier resolution: missing hints default to standard; invalid/unknown hints fall back to standard (`invalid_tier_hint`, non-escalating); conflicting hints resolved by precedence `tbt_tier` > `tier` > `plan`.
+  3. Hardened rejection behavior: entitlement-rejected symbols never enter desired state; channel-allocation failures remove symbols from desired so they cannot remain desired or be resubscribed on reconnect.
+  4. `python -m pytest test/test_fyers_tbt.py -q` → **81 passed, 1 skipped**.
+  5. `python -m pytest test/test_fyers_feed.py -q` → **12 passed**.
+  6. `python -m pytest test/test_architecture_boundaries.py -q` → **17 passed**.
+  7. Broader FYERS: `python -m pytest test/test_fyers_bse_fo_catalogue.py test/test_fyers_capabilities.py test/test_fyers_chain_request_form.py test/test_fyers_chain_symbol.py test/test_fyers_config_architecture.py test/test_fyers_decoder.py test/test_fyers_dynamic_subscriptions.py test/test_fyers_expiry_timestamp.py test/test_fyers_feed.py test/test_fyers_greeks_oi.py test/test_fyers_index_source.py test/test_fyers_integration.py test/test_fyers_login_ux.py test/test_fyers_pin.py test/test_fyers_reconnect_mapping.py test/test_fyers_socket_lifecycle.py test/test_fyers_tbt.py -q` → **203 passed, 1 skipped**.
+  8. Source-manager: `python -m pytest test/test_source_controls.py test/test_source_dedup.py test/test_source_lifecycle.py -q` → **33 passed**.
+  9. Subscription: `python -m pytest test/test_subscription_demand.py test/test_subscription_failover_lifecycle.py test/test_subscription_manager.py test/test_subscription_reconcile_lifecycle.py test/test_subscriptions.py test/test_md_subscriptions.py test/test_runtime_subscriptions.py -q` → **52 passed**.
+  10. WebSocket/socket lifecycle: `python -m pytest test/test_fyers_socket_lifecycle.py test/test_upstox_socket_lifecycle.py -q` → **13 passed**.
 - **Remaining work:**
-  1. Run broader relevant suite as needed (e.g. source-manager and other FYERS-related tests) and record results.
-  2. Complete TBT-07 (entitlement-aware limits) and perform runtime verification with approved credentials/environment when available.
-- **Acceptance criteria:** Not fully satisfied (TBT-07 and live/runtime verification pending).
-- **Required tests:** As above.
+  1. Perform live runtime verification with approved credentials/environment when available (kept pending).
+  2. Run any additional broader suites if later identified as directly relevant.
+- **Acceptance criteria:** Not fully satisfied (live/runtime verification pending).
+- **Required tests:** As above. No failures/regressions observed.
 
 ---
 
@@ -519,14 +550,14 @@ All tasks are individually numbered. Status must be updated after each task. Do 
 
 ## 7) Current State
 
-- **Plan file:** `docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (updated through corrective implementation of TBT-04 follow-up, TBT-05a, TBT-08)
-- **Git:** `review/scanner-phase1` at `43c7eb5e60ad828c4aab6fd3e5765115df6dce06` (HEAD unchanged this session; working tree has uncommitted corrective changes)
-- **Working tree (reconciled):** `?? docs/performance/` (pre-existing, preserved), modified `brokers/fyers/feed.py`, modified `brokers/fyers/tbt/feed.py`, modified `brokers/fyers/tbt/order_book.py`, modified `test/test_fyers_tbt.py`, modified `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`. No other files changed.
-- **Implemented (corrective session):** Task A/TBT-04 follow-up (receive-task cancellation cleanup on all `_recv_loop` exit paths, including outer cancellation; parent stop cleanup reviewed), Task B/TBT-05a (parent instrument lifecycle synchronized with TBT desired subscriptions/start/add/remove/reconnect), Task C/TBT-08 (fresh snapshot required after invalidation/uninitialized state; deltas rejected/not published until snapshot reinitializes). Focused mocked tests added/updated.
-- **Remaining gaps:** TBT-07 entitlement-aware limits (separate channel capacity vs entitlements), TBT-09 full regression/runtime verification.
-- **Explicit issues/uncertainties (tracked):** (1) Dynamic URL discovery endpoint (`https://api-t1.fyers.in/indus/home/tbtws`) auth contract/necessity remains **UNRESOLVED** (preserved). (2) Server acknowledgement semantics for subscribe/resume remain **UNRESOLVED**. (3) Runtime/live broker behavior **not verified** (mocked tests only). (4) Symbol eligibility/entitlement enforcement not completed (TBT-07).
-- **TBT-01/02/03/04/05/06 outcomes:** Preserved/extended (see §2, §9, §10, §11, §12).
-- **TBT-05a/08 outcomes:** Implemented and tested with mocks; see task entries and §12.
+- **Plan file:** `docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (updated through TBT-07 audit/hardening + TBT-09 broader regression rerun)
+- **Git:** `review/scanner-phase1` at `2833138d81da356fc827e5c6c7b925ee4c4cd603` (HEAD unchanged this session; working tree has uncommitted TBT-07 changes)
+- **Working tree (reconciled):** `?? docs/performance/` (pre-existing, preserved), modified `brokers/fyers/tbt/feed.py`, modified `test/test_fyers_tbt.py`, modified `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`. No other implementation files changed.
+- **Implemented (prior sessions):** TBT-04 (shutdown + corrective recv-task cleanup), TBT-05 (auth), TBT-06 (channel protocol), TBT-05a (symbol propagation/runtime sync), TBT-08 (fresh-snapshot gating). Focused and broader mocked regressions executed (see TBT-09, §11, §12).
+- **Implemented/audited (this session):** TBT-07 entitlement-aware limits audited and hardened (tier-aware TBT symbol limits via existing resolution where possible, separate channel-capacity enforcement, graceful rejection/logging, status reporting; rejected/unallocatable symbols cannot remain desired or resubscribe on reconnect). **Locally enforced:** per-instance/connection ceilings (channels 50, tier-mapped symbol limits for this feed instance). **Not globally enforced:** account-wide symbols/connections across multiple feed instances/connections/users (requires external coordination; documented).
+- **Remaining gaps:** TBT-09 live runtime verification (pending approved credentials/environment).
+- **Explicit issues/uncertainties (tracked):** (1) Dynamic URL discovery endpoint (`https://api-t1.fyers.in/indus/home/tbtws`) auth contract/necessity remains **UNRESOLVED** (preserved). (2) Server acknowledgement semantics for subscribe/resume remain **UNRESOLVED**. (3) Runtime/live broker behavior **not verified** (mocked tests only). (4) Account-wide TBT limits across multiple connections/users require external coordination (documented).
+- **TBT-01/02/03/04/05/06/05a/07/08 outcomes:** Preserved/extended (see §2, §9, §10, §11, §12, §13). TBT-09 broader regression rerun recorded (no failures/regressions observed in executed suites).
 
 ---
 
@@ -540,15 +571,16 @@ All tasks are individually numbered. Status must be updated after each task. Do 
 6. **TBT-06: Channel subscription and resume protocol (type-2) — DONE** (implemented + mocked tests)
 7. **TBT-05a: Propagate desired symbols from FyersFeed to FyersTbtFeed — DONE** (corrective Task B; mocked tests)
 8. **TBT-08: Fix reconnect recovery (invalidate stale books + require fresh snapshots) — DONE** (corrective Task C; mocked tests)
-9. **TBT-07: Enforce entitlement-aware limits — NOT STARTED**
-10. **TBT-09: Verification & regression — IN PROGRESS (partial)**
+9. **TBT-07: Enforce entitlement-aware limits — DONE** (tier-aware TBT limits, separate channel capacity, graceful handling; mocked tests)
+10. **TBT-09: Verification & regression — IN PROGRESS (partial)** (broader mocked regression recorded; live runtime verification pending)
 
 **Dependency notes:**
 - **Dynamic URL discovery auth contract** (`/indus/home/tbtws`) remains **UNRESOLVED**; existing behavior preserved (no guessing/removal without evidence).
 - **Server acknowledgement semantics** for subscribe/resume remain **UNRESOLVED**.
 - **Live broker/runtime verification** not performed.
+- **Account-wide TBT limits** across multiple connections/users require external coordination (documented).
 
-**Next task:** TBT-07 (entitlement-aware limits) or TBT-09 broader regression/runtime verification, as prioritized. No Git history operations performed.
+**Next task:** TBT-09 live runtime verification with approved credentials/environment when available (or additional broader regression if identified). No Git history operations performed.
 
 ---
 
@@ -712,3 +744,50 @@ All tasks are individually numbered. Status must be updated after each task. Do 
 - No Git history operations, staging, commits, or pushes performed.
 - No credentials/tokens/secrets introduced into source, tests, logs, or documentation.
 - Changes limited to Tasks A/B/C corrective scope plus necessary tests and plan documentation.
+
+---
+
+## 13) TBT-07 Audit/Hardening + TBT-09 Rerun Record (this session)
+
+### 13.1 Baseline and scope
+- **Branch/HEAD (verified):** `review/scanner-phase1` @ `2833138d81da356fc827e5c6c7b925ee4c4cd603` (unchanged this session).
+- **Working tree (before):** `?? docs/performance/`, modified `brokers/fyers/tbt/feed.py`, modified `test/test_fyers_tbt.py`, modified `docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (uncommitted TBT-07 baseline).
+- **Working tree (after):** `?? docs/performance/` (preserved), modified `brokers/fyers/tbt/feed.py`, modified `test/test_fyers_tbt.py`, modified `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`.
+- **Authorized scope respected:** FYERS TBT implementation + focused tests + canonical plan only. No auth/startup foundation, credential storage/token persistence/OAuth/login/session restoration, unrelated providers, DB/config schema, or dependency changes. No live broker operations/credentials. No Git history operations, staging, commits, or pushes.
+
+### 13.2 Audit findings (construction/ownership/lifecycle)
+- **Construction/ownership:** `FyersFeed` creates and owns one `FyersTbtFeed` instance when `tbt_enabled` (`_start_tbt_channel()`), seeds it with the parent feed's current desired instrument set, and runs it as a child task; stopped via `_stop_tbt_channel()` (idempotent/exception-safe). Parent add/remove operations sync desired instruments to TBT.
+- **Connection lifecycle:** each `FyersTbtFeed` instance manages one TBT WebSocket connection (`_ws`/`_ws_lock`, single run loop). No multi-connection fanout exists within a single TBT feed instance.
+- **Multiple instances:** multiple `FyersFeed`/`FyersTbtFeed` instances can exist if multiple FYERS feed sources are configured/instantiated. Therefore **account-wide/per-user-across-connections limits are not globally enforceable in-process without external coordination**; enforcement is local to each TBT feed instance/connection and fails gracefully.
+
+### 13.3 Tier resolution verification
+- **Hints/precedence:** `tbt_tier` preferred, then `tier`, then `plan` (first non-empty wins). Cached per feed instance after first resolution.
+- **Missing:** defaults to documented `standard` tier/limits.
+- **Invalid/unknown:** falls back to `standard` with `source=invalid_tier_hint` (non-escalating; never grants higher limits).
+- **Conflicting:** resolved by precedence above (e.g. `tbt_tier=prime` wins over differing `tier`/`plan`).
+- **Existing resolution reuse:** attempts `providers.capacity.resolve_entitlement("fyers", tier=...)` where possible for tier/source semantics, but applies **TBT-specific** documented limits (distinct from HSM capability limits).
+
+### 13.4 Rejection behavior hardening
+- **Entitlement-rejected symbols:** never added to desired state and never sent/subscribed.
+- **Channel-capacity failures:** if channel allocation fails during connected subscribe or reconnect resubscribe, the symbol is removed from desired state so it cannot remain desired or be retried/subscribed accidentally on reconnect.
+- **Reconnect:** `_resubscribe_all()` restores only allocatable desired symbols and drops unallocatable ones (with safe error/logging).
+
+### 13.5 Locally enforced vs genuinely account-wide enforced limits
+- **Locally enforced (per TBT feed instance/connection):** channels per connection (50), symbols per connection (tier-mapped), symbols per user ceiling applied to this instance's desired set as `min(per_user, per_connection)`, graceful rejection/logging, no accidental desired-state retention for rejected/unallocatable symbols.
+- **Not globally/account-wide enforced here:** symbols per user across multiple connections/apps/users, connections per user across multiple feed instances/processes. Requires external coordination (documented). `status().tbt_limits.connections_per_user` is reported for visibility only.
+
+### 13.6 Tests added/modified and results
+- **Added/updated:** `TestTBTEntitlementLimits` coverage for missing/invalid/conflicting tier hints, channel-capacity failure not leaving desired state, reconnect dropping unallocatable desired symbols (plus prior entitlement/status checks).
+- **Commands executed:** `python -m pytest test/test_fyers_tbt.py -q`; `python -m pytest test/test_fyers_feed.py -q`; `python -m pytest test/test_architecture_boundaries.py -q`; broader FYERS/source-manager/subscription/socket-lifecycle suites (see §9).
+- **Exact results:** TBT **81 passed, 1 skipped**. FYERS feed **12 passed**. Architecture boundaries **17 passed**. Broader FYERS **203 passed, 1 skipped**. Source-manager **33 passed**. Subscription **52 passed**. WebSocket/socket lifecycle **13 passed**. No failures/regressions observed.
+
+### 13.7 Remaining issues / runtime verification
+- **Account-wide TBT limits** across multiple connections/users require external coordination (documented).
+- **Dynamic URL discovery auth contract:** UNRESOLVED (preserved).
+- **Server subscribe/resume acknowledgement semantics:** UNRESOLVED.
+- **Live broker/runtime verification:** not performed (pending approved credentials/environment).
+
+### 13.8 Confirmations
+- Existing untracked files preserved (`docs/performance/` untouched).
+- No Git history operations, staging, commits, or pushes performed.
+- No credentials/tokens/secrets introduced into source, tests, logs, or documentation.
