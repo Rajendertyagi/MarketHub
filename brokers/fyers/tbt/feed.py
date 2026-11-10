@@ -4,22 +4,24 @@ Provides 50-level market depth via the official Fyers TBT protocol,
 supplementing the existing HSM quote feed. Both feeds update the same
 canonical MarketService state.
 
-Protocol reference:
-  * Official implementation: fyers-apiv3.FyersWebsocket.tbt_ws
-  * WebSocket URL: dynamically fetched from https://api-t1.fyers.in/indus/home/tbtws
-  * Subscription: JSON control messages
-  * Data: Protobuf binary (SocketMessage with MarketFeed)
-  * Depth: Up to 50 levels with price, quantity, order counts
+Protocol reference (official docs, verified 2026-11-10):
+  * Connection: https://fyers.in/api-docs/v3/api/websockets/tick-by-tick-socket/overview/tbt-websocket-connection/
+    - Endpoint: wss://rtsocket-api.fyers.in/versova
+    - Header: Authorization: <appId:accessToken>
+  * Channels: https://fyers.in/api-docs/v3/api/websockets/tick-by-tick-socket/overview/concept-of-channels/
+    - type 1 subscribe/unsubscribe (subs 1/-1, mode depth, channel string)
+    - type 2 switch-channel with resumeChannels/pauseChannels (required to start stream)
+  * Dynamic URL discovery (existing implementation, contract not documented in fetched pages):
+    GET https://api-t1.fyers.in/indus/home/tbtws -> data.socket_url
 
 Lifecycle:
-  1. Fetch WebSocket URL from Fyers API
-  2. Connect with Authorization header
-  3. Subscribe to channels with symbols
-  4. Receive protobuf depth updates
-  5. Reconstruct local order book (snapshot + deltas)
-  6. Publish canonical Depth to MarketService
-  7. Reconnect on transient failures
-  8. Stop on auth failures or explicit shutdown
+  1. Resolve app_id and raw access token (canonical token storage unchanged)
+  2. Fetch WebSocket URL (dynamic discovery preserved; auth contract unverified)
+  3. Connect with Authorization: <appId:accessToken> (official TBT WS contract)
+  4. Subscribe (type 1) and resume channels (type 2)
+  5. Receive protobuf depth updates (snapshot + deltas)
+  6. Reconstruct local order book and publish canonical Depth to MarketService
+  7. Reconnect on transient failures; stop on auth failures or explicit shutdown
 """
 
 from __future__ import annotations
@@ -41,7 +43,7 @@ from market.normalize.common import NormalizationError
 
 logger = logging.getLogger(__name__)
 
-# Official rate limits (verified from fyers-apiv3 implementation)
+# Official rate limits (verified from fyers-apiv3 implementation/docs)
 MAX_CONNECTIONS_PER_USER = 3
 SYMBOLS_PER_CONNECTION = 5
 MAX_CHANNELS_PER_CONNECTION = 50
@@ -50,6 +52,26 @@ MAX_CHANNELS_PER_CONNECTION = 50
 TBT_SUBSCRIBE_TYPE = 1
 TBT_CHANNEL_CONTROL_TYPE = 2
 TBT_PING_MESSAGE = "ping"
+
+
+def _socket_is_open(ws: Any) -> bool:
+    """True when the socket can still be written to (duck-typed)."""
+    if ws is None:
+        return False
+    open_attr = getattr(ws, "open", None)
+    if isinstance(open_attr, bool):
+        return open_attr
+    closed = getattr(ws, "closed", None)
+    if isinstance(closed, bool):
+        return not closed
+    state = getattr(ws, "state", None)
+    if state is not None:
+        name = str(getattr(state, "name", state)).upper()
+        if "OPEN" in name:
+            return True
+        if name:
+            return False
+    return True
 
 
 class FyersTbtFeed:
@@ -64,24 +86,31 @@ class FyersTbtFeed:
         access_token_getter: Callable[[], str],
         config: dict[str, Any],
         market_service: Any,
+        app_id_getter: Callable[[], str] | None = None,
     ) -> None:
         """Initialize TBT feed.
 
         Args:
-            access_token_getter: Callable that returns current OAuth token
-            config: Source configuration (includes tbt_enabled flag)
-            market_service: Shared MarketService instance
+            access_token_getter: Callable that returns current raw OAuth access token.
+            config: Source configuration (includes tbt_enabled flag).
+            market_service: Shared MarketService instance.
+            app_id_getter: Optional callable returning FYERS app_id for TBT WS auth
+                (Authorization: <appId:accessToken>). If omitted, config["app_id"]
+                is used as fallback.
         """
         self._token_getter = access_token_getter
+        self._app_id_getter = app_id_getter
         self._market_service = market_service
         self._config = config
 
         # State
         self._state = "disconnected"
         self._task: asyncio.Task | None = None
-        self._stop_event = asyncio.Event()
+        self._stop_event = asyncio.Event()  # internal stop signal (also set by stop())
+        self._caller_stop_event: asyncio.Event | None = None
         self._desired_symbols: set[str] = set()
         self._lock = asyncio.Lock()
+        self._ws_lock = asyncio.Lock()
 
         # Order book state
         self._books = OrderBookStore()
@@ -106,10 +135,42 @@ class FyersTbtFeed:
         # Channel management
         self._channel_map: dict[str, int] = {}  # symbol -> channel
         self._next_channel = 1
+        self._active_channels: set[int] = set()  # channels resumed on current connection
 
     # -------------------------------------------------------------------------
     # Lifecycle
     # -------------------------------------------------------------------------
+
+    def _is_stop_requested(self, stop_event: asyncio.Event | None = None) -> bool:
+        if self._stop_event.is_set():
+            return True
+        if stop_event is not None and stop_event.is_set():
+            return True
+        caller = self._caller_stop_event
+        return caller is not None and caller.is_set()
+
+    async def stop(self) -> None:
+        """Idempotent stop request.
+
+        Signals shutdown and closes the active WebSocket to interrupt a blocked
+        receive promptly. Does not own/cancel the parent-managed run task.
+        Safe before/during/after run and on repeated calls.
+        """
+        self._stop_event.set()
+        await self._close_active_ws()
+
+    async def _close_active_ws(self) -> None:
+        async with self._ws_lock:
+            ws = self._ws
+            self._ws = None
+        if ws is None:
+            return
+        try:
+            await ws.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.debug("TBT feed: ws close ignored: %s", type(exc).__name__)
 
     async def run(self, publisher: Any, stop_event: asyncio.Event) -> None:
         """Main lifecycle loop with reconnect logic.
@@ -118,13 +179,15 @@ class FyersTbtFeed:
             publisher: Event publisher (unused, for compatibility)
             stop_event: Global stop event
         """
+        del publisher
+        self._caller_stop_event = stop_event
         logger.info("TBT feed: starting")
         self._state = "starting"
 
         try:
-            while not stop_event.is_set():
+            while not self._is_stop_requested(stop_event):
                 outcome = await self._run_session(stop_event)
-                if outcome is None or stop_event.is_set():
+                if outcome is None or self._is_stop_requested(stop_event):
                     break
                 if self._state == "auth_required":
                     logger.info("TBT feed: auth required, stopping until re-login")
@@ -138,27 +201,63 @@ class FyersTbtFeed:
                     self._stats["reconnects"] + 1,
                 )
                 self._stats["reconnects"] += 1
-                try:
-                    await asyncio.wait_for(stop_event.wait(), timeout=delay)
+                stopped = await self._wait_or_stop(stop_event, delay)
+                if stopped:
                     break
-                except asyncio.TimeoutError:
-                    pass
 
+        except asyncio.CancelledError:
+            # Ensure prompt shutdown and cleanup on parent cancellation.
+            self._stop_event.set()
+            await self._close_active_ws()
+            raise
         finally:
-            await self._cleanup()
-            self._state = "stopped"
-            logger.info("TBT feed: stopped")
+            try:
+                await self._cleanup()
+            finally:
+                if self._state != "auth_required":
+                    self._state = "stopped"
+                logger.info("TBT feed: stopped")
+
+    async def _wait_or_stop(self, stop_event: asyncio.Event, delay: float) -> bool:
+        """Wait for delay or stop (caller/internal). Returns True if stopped."""
+        if self._is_stop_requested(stop_event):
+            return True
+        waiters = [asyncio.create_task(stop_event.wait()),
+                   asyncio.create_task(self._stop_event.wait()),
+                   asyncio.create_task(asyncio.sleep(delay))]
+        try:
+            done, _pending = await asyncio.wait(
+                set(waiters), return_when=asyncio.FIRST_COMPLETED
+            )
+            return waiters[0] in done or waiters[1] in done
+        finally:
+            for t in waiters:
+                if not t.done():
+                    t.cancel()
+            await asyncio.gather(*waiters, return_exceptions=True)
 
     async def _run_session(self, stop_event: asyncio.Event) -> str | None:
         """Single connection session with reconnect logic."""
+        ws = None
         try:
-            # Get auth token
+            # Get auth token (raw; canonical storage unchanged)
             token = await asyncio.to_thread(self._token_getter)
-            if not token or not token.strip():
+            if not token or not str(token).strip():
                 self._set_state("auth_required")
                 return "auth_required"
+            token = str(token).strip()
 
-            # Fetch WebSocket URL
+            # Resolve app_id for official TBT WS auth header (<appId:accessToken>)
+            app_id = await self._resolve_app_id()
+            if not app_id:
+                self._set_state("auth_required")
+                self._stats["last_error"] = "missing_app_id"
+                logger.error("TBT feed: missing app_id for TBT WebSocket auth")
+                return "auth_required"
+
+            # Fetch WebSocket URL (dynamic discovery preserved).
+            # Contract for this endpoint is not established in fetched official docs;
+            # preserve existing behavior (raw token header) and do not guess.
             ws_url = await self._fetch_ws_url(token)
             if not ws_url:
                 logger.error("TBT feed: failed to fetch WebSocket URL")
@@ -166,51 +265,103 @@ class FyersTbtFeed:
                 return "transient"
 
             self._ws_url = ws_url
+            ws_auth = f"{app_id}:{token}"
 
             # Connect and subscribe
             async with ws_connect(
                 ws_url,
-                additional_headers={"Authorization": token},
+                additional_headers={"Authorization": ws_auth},
                 ping_interval=20,
                 ping_timeout=10,
             ) as ws:
-                self._ws = ws
+                async with self._ws_lock:
+                    self._ws = ws
+                self._active_channels.clear()
                 self._set_state("connected")
-                logger.info("TBT feed: connected to %s", ws_url[:50] + "...")
+                logger.info("TBT feed: connected")
 
-                # Subscribe to desired symbols
+                # Subscribe to desired symbols and resume channels
                 await self._resubscribe_all(ws)
 
-                # Receive loop
-                await self._recv_loop(ws, stop_event)
+                # Receive loop (interruptible on stop/cancel)
+                reason = await self._recv_loop(ws, stop_event)
 
-                if stop_event.is_set():
+                if self._is_stop_requested(stop_event) or reason == "stopped":
                     return None
 
                 return "transient"  # Connection lost
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
-            logger.error("TBT feed: session error: %s", e)
-            self._stats["last_error"] = str(e)
+            logger.error("TBT feed: session error: %s", type(e).__name__)
+            self._stats["last_error"] = type(e).__name__
             return "transient"
+        finally:
+            async with self._ws_lock:
+                if self._ws is ws:
+                    self._ws = None
+            self._active_channels.clear()
 
-    async def _recv_loop(self, ws: Any, stop_event: asyncio.Event) -> None:
-        """Receive and process WebSocket messages."""
+    async def _resolve_app_id(self) -> str:
+        getter = self._app_id_getter
+        if getter is not None:
+            try:
+                value = getter()
+                if asyncio.iscoroutine(value):
+                    value = await value
+            except Exception:
+                value = None
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        cfg_app_id = self._config.get("app_id")
+        if isinstance(cfg_app_id, str) and cfg_app_id.strip():
+            return cfg_app_id.strip()
+        return ""
+
+    async def _recv_loop(self, ws: Any, stop_event: asyncio.Event) -> str:
+        """Receive and process WebSocket messages (interruptible)."""
+        stop_task = asyncio.create_task(stop_event.wait())
+        internal_stop_task = asyncio.create_task(self._stop_event.wait())
         try:
-            async for message in ws:
-                if stop_event.is_set():
-                    break
+            while True:
+                if self._is_stop_requested(stop_event):
+                    return "stopped"
+                recv_task = asyncio.create_task(ws.recv())
+                done, _pending = await asyncio.wait(
+                    {recv_task, stop_task, internal_stop_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if stop_task in done or internal_stop_task in done:
+                    recv_task.cancel()
+                    await asyncio.gather(recv_task, return_exceptions=True)
+                    return "stopped"
+                try:
+                    message = recv_task.result()
+                except asyncio.CancelledError:
+                    raise
+                except websockets.exceptions.ConnectionClosed as e:
+                    logger.warning("TBT feed: connection closed: %s", type(e).__name__)
+                    return "closed"
+                except Exception as e:
+                    logger.error("TBT feed: recv error: %s", type(e).__name__)
+                    self._stats["last_error"] = type(e).__name__
+                    return "transport"
 
                 if message == TBT_PING_MESSAGE:
                     continue
-
                 await self._handle_message(message)
-
-        except websockets.exceptions.ConnectionClosed as e:
-            logger.warning("TBT feed: connection closed: %s", e)
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
-            logger.error("TBT feed: recv loop error: %s", e)
-            self._stats["last_error"] = str(e)
+            logger.error("TBT feed: recv loop error: %s", type(e).__name__)
+            self._stats["last_error"] = type(e).__name__
+            return "transport"
+        finally:
+            for t in (stop_task, internal_stop_task):
+                if not t.done():
+                    t.cancel()
+            await asyncio.gather(stop_task, internal_stop_task, return_exceptions=True)
 
     async def _handle_message(self, message: Any) -> None:
         """Parse and dispatch protobuf message."""
@@ -230,9 +381,9 @@ class FyersTbtFeed:
             self._stats["last_message_at"] = datetime.now(timezone.utc).isoformat()
 
         except Exception as e:
-            logger.error("TBT feed: malformed message: %s", e)
+            logger.error("TBT feed: malformed message: %s", type(e).__name__)
             self._stats["malformed"] += 1
-            self._stats["last_error"] = f"malformed: {e}"
+            self._stats["last_error"] = f"malformed: {type(e).__name__}"
 
     async def _process_feed(self, symbol: str, feed: msg_pb2.MarketFeed) -> None:
         """Process a single symbol's MarketFeed."""
@@ -280,7 +431,7 @@ class FyersTbtFeed:
             try:
                 await self._market_service.apply_depth(full_depth)
             except Exception as e:
-                logger.error("TBT feed: failed to apply depth: %s", e)
+                logger.error("TBT feed: failed to apply depth: %s", type(e).__name__)
 
     # -------------------------------------------------------------------------
     # Subscription management
@@ -293,9 +444,16 @@ class FyersTbtFeed:
             self._desired_symbols.update(new_symbols)
 
         # If connected, send subscribe immediately
-        if self._ws and self._ws.open:
+        async with self._ws_lock:
+            ws = self._ws
+        if ws and _socket_is_open(ws):
+            channels_to_resume: set[int] = set()
             for symbol in new_symbols:
-                await self._send_subscribe(symbol)
+                ch = await self._send_subscribe(symbol, ws=ws)
+                if ch is not None:
+                    channels_to_resume.add(ch)
+            if channels_to_resume:
+                await self._send_channel_control(ws, resume_channels=sorted(channels_to_resume))
 
         logger.info("TBT feed: subscribed to %d symbols (total: %d)", len(new_symbols), len(self._desired_symbols))
         self._stats["subscribes"] += len(new_symbols)
@@ -307,33 +465,55 @@ class FyersTbtFeed:
             self._desired_symbols.difference_update(removed)
 
         # If connected, send unsubscribe immediately
-        if self._ws and self._ws.open:
+        async with self._ws_lock:
+            ws = self._ws
+        if ws and _socket_is_open(ws):
+            channels_to_pause: set[int] = set()
             for symbol in removed:
-                await self._send_unsubscribe(symbol)
+                ch = await self._send_unsubscribe(symbol, ws=ws)
+                if ch is not None and not self._channel_has_desired_symbols(ch):
+                    channels_to_pause.add(ch)
+            if channels_to_pause:
+                await self._send_channel_control(ws, pause_channels=sorted(channels_to_pause))
 
         logger.info("TBT feed: unsubscribed from %d symbols (remaining: %d)", len(removed), len(self._desired_symbols))
         self._stats["unsubscribes"] += len(removed)
 
     async def _resubscribe_all(self, ws: Any) -> None:
-        """Resubscribe to all desired symbols after reconnect."""
+        """Resubscribe to all desired symbols after (re)connect and resume channels."""
         async with self._lock:
             symbols = list(self._desired_symbols)
 
+        channels: set[int] = set()
         for symbol in symbols:
-            await self._send_subscribe(symbol)
+            ch = await self._send_subscribe(symbol, ws=ws)
+            if ch is not None:
+                channels.add(ch)
+
+        # Official protocol: subscribing does not start stream; resume channels (type 2).
+        if channels:
+            await self._send_channel_control(ws, resume_channels=sorted(channels))
 
         logger.info("TBT feed: resubscribed to %d symbols after reconnect", len(symbols))
 
     async def _resubscribe_symbol(self, symbol: str) -> None:
         """Resubscribe to a single symbol (after sequence gap)."""
-        if self._ws and self._ws.open:
-            await self._send_unsubscribe(symbol)
-            await self._send_subscribe(symbol)
-
-    async def _send_subscribe(self, symbol: str) -> None:
-        """Send subscribe message for a symbol."""
-        if not self._ws or not self._ws.open:
+        async with self._ws_lock:
+            ws = self._ws
+        if not ws or not _socket_is_open(ws):
             return
+        await self._send_unsubscribe(symbol, ws=ws)
+        ch = await self._send_subscribe(symbol, ws=ws)
+        if ch is not None:
+            await self._send_channel_control(ws, resume_channels=[ch])
+
+    async def _send_subscribe(self, symbol: str, ws: Any | None = None) -> int | None:
+        """Send subscribe message for a symbol. Returns channel number."""
+        if ws is None:
+            async with self._ws_lock:
+                ws = self._ws
+        if not ws or not _socket_is_open(ws):
+            return None
 
         channel = self._get_or_create_channel(symbol)
         msg = {
@@ -345,13 +525,17 @@ class FyersTbtFeed:
                 "channel": str(channel),
             },
         }
-        await self._ws.send(json.dumps(msg))
+        await ws.send(json.dumps(msg))
         logger.debug("TBT feed: subscribed to %s on channel %d", symbol, channel)
+        return channel
 
-    async def _send_unsubscribe(self, symbol: str) -> None:
-        """Send unsubscribe message for a symbol."""
-        if not self._ws or not self._ws.open:
-            return
+    async def _send_unsubscribe(self, symbol: str, ws: Any | None = None) -> int | None:
+        """Send unsubscribe message for a symbol. Returns channel number."""
+        if ws is None:
+            async with self._ws_lock:
+                ws = self._ws
+        if not ws or not _socket_is_open(ws):
+            return None
 
         channel = self._channel_map.get(symbol, 1)
         msg = {
@@ -363,8 +547,42 @@ class FyersTbtFeed:
                 "channel": str(channel),
             },
         }
-        await self._ws.send(json.dumps(msg))
+        await ws.send(json.dumps(msg))
         logger.debug("TBT feed: unsubscribed from %s", symbol)
+        return channel
+
+    async def _send_channel_control(
+        self,
+        ws: Any,
+        resume_channels: list[int] | None = None,
+        pause_channels: list[int] | None = None,
+    ) -> None:
+        """Send type-2 switch-channel message (resume/pause)."""
+        if not ws or not _socket_is_open(ws):
+            return
+        resume = [str(c) for c in (resume_channels or [])]
+        pause = [str(c) for c in (pause_channels or [])]
+        if not resume and not pause:
+            return
+        msg = {
+            "type": TBT_CHANNEL_CONTROL_TYPE,
+            "data": {
+                "resumeChannels": resume,
+                "pauseChannels": pause,
+            },
+        }
+        await ws.send(json.dumps(msg))
+        for c in (resume_channels or []):
+            self._active_channels.add(int(c))
+        for c in (pause_channels or []):
+            self._active_channels.discard(int(c))
+        logger.debug("TBT feed: channel control resume=%s pause=%s", resume, pause)
+
+    def _channel_has_desired_symbols(self, channel: int) -> bool:
+        for sym, ch in self._channel_map.items():
+            if ch == channel and sym in self._desired_symbols:
+                return True
+        return False
 
     def _get_or_create_channel(self, symbol: str) -> int:
         """Get or create a channel for a symbol."""
@@ -382,7 +600,12 @@ class FyersTbtFeed:
     # -------------------------------------------------------------------------
 
     async def _fetch_ws_url(self, token: str) -> str | None:
-        """Fetch dynamic WebSocket URL from Fyers API."""
+        """Fetch dynamic WebSocket URL from Fyers API.
+
+        Note: Official docs document fixed endpoint wss://rtsocket-api.fyers.in/versova
+        but do not document this discovery endpoint's auth contract. Existing behavior
+        (raw token Authorization header) is preserved pending evidence.
+        """
         try:
             import httpx
             async with httpx.AsyncClient() as client:
@@ -397,7 +620,7 @@ class FyersTbtFeed:
                 else:
                     logger.error("TBT feed: failed to fetch URL: %d", resp.status_code)
         except Exception as e:
-            logger.error("TBT feed: error fetching URL: %s", e)
+            logger.error("TBT feed: error fetching URL: %s", type(e).__name__)
         return None
 
     # -------------------------------------------------------------------------
@@ -431,10 +654,15 @@ class FyersTbtFeed:
         return symbol
 
     async def _cleanup(self) -> None:
-        """Clean up resources."""
-        self._books.invalidate_all()
-        self._ws = None
-        self._set_state("disconnected")
+        """Clean up resources (idempotent)."""
+        try:
+            self._books.invalidate_all()
+        finally:
+            self._active_channels.clear()
+            async with self._ws_lock:
+                self._ws = None
+            if self._state != "auth_required":
+                self._set_state("disconnected")
 
     # -------------------------------------------------------------------------
     # Status

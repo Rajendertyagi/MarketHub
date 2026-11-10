@@ -1462,10 +1462,17 @@ class FyersFeed:
         try:
             from brokers.fyers.tbt.feed import FyersTbtFeed
 
+            def _app_id_getter() -> str:
+                try:
+                    return self._resolve_app_id()
+                except Exception:
+                    return str(self._app_id or "")
+
             self._tbt_feed = FyersTbtFeed(
                 access_token_getter=self._access_token_getter,
                 config=self._config,
                 market_service=self._market_service,
+                app_id_getter=_app_id_getter,
             )
 
             self._tbt_task = asyncio.create_task(
@@ -1474,20 +1481,30 @@ class FyersFeed:
             logger.info("TBT depth channel started")
 
         except Exception as e:
-            logger.error("Failed to start TBT channel: %s", e)
+            logger.error("Failed to start TBT channel: %s", type(e).__name__)
 
     async def _stop_tbt_channel(self) -> None:
-        """Stop TBT depth channel."""
-        if self._tbt_feed:
-            await self._tbt_feed.stop()
-            self._tbt_feed = None
-        if self._tbt_task:
-            self._tbt_task.cancel()
+        """Stop TBT depth channel (robust, exception-safe)."""
+        feed = self._tbt_feed
+        task = self._tbt_task
+        self._tbt_feed = None
+        self._tbt_task = None
+        if feed is not None:
             try:
-                await self._tbt_task
+                await feed.stop()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.debug("TBT feed stop raised: %s", type(exc).__name__)
+        if task is not None:
+            if not task.done():
+                task.cancel()
+            try:
+                await task
             except asyncio.CancelledError:
                 pass
-            self._tbt_task = None
+            except Exception as exc:
+                logger.debug("TBT task await raised: %s", type(exc).__name__)
             logger.info("TBT depth channel stopped")
 
     def _tbt_status(self) -> dict[str, Any]:
