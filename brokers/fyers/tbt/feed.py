@@ -131,6 +131,7 @@ class FyersTbtFeed:
         # WebSocket
         self._ws = None
         self._ws_url = None
+        self._active_recv_task: asyncio.Task | None = None
 
         # Channel management
         self._channel_map: dict[str, int] = {}  # symbol -> channel
@@ -323,29 +324,47 @@ class FyersTbtFeed:
         """Receive and process WebSocket messages (interruptible)."""
         stop_task = asyncio.create_task(stop_event.wait())
         internal_stop_task = asyncio.create_task(self._stop_event.wait())
+        recv_task: asyncio.Task | None = None
         try:
             while True:
                 if self._is_stop_requested(stop_event):
                     return "stopped"
                 recv_task = asyncio.create_task(ws.recv())
+                self._active_recv_task = recv_task
                 done, _pending = await asyncio.wait(
                     {recv_task, stop_task, internal_stop_task},
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 if stop_task in done or internal_stop_task in done:
-                    recv_task.cancel()
-                    await asyncio.gather(recv_task, return_exceptions=True)
+                    if recv_task in done and not recv_task.cancelled():
+                        try:
+                            recv_task.result()
+                        except Exception:
+                            pass
+                    else:
+                        recv_task.cancel()
+                        await asyncio.gather(recv_task, return_exceptions=True)
+                    self._active_recv_task = None
+                    recv_task = None
                     return "stopped"
                 try:
                     message = recv_task.result()
+                    self._active_recv_task = None
+                    recv_task = None
                 except asyncio.CancelledError:
+                    self._active_recv_task = None
+                    recv_task = None
                     raise
                 except websockets.exceptions.ConnectionClosed as e:
                     logger.warning("TBT feed: connection closed: %s", type(e).__name__)
+                    self._active_recv_task = None
+                    recv_task = None
                     return "closed"
                 except Exception as e:
                     logger.error("TBT feed: recv error: %s", type(e).__name__)
                     self._stats["last_error"] = type(e).__name__
+                    self._active_recv_task = None
+                    recv_task = None
                     return "transport"
 
                 if message == TBT_PING_MESSAGE:
@@ -358,10 +377,18 @@ class FyersTbtFeed:
             self._stats["last_error"] = type(e).__name__
             return "transport"
         finally:
+            if recv_task is not None and not recv_task.done():
+                recv_task.cancel()
             for t in (stop_task, internal_stop_task):
                 if not t.done():
                     t.cancel()
-            await asyncio.gather(stop_task, internal_stop_task, return_exceptions=True)
+            tasks_to_gather = []
+            if recv_task is not None:
+                tasks_to_gather.append(recv_task)
+            tasks_to_gather.extend([stop_task, internal_stop_task])
+            if tasks_to_gather:
+                await asyncio.gather(*tasks_to_gather, return_exceptions=True)
+            self._active_recv_task = None
 
     async def _handle_message(self, message: Any) -> None:
         """Parse and dispatch protobuf message."""
@@ -395,20 +422,6 @@ class FyersTbtFeed:
         tradingsymbol = self._extract_tradingsymbol(symbol)
         book = self._books.get_or_create(symbol, exchange, tradingsymbol)
 
-        # Check sequence
-        if not book.check_sequence(sequence):
-            logger.warning(
-                "TBT feed: sequence gap for %s (expected %d, got %d)",
-                symbol,
-                book.last_sequence + 1 if book.last_sequence else 0,
-                sequence,
-            )
-            self._stats["sequence_gaps"] += 1
-            book.invalidate()
-            # Request resubscribe for this symbol
-            await self._resubscribe_symbol(symbol)
-            return
-
         # Normalize depth
         received_ts = datetime.now(timezone.utc)
         try:
@@ -417,16 +430,36 @@ class FyersTbtFeed:
             logger.error("TBT feed: normalization error for %s: %s", symbol, e)
             return
 
-        # Apply snapshot or delta
+        # Apply snapshot or delta. Deltas require a valid snapshot-initialized
+        # book and in-order sequence; snapshots (re)initialize the book.
         if feed.snapshot:
             book.apply_snapshot(depth, sequence)
             self._stats["snapshots"] += 1
         else:
+            if not book.check_sequence(sequence):
+                if book.awaiting_snapshot:
+                    logger.warning(
+                        "TBT feed: delta before fresh snapshot for %s (seq %d), awaiting snapshot",
+                        symbol,
+                        sequence,
+                    )
+                else:
+                    logger.warning(
+                        "TBT feed: sequence gap for %s (expected %d, got %d)",
+                        symbol,
+                        book.last_sequence + 1 if book.last_sequence is not None else 0,
+                        sequence,
+                    )
+                    self._stats["sequence_gaps"] += 1
+                book.invalidate()
+                # Request resubscribe for this symbol to obtain a fresh snapshot.
+                await self._resubscribe_symbol(symbol)
+                return
             book.apply_delta(depth, sequence)
             self._stats["deltas"] += 1
 
-        # Publish to MarketService
-        if self._market_service:
+        # Publish to MarketService only when a valid book state is available.
+        if self._market_service and not book.awaiting_snapshot:
             full_depth = book.get_full_depth(received_ts)
             try:
                 await self._market_service.apply_depth(full_depth)
@@ -440,7 +473,13 @@ class FyersTbtFeed:
     async def subscribe(self, symbols: list[str]) -> None:
         """Subscribe to additional symbols at runtime."""
         async with self._lock:
-            new_symbols = [s for s in symbols if s not in self._desired_symbols]
+            seen: set[str] = set()
+            new_symbols: list[str] = []
+            for s in symbols:
+                if s in seen or s in self._desired_symbols:
+                    continue
+                seen.add(s)
+                new_symbols.append(s)
             self._desired_symbols.update(new_symbols)
 
         # If connected, send subscribe immediately

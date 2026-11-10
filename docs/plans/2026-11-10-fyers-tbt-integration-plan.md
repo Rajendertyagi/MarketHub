@@ -1,11 +1,11 @@
 # FYERS TBT Corrective Implementation Plan (P0-A)
 
-**Date:** 2026-11-10  
-**Repository:** `Rajendertyagi/MarketHub`  
-**Branch:** `review/scanner-phase1`  
-**HEAD:** `bab6d1a7869ad8aeb7a2431e32e997596adbce90` (unchanged)  
-**Status:** TBT-01/02/03 complete; TBT-04 (shutdown), TBT-05 (authentication), TBT-06 (channel protocol) implemented and tested with mocks (no live broker verification). Remaining: TBT-05a symbol propagation, TBT-07 limits, TBT-08 reconnect recovery hardening, TBT-09 full regression.  
-**Scope:** FYERS TBT only. Minimal corrective changes to fix identified integration gaps.  
+**Date:** 2026-11-10
+**Repository:** `Rajendertyagi/MarketHub`
+**Branch:** `review/scanner-phase1`
+**HEAD:** `bab6d1a7869ad8aeb7a2431e32e997596adbce90` (unchanged)
+**Status:** TBT-01/02/03 complete; TBT-04 (shutdown + corrective recv-task cleanup), TBT-05 (authentication), TBT-06 (channel protocol), TBT-05a (symbol propagation/runtime sync), TBT-08 (fresh-snapshot gating after invalidation) implemented and tested with mocks (no live broker verification). Remaining: TBT-07 limits, TBT-09 full regression/runtime verification.
+**Scope:** FYERS TBT only. Minimal corrective changes to fix identified integration gaps.
 **Source of truth:** This document. Must be updated immediately after every individual task.
 
 ---
@@ -358,24 +358,29 @@ All tasks are individually numbered. Status must be updated after each task. Do 
 - **Decisions and rationale:** Preserve canonical token storage; resolve WS auth formatting with evidence (and verify dynamic URL separately) before auth-dependent implementation; implement type-2 resume per docs; fix shutdown minimally using existing lifecycle patterns without new abstractions.
 - **Next task:** TBT-04 (shutdown correction) or a dedicated auth-resolution task as prioritized, but **do not begin implementation without explicit approval**. Auth-format discrepancy remains an explicit dependency for authenticated TBT connectivity.
 
-### TBT-04: Deterministic shutdown and task lifecycle (implemented)
+### TBT-04: Deterministic shutdown and task lifecycle (implemented + corrective follow-up)
 - **Status:** DONE
 - **Scope:** Minimal code change + focused tests + plan update
 - **Affected files:** `brokers/fyers/tbt/feed.py`, `brokers/fyers/feed.py`, `test/test_fyers_tbt.py`, `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`
 - **Dependencies:** TBT-02, TBT-03 (corrected shutdown analysis in §2.10.3)
-- **Work completed:**
+- **Work completed (initial):**
   1. Added idempotent `FyersTbtFeed.stop()` that signals internal stop and closes the active WebSocket to interrupt blocked receives promptly; does not own/cancel the parent-managed run task and is safe before/during/after run and on repeated calls.
   2. Replaced `async for` receive loop with explicit `ws.recv()` raced against caller/internal stop events (`asyncio.wait`), cancelling/awaiting the pending receive task on stop so blocked receives are interruptible without relying solely on stop-event checks inside iteration.
   3. Added active-WS tracking/retirement under lock, stop-aware waits/backoff, `CancelledError` handling that triggers prompt close/cleanup and propagates cancellation, and idempotent cleanup (book invalidation, channel/ref/state reset) while preserving `auth_required` terminal state semantics.
   4. Hardened `FyersFeed._stop_tbt_channel()` to be exception-safe/idempotent: contains `feed.stop()` failures and **always** cancels/awaits the child task and clears refs/log completion even if an earlier cleanup operation raises.
   5. Added focused shutdown/lifecycle tests covering normal receive shutdown, blocked-receive shutdown, parent cancellation, WS closure/termination, cleanup when close raises, repeated stop calls, no orphaned child task after parent shutdown, parent stop continuing when child stop raises, and reconnect cancellation/cleanup.
-- **Acceptance criteria:** Satisfied by implementation and mocked tests (idempotent stop; blocked receive interruptible; child termination awaited/observed in tested paths; WS closed; cleanup/ref release reliable in tested paths; parent/child shutdown continues on earlier cleanup exception; no new task manager/abstraction). Runtime behavior under real broker/network conditions remains unverified.
-- **Required tests:** `python -m pytest test/test_fyers_tbt.py -q` (52 passed, 1 skipped). `python -m pytest test/test_fyers_feed.py -q` (12 passed).
-- **Commands executed:** `git status --short`; `git rev-parse --abbrev-ref HEAD`; `git rev-parse HEAD`; dependency/doc/source inspection; `python -m pytest test/test_fyers_tbt.py -q`; `python -m pytest test/test_fyers_feed.py -q`.
-- **Exact results:** TBT tests: **52 passed, 1 skipped**. Fyers feed tests: **12 passed**. No live broker/runtime verification performed.
+- **Corrective follow-up (Task A, this session, HEAD `43c7eb5` baseline):**
+  1. Tracked the active receive task (`_active_recv_task`) in `FyersTbtFeed._recv_loop()` so it remains accessible to cleanup on all exit paths (normal completion, internal/caller stop, outer task cancellation, WS/transport errors, unexpected exceptions).
+  2. Ensured `finally` cancels and awaits any pending receive task and gathers task exceptions (via `return_exceptions=True`) to prevent unhandled-task warnings; preserved `asyncio.CancelledError` propagation semantics.
+  3. Reviewed `FyersFeed._stop_tbt_channel()`: child-task cancellation/await/ref cleanup still occur if `feed.stop()` raises; cancellation from `feed.stop()` is propagated after cleanup (straightforward containment + `finally`-style cleanup without changing normal cancellation semantics).
+  4. Added/updated focused tests verifying no receive task remains pending after shutdown (not just outer task/socket state), including outer cancellation while blocked, internal/caller stop while blocked, receive failure, repeated stops, and parent cleanup when child stop is cancelled/raises.
+- **Acceptance criteria:** Satisfied by implementation and mocked tests (idempotent stop; blocked receive interruptible; receive task cleaned up on all covered exit paths; child termination awaited/observed in tested paths; WS closed; cleanup/ref release reliable in tested paths; parent/child shutdown continues on earlier cleanup exception; no new task manager/abstraction). Runtime behavior under real broker/network conditions remains unverified.
+- **Required tests:** `python -m pytest test/test_fyers_tbt.py -q` (72 passed, 1 skipped). `python -m pytest test/test_fyers_feed.py -q` (12 passed). `python -m pytest test/test_architecture_boundaries.py -q` (17 passed).
+- **Commands executed (corrective session):** `git status --short`; `git rev-parse --abbrev-ref HEAD`; `git rev-parse HEAD`; source/test inspection; `python -m pytest test/test_fyers_tbt.py -q`; `python -m pytest test/test_fyers_feed.py -q`; `python -m pytest test/test_architecture_boundaries.py -q`.
+- **Exact results (corrective session):** TBT tests: **72 passed, 1 skipped**. Fyers feed tests: **12 passed**. Architecture boundaries: **17 passed**. No live broker/runtime verification performed.
 - **Failures and unresolved issues:** None in focused/mocked tests. Real-network cancellation timing/WS closure behavior remains runtime-unverified.
-- **Decisions and rationale:** Used existing repo patterns (explicit recv-vs-stop race + socket close/retirement + parent-owned task cancel/await + exception containment) compatible with pinned `websockets>=17,<18`; avoided `async for`-only stop checks and avoided new abstractions.
-- **Next task:** TBT-05 (authentication correction) — completed in this coordinated implementation (see below).
+- **Decisions and rationale:** Minimal tracking of active recv task for deterministic cleanup; preserved existing recv-vs-stop design and pinned `websockets>=17,<18` compatibility; no new abstractions.
+- **Next task:** TBT-05a (symbol propagation/runtime sync) — completed in this corrective session (see below).
 
 ### TBT-05: Authentication correction (implemented)
 - **Status:** DONE
@@ -413,21 +418,23 @@ All tasks are individually numbered. Status must be updated after each task. Do 
 - **Failures and unresolved issues:** Ack semantics unresolved; live protocol/runtime behavior unverified.
 - **Decisions and rationale:** Implement only documented protocol requirements; keep changes localized; preserve existing book/normalizer/MarketService behavior.
 
-### TBT-05a: Propagate desired symbols from FyersFeed to FyersTbtFeed (deferred from original TBT-05 numbering)
-- **Status:** NOT STARTED
-- **Scope:** Minimal code change
-- **Affected files:** `brokers/fyers/feed.py`, `brokers/fyers/tbt/feed.py` (if needed)
+### TBT-05a: Propagate desired symbols from FyersFeed to FyersTbtFeed (implemented, corrective Task B)
+- **Status:** DONE
+- **Scope:** Minimal code change + focused tests + plan update
+- **Affected files:** `brokers/fyers/feed.py`, `brokers/fyers/tbt/feed.py`, `test/test_fyers_tbt.py`, `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`
 - **Dependencies:** TBT-04, TBT-06
-- **Work:**
-  1. When starting TBT channel, pass initial desired symbols (from `FyersFeed._desired`) to `FyersTbtFeed` (via constructor/config or `subscribe`).
-  2. On `FyersFeed.add_instruments`/`remove_instruments`, sync to TBT: only TBT-supported instruments, correct symbol format (`EXCHANGE:SYMBOL`), respect entitlement-aware limits.
-  3. Do not duplicate subscription manager; use existing `FyersTbtFeed.subscribe/unsubscribe`.
-- **Acceptance criteria:**
-  - TBT receives desired symbols on start.
-  - Runtime add/remove syncs to TBT.
-  - Only valid TBT-supported symbols propagated.
-- **Required tests:** Run `python -m pytest test/test_fyers_tbt.py -q`.
-- **Notes:** Original plan listed this as TBT-05; this coordinated implementation completed authentication as **TBT-05** per user authorization and channel protocol as **TBT-06**. Symbol propagation remains required for end-to-end TBT usability but was not part of the three authorized implementation areas.
+- **Work completed:**
+  1. Seeded `FyersTbtFeed` with the parent `FyersFeed`'s current desired instrument set when starting the TBT channel (using existing `subscribe()` so desired state is retained and applied on connect/reconnect).
+  2. Propagated runtime `add_instruments` additions and `remove_instruments` removals to the active TBT feed (desired state retained even if TBT not yet connected; reconnect/resubscribe uses latest desired set).
+  3. Reused existing parent instrument lifecycle and TBT desired-symbol/subscribe-unsubscribe mechanism (no second registry/subscription manager). Preserved existing non-TBT feed behavior.
+  4. Added focused tests for start-with-existing instruments, runtime add/remove sync, add/remove before connection readiness, reconnect restoring latest desired instruments, repeated add/remove without duplicate/inconsistent subscriptions, and non-TBT behavior unchanged.
+- **Acceptance criteria:** Satisfied by implementation and mocked tests for parent/TBT desired-state synchronization and reconnect restoration of latest desired set. TBT-supported instrument eligibility/format filtering and entitlement-aware limit enforcement remain out of scope here and tracked under TBT-07 (and broader eligibility handling as applicable).
+- **Required tests:** `python -m pytest test/test_fyers_tbt.py -q` (72 passed, 1 skipped). `python -m pytest test/test_fyers_feed.py -q` (12 passed).
+- **Commands executed (corrective session):** `python -m pytest test/test_fyers_tbt.py -q`; `python -m pytest test/test_fyers_feed.py -q`; `python -m pytest test/test_architecture_boundaries.py -q`.
+- **Exact results (corrective session):** TBT tests: **72 passed, 1 skipped**. Fyers feed tests: **12 passed**. Architecture boundaries: **17 passed**.
+- **Failures and unresolved issues:** None in focused/mocked tests. Eligibility/entitlement enforcement and live broker/runtime verification remain pending.
+- **Decisions and rationale:** Minimal sync at existing lifecycle points; deduplicated subscribe inputs to avoid duplicate wire/control actions; no new abstractions.
+- **Notes:** Original plan listed this as TBT-05; completed here as corrective Task B / TBT-05a.
 
 ### TBT-07: Enforce entitlement-aware limits (separate channel capacity from entitlements)
 - **Status:** NOT STARTED
@@ -445,75 +452,81 @@ All tasks are individually numbered. Status must be updated after each task. Do 
   - No new global entitlement systems.
 - **Required tests:** Run `python -m pytest test/test_fyers_tbt.py -q`.
 
-### TBT-08: Fix reconnect recovery (invalidate stale books + require fresh snapshots)
-- **Status:** NOT STARTED
-- **Scope:** Minimal code change
-- **Affected files:** `brokers/fyers/tbt/feed.py`, `brokers/fyers/tbt/order_book.py` (if needed)
+### TBT-08: Fix reconnect recovery (invalidate stale books + require fresh snapshots) (implemented, corrective Task C)
+- **Status:** DONE
+- **Scope:** Minimal code change + focused tests + plan update
+- **Affected files:** `brokers/fyers/tbt/feed.py`, `brokers/fyers/tbt/order_book.py`, `test/test_fyers_tbt.py`, `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`
 - **Dependencies:** TBT-04, TBT-05a, TBT-06
-- **Work:**
-  1. On reconnect/disconnect/sequence gaps, invalidate all stale order books (`OrderBookStore.invalidate_all()` or per-symbol).
-  2. Require fresh snapshots before treating depth as valid (do not apply deltas to stale books).
-  3. Resubscribe after invalidation as appropriate.
-  4. Preserve existing snapshot/delta parsing/normalizer behavior.
-- **Acceptance criteria:**
-  - Stale books invalidated on reconnect/gaps.
-  - Depth only treated valid after fresh snapshot.
-  - No changes to normalizer/order book core logic beyond necessary invalidation.
-- **Required tests:** Run `python -m pytest test/test_fyers_tbt.py -q`.
-- **Notes:** Sequence-gap invalidation/resubscribe+resume and reconnect resubscribe+resume are implemented; full reconnect book invalidation/fresh-snapshot gating policy should be verified/completed as needed.
+- **Work completed:**
+  1. Added explicit book state distinguishing uninitialized/invalidated-awaiting-snapshot from snapshot-initialized valid state (`awaiting_snapshot`); `invalidate()` requires a fresh snapshot and `apply_snapshot()` (re)establishes validity/sequence.
+  2. Enforced fresh-snapshot gating in `FyersTbtFeed._process_feed()`: snapshots (re)initialize and may publish; deltas are rejected (not applied/published) when awaiting snapshot or on sequence gap, with invalidation and resubscribe/recovery as appropriate.
+  3. Applied consistently to initial/uninitialized books, explicit invalidation, sequence-gap recovery, and reconnect recovery paths (reconnect cleanup invalidates books; new session must receive fresh snapshots before deltas publish).
+  4. Preserved existing snapshot/delta parsing, normalizer, and core order-book reconstruction semantics; updated existing sequence-check tests to reflect corrected delta-vs-snapshot semantics (not weakened).
+  5. Added focused tests for delta before initial snapshot, delta after invalidation, delta after sequence gap, delta during reconnect recovery, fresh snapshot restore permitting subsequent deltas, invalid snapshot not restoring validity, and no incomplete publish while awaiting snapshot.
+- **Acceptance criteria:** Satisfied by implementation and mocked tests. Runtime/live broker behavior remains unverified.
+- **Required tests:** `python -m pytest test/test_fyers_tbt.py -q` (72 passed, 1 skipped). `python -m pytest test/test_fyers_feed.py -q` (12 passed). `python -m pytest test/test_architecture_boundaries.py -q` (17 passed).
+- **Commands executed (corrective session):** `python -m pytest test/test_fyers_tbt.py -q`; `python -m pytest test/test_fyers_feed.py -q`; `python -m pytest test/test_architecture_boundaries.py -q`.
+- **Exact results (corrective session):** TBT tests: **72 passed, 1 skipped**. Fyers feed tests: **12 passed**. Architecture boundaries: **17 passed**.
+- **Failures and unresolved issues:** None in focused/mocked tests. Live broker/runtime verification pending.
+- **Decisions and rationale:** Minimal explicit validity state and feed-level gating to prevent publishing incomplete depth; snapshots remain authoritative reinitialization points.
 
 ### TBT-09: Verification & regression
 - **Status:** IN PROGRESS (partial)
 - **Scope:** Verification only
 - **Affected files:** None (or test files only if fixes needed)
-- **Dependencies:** TBT-04, TBT-05, TBT-06 (and remaining tasks as applicable)
-- **Work completed (this session):**
+- **Dependencies:** TBT-04, TBT-05, TBT-06, TBT-05a, TBT-08 (and remaining tasks as applicable)
+- **Work completed (prior session):**
   1. Ran TBT tests: `python -m pytest test/test_fyers_tbt.py -q` → **52 passed, 1 skipped**.
   2. Ran FYERS feed regression: `python -m pytest test/test_fyers_feed.py -q` → **12 passed**.
-  3. Reviewed diff scope (FYERS TBT/feed + focused tests + plan only).
+  3. Ran architecture boundaries: `python -m pytest test/test_architecture_boundaries.py -q` → **17 passed**.
+- **Work completed (corrective session, HEAD `43c7eb5` baseline):**
+  1. Ran TBT tests: `python -m pytest test/test_fyers_tbt.py -q` → **72 passed, 1 skipped**.
+  2. Ran FYERS feed regression: `python -m pytest test/test_fyers_feed.py -q` → **12 passed**.
+  3. Ran architecture boundaries: `python -m pytest test/test_architecture_boundaries.py -q` → **17 passed**.
+  4. Reviewed diff scope (FYERS TBT/feed + order book + focused tests + plan only).
 - **Remaining work:**
-  1. Run broader relevant suite as needed (e.g. source-manager/architecture boundaries and other FYERS-related tests) and record results.
-  2. Complete remaining TBT tasks (symbol propagation, entitlement limits, reconnect recovery hardening) and re-verify.
-- **Acceptance criteria:** Not fully satisfied (remaining tasks/verification pending).
+  1. Run broader relevant suite as needed (e.g. source-manager and other FYERS-related tests) and record results.
+  2. Complete TBT-07 (entitlement-aware limits) and perform runtime verification with approved credentials/environment when available.
+- **Acceptance criteria:** Not fully satisfied (TBT-07 and live/runtime verification pending).
 - **Required tests:** As above.
 
 ---
 
 ## 5) Task Tracking Protocol (MANDATORY)
 
-- **Single source of truth:** This file.  
-- **Statuses:** `NOT STARTED`, `IN PROGRESS`, `BLOCKED`, `DONE`.  
-- **After every individual task:** Immediately update this plan on disk before starting the next task.  
-- **Each update must record:** What was completed, files changed, commands and tests executed, exact results, failures and unresolved issues, decisions and rationale, next task.  
-- **No batching:** Do not mark multiple tasks DONE at once.  
-- **No partial DONE:** Do not mark partially completed work as DONE.  
+- **Single source of truth:** This file.
+- **Statuses:** `NOT STARTED`, `IN PROGRESS`, `BLOCKED`, `DONE`.
+- **After every individual task:** Immediately update this plan on disk before starting the next task.
+- **Each update must record:** What was completed, files changed, commands and tests executed, exact results, failures and unresolved issues, decisions and rationale, next task.
+- **No batching:** Do not mark multiple tasks DONE at once.
+- **No partial DONE:** Do not mark partially completed work as DONE.
 - **End of session:** Reconcile plan against actual Git working tree and leave next task clearly identified.
 
 ---
 
 ## 6) Constraints & Guardrails
 
-- **Plan-revision only now:** No implementation until explicit approval. This document is the revised plan.  
-- **Preserve existing work:** Do not overwrite/discard unrelated files (including `docs/performance/`).  
-- **Protected zones:** Do not modify `app/auth/*`, credential storage, startup restoration, broker login/OAuth, session persistence without explicit approval.  
-- **Architecture:** Reuse existing abstractions. No second subscription manager, no duplicate depth store, no new deps/global config/entitlement systems.  
-- **Behavior:** Preserve snapshot/delta parsing, normalizer, `OrderBookStore`, `MarketService` behavior.  
-- **Scope:** FYERS TBT only. No unrelated HSM/Upstox/API/frontend/startup changes.  
-- **Git:** No commits/pushes/merges/rebases/branch operations unless explicitly requested/approved.  
+- **Plan-revision only now:** No implementation until explicit approval. This document is the revised plan.
+- **Preserve existing work:** Do not overwrite/discard unrelated files (including `docs/performance/`).
+- **Protected zones:** Do not modify `app/auth/*`, credential storage, startup restoration, broker login/OAuth, session persistence without explicit approval.
+- **Architecture:** Reuse existing abstractions. No second subscription manager, no duplicate depth store, no new deps/global config/entitlement systems.
+- **Behavior:** Preserve snapshot/delta parsing, normalizer, `OrderBookStore`, `MarketService` behavior.
+- **Scope:** FYERS TBT only. No unrelated HSM/Upstox/API/frontend/startup changes.
+- **Git:** No commits/pushes/merges/rebases/branch operations unless explicitly requested/approved.
 - **Boundaries:** Follow `docs/ARCHITECTURE_BOUNDARIES.md` and `AGENTS.md`. Run `pytest test/test_architecture_boundaries.py` and keep green.
 
 ---
 
 ## 7) Current State
 
-- **Plan file:** `docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (updated through coordinated implementation of TBT-04/05/06)  
-- **Git:** `review/scanner-phase1` at `bab6d1a7869ad8aeb7a2431e32e997596adbce90` (unchanged)  
-- **Working tree (reconciled):** `?? docs/performance/` (pre-existing, preserved), `?? docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (updated), modified `brokers/fyers/tbt/feed.py`, modified `brokers/fyers/feed.py`, modified `test/test_fyers_tbt.py`. No other files changed.  
-- **Implemented (this session):** TBT-04 deterministic shutdown/task lifecycle, TBT-05 TBT WebSocket authentication correction (`appId:accessToken`) with app_id wiring from existing owner and canonical raw token preserved, TBT-06 type-2 channel resume/pause integrated with subscribe/resubscribe/reconnect/sequence-gap recovery. Focused mocked tests added/updated.  
-- **Remaining gaps:** TBT-05a symbol propagation/runtime sync from parent feed, TBT-07 entitlement-aware limits (separate channel capacity vs entitlements), TBT-08 reconnect recovery hardening (fresh-snapshot gating/invalidation policy verification), TBT-09 full regression/architecture-boundary verification.  
-- **Explicit issues/uncertainties (tracked):** (1) Dynamic URL discovery endpoint (`https://api-t1.fyers.in/indus/home/tbtws`) auth contract/necessity remains **UNRESOLVED** (official docs fetched do not document it); existing raw-token header behavior preserved. (2) Server acknowledgement semantics for subscribe/resume remain **UNRESOLVED** (not invented). (3) Runtime/live broker behavior (auth acceptance, protocol flow, reconnect timing, cancellation-while-blocked under real network) **not verified** (mocked tests only). (4) Symbol eligibility/entitlement enforcement and end-to-end symbol propagation not completed.  
-- **TBT-01/02/03 outcomes:** Preserved (see §2, §9, §10).  
-- **TBT-04/05/06 outcomes:** Implemented and tested with mocks; see task entries and §11.
+- **Plan file:** `docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (updated through corrective implementation of TBT-04 follow-up, TBT-05a, TBT-08)
+- **Git:** `review/scanner-phase1` at `43c7eb5e60ad828c4aab6fd3e5765115df6dce06` (HEAD unchanged this session; working tree has uncommitted corrective changes)
+- **Working tree (reconciled):** `?? docs/performance/` (pre-existing, preserved), modified `brokers/fyers/feed.py`, modified `brokers/fyers/tbt/feed.py`, modified `brokers/fyers/tbt/order_book.py`, modified `test/test_fyers_tbt.py`, modified `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`. No other files changed.
+- **Implemented (corrective session):** Task A/TBT-04 follow-up (receive-task cancellation cleanup on all `_recv_loop` exit paths, including outer cancellation; parent stop cleanup reviewed), Task B/TBT-05a (parent instrument lifecycle synchronized with TBT desired subscriptions/start/add/remove/reconnect), Task C/TBT-08 (fresh snapshot required after invalidation/uninitialized state; deltas rejected/not published until snapshot reinitializes). Focused mocked tests added/updated.
+- **Remaining gaps:** TBT-07 entitlement-aware limits (separate channel capacity vs entitlements), TBT-09 full regression/runtime verification.
+- **Explicit issues/uncertainties (tracked):** (1) Dynamic URL discovery endpoint (`https://api-t1.fyers.in/indus/home/tbtws`) auth contract/necessity remains **UNRESOLVED** (preserved). (2) Server acknowledgement semantics for subscribe/resume remain **UNRESOLVED**. (3) Runtime/live broker behavior **not verified** (mocked tests only). (4) Symbol eligibility/entitlement enforcement not completed (TBT-07).
+- **TBT-01/02/03/04/05/06 outcomes:** Preserved/extended (see §2, §9, §10, §11, §12).
+- **TBT-05a/08 outcomes:** Implemented and tested with mocks; see task entries and §12.
 
 ---
 
@@ -522,12 +535,12 @@ All tasks are individually numbered. Status must be updated after each task. Do 
 1. **TBT-01: Audit & reconcile protocol/URL/auth — DONE**
 2. **TBT-02: Verify method signatures & lifecycle contracts — DONE (corrected)**
 3. **TBT-03: Investigate FYERS TBT protocol and lifecycle integration (auth, channel resume, shutdown) — DONE** (investigation/documentation only)
-4. **TBT-04: Deterministic shutdown and task lifecycle — DONE** (implemented + mocked tests)
+4. **TBT-04: Deterministic shutdown and task lifecycle — DONE** (implemented + corrective recv-task cleanup; mocked tests)
 5. **TBT-05: Authentication correction (TBT WS `appId:accessToken`) — DONE** (implemented + mocked tests; dynamic URL auth contract preserved/unresolved)
 6. **TBT-06: Channel subscription and resume protocol (type-2) — DONE** (implemented + mocked tests)
-7. **TBT-05a: Propagate desired symbols from FyersFeed to FyersTbtFeed — NOT STARTED** (deferred; required for end-to-end usability)
-8. **TBT-07: Enforce entitlement-aware limits — NOT STARTED**
-9. **TBT-08: Fix reconnect recovery (invalidate stale books + require fresh snapshots) — NOT STARTED** (partially addressed; needs verification/completion)
+7. **TBT-05a: Propagate desired symbols from FyersFeed to FyersTbtFeed — DONE** (corrective Task B; mocked tests)
+8. **TBT-08: Fix reconnect recovery (invalidate stale books + require fresh snapshots) — DONE** (corrective Task C; mocked tests)
+9. **TBT-07: Enforce entitlement-aware limits — NOT STARTED**
 10. **TBT-09: Verification & regression — IN PROGRESS (partial)**
 
 **Dependency notes:**
@@ -535,26 +548,26 @@ All tasks are individually numbered. Status must be updated after each task. Do 
 - **Server acknowledgement semantics** for subscribe/resume remain **UNRESOLVED**.
 - **Live broker/runtime verification** not performed.
 
-**Next task:** TBT-05a (symbol propagation/runtime sync) or TBT-09 broader regression/architecture checks, as prioritized — requires explicit approval for further implementation scope beyond this coordinated delivery.
+**Next task:** TBT-07 (entitlement-aware limits) or TBT-09 broader regression/runtime verification, as prioritized. No Git history operations performed.
 
 ---
 
 ## 9) TBT-03 Completion Record (this session)
 
-1. **Exact plan path:** `D:\Temp\MarketHub\docs\plans\2026-11-10-fyers-tbt-integration-plan.md`  
-2. **Git branch and HEAD:** `review/scanner-phase1` @ `bab6d1a7869ad8aeb7a2431e32e997596adbce90` (unchanged)  
-3. **Files changed:** `docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (TBT-03 investigation/documentation update only). No application code, tests, dependencies, config, or DB changes.  
-4. **Inspected files (source/docs):** `brokers/fyers/tbt/feed.py`, `brokers/fyers/feed.py`, `brokers/fyers/auth.py`, `app/fyers_runtime_auth.py`, `app/auth/fyers.py`, `sources/__init__.py`, `brokers/upstox/feed.py`, `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`.  
-5. **Commands/tests executed:** Read-only inspection only: `git status --short`, `git rev-parse --abbrev-ref HEAD`, `git rev-parse HEAD`, file reads/grep for auth/token flow, protocol handling, lifecycle/call sites, and comparable feed patterns. **No tests run. No runtime/broker/network actions. No service restarts.**  
-6. **Findings recorded (§2.10):**  
-   - **TBT-03.1 (Auth):** Raw runtime access token flows unchanged to TBT and is sent as `Authorization` for dynamic URL fetch and WS connect; official TBT WS requires `<appId:accessToken>`; app_id available in existing owners but not used by TBT; no existing TBT formatter; dynamic URL auth contract unverified/distinct.  
-   - **TBT-03.2 (Channel resume):** Type-2 `resumeChannels`/`pauseChannels` required by docs but not implemented (type-1 only); channel allocation/retention and reconnect/resubscribe interactions documented; ack semantics unresolved.  
-   - **TBT-03.3 (Shutdown/task ownership):** Parent/child ownership and shared stop event confirmed; missing `FyersTbtFeed.stop()` and parent call-order exception risk confirmed; normal/cancellation/cleanup paths documented; minimal correction should follow existing lifecycle patterns without new abstractions.  
-7. **Status reconciliation:** TBT-03 marked **DONE (investigation/documentation only)**. No implementation marked complete.  
-8. **Explicit issues/dependencies:** WS auth-format discrepancy (and separate dynamic URL auth verification) remains a dependency for authenticated TBT connectivity; type-2 resume is a confirmed required gap.  
-9. **Remaining uncertainties:** Dynamic URL discovery auth contract/mandate; runtime effect of WS auth header construction; server acknowledgement semantics; runtime shutdown/exception consequences (not tested).  
-10. **Plan reconciliation (working tree):** `?? docs/performance/` (pre-existing, preserved), `?? docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (updated). No other files changed.  
-11. **Next task:** **TBT-04 — Add idempotent shutdown to FyersTbtFeed** (NOT STARTED) or a dedicated auth-resolution implementation task, as prioritized. **Not started.**  
+1. **Exact plan path:** `D:\Temp\MarketHub\docs\plans\2026-11-10-fyers-tbt-integration-plan.md`
+2. **Git branch and HEAD:** `review/scanner-phase1` @ `bab6d1a7869ad8aeb7a2431e32e997596adbce90` (unchanged)
+3. **Files changed:** `docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (TBT-03 investigation/documentation update only). No application code, tests, dependencies, config, or DB changes.
+4. **Inspected files (source/docs):** `brokers/fyers/tbt/feed.py`, `brokers/fyers/feed.py`, `brokers/fyers/auth.py`, `app/fyers_runtime_auth.py`, `app/auth/fyers.py`, `sources/__init__.py`, `brokers/upstox/feed.py`, `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`.
+5. **Commands/tests executed:** Read-only inspection only: `git status --short`, `git rev-parse --abbrev-ref HEAD`, `git rev-parse HEAD`, file reads/grep for auth/token flow, protocol handling, lifecycle/call sites, and comparable feed patterns. **No tests run. No runtime/broker/network actions. No service restarts.**
+6. **Findings recorded (§2.10):**
+   - **TBT-03.1 (Auth):** Raw runtime access token flows unchanged to TBT and is sent as `Authorization` for dynamic URL fetch and WS connect; official TBT WS requires `<appId:accessToken>`; app_id available in existing owners but not used by TBT; no existing TBT formatter; dynamic URL auth contract unverified/distinct.
+   - **TBT-03.2 (Channel resume):** Type-2 `resumeChannels`/`pauseChannels` required by docs but not implemented (type-1 only); channel allocation/retention and reconnect/resubscribe interactions documented; ack semantics unresolved.
+   - **TBT-03.3 (Shutdown/task ownership):** Parent/child ownership and shared stop event confirmed; missing `FyersTbtFeed.stop()` and parent call-order exception risk confirmed; normal/cancellation/cleanup paths documented; minimal correction should follow existing lifecycle patterns without new abstractions.
+7. **Status reconciliation:** TBT-03 marked **DONE (investigation/documentation only)**. No implementation marked complete.
+8. **Explicit issues/dependencies:** WS auth-format discrepancy (and separate dynamic URL auth verification) remains a dependency for authenticated TBT connectivity; type-2 resume is a confirmed required gap.
+9. **Remaining uncertainties:** Dynamic URL discovery auth contract/mandate; runtime effect of WS auth header construction; server acknowledgement semantics; runtime shutdown/exception consequences (not tested).
+10. **Plan reconciliation (working tree):** `?? docs/performance/` (pre-existing, preserved), `?? docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (updated). No other files changed.
+11. **Next task:** **TBT-04 — Add idempotent shutdown to FyersTbtFeed** (NOT STARTED) or a dedicated auth-resolution implementation task, as prioritized. **Not started.**
 12. **Confirmations:** Investigation/documentation only. No application/source/test/config/dependency/DB changes. No auth/URL/protocol changes. No broker login/OAuth/WebSocket connections. No runtime testing. No credential access or token exposure. No Git staging/commits/pushes/merges/rebases/resets/branch operations. All existing modified/untracked files preserved.
 
 **Status:** Stopped after TBT-03. Awaiting explicit approval to begin TBT-04 or any implementation.
@@ -563,22 +576,22 @@ All tasks are individually numbered. Status must be updated after each task. Do 
 
 ## 10) TBT-03 Follow-up Completion Record (shutdown lifecycle correction, this session)
 
-1. **Exact plan path:** `D:\Temp\MarketHub\docs\plans\2026-11-10-fyers-tbt-integration-plan.md`  
-2. **Git branch and HEAD:** `review/scanner-phase1` @ `bab6d1a7869ad8aeb7a2431e32e997596adbce90` (unchanged)  
-3. **Files changed:** `docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (shutdown lifecycle correction/documentation only). No application code, tests, dependencies, config, or DB changes.  
-4. **Inspected files (source/docs):** `brokers/fyers/tbt/feed.py`, `brokers/fyers/feed.py`, `sources/__init__.py`, `brokers/upstox/feed.py`, `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`.  
-5. **Commands/tests executed:** Read-only inspection only: `git status --short`, `git rev-parse --abbrev-ref HEAD`, `git rev-parse HEAD`, file reads. **No tests run. No runtime/broker/network actions. No service restarts.**  
-6. **Corrections made:**  
-   - Re-verified and documented actual receive-loop behavior (`async for message in ws` with in-loop stop-event check only).  
-   - Corrected plan to state stop-event signalling does **not** by itself interrupt a blocked WebSocket receive; prompt exit on stop while blocked cannot be assumed.  
-   - Documented that parent task cancellation does **not** automatically cancel the separately created TBT child task.  
-   - Documented that `_stop_tbt_channel()` can skip child cancellation/await/ref cleanup because it calls missing `FyersTbtFeed.stop()` first without containment.  
-   - Distinguished stop-event signalling, blocked-receive interruption, child-task cancellation, awaiting termination, and cleanup/ref release; marked cancellation-while-blocked WS/cleanup behavior as **UNRESOLVED** (not runtime-tested).  
-   - Updated minimal lifecycle recommendation (grounded in existing repo patterns) and added explicit future implementation acceptance criteria/focused tests for TBT-04.  
-7. **Status reconciliation:** TBT-03 remains **DONE (investigation/documentation only)**; follow-up correction recorded. No implementation marked complete.  
-8. **Remaining uncertainties:** Runtime behavior when stop/cancellation occurs while receive is blocked (promptness, WS context-manager closure, cleanup completion) remains **UNRESOLVED** (not tested). Prior unresolved items (dynamic URL auth contract, WS auth runtime effect, server ack semantics) unchanged.  
-9. **Plan reconciliation (working tree):** `?? docs/performance/` (pre-existing, preserved), `?? docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (updated). No other files changed.  
-10. **Next task:** **TBT-04 — Add idempotent shutdown to FyersTbtFeed** (NOT STARTED) or a dedicated auth-resolution implementation task, as prioritized. **Not started.**  
+1. **Exact plan path:** `D:\Temp\MarketHub\docs\plans\2026-11-10-fyers-tbt-integration-plan.md`
+2. **Git branch and HEAD:** `review/scanner-phase1` @ `bab6d1a7869ad8aeb7a2431e32e997596adbce90` (unchanged)
+3. **Files changed:** `docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (shutdown lifecycle correction/documentation only). No application code, tests, dependencies, config, or DB changes.
+4. **Inspected files (source/docs):** `brokers/fyers/tbt/feed.py`, `brokers/fyers/feed.py`, `sources/__init__.py`, `brokers/upstox/feed.py`, `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`.
+5. **Commands/tests executed:** Read-only inspection only: `git status --short`, `git rev-parse --abbrev-ref HEAD`, `git rev-parse HEAD`, file reads. **No tests run. No runtime/broker/network actions. No service restarts.**
+6. **Corrections made:**
+   - Re-verified and documented actual receive-loop behavior (`async for message in ws` with in-loop stop-event check only).
+   - Corrected plan to state stop-event signalling does **not** by itself interrupt a blocked WebSocket receive; prompt exit on stop while blocked cannot be assumed.
+   - Documented that parent task cancellation does **not** automatically cancel the separately created TBT child task.
+   - Documented that `_stop_tbt_channel()` can skip child cancellation/await/ref cleanup because it calls missing `FyersTbtFeed.stop()` first without containment.
+   - Distinguished stop-event signalling, blocked-receive interruption, child-task cancellation, awaiting termination, and cleanup/ref release; marked cancellation-while-blocked WS/cleanup behavior as **UNRESOLVED** (not runtime-tested).
+   - Updated minimal lifecycle recommendation (grounded in existing repo patterns) and added explicit future implementation acceptance criteria/focused tests for TBT-04.
+7. **Status reconciliation:** TBT-03 remains **DONE (investigation/documentation only)**; follow-up correction recorded. No implementation marked complete.
+8. **Remaining uncertainties:** Runtime behavior when stop/cancellation occurs while receive is blocked (promptness, WS context-manager closure, cleanup completion) remains **UNRESOLVED** (not tested). Prior unresolved items (dynamic URL auth contract, WS auth runtime effect, server ack semantics) unchanged.
+9. **Plan reconciliation (working tree):** `?? docs/performance/` (pre-existing, preserved), `?? docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (updated). No other files changed.
+10. **Next task:** **TBT-04 — Add idempotent shutdown to FyersTbtFeed** (NOT STARTED) or a dedicated auth-resolution implementation task, as prioritized. **Not started.**
 11. **Confirmations:** Documentation only. No application/source/test/config/dependency/DB changes. No auth/URL/protocol changes. No broker login/OAuth/WebSocket connections. No runtime testing. No credential access or token exposure. No Git staging/commits/pushes/merges/rebases/resets/branch operations. All existing modified/untracked files preserved.
 
 **Status:** Stopped after TBT-03 follow-up correction. Awaiting explicit approval to begin TBT-04 or any implementation.
@@ -594,17 +607,17 @@ All tasks are individually numbered. Status must be updated after each task. Do 
 - **Authorized scope respected:** FYERS TBT implementation + parent TBT wiring + focused tests + canonical plan only. No canonical token storage/OAuth/login/credential persistence/session restoration redesign; no unrelated providers; no new dependencies; no DB/config schema changes; no Git history operations; existing untracked/modified user files preserved.
 
 ### 11.2 Online research / references consulted (and behavior established)
-- **FYERS TBT Connection (official):** https://fyers.in/api-docs/v3/api/websockets/tick-by-tick-socket/overview/tbt-websocket-connection/  
+- **FYERS TBT Connection (official):** https://fyers.in/api-docs/v3/api/websockets/tick-by-tick-socket/overview/tbt-websocket-connection/
   - Establishes TBT WS endpoint `wss://rtsocket-api.fyers.in/versova` and header `Authorization: <appId:accessToken>`; snapshot-first then diffs; server errors via error response/callback semantics noted.
-- **FYERS TBT Channels and Message Types (official):** https://fyers.in/api-docs/v3/api/websockets/tick-by-tick-socket/overview/concept-of-channels/  
+- **FYERS TBT Channels and Message Types (official):** https://fyers.in/api-docs/v3/api/websockets/tick-by-tick-socket/overview/concept-of-channels/
   - Establishes type-1 subscribe/unsubscribe (`subs` 1/-1, `mode:"depth"`, channel string), type-2 switch-channel `{"type":2,"data":{"resumeChannels":[...],"pauseChannels":[...]}}` required to start stream, channel string IDs, 50 channels/connection, protobuf responses/snapshot flag/error fields.
-- **FYERS WebSocket authentication notice (official):** https://fyers.in/notice-board/mandatory-websocket-authentication-from-30-september-2026  
+- **FYERS WebSocket authentication notice (official):** https://fyers.in/notice-board/mandatory-websocket-authentication-from-30-september-2026
   - Establishes mandatory valid access token for WS connections and `app_id:access_token` format guidance (official SDK/custom implementations).
-- **FYERS Plans & Limits (official):** https://fyers.in/api-docs/v3/getting-started/plans-and-limits/  
+- **FYERS Plans & Limits (official):** https://fyers.in/api-docs/v3/getting-started/plans-and-limits/
   - Establishes TBT symbol limits per user across connections (Standard 1, Prime 15) and related plan context (entitlement enforcement not fully implemented in this session).
-- **websockets asyncio connection docs (stable, consulted):** https://websockets.readthedocs.io/en/stable/reference/asyncio/connection.html  
+- **websockets asyncio connection docs (stable, consulted):** https://websockets.readthedocs.io/en/stable/reference/asyncio/connection.html
   - Establishes `recv()`/`close()`/`wait_closed()` behavior and cancellation guidance; implementation chosen to be compatible with pinned project dependency `websockets>=17,<18` (from `requirements.txt`) using explicit recv-vs-stop race and socket close for prompt interruption.
-- **Python asyncio task docs (consulted):** https://docs.python.org/3/library/asyncio-task.html  
+- **Python asyncio task docs (consulted):** https://docs.python.org/3/library/asyncio-task.html
   - Task cancellation/awaiting semantics informed exception-safe shutdown design.
 - **Official FYERS SDK behavior:** Not directly inspected as installed package source in-session; official docs/notice-board used as primary protocol/auth evidence. SDK mentioned in repo/docs as reference only; no SDK code copied/replaced MarketHub architecture.
 - **Dynamic URL discovery endpoint:** `https://api-t1.fyers.in/indus/home/tbtws` exists in current implementation but was **not documented** in fetched official pages above; contract/necessity/auth format **UNRESOLVED** (preserved existing behavior).
@@ -640,3 +653,62 @@ All tasks are individually numbered. Status must be updated after each task. Do 
 - **Exact files changed:** `brokers/fyers/tbt/feed.py` (shutdown/auth/channel protocol/lifecycle), `brokers/fyers/feed.py` (TBT wiring app_id + robust child stop/cancel/await), `test/test_fyers_tbt.py` (focused tests + fixture compatibility), `docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (plan/status/records).
 - **Git diff stat:** `3 files changed, 887 insertions(+), 102 deletions(-)` (plus untracked plan/performance preserved).
 - **Confirmations:** No Git staging/commit/push/merge/rebase/reset/branch switch performed. No unrelated files modified/deleted/renamed. Existing untracked/modified user files preserved. No live broker connections or real credentials used. No dependencies/config/DB/credential storage/auth-startup foundation changes.
+
+---
+
+## 12) Corrective Implementation Record (Tasks A/B/C, this session)
+
+### 12.1 Baseline and scope
+- **Branch/HEAD (verified):** `review/scanner-phase1` @ `43c7eb5e60ad828c4aab6fd3e5765115df6dce06` (unchanged this session).
+- **Working tree (before):** `?? docs/performance/` only.
+- **Working tree (after):** `?? docs/performance/` (preserved), modified `brokers/fyers/feed.py`, modified `brokers/fyers/tbt/feed.py`, modified `brokers/fyers/tbt/order_book.py`, modified `test/test_fyers_tbt.py`, modified `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`.
+- **Authorized scope respected:** FYERS TBT/feed implementation, order-book lifecycle, focused tests, and canonical plan only. No auth/startup foundation, credential storage/token persistence/OAuth/login/session restoration, unrelated providers, DB/config schema, or dependency changes. No live broker operations/credentials. No Git history operations, staging, commits, or pushes.
+
+### 12.2 Task A — Complete TBT receive-task cancellation cleanup (TBT-04 corrective follow-up)
+- **Status:** DONE
+- **Actual implementation changes:** Tracked active receive task in `FyersTbtFeed._recv_loop()` (`_active_recv_task`) so cleanup can access it on all exit paths (normal receive completion, internal/caller stop, outer task cancellation, WS/transport errors, unexpected exceptions). `finally` cancels/awaits any pending receive task and gathers exceptions to avoid unhandled-task warnings; `asyncio.CancelledError` semantics preserved. Reviewed `FyersFeed._stop_tbt_channel()` to ensure child-task cancellation/await/ref cleanup still occur if `feed.stop()` raises or is cancelled (cleanup contained, cancellation propagated after cleanup).
+- **Exact files changed:** `brokers/fyers/tbt/feed.py`, `brokers/fyers/feed.py`, `test/test_fyers_tbt.py`.
+- **Tests added/modified:** Added `TestTBTCorrectiveTaskA` covering outer cancellation while `ws.recv()` blocked, internal stop while blocked, caller stop while blocked, websocket receive failure, repeated stop calls, and parent cleanup when child stop is cancelled/raises; tests verify no receive task remains pending (`_active_recv_task` cleared/done) in covered paths.
+- **Commands executed:** `python -m pytest test/test_fyers_tbt.py -q`; `python -m pytest test/test_fyers_feed.py -q`; `python -m pytest test/test_architecture_boundaries.py -q`.
+- **Results:** TBT **72 passed, 1 skipped**; FYERS feed **12 passed**; architecture boundaries **17 passed**.
+- **Decisions/deviations:** Added minimal `_active_recv_task` tracking attribute for deterministic cleanup/verification (no new abstraction/framework). Existing WS auth and type-2 channel resume behavior unchanged.
+- **Remaining limitations:** Real-network cancellation timing/closure behavior not runtime-verified.
+
+### 12.3 Task B — Synchronize parent instrument lifecycle with TBT subscriptions (TBT-05a)
+- **Status:** DONE
+- **Actual implementation changes:** Seeded TBT feed with parent `FyersFeed._desired` on TBT start (via existing `subscribe()` so desired state retained/applied on connect). Propagated runtime `add_instruments` additions and `remove_instruments` removals to active TBT feed (desired state retained before connection readiness; reconnect/resubscribe uses latest desired set). Reused existing parent lifecycle and TBT desired-symbol mechanism (no second registry/subscription manager). Deduplicated subscribe inputs to avoid duplicate wire/control actions. Preserved existing non-TBT feed behavior.
+- **Exact files changed:** `brokers/fyers/feed.py`, `brokers/fyers/tbt/feed.py`, `test/test_fyers_tbt.py`.
+- **Tests added/modified:** Added `TestTBTCorrectiveTaskB` covering TBT start with instruments already registered in parent feed, runtime add/remove sync, add/remove before TBT connection readiness, reconnection restoring latest desired instruments, repeated add/remove without duplicate/inconsistent subscriptions, and existing non-TBT feed behavior unchanged. Updated existing sequence-gap recovery test to use delta-gap input consistent with corrected snapshot semantics.
+- **Commands executed:** `python -m pytest test/test_fyers_tbt.py -q`; `python -m pytest test/test_fyers_feed.py -q`; `python -m pytest test/test_architecture_boundaries.py -q`.
+- **Results:** TBT **72 passed, 1 skipped**; FYERS feed **12 passed**; architecture boundaries **17 passed**.
+- **Decisions/deviations:** Synced parent desired instruments to TBT without adding eligibility/entitlement filtering (TBT-07 and dynamic URL auth remain out of scope/unresolved as specified).
+- **Remaining limitations:** TBT-supported instrument eligibility/format validation and entitlement-aware limits not enforced (TBT-07). Live broker/runtime verification pending.
+
+### 12.4 Task C — Require a fresh snapshot after order-book invalidation (TBT-08)
+- **Status:** DONE
+- **Actual implementation changes:** Added explicit `LocalOrderBook.awaiting_snapshot` state (initial/uninitialized and invalidated-awaiting-snapshot vs snapshot-initialized valid). `invalidate()` requires fresh snapshot; `apply_snapshot()` reinitializes validity/sequence; `check_sequence()` rejects deltas when awaiting snapshot or on gaps. `FyersTbtFeed._process_feed()` now accepts snapshots as (re)initialization points, rejects/applies-no-publish for deltas when awaiting snapshot or sequence-invalid, invalidates and triggers resubscribe/recovery as appropriate, and publishes only valid snapshot-initialized book state. Applied consistently to initial connection, reconnect recovery, sequence gaps, and explicit invalidation paths.
+- **Exact files changed:** `brokers/fyers/tbt/order_book.py`, `brokers/fyers/tbt/feed.py`, `test/test_fyers_tbt.py`.
+- **Tests added/modified:** Added `TestTBTCorrectiveTaskC` covering delta before initial snapshot, delta after explicit invalidation, delta after sequence gap, delta during reconnect recovery, fresh snapshot restore permitting subsequent valid deltas, invalid snapshot not restoring validity, and no incomplete order book published while awaiting snapshot. Updated existing sequence-check tests (`test_tbt10_sequence_gap_detected`, `test_order_book_sequence_check`) to reflect corrected delta-vs-snapshot semantics (not weakened).
+- **Commands executed:** `python -m pytest test/test_fyers_tbt.py -q`; `python -m pytest test/test_fyers_feed.py -q`; `python -m pytest test/test_architecture_boundaries.py -q`.
+- **Results:** TBT **72 passed, 1 skipped**; FYERS feed **12 passed**; architecture boundaries **17 passed**.
+- **Decisions/deviations:** Preserved existing snapshot/delta parsing, normalizer, and core book reconstruction; minimal gating added to prevent publishing incomplete depth. Existing WS auth and type-2 channel resume behavior unchanged.
+- **Remaining limitations:** Live broker/runtime verification pending.
+
+### 12.5 Verification summary (executed this session)
+- `python -m pytest test/test_fyers_tbt.py -q` → **72 passed, 1 skipped**
+- `python -m pytest test/test_fyers_feed.py -q` → **12 passed**
+- `python -m pytest test/test_architecture_boundaries.py -q` → **17 passed**
+- No live broker operations or real credentials used. No additional directly relevant test suites identified/executed beyond the above.
+
+### 12.6 Remaining blockers and limitations
+- **TBT-07:** entitlement and plan-limit handling not implemented (out of scope).
+- **Dynamic URL discovery auth contract:** remains **UNRESOLVED**; existing behavior preserved.
+- **Server subscribe/resume acknowledgement semantics:** **UNRESOLVED** (not invented).
+- **Live broker/runtime verification:** not performed.
+- **TBT-09:** broader regression/runtime verification pending.
+
+### 12.7 Confirmations
+- Existing untracked files preserved (`docs/performance/` untouched).
+- No Git history operations, staging, commits, or pushes performed.
+- No credentials/tokens/secrets introduced into source, tests, logs, or documentation.
+- Changes limited to Tasks A/B/C corrective scope plus necessary tests and plan documentation.

@@ -788,6 +788,14 @@ class FyersFeed:
             frame = self._mutation_frame("SymbolUpdate", fresh)
             if frame is not None:
                 await self._send_mutation(frame)
+        # Propagate desired-instrument additions to the TBT channel (if active).
+        # Desired state is retained even if TBT is not yet connected.
+        if self._tbt_feed is not None:
+            try:
+                await self._tbt_feed.subscribe(fresh)
+            except Exception as exc:
+                logger.debug("fyers feed %s: TBT subscribe sync failed: %s",
+                             self._name, type(exc).__name__)
         return len(fresh)
 
     async def add_instruments_detailed(self, symbols: list[str],
@@ -822,6 +830,13 @@ class FyersFeed:
             frame = self._mutation_frame("unsub", gone)
             if frame is not None:
                 await self._send_mutation(frame)
+        # Propagate desired-instrument removals to the TBT channel (if active).
+        if gone and self._tbt_feed is not None:
+            try:
+                await self._tbt_feed.unsubscribe(gone)
+            except Exception as exc:
+                logger.debug("fyers feed %s: TBT unsubscribe sync failed: %s",
+                             self._name, type(exc).__name__)
         # The resolved wire topic goes with the symbol: a reconnect
         # restores EXACTLY the current desired set (no ghost subscription
         # for an instrument nobody wants any more).
@@ -1474,6 +1489,13 @@ class FyersFeed:
                 market_service=self._market_service,
                 app_id_getter=_app_id_getter,
             )
+
+            # Seed TBT with the current desired instrument set so initial connect
+            # and reconnects restore the latest parent lifecycle state.
+            async with self._sub_lock:
+                desired = list(self._desired)
+            if desired:
+                await self._tbt_feed.subscribe(desired)
 
             self._tbt_task = asyncio.create_task(
                 self._tbt_feed.run(publisher=None, stop_event=stop_event)

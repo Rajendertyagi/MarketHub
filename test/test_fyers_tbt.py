@@ -267,10 +267,19 @@ class TestTBTProtocol:
     @pytest.mark.asyncio
     async def test_tbt10_sequence_gap_detected(self, tbt_feed):
         book = LocalOrderBook("NSE:RELIANCE-EQ", "NSE", "RELIANCE-EQ")
-        
-        assert book.check_sequence(1) is True
-        book.last_sequence = 1
-        
+
+        # Deltas require a snapshot-initialized book.
+        assert book.check_sequence(1) is False
+        depth = Depth(
+            instrument_token="NSE:RELIANCE-EQ",
+            exchange="NSE",
+            tradingsymbol="RELIANCE-EQ",
+            received_ts=datetime.now(timezone.utc),
+            bids=(DepthLevel(price=1000.0, quantity=1, orders=1),),
+            asks=(),
+        )
+        book.apply_snapshot(depth, 1)
+        assert book.check_sequence(2) is True
         assert book.check_sequence(3) is False
 
     @pytest.mark.asyncio
@@ -556,9 +565,21 @@ class TestOrderBook:
 
     def test_order_book_sequence_check(self):
         book = LocalOrderBook("NSE:RELIANCE-EQ", "NSE", "RELIANCE-EQ")
-        
-        assert book.check_sequence(1) is True
-        book.last_sequence = 1
+
+        # Uninitialized/awaiting-snapshot book must not accept deltas.
+        assert book.awaiting_snapshot is True
+        assert book.check_sequence(1) is False
+
+        depth = Depth(
+            instrument_token="NSE:RELIANCE-EQ",
+            exchange="NSE",
+            tradingsymbol="RELIANCE-EQ",
+            received_ts=datetime.now(timezone.utc),
+            bids=(DepthLevel(price=1000.0, quantity=1, orders=1),),
+            asks=(),
+        )
+        book.apply_snapshot(depth, 1)
+        assert book.awaiting_snapshot is False
         assert book.check_sequence(2) is True
         assert book.check_sequence(4) is False
 
@@ -620,6 +641,7 @@ class _FakeWS:
         self.closed = False
         self.close_calls = 0
         self.open = True
+        self._close_event = asyncio.Event()
 
     async def send(self, data):
         self.sent.append(data)
@@ -632,13 +654,23 @@ class _FakeWS:
         if self._messages:
             return self._messages.pop(0)
         if self._block_recv:
-            await asyncio.Future()
+            if self.closed or self._close_event.is_set():
+                raise websockets.exceptions.ConnectionClosedOK(None, None)
+            close_task = asyncio.create_task(self._close_event.wait())
+            try:
+                await close_task
+            finally:
+                if not close_task.done():
+                    close_task.cancel()
+                    await asyncio.gather(close_task, return_exceptions=True)
+            raise websockets.exceptions.ConnectionClosedOK(None, None)
         raise websockets.exceptions.ConnectionClosedOK(None, None)
 
     async def close(self):
         self.close_calls += 1
         self.closed = True
         self.open = False
+        self._close_event.set()
 
     async def __aenter__(self):
         return self
@@ -1102,8 +1134,8 @@ class TestTBTChannelProtocol:
         from brokers.fyers.tbt import feed as tbt_feed_mod
 
         snap = _build_snapshot(levels=1, sequence=1)
-        gap = _build_snapshot(levels=1, sequence=5)
-        ws = _FakeWS(messages=[snap, gap], block_recv=True)
+        gap_delta = _build_delta(sequence=5)
+        ws = _FakeWS(messages=[snap, gap_delta], block_recv=True)
         connector = _FakeWSConnect(ws)
         monkeypatch.setattr(tbt_feed_mod, "ws_connect", connector)
 
@@ -1120,10 +1152,11 @@ class TestTBTChannelProtocol:
         await asyncio.wait_for(task, timeout=2.0)
 
         msgs = [json.loads(m) for m in ws.sent]
-        # initial sub+resume plus resubscribe (unsub+sub+resume) on gap
+        # initial sub+resume plus resubscribe (unsub+sub+resume) on sequence gap
         assert sum(1 for m in msgs if m.get("type") == 1 and m["data"]["subs"] == -1) >= 1
         assert sum(1 for m in msgs if m.get("type") == 1 and m["data"]["subs"] == 1) >= 2
         assert sum(1 for m in msgs if m.get("type") == 2) >= 2
+        assert feed._stats["sequence_gaps"] >= 1
 
     @pytest.mark.asyncio
     async def test_server_error_response_handled(self, tbt_feed):
@@ -1152,6 +1185,522 @@ class TestTBTChannelProtocol:
         book.apply_delta(depth2, 2)
         full = book.get_full_depth(datetime.now(timezone.utc))
         assert full.bids[0].price == 1006.00
+
+
+class TestTBTCorrectiveTaskA:
+    @pytest.mark.asyncio
+    async def test_recv_task_not_pending_on_outer_cancellation_while_blocked(self, monkeypatch):
+        from brokers.fyers.tbt import feed as tbt_feed_mod
+
+        ws = _FakeWS(block_recv=True)
+        connector = _FakeWSConnect(ws)
+        monkeypatch.setattr(tbt_feed_mod, "ws_connect", connector)
+
+        feed = FyersTbtFeed(lambda: "rawtoken", {"tbt_enabled": True, "app_id": "APP-1"}, AsyncMock())
+        async def _url(_token):
+            return "wss://tbt.example/ws"
+        feed._fetch_ws_url = _url
+
+        stop = asyncio.Event()
+        task = asyncio.create_task(feed.run(None, stop))
+        await asyncio.sleep(0.05)
+        recv_task = feed._active_recv_task
+        assert recv_task is not None
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0)
+        assert recv_task.done()
+        assert feed._active_recv_task is None
+
+    @pytest.mark.asyncio
+    async def test_recv_task_not_pending_on_internal_stop_while_blocked(self, monkeypatch):
+        from brokers.fyers.tbt import feed as tbt_feed_mod
+
+        ws = _FakeWS(block_recv=True)
+        connector = _FakeWSConnect(ws)
+        monkeypatch.setattr(tbt_feed_mod, "ws_connect", connector)
+
+        feed = FyersTbtFeed(lambda: "rawtoken", {"tbt_enabled": True, "app_id": "APP-1"}, AsyncMock())
+        async def _url(_token):
+            return "wss://tbt.example/ws"
+        feed._fetch_ws_url = _url
+
+        stop = asyncio.Event()
+        task = asyncio.create_task(feed.run(None, stop))
+        await asyncio.sleep(0.05)
+        recv_task = feed._active_recv_task
+        assert recv_task is not None
+        await feed.stop()
+        await asyncio.wait_for(task, timeout=2.0)
+        await asyncio.sleep(0)
+        assert recv_task.done()
+        assert feed._active_recv_task is None
+
+    @pytest.mark.asyncio
+    async def test_recv_task_not_pending_on_caller_stop_while_blocked(self, monkeypatch):
+        from brokers.fyers.tbt import feed as tbt_feed_mod
+
+        ws = _FakeWS(block_recv=True)
+        connector = _FakeWSConnect(ws)
+        monkeypatch.setattr(tbt_feed_mod, "ws_connect", connector)
+
+        feed = FyersTbtFeed(lambda: "rawtoken", {"tbt_enabled": True, "app_id": "APP-1"}, AsyncMock())
+        async def _url(_token):
+            return "wss://tbt.example/ws"
+        feed._fetch_ws_url = _url
+
+        stop = asyncio.Event()
+        task = asyncio.create_task(feed.run(None, stop))
+        await asyncio.sleep(0.05)
+        recv_task = feed._active_recv_task
+        assert recv_task is not None
+        stop.set()
+        await asyncio.wait_for(task, timeout=2.0)
+        await asyncio.sleep(0)
+        assert recv_task.done()
+        assert feed._active_recv_task is None
+
+    @pytest.mark.asyncio
+    async def test_recv_task_not_pending_on_websocket_receive_failure(self, monkeypatch):
+        from brokers.fyers.tbt import feed as tbt_feed_mod
+
+        ws = _FakeWS(recv_error=RuntimeError("boom"))
+        connector = _FakeWSConnect(ws)
+        monkeypatch.setattr(tbt_feed_mod, "ws_connect", connector)
+
+        feed = FyersTbtFeed(lambda: "rawtoken", {"tbt_enabled": True, "app_id": "APP-1"}, AsyncMock())
+        async def _url(_token):
+            return "wss://tbt.example/ws"
+        feed._fetch_ws_url = _url
+        feed._calculate_backoff = lambda: 10.0
+
+        stop = asyncio.Event()
+        task = asyncio.create_task(feed.run(None, stop))
+        await asyncio.sleep(0.1)
+        # Session should have failed and entered backoff; no active recv task pending.
+        assert feed._active_recv_task is None
+        stop.set()
+        await asyncio.wait_for(task, timeout=2.0)
+
+    @pytest.mark.asyncio
+    async def test_repeated_stop_calls_no_pending_recv_task(self, monkeypatch):
+        from brokers.fyers.tbt import feed as tbt_feed_mod
+
+        ws = _FakeWS(block_recv=True)
+        connector = _FakeWSConnect(ws)
+        monkeypatch.setattr(tbt_feed_mod, "ws_connect", connector)
+
+        feed = FyersTbtFeed(lambda: "rawtoken", {"tbt_enabled": True, "app_id": "APP-1"}, AsyncMock())
+        async def _url(_token):
+            return "wss://tbt.example/ws"
+        feed._fetch_ws_url = _url
+
+        stop = asyncio.Event()
+        task = asyncio.create_task(feed.run(None, stop))
+        await asyncio.sleep(0.05)
+        recv_task = feed._active_recv_task
+        await feed.stop()
+        await feed.stop()
+        stop.set()
+        await asyncio.wait_for(task, timeout=2.0)
+        await feed.stop()
+        await asyncio.sleep(0)
+        assert recv_task is not None and recv_task.done()
+        assert feed._active_recv_task is None
+
+    @pytest.mark.asyncio
+    async def test_parent_cleanup_when_child_stop_cancelled(self):
+        from brokers.fyers.feed import FyersFeed
+
+        class _Child:
+            def __init__(self):
+                self.stop_calls = 0
+            async def stop(self):
+                self.stop_calls += 1
+                raise asyncio.CancelledError()
+
+        async def _child_run():
+            await asyncio.sleep(10)
+
+        feed = FyersFeed.__new__(FyersFeed)
+        feed._tbt_feed = _Child()
+        feed._tbt_task = asyncio.create_task(_child_run())
+
+        with pytest.raises(asyncio.CancelledError):
+            await feed._stop_tbt_channel()
+
+        assert feed._tbt_feed is None
+        assert feed._tbt_task is None
+
+    @pytest.mark.asyncio
+    async def test_parent_cleanup_when_child_stop_raises_and_task_cancelled(self):
+        from brokers.fyers.feed import FyersFeed
+
+        class _Child:
+            async def stop(self):
+                raise RuntimeError("boom")
+
+        async def _child_run():
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                raise
+
+        feed = FyersFeed.__new__(FyersFeed)
+        feed._tbt_feed = _Child()
+        feed._tbt_task = asyncio.create_task(_child_run())
+
+        await feed._stop_tbt_channel()
+
+        assert feed._tbt_feed is None
+        assert feed._tbt_task is None
+
+
+class TestTBTCorrectiveTaskB:
+    @pytest.mark.asyncio
+    async def test_tbt_starts_with_parent_desired_instruments(self, monkeypatch):
+        from brokers.fyers.feed import FyersFeed
+        from brokers.fyers.tbt import feed as tbt_feed_mod
+
+        ws = _FakeWS(block_recv=True)
+        connector = _FakeWSConnect(ws)
+        monkeypatch.setattr(tbt_feed_mod, "ws_connect", connector)
+
+        async def _fake_fetch(self, token):
+            return "wss://tbt.example/ws"
+        monkeypatch.setattr(tbt_feed_mod.FyersTbtFeed, "_fetch_ws_url", _fake_fetch)
+
+        feed = FyersFeed.__new__(FyersFeed)
+        feed._name = "fyers"
+        feed._tbt_enabled = True
+        feed._tbt_feed = None
+        feed._tbt_task = None
+        feed._access_token_getter = lambda: "rawtoken"
+        feed._config = {"tbt_enabled": True, "app_id": "APP-1"}
+        feed._market_service = AsyncMock()
+        feed._app_id = "APP-1"
+        feed._credential_store = None
+        feed._desired = ("NSE:AAA-EQ", "NSE:BBB-EQ")
+        feed._sub_lock = asyncio.Lock()
+
+        stop = asyncio.Event()
+        await feed._start_tbt_channel(stop)
+        await asyncio.sleep(0.05)
+        assert feed._tbt_feed is not None
+        assert feed._tbt_feed.desired_symbols == {"NSE:AAA-EQ", "NSE:BBB-EQ"}
+        msgs = [json.loads(m) for m in ws.sent]
+        subscribed = set()
+        for m in msgs:
+            if m.get("type") == 1 and m.get("data", {}).get("subs") == 1:
+                subscribed.update(m["data"].get("symbols", []))
+        assert subscribed == {"NSE:AAA-EQ", "NSE:BBB-EQ"}
+        assert any(m.get("type") == 2 for m in msgs)
+        stop.set()
+        await feed._stop_tbt_channel()
+
+    @pytest.mark.asyncio
+    async def test_runtime_add_remove_syncs_to_tbt(self):
+        from brokers.fyers.feed import FyersFeed
+
+        class _Tbt:
+            def __init__(self):
+                self.subscribed = []
+                self.unsubscribed = []
+            async def subscribe(self, symbols):
+                self.subscribed.append(list(symbols))
+            async def unsubscribe(self, symbols):
+                self.unsubscribed.append(list(symbols))
+
+        feed = FyersFeed.__new__(FyersFeed)
+        feed._name = "fyers"
+        feed._desired = ("NSE:AAA-EQ",)
+        feed._sub_lock = asyncio.Lock()
+        feed._state = "stopped"
+        feed._tbt_feed = _Tbt()
+        feed._hsm_symbols = {}
+        feed._hsm_by_topic = {}
+        feed._last_data_at = {}
+        feed._last_data_mono = {}
+        feed._unresolved = {}
+        async def _resolve(*a, **k):
+            return None
+        feed._resolve_hsm_symbols = _resolve
+        async def _token():
+            return "tok"
+        feed._current_token = _token
+        feed._mutation_frame = lambda *a, **k: None
+        feed._send_mutation = AsyncMock()
+
+        added = await feed.add_instruments(["NSE:BBB-EQ"])
+        assert added == 1
+        assert feed._tbt_feed.subscribed[-1] == ["NSE:BBB-EQ"]
+
+        removed = await feed.remove_instruments(["NSE:BBB-EQ"])
+        assert removed == 1
+        assert feed._tbt_feed.unsubscribed[-1] == ["NSE:BBB-EQ"]
+
+    @pytest.mark.asyncio
+    async def test_add_remove_before_tbt_connection_readiness_retained(self):
+        from brokers.fyers.feed import FyersFeed
+
+        tbt = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP"}, AsyncMock())
+        feed = FyersFeed.__new__(FyersFeed)
+        feed._name = "fyers"
+        feed._desired = ("NSE:AAA-EQ",)
+        feed._sub_lock = asyncio.Lock()
+        feed._state = "stopped"
+        feed._tbt_feed = tbt
+        feed._hsm_symbols = {}
+        feed._hsm_by_topic = {}
+        feed._last_data_at = {}
+        feed._last_data_mono = {}
+        feed._unresolved = {}
+        async def _resolve(*a, **k):
+            return None
+        feed._resolve_hsm_symbols = _resolve
+        async def _token():
+            return "tok"
+        feed._current_token = _token
+        feed._mutation_frame = lambda *a, **k: None
+        feed._send_mutation = AsyncMock()
+
+        await feed.add_instruments(["NSE:BBB-EQ"])
+        assert "NSE:BBB-EQ" in tbt.desired_symbols
+        await feed.remove_instruments(["NSE:AAA-EQ"])
+        assert "NSE:AAA-EQ" not in tbt.desired_symbols
+        assert "NSE:BBB-EQ" in tbt.desired_symbols
+
+    @pytest.mark.asyncio
+    async def test_reconnect_restores_latest_desired_instruments(self, monkeypatch):
+        from brokers.fyers.tbt import feed as tbt_feed_mod
+
+        ws1 = _FakeWS(block_recv=True)
+        ws2 = _FakeWS(block_recv=True)
+        calls = {"n": 0}
+        def _connector(url, *args, **kwargs):
+            calls["n"] += 1
+            return ws1 if calls["n"] == 1 else ws2
+        monkeypatch.setattr(tbt_feed_mod, "ws_connect", _connector)
+
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP"}, AsyncMock())
+        feed._desired_symbols.update({"NSE:AAA-EQ", "NSE:BBB-EQ"})
+        async def _url(_token):
+            return "wss://tbt.example/ws"
+        feed._fetch_ws_url = _url
+        feed._calculate_backoff = lambda: 0.01
+
+        stop = asyncio.Event()
+        task = asyncio.create_task(feed.run(None, stop))
+        await asyncio.sleep(0.05)
+        # mutate desired set, then force reconnect by closing first session socket
+        feed._desired_symbols.discard("NSE:AAA-EQ")
+        feed._desired_symbols.add("NSE:CCC-EQ")
+        await ws1.close()
+        await asyncio.sleep(0.2)
+        stop.set()
+        await asyncio.wait_for(task, timeout=2.0)
+
+        msgs = [json.loads(m) for m in ws2.sent if isinstance(m, str)]
+        sub_msgs = [m for m in msgs if m.get("type") == 1 and m["data"].get("subs") == 1]
+        subscribed = set()
+        for m in sub_msgs:
+            subscribed.update(m["data"].get("symbols", []))
+        assert "NSE:CCC-EQ" in subscribed
+        assert "NSE:AAA-EQ" not in subscribed
+        assert "NSE:BBB-EQ" in subscribed
+
+    @pytest.mark.asyncio
+    async def test_repeated_add_remove_no_duplicate_subscriptions(self):
+        tbt = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP"}, AsyncMock())
+        ws = AsyncMock()
+        ws.open = True
+        tbt._ws = ws
+        await tbt.subscribe(["NSE:AAA-EQ", "NSE:AAA-EQ"])
+        await tbt.subscribe(["NSE:AAA-EQ"])
+        assert tbt.desired_symbols == {"NSE:AAA-EQ"}
+        sub_msgs = [json.loads(c.args[0]) for c in ws.send.call_args_list if json.loads(c.args[0]).get("type") == 1 and json.loads(c.args[0])["data"].get("subs") == 1]
+        assert len(sub_msgs) == 1
+        await tbt.unsubscribe(["NSE:AAA-EQ"])
+        await tbt.unsubscribe(["NSE:AAA-EQ"])
+        assert tbt.desired_symbols == set()
+
+    @pytest.mark.asyncio
+    async def test_existing_non_tbt_feed_behavior_unchanged(self):
+        from brokers.fyers.feed import FyersFeed
+
+        feed = FyersFeed.__new__(FyersFeed)
+        feed._name = "fyers"
+        feed._desired = ("NSE:AAA-EQ", "NSE:BBB-EQ")
+        feed._sub_lock = asyncio.Lock()
+        feed._state = "stopped"
+        feed._tbt_feed = None
+        feed._hsm_symbols = {}
+        feed._hsm_by_topic = {}
+        feed._last_data_at = {}
+        feed._last_data_mono = {}
+        feed._unresolved = {}
+        async def _resolve(*a, **k):
+            return None
+        feed._resolve_hsm_symbols = _resolve
+        async def _token():
+            return "tok"
+        feed._current_token = _token
+        feed._mutation_frame = lambda *a, **k: None
+        feed._send_mutation = AsyncMock()
+
+        added = await feed.add_instruments(["NSE:CCC-EQ"])
+        assert added == 1
+        assert "NSE:CCC-EQ" in feed._desired
+        removed = await feed.remove_instruments(["NSE:CCC-EQ"])
+        assert removed == 1
+        assert "NSE:CCC-EQ" not in feed._desired
+
+
+class TestTBTCorrectiveTaskC:
+    @pytest.mark.asyncio
+    async def test_delta_before_initial_snapshot_rejected_not_published(self):
+        market = AsyncMock()
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP"}, market)
+        feed._desired_symbols.add("NSE:RELIANCE-EQ")
+        ws = AsyncMock()
+        ws.open = True
+        feed._ws = ws
+
+        delta = _build_delta(sequence=1)
+        await feed._handle_message(delta)
+
+        assert market.apply_depth.await_count == 0
+        book = feed._books.get("NSE:RELIANCE-EQ")
+        assert book is not None and book.awaiting_snapshot is True
+
+    @pytest.mark.asyncio
+    async def test_delta_after_explicit_invalidation_rejected(self):
+        market = AsyncMock()
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP"}, market)
+        feed._desired_symbols.add("NSE:RELIANCE-EQ")
+        ws = AsyncMock()
+        ws.open = True
+        feed._ws = ws
+
+        await feed._handle_message(_build_snapshot(levels=1, sequence=1))
+        assert market.apply_depth.await_count == 1
+        book = feed._books.get("NSE:RELIANCE-EQ")
+        book.invalidate()
+        market.apply_depth.reset_mock()
+
+        await feed._handle_message(_build_delta(sequence=2))
+        assert market.apply_depth.await_count == 0
+        assert book.awaiting_snapshot is True
+
+    @pytest.mark.asyncio
+    async def test_delta_after_sequence_gap_rejected_until_snapshot(self):
+        market = AsyncMock()
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP"}, market)
+        feed._desired_symbols.add("NSE:RELIANCE-EQ")
+        ws = AsyncMock()
+        ws.open = True
+        feed._ws = ws
+
+        await feed._handle_message(_build_snapshot(levels=1, sequence=1))
+        market.apply_depth.reset_mock()
+        # gap -> invalidates
+        await feed._handle_message(_build_delta(sequence=5))
+        assert market.apply_depth.await_count == 0
+        book = feed._books.get("NSE:RELIANCE-EQ")
+        assert book.awaiting_snapshot is True
+        # another delta still rejected
+        await feed._handle_message(_build_delta(sequence=6))
+        assert market.apply_depth.await_count == 0
+
+    @pytest.mark.asyncio
+    async def test_delta_during_reconnect_recovery_rejected(self, monkeypatch):
+        from brokers.fyers.tbt import feed as tbt_feed_mod
+
+        # session 1: snapshot then disconnect; session 2: delta first (should be rejected) then snapshot
+        snap1 = _build_snapshot(levels=1, sequence=1)
+        delta2 = _build_delta(sequence=1)
+        snap2 = _build_snapshot(levels=1, sequence=1)
+        ws1 = _FakeWS(messages=[snap1], block_recv=False)
+        ws2 = _FakeWS(messages=[delta2, snap2], block_recv=True)
+        calls = {"n": 0}
+        def _connector(url, *args, **kwargs):
+            calls["n"] += 1
+            return ws1 if calls["n"] == 1 else ws2
+        monkeypatch.setattr(tbt_feed_mod, "ws_connect", _connector)
+
+        market = AsyncMock()
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP"}, market)
+        feed._desired_symbols.add("NSE:RELIANCE-EQ")
+        async def _url(_token):
+            return "wss://tbt.example/ws"
+        feed._fetch_ws_url = _url
+        feed._calculate_backoff = lambda: 0.01
+
+        stop = asyncio.Event()
+        task = asyncio.create_task(feed.run(None, stop))
+        await asyncio.sleep(0.25)
+        stop.set()
+        await asyncio.wait_for(task, timeout=2.0)
+
+        # first session published snapshot; second session's leading delta must not publish incomplete book
+        # published depths should correspond to snapshots only (2 times)
+        assert market.apply_depth.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_fresh_snapshot_restores_book_and_permits_deltas(self):
+        market = AsyncMock()
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP"}, market)
+        feed._desired_symbols.add("NSE:RELIANCE-EQ")
+        ws = AsyncMock()
+        ws.open = True
+        feed._ws = ws
+
+        await feed._handle_message(_build_snapshot(levels=1, sequence=1))
+        book = feed._books.get("NSE:RELIANCE-EQ")
+        book.invalidate()
+        market.apply_depth.reset_mock()
+
+        await feed._handle_message(_build_snapshot(levels=1, sequence=10))
+        assert market.apply_depth.await_count == 1
+        assert book.awaiting_snapshot is False
+        assert book.last_sequence == 10
+
+        await feed._handle_message(_build_delta(sequence=11))
+        assert market.apply_depth.await_count == 2
+        assert book.last_sequence == 11
+
+    @pytest.mark.asyncio
+    async def test_invalid_snapshot_does_not_restore_validity(self):
+        market = AsyncMock()
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP"}, market)
+        feed._desired_symbols.add("NSE:RELIANCE-EQ")
+        ws = AsyncMock()
+        ws.open = True
+        feed._ws = ws
+
+        book = feed._books.get_or_create("NSE:RELIANCE-EQ", "NSE", "RELIANCE-EQ")
+        book.invalidate()
+        # malformed/invalid snapshot payload -> normalization/parse path should not mark valid
+        await feed._handle_message(b"not-a-protobuf")
+        assert book.awaiting_snapshot is True
+        assert market.apply_depth.await_count == 0
+
+    @pytest.mark.asyncio
+    async def test_no_incomplete_order_book_published_while_awaiting_snapshot(self):
+        market = AsyncMock()
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP"}, market)
+        feed._desired_symbols.add("NSE:RELIANCE-EQ")
+        ws = AsyncMock()
+        ws.open = True
+        feed._ws = ws
+
+        # multiple deltas before snapshot
+        for seq in (1, 2, 3):
+            await feed._handle_message(_build_delta(sequence=seq))
+        assert market.apply_depth.await_count == 0
+        book = feed._books.get("NSE:RELIANCE-EQ")
+        assert book is not None and book.awaiting_snapshot is True and book.is_empty
 
 
 if __name__ == "__main__":
