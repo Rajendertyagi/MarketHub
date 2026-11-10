@@ -11,12 +11,14 @@ Protocol reference (official docs, verified 2026-11-10):
   * Channels: https://fyers.in/api-docs/v3/api/websockets/tick-by-tick-socket/overview/concept-of-channels/
     - type 1 subscribe/unsubscribe (subs 1/-1, mode depth, channel string)
     - type 2 switch-channel with resumeChannels/pauseChannels (required to start stream)
-  * Dynamic URL discovery (existing implementation, contract not documented in fetched pages):
-    GET https://api-t1.fyers.in/indus/home/tbtws -> data.socket_url
+  * Dynamic URL discovery: undocumented credential-bearing discovery to
+    https://api-t1.fyers.in/indus/home/tbtws is disabled (security-first;
+    endpoint necessity/auth contract not authoritatively verified).
 
 Lifecycle:
   1. Resolve app_id and raw access token (canonical token storage unchanged)
-  2. Fetch WebSocket URL (dynamic discovery preserved; auth contract unverified)
+  2. Resolve WebSocket URL via _fetch_ws_url() (returns fixed documented endpoint;
+     no HTTP discovery, no credential transmission to unverified endpoint)
   3. Connect with Authorization: <appId:accessToken> (official TBT WS contract)
   4. Subscribe (type 1) and resume channels (type 2)
   5. Receive protobuf depth updates (snapshot + deltas)

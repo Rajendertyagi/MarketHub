@@ -1,11 +1,12 @@
 # FYERS TBT Corrective Implementation Plan (P0-A)
 
-**Date:** 2026-11-10 (historical updates through 2026-11-11; four-workstream follow-up execution: 2026-11-11)
+**Date:** 2026-11-10 (historical updates through 2026-11-11; four-workstream follow-up execution and publication reconciliation: 2026-11-11)
 **Repository:** `Rajendertyagi/MarketHub`
 **Branch:** `review/scanner-phase1`
-**Current committed baseline (HEAD):** `2185356c6e30a82157d1b5b7f87b07889fe33e61` (`fix(fyers): finalize TBT discovery fallback and protocol handling`, pushed to `origin/review/scanner-phase1`; parent `03bf72d044189d941c04b8a001d0f8e7cabffb5e`)
-**Working tree (this execution):** uncommitted follow-up changes for Workstreams A–D reconciliation (see §16); `docs/performance/` preserved/untracked.
-**Status:** TBT-01/02/03/04/05/05a/06/07/08 implemented and tested with mocks in committed baseline. This follow-up: **Workstream A** (positive subscribe/resume ack and error correlation) remains **UNRESOLVED** by available authoritative evidence (no invented semantics; safe behavior preserved). **Workstream B** (dynamic URL discovery/auth) resolved with a security-first decision: undocumented credential-bearing discovery to `https://api-t1.fyers.in/indus/home/tbtws` removed; documented fixed endpoint `wss://rtsocket-api.fyers.in/versova` with official `Authorization: <appId:accessToken>` used. **Workstream C** (genuine account-wide entitlement enforcement) remains **BLOCKED** (no existing cross-process/shared coordination mechanism; local per-feed-instance enforcement only, `account_wide_enforced=false`). **Workstream D** (live runtime verification, TBT-09) remains **BLOCKED** (no approved credentials/environment available). Historical sections below preserve earlier execution records, including statements that were accurate at the time they were written.
+**Current committed baseline (HEAD):** `25d08a1b5069337e683be405d45463aff44a0dbc` (`fix(fyers): harden TBT endpoint and protocol handling`, pushed and verified on `origin/review/scanner-phase1`; parent `2185356c6e30a82157d1b5b7f87b07889fe33e61`)
+**Previous committed baseline:** `2185356c6e30a82157d1b5b7f87b07889fe33e61` (`fix(fyers): finalize TBT discovery fallback and protocol handling`, pushed to `origin/review/scanner-phase1`; parent `03bf72d044189d941c04b8a001d0f8e7cabffb5e`)
+**Working tree:** clean except `?? docs/performance/` (preserved/untracked) unless otherwise noted by a later execution record.
+**Status:** TBT-01/02/03/04/05/05a/06/07/08 implemented and tested with mocks in committed baselines. **Workstream A** (positive subscribe/resume ack and error correlation) remains **UNRESOLVED** by available authoritative evidence (no invented semantics; safe behavior preserved). **Workstream B** (dynamic URL discovery/auth) is **DONE** for the security-first implementation decision: undocumented credential-bearing discovery to `https://api-t1.fyers.in/indus/home/tbtws` is disabled; documented fixed endpoint `wss://rtsocket-api.fyers.in/versova` with official `Authorization: <appId:accessToken>` is used (live connectivity not thereby verified). **Workstream C** (genuine account-wide entitlement enforcement) remains **BLOCKED** (no existing cross-process/shared coordination mechanism; local per-feed-instance enforcement only, `account_wide_enforced=false`). **Workstream D** (live runtime verification, TBT-09) remains **BLOCKED** (no approved credentials/environment available). Historical sections below preserve earlier execution records, including statements that were accurate at the time they were written.
 **Scope:** FYERS TBT only. Minimal corrective changes to fix identified integration gaps.
 **Source of truth:** This document. Must be updated immediately after every individual task.
 
@@ -909,7 +910,9 @@ All tasks are individually numbered. Status must be updated after each task. Do 
 
 ---
 
-## 16) Four-Workstream Follow-up Execution Record (2026-11-11, uncommitted)
+## 16) Four-Workstream Follow-up Execution Record (2026-11-11, pre-commit implementation)
+
+> **Historical execution record:** This section documents the implementation work performed before commit `25d08a1b5069337e683be405d45463aff44a0dbc`. Its original pre-commit Git state (including §16.12 "uncommitted, no commit/push performed" at that time) is preserved as historical execution evidence and is **not** represented as the current repository state. Current publication state is recorded in §16.15.
 
 ### 16.1 Baseline and scope
 - **TASK ZONE:** FYERS ADAPTER / BROKER RUNTIME (TBT feed integration) — localized to TBT implementation, focused tests, and canonical plan.
@@ -1045,3 +1048,22 @@ All tasks are individually numbered. Status must be updated after each task. Do 
 - No new dependencies/config/DB/credential-storage/schema changes introduced.
 - `docs/performance/` and unrelated user files preserved; no unrelated files staged/committed.
 - No commit, push, amend, rebase, reset, or branch switch performed.
+
+### 16.15 Post-commit publication record (2026-11-11)
+- **Commit SHA:** `25d08a1b5069337e683be405d45463aff44a0dbc`
+- **Parent:** `2185356c6e30a82157d1b5b7f87b07889fe33e61`
+- **Commit message:** `fix(fyers): harden TBT endpoint and protocol handling`
+- **Branch:** `review/scanner-phase1` (pushed and verified on `origin/review/scanner-phase1`)
+- **Exact committed files (3):**
+  - `brokers/fyers/tbt/feed.py`
+  - `test/test_fyers_tbt.py`
+  - `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`
+- **Diff summary:** 205 insertions(+), 153 deletions(-)
+- **Push/publication:** successful explicit-refspec push (`git push origin 25d08a1b5069337e683be405d45463aff44a0dbc:refs/heads/review/scanner-phase1`); remote branch SHA verified equal to local HEAD (`25d08a1b5069337e683be405d45463aff44a0dbc`) via fetch/remote-tracking ref/`git ls-remote`.
+- **Working tree:** `docs/performance/` preserved and untracked.
+- **Existing test results (recorded for this publication baseline):** 263 passed, 1 skipped (mocked/deterministic/local suites as reported in execution/audit records; not live FYERS runtime verification).
+- **Workstream statuses (current):**
+  - **Workstream A:** **UNRESOLVED** (positive subscribe/resume ack and error correlation; no authoritative evidence).
+  - **Workstream B:** **DONE** (undocumented credential-bearing dynamic URL discovery disabled; documented fixed endpoint `wss://rtsocket-api.fyers.in/versova` with official `Authorization: <appId:accessToken>` used; live connectivity not thereby verified).
+  - **Workstream C:** **BLOCKED** (genuine account-wide entitlement enforcement across connections/users/processes; local per-feed-instance enforcement only, `account_wide_enforced=false`).
+  - **Workstream D / TBT-09:** **BLOCKED** (live runtime verification; no approved credentials/environment).
