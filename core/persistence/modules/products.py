@@ -625,8 +625,10 @@ def search_instruments(
                 " LENGTH(tradingsymbol), tradingsymbol")
     else:
         sql += " ORDER BY tradingsymbol"
-    sql += " LIMIT ?"
-    args.append(max(1, min(int(limit), 50 if ranked else 100)))
+    lim = int(limit)
+    if lim > 0:
+        sql += " LIMIT ?"
+        args.append(max(1, min(lim, 50 if ranked else 100)))
     conn.row_factory = sqlite3.Row
     try:
         return [dict(r) for r in conn.execute(sql, args)]
@@ -1008,6 +1010,56 @@ def record_trigger(conn: sqlite3.Connection, alert_id: int) -> None:
     conn.commit()
 
 
+def commit_market_alert_trigger(
+    conn: sqlite3.Connection,
+    *,
+    alert_id: int,
+    exchange: str | None,
+    instrument_token: str | None,
+    tradingsymbol: str | None,
+    field: str | None,
+    operator: str | None,
+    threshold: float | None,
+    observed_value: float | None,
+    provider: str | None,
+    triggered_at: str,
+) -> int | None:
+    """Atomically commit a market-alert trigger (state + history) once.
+
+    Updates ``market_alerts`` to triggered only when the rule is still
+    enabled and inactive, then inserts one ``alert_trigger_history`` row in
+    the same transaction. Returns the history row id on commit, or ``None``
+    when the alert was not triggerable (already triggered/disabled/deleted/
+    raced). Any failure rolls back the whole transaction.
+    """
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        cur = conn.execute(
+            "UPDATE market_alerts SET state = 'triggered', triggered_at = ? "
+            "WHERE id = ? AND enabled = 1 AND state = 'inactive'",
+            (triggered_at, alert_id),
+        )
+        if cur.rowcount != 1:
+            conn.rollback()
+            return None
+        hist = conn.execute(
+            "INSERT INTO alert_trigger_history "
+            "(alert_id, exchange, instrument_token, tradingsymbol, field, "
+            " operator, threshold, observed_value, provider, triggered_at, "
+            " created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (alert_id, exchange, instrument_token, tradingsymbol, field,
+             operator, threshold if threshold is None else float(threshold),
+             observed_value if observed_value is None else float(observed_value),
+             provider, triggered_at, _now()),
+        )
+        conn.commit()
+        return int(hist.lastrowid)
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def load_enabled_alerts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     try:
@@ -1273,14 +1325,15 @@ def fno_universe(
 def list_future_contracts(
     conn: sqlite3.Connection, *, provider: str | None = None,
     underlying: str | None = None, expiries: list[str] | None = None,
-    exchange: str | None = None, limit: int = 5000,
+    exchange: str | None = None, limit: int | None = 5000,
 ) -> list[dict[str, Any]]:
-    """Bulk read model: every FUTURE contract row in one query (no N+1).
+    """Bulk read model: FUTURE contract rows in one query (no N+1).
 
     Provider-neutral shape (provider tokens included as data, never assumed).
     Ordered by underlying, expiry. Optional provider / underlying / expiry /
     exchange filters keep callers from issuing per-underlying queries;
     ``exchange`` also lets the query use ``idx_instr_lookup``.
+    ``limit <= 0`` or ``None`` returns the complete result set (no silent cap).
     """
     sql = (f"SELECT {', '.join(_INSTRUMENT_COLUMNS)} FROM instruments "
            "WHERE instrument_type = 'FUTURE'")
@@ -1298,8 +1351,10 @@ def list_future_contracts(
         placeholders = ",".join("?" for _ in expiries)
         sql += f" AND expiry IN ({placeholders})"
         args.extend(str(e) for e in expiries)
-    sql += " ORDER BY underlying, expiry, tradingsymbol LIMIT ?"
-    args.append(max(1, min(int(limit), 20000)))
+    sql += " ORDER BY underlying, expiry, tradingsymbol"
+    if limit is not None and int(limit) > 0:
+        sql += " LIMIT ?"
+        args.append(int(limit))
     conn.row_factory = sqlite3.Row
     try:
         return [dict(r) for r in conn.execute(sql, args)]

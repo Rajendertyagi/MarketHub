@@ -166,7 +166,8 @@ describe("ScannersView", () => {
     });
 
     renderWithProviders(<ScannersView />);
-    expect((await screen.findAllByText("Option IV")).length).toBeGreaterThan(0);
+    const toggle = await screen.findByRole("button", { name: /Option IV/i });
+    fireEvent.click(toggle);
     expect(await screen.findByText("17.58%")).toBeInTheDocument();
   });
 
@@ -208,6 +209,8 @@ describe("ScannersView", () => {
     });
 
     renderWithProviders(<ScannersView />);
+    const toggle = await screen.findByRole("button", { name: /Option IV/i });
+    fireEvent.click(toggle);
     const row = await screen.findByText("NIFTY24xxxCE");
     const rowEl = row.closest("tr");
     if (!rowEl) throw new Error("expected scanner row");

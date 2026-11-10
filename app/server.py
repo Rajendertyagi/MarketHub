@@ -268,22 +268,17 @@ async def _on_market_quote_update(quote: Quote) -> None:
         return
     _market_event_broker.broadcast(line)
     # Alert engines consume the same canonical quote (never polls REST).
-    # They are independent; evaluate concurrently to reduce ingestion-path
-    # latency while preserving per-engine error isolation and alert semantics.
-    async def _eval_market_alerts() -> None:
-        try:
-            await _alert_engine.evaluate(quote)
-        except Exception:
-            _app_logger.warning("alert evaluation failed", exc_info=True)
-
-    async def _eval_condition_alerts() -> None:
-        try:
-            await _condition_alert_engine.evaluate(quote)
-        except Exception:
-            _app_logger.warning(
-                "condition alert evaluation failed", exc_info=True)
-
-    await asyncio.gather(_eval_market_alerts(), _eval_condition_alerts())
+    # Evaluate sequentially so quote callbacks cannot interleave engine state
+    # transitions or trigger ordering; per-engine isolation is preserved.
+    try:
+        await _alert_engine.evaluate(quote)
+    except Exception:
+        _app_logger.warning("alert evaluation failed", exc_info=True)
+    try:
+        await _condition_alert_engine.evaluate(quote)
+    except Exception:
+        _app_logger.warning(
+            "condition alert evaluation failed", exc_info=True)
 
 
 _market_service = MarketService(on_quote_update=_on_market_quote_update)

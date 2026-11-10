@@ -1160,6 +1160,45 @@ class EventStore:
         finally:
             conn.close()
 
+    def commit_market_alert_trigger(
+        self,
+        *,
+        alert_id: int,
+        exchange: str | None,
+        instrument_token: str | None,
+        tradingsymbol: str | None,
+        field: str | None,
+        operator: str | None,
+        threshold: float | None,
+        observed_value: float | None,
+        provider: str | None,
+        triggered_at: str | None = None,
+    ) -> int | None:
+        """Atomically commit market-alert trigger state + history once.
+
+        Returns the history row id when committed, or ``None`` when the alert
+        was not triggerable (already triggered/disabled/deleted/raced).
+        """
+        if triggered_at is None:
+            triggered_at = datetime.now(timezone.utc).isoformat()
+        conn = self._open(self._db_path)
+        try:
+            return _products.commit_market_alert_trigger(
+                conn,
+                alert_id=alert_id,
+                exchange=exchange,
+                instrument_token=instrument_token,
+                tradingsymbol=tradingsymbol,
+                field=field,
+                operator=operator,
+                threshold=threshold,
+                observed_value=observed_value,
+                provider=provider,
+                triggered_at=triggered_at,
+            )
+        finally:
+            conn.close()
+
     def load_enabled_alerts(self) -> list[dict[str, Any]]:
         conn = self._open(self._db_path)
         try:

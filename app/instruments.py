@@ -380,11 +380,11 @@ def _is_sensex_bse_fo(record: dict[str, Any]) -> bool:
 def _filter_sensex_bse_fo(
     records: list[dict[str, Any]], segments: frozenset[str] | set[str],
 ) -> tuple[list[dict[str, Any]], dict[str, int], int]:
-    """Filter FYERS records to the Sensex BSE_FO policy.
+    """Filter FYERS records to enabled segments and tradable contracts.
 
-    Other segments (NSE_EQ, NSE_FO, NSE_CM index rows, ...) pass through
-    unchanged. Inside BSE_FO only authoritative-Sensex, active contracts
-    are kept; every other BSE_FO row is counted as filtered.
+    Inactive instruments (tradeStatus != active) are excluded from all
+    segments so they cannot be treated as tradable or subscription-eligible.
+    Inside BSE_FO only authoritative-Sensex contracts are kept.
     """
     kept: list[dict[str, Any]] = []
     counts: dict[str, int] = {}
@@ -394,9 +394,10 @@ def _filter_sensex_bse_fo(
         if seg is None or seg not in segments:
             filtered += 1
             continue
-        if seg == "BSE_FO" and (
-                _underlying_of(r) not in SENSEX_UNDERLYINGS
-                or not r.get("active", True)):
+        if not r.get("active", True):
+            filtered += 1
+            continue
+        if seg == "BSE_FO" and _underlying_of(r) not in SENSEX_UNDERLYINGS:
             filtered += 1
             continue
         kept.append(r)
