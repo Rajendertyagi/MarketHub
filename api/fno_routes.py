@@ -109,7 +109,7 @@ def build_fno_routes(catalog: Any, subscriptions: Any = None,
             return _json({"error": "limit must be an integer"}, 400)
         today = date.today().isoformat()
         rows = await asyncio.to_thread(
-            catalog.fno_universe, provider="upstox", today=today,
+            catalog.fno_universe, provider=None, today=today,
             q=q, limit=limit)
         universe = [{
             "symbol": r["symbol"],

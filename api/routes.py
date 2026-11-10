@@ -146,34 +146,39 @@ def build_market_routes(
             async with market_broker.subscribe() as lines:
                 async for line in lines:
                     # Live updates must reflect the SAME selected quote as
-                    # the snapshot: re-select the canonical instrument.
-                    cid = None
+                    # the snapshot: re-select the canonical instrument so
+                    # REST, SSE, WebUI and MCP see the same value, freshness
+                    # verdict and provenance.
+                    data = None
                     try:
-                        cid = json.loads(line).get("data", {}).get(
-                            "canonical_id")
+                        parsed = json.loads(line)
+                        data = parsed.get("data") if isinstance(parsed, dict) else None
                     except Exception:
-                        cid = None
-                    if cid:
-                        payload = None
-                        if quote_service is not None:
-                            # The SAME selection, identity, provenance and
-                            # freshness verdict as the REST read (the
-                            # provider comes from the catalogue, never from
-                            # the shape of a storage key).
-                            payload = await quote_service.quote(cid)
-                        elif quote_coordinator is not None:
-                            from market.quote_coordinator import (
-                                selected_quote_to_dict,
-                            )
-                            sel = await quote_coordinator.get_canonical_quote(
-                                cid)
-                            if sel is not None:
-                                payload = selected_quote_to_dict(sel)
-                        if payload is not None:
-                            yield _encode({"type": "quote", "data": payload})
-                            continue
-                    # Broker lines are raw JSON envelopes; frame them as
-                    # `quote` SSE events so the WebUI listener fires.
+                        data = None
+                    ref = None
+                    if isinstance(data, dict):
+                        ref = (data.get("canonical_id")
+                               or data.get("instrument_token")
+                               or data.get("tradingsymbol"))
+                    payload = None
+                    if ref and quote_service is not None:
+                        # The SAME selection, identity, provenance and
+                        # freshness verdict as the REST read (the provider
+                        # comes from the catalogue, never from the shape of
+                        # a storage key).
+                        payload = await quote_service.quote(str(ref))
+                    elif ref and quote_coordinator is not None:
+                        from market.quote_coordinator import selected_quote_to_dict
+                        sel = await quote_coordinator.get_canonical_quote(str(ref))
+                        if sel is not None:
+                            payload = selected_quote_to_dict(sel)
+                    if payload is not None:
+                        yield _encode({"type": "quote", "data": payload})
+                        continue
+                    # Fall back to the raw broker envelope when no canonical
+                    # selection is available (e.g. no canonical read service,
+                    # or an instrument not yet resolvable). This preserves
+                    # delivery while canonical paths remain the primary source.
                     yield ServerSentEvent(data=line, event="quote").encode()
 
         return EventSourceResponse(

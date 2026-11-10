@@ -1746,7 +1746,8 @@ def browse_instruments(
     browsable. OPTION browse without an ``underlying`` scope is rejected by
     the app layer (unscoped option dedupe exceeds the latency budget).
     """
-    where = ["instrument_type IS NOT NULL", "instrument_type != ''"]
+    where = ["instrument_type IS NOT NULL", "instrument_type != ''",
+             _SUPPORTED_PRODUCT_SQL]
     args: list[Any] = []
     if types:
         where.append(
