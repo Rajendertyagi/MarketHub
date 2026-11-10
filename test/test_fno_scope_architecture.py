@@ -136,14 +136,15 @@ def test_upstox_bse_fo_sync_is_sensex_only():
             segments={"BSE_FO"},
         )
         assert result["ok"] is True
+        # Supported discovery excludes out-of-scope BSE_FO but keeps SENSEX.
         bse = store.search_instruments(provider="upstox", exchange="BSE")
         underlyings = {r.get("underlying") for r in bse if r.get("segment") == "BSE_FO"}
         assert "SENSEX" in underlyings
-        assert "BANKEX" not in {r.get("underlying") for r in bse
-                                if r.get("segment") == "BSE_FO"
-                                and r.get("instrument_token") != "BSE_FO|OLD-BANKEX"}
-        # Pre-existing out-of-scope row preserved by scoped Sensex replacement.
-        assert any(r.get("instrument_token") == "BSE_FO|OLD-BANKEX" for r in bse)
+        assert "BANKEX" not in underlyings
+        # Pre-existing out-of-scope row preserved in storage (diagnostic/raw),
+        # but not exposed as a supported product.
+        assert store.get_instrument("upstox", "BSE_FO|OLD-BANKEX") is not None
+        assert all(r.get("instrument_token") != "BSE_FO|OLD-BANKEX" for r in bse)
     finally:
         tmp.cleanup()
 
@@ -193,5 +194,174 @@ def test_futures_index_complete_no_truncation_and_cached():
             t.join()
         assert all(r == 20050 for r in results)
         assert calls["n"] == 1
+    finally:
+        tmp.cleanup()
+
+
+def test_upstox_sync_atomic_rollback_across_scoped_and_other_segments():
+    tmp, store, catalog = _catalog()
+    try:
+        store.replace_provider_instruments("upstox", [
+            {
+                "provider": "upstox", "instrument_token": "BSE_FO|OLD-BANKEX",
+                "provider_symbol": "BSE_FO|OLD-BANKEX", "exchange": "BSE",
+                "segment": "BSE_FO", "tradingsymbol": "BANKEX OLD FUT",
+                "name": "BANKEX", "instrument_type": "FUTURE",
+                "underlying": "BANKEX", "expiry": "2026-12-29",
+            },
+            {
+                "provider": "upstox", "instrument_token": "BSE_FO|OLD-SENSEX",
+                "provider_symbol": "BSE_FO|OLD-SENSEX", "exchange": "BSE",
+                "segment": "BSE_FO", "tradingsymbol": "SENSEX OLD FUT",
+                "name": "SENSEX", "instrument_type": "FUTURE",
+                "underlying": "SENSEX", "expiry": "2026-11-24",
+            },
+            {
+                "provider": "upstox", "instrument_token": "NSE_EQ|OLD",
+                "provider_symbol": "NSE_EQ|OLD", "exchange": "NSE",
+                "segment": "NSE_EQ", "tradingsymbol": "OLD",
+                "name": "OLD", "instrument_type": "EQUITY",
+                "underlying": "OLD",
+            },
+        ])
+        before = {
+            r["instrument_token"]: r
+            for r in store.search_instruments(provider="upstox", limit=100)
+        }
+        assert store.get_instrument("upstox", "BSE_FO|OLD-BANKEX") is not None
+
+        ms = 86400000
+        base = 1796774399000  # 2026-12-08
+        rows = [
+            {"instrument_key": "BSE_FO|S1", "exchange": "BSE", "segment": "BSE_FO",
+             "instrument_type": "FUT", "trading_symbol": "SENSEX FUT 29 DEC 26",
+             "name": "SENSEX", "underlying_symbol": "SENSEX", "expiry": base + 21 * ms,
+             "strike_price": None, "lot_size": 20, "tick_size": 1.0},
+            {"instrument_key": "BSE_FO|S2", "exchange": "BSE", "segment": "BSE_FO",
+             "instrument_type": "CE", "trading_symbol": "SENSEX 80000 CE 29 DEC 26",
+             "name": "SENSEX", "underlying_symbol": "SENSEX", "expiry": base + 21 * ms,
+             "strike_price": 80000.0, "lot_size": 20, "tick_size": 1.0},
+            {"instrument_key": "BSE_FO|S3", "exchange": "BSE", "segment": "BSE_FO",
+             "instrument_type": "PE", "trading_symbol": "SENSEX 80000 PE 29 DEC 26",
+             "name": "SENSEX", "underlying_symbol": "SENSEX", "expiry": base + 21 * ms,
+             "strike_price": 80000.0, "lot_size": 20, "tick_size": 1.0},
+            {"instrument_key": "NSE_EQ|NEW", "exchange": "NSE", "segment": "NSE_EQ",
+             "instrument_type": "EQ", "trading_symbol": "NEW", "name": "NEW",
+             "underlying_symbol": "NEW", "expiry": None, "strike_price": None,
+             "lot_size": 1, "tick_size": 0.05, "isin": "INE999"},
+        ]
+
+        import core.persistence.modules.products as products
+
+        orig = products._apply_segmented_replace
+        calls = {"n": 0}
+
+        def boom(*args, **kwargs):
+            calls["n"] += 1
+            raise RuntimeError("boom-after-scoped")
+
+        products._apply_segmented_replace = boom  # type: ignore[assignment]
+        try:
+            result = catalog.sync_upstox(
+                fetch=lambda _url: __import__("json").dumps(rows).encode("utf-8"),
+                segments={"BSE_FO", "NSE_EQ"},
+            )
+        finally:
+            products._apply_segmented_replace = orig  # type: ignore[assignment]
+
+        assert result["ok"] is False
+        assert result.get("aborted") is True
+        assert calls["n"] >= 1
+        after = {
+            r["instrument_token"]: r
+            for r in store.search_instruments(provider="upstox", limit=100)
+        }
+        assert set(after.keys()) == set(before.keys())
+        assert store.get_instrument("upstox", "BSE_FO|OLD-BANKEX") is not None
+        assert store.get_instrument("upstox", "BSE_FO|OLD-SENSEX") is not None
+        assert store.get_instrument("upstox", "NSE_EQ|OLD") is not None
+        assert store.get_instrument("upstox", "BSE_FO|S1") is None
+        assert store.get_instrument("upstox", "NSE_EQ|NEW") is None
+    finally:
+        tmp.cleanup()
+
+
+def test_out_of_scope_bse_derivatives_excluded_from_supported_discovery():
+    tmp, store, catalog = _catalog()
+    try:
+        store.replace_provider_instruments("upstox", [
+            {
+                "provider": "upstox", "instrument_token": "BSE_FO|S-FUT",
+                "provider_symbol": "BSE_FO|S-FUT", "exchange": "BSE",
+                "segment": "BSE_FO", "tradingsymbol": "SENSEX FUT 29 DEC 26",
+                "name": "SENSEX", "instrument_type": "FUTURE",
+                "underlying": "SENSEX", "expiry": "2026-12-29",
+            },
+            {
+                "provider": "upstox", "instrument_token": "BSE_FO|S-CE",
+                "provider_symbol": "BSE_FO|S-CE", "exchange": "BSE",
+                "segment": "BSE_FO", "tradingsymbol": "SENSEX 80000 CE 29 DEC 26",
+                "name": "SENSEX", "instrument_type": "OPTION",
+                "underlying": "SENSEX", "expiry": "2026-12-29",
+                "strike": 80000.0, "option_type": "CE",
+            },
+            {
+                "provider": "upstox", "instrument_token": "BSE_FO|S-PE",
+                "provider_symbol": "BSE_FO|S-PE", "exchange": "BSE",
+                "segment": "BSE_FO", "tradingsymbol": "SENSEX 80000 PE 29 DEC 26",
+                "name": "SENSEX", "instrument_type": "OPTION",
+                "underlying": "SENSEX", "expiry": "2026-12-29",
+                "strike": 80000.0, "option_type": "PE",
+            },
+            {
+                "provider": "upstox", "instrument_token": "BSE_FO|BANKEX-FUT",
+                "provider_symbol": "BSE_FO|BANKEX-FUT", "exchange": "BSE",
+                "segment": "BSE_FO", "tradingsymbol": "BANKEX FUT 29 DEC 26",
+                "name": "BANKEX", "instrument_type": "FUTURE",
+                "underlying": "BANKEX", "expiry": "2026-12-29",
+            },
+            {
+                "provider": "upstox", "instrument_token": "BSE_FO|SENSEX50-FUT",
+                "provider_symbol": "BSE_FO|SENSEX50-FUT", "exchange": "BSE",
+                "segment": "BSE_FO", "tradingsymbol": "SENSEX50 FUT 29 DEC 26",
+                "name": "SENSEX50", "instrument_type": "FUTURE",
+                "underlying": "SENSEX50", "expiry": "2026-12-29",
+            },
+            {
+                "provider": "upstox", "instrument_token": "BSE_FO|STOCK-FUT",
+                "provider_symbol": "BSE_FO|STOCK-FUT", "exchange": "BSE",
+                "segment": "BSE_FO", "tradingsymbol": "RELIANCE FUT 29 DEC 26",
+                "name": "RELIANCE", "instrument_type": "FUTURE",
+                "underlying": "RELIANCE", "expiry": "2026-12-29",
+            },
+        ])
+
+        assert store.get_instrument("upstox", "BSE_FO|BANKEX-FUT") is not None
+        assert store.get_instrument("upstox", "BSE_FO|SENSEX50-FUT") is not None
+        assert store.get_instrument("upstox", "BSE_FO|STOCK-FUT") is not None
+
+        search = store.search_instruments(provider="upstox", exchange="BSE", limit=100)
+        tokens = {r["instrument_token"] for r in search}
+        assert "BSE_FO|S-FUT" in tokens
+        assert "BSE_FO|S-CE" in tokens
+        assert "BSE_FO|S-PE" in tokens
+        assert "BSE_FO|BANKEX-FUT" not in tokens
+        assert "BSE_FO|SENSEX50-FUT" not in tokens
+        assert "BSE_FO|STOCK-FUT" not in tokens
+
+        assert store.derivative_expiries("SENSEX", "FUTURE", exchange="BSE") == ["2026-12-29"]
+        assert store.derivative_expiries("SENSEX", "OPTION", exchange="BSE") == ["2026-12-29"]
+        assert store.derivative_expiries("BANKEX", "FUTURE", exchange="BSE") == []
+        assert store.derivative_expiries("SENSEX50", "FUTURE", exchange="BSE") == []
+
+        strikes = store.option_strikes("SENSEX", "2026-12-29", exchange="BSE")
+        assert {r["instrument_token"] for r in strikes} == {"BSE_FO|S-CE", "BSE_FO|S-PE"}
+        assert store.option_strikes("BANKEX", "2026-12-29", exchange="BSE") == []
+
+        futs = store.list_future_contracts(exchange="BSE")
+        assert {r["instrument_token"] for r in futs} == {"BSE_FO|S-FUT"}
+        futs_sensex = store.list_future_contracts(underlying="SENSEX", exchange="BSE")
+        assert len(futs_sensex) == 1
+        assert store.list_future_contracts(underlying="BANKEX", exchange="BSE") == []
     finally:
         tmp.cleanup()

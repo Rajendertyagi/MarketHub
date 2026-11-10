@@ -270,42 +270,23 @@ def sync_upstox_master(
     try:
         from core.persistence.modules import products as _products
 
-        written = 0
-        covered_segments: set[str] = set()
-        # Predicate-scoped segments first (preserve rows outside scope).
-        for seg, scope in scopes.items():
-            if seg not in enabled_segments:
-                continue
-            seg_rows = [r for r in kept if _segment_of(r) == seg]
-            if not seg_rows:
-                # No in-scope rows survived; do not delete existing scoped rows.
-                continue
-            count = _products.replace_provider_instruments_scoped_at(
-                store.db_path, provider, seg_rows,
-                segment=scope.segment, scope_column=scope.column,
-                scope_values=scope.values)
-            written += count
-            covered_segments.add(seg)
-            if "complete" in result.details:
-                result.details["complete"]["persisted"] = (
-                    result.details["complete"].get("persisted", 0) + count)
-
-        other_segments = [s for s in enabled_segments if s not in scopes]
-        other_rows = [r for r in kept if _segment_of(r) in set(other_segments)]
-        if other_segments:
-            count = _products.replace_provider_instruments_segmented_at(
-                store.db_path, provider, other_rows, other_segments)
-            written += count
-            covered_segments.update(
-                s for s in other_segments
-                if any(_segment_of(r) == s for r in other_rows))
-        elif not scopes:
-            # No scopes and no other-segment path taken above only when empty;
-            # fall back to full replace for backward compatibility.
-            written = store.replace_provider_instruments(provider, kept)
-            covered_segments.update(seg_counts.keys())
-
+        written, covered_segments = _products.replace_provider_instruments_upstox_atomic_at(
+            store.db_path, provider,
+            enabled_segments=list(enabled_segments),
+            kept_records=kept,
+            write_scopes=scopes,
+        )
         result.records = written
+        # Persisted count for scoped BSE_FO detail (if reported).
+        if "complete" in result.details and "BSE_FO" in scopes and "BSE_FO" in enabled_segments:
+            bse_persisted = sum(
+                1 for r in kept
+                if _segment_of(r) == "BSE_FO"
+                and str(r.get("underlying") or "").upper() == "SENSEX"
+            )
+            if bse_persisted:
+                result.details["complete"]["persisted"] = (
+                    result.details["complete"].get("persisted", 0) + bse_persisted)
     except Exception as exc:
         result.ok = False
         result.aborted = True

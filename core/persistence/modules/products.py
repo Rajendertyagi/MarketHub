@@ -376,6 +376,34 @@ def replace_provider_instruments_segmented_at(
         conn.close()
 
 
+def _apply_segmented_replace(
+    conn: sqlite3.Connection,
+    provider: str,
+    records: list[dict[str, Any]],
+    segments: Sequence[str],
+) -> int:
+    """Apply segment-scoped replace on an active transaction (no commit)."""
+    now = _now()
+    segs = [str(s) for s in segments if s]
+    if not segs:
+        return 0
+    placeholders = ", ".join("?" for _ in segs)
+    rows = []
+    for r in records:
+        if str(r.get("segment") or "") not in segs:
+            continue
+        row = _instrument_row(provider, r, now)
+        if row is not None:
+            rows.append(row)
+    conn.execute(
+        f"DELETE FROM instruments WHERE provider = ? "
+        f"AND (segment IN ({placeholders}) OR segment IS NULL)",
+        (provider, *segs),
+    )
+    _insert_instrument_rows(conn, rows)
+    return len(rows)
+
+
 def replace_provider_instruments_segmented(
     conn: sqlite3.Connection,
     provider: str,
@@ -393,28 +421,11 @@ def replace_provider_instruments_segmented(
     segments: they carry no segment ownership and would otherwise be
     orphaned by a segment-scoped delete.
     """
-    now = _now()
-    segs = [str(s) for s in segments if s]
-    if not segs:
-        return 0
-    placeholders = ", ".join("?" for _ in segs)
-    rows = []
-    for r in records:
-        if str(r.get("segment") or "") not in segs:
-            continue
-        row = _instrument_row(provider, r, now)
-        if row is not None:
-            rows.append(row)
     try:
         conn.execute("BEGIN IMMEDIATE")
-        conn.execute(
-            f"DELETE FROM instruments WHERE provider = ? "
-            f"AND (segment IN ({placeholders}) OR segment IS NULL)",
-            (provider, *segs),
-        )
-        _insert_instrument_rows(conn, rows)
+        count = _apply_segmented_replace(conn, provider, records, segments)
         conn.commit()
-        return len(rows)
+        return count
     except Exception:
         conn.rollback()
         raise
@@ -422,6 +433,75 @@ def replace_provider_instruments_segmented(
 
 # Kept outside the writers so the scope is validated once, before any SQL.
 _SCOPE_TEMP_TABLE = "_instruments_scope_tokens"
+
+
+def _apply_scoped_replace(
+    conn: sqlite3.Connection,
+    provider: str,
+    records: list[dict[str, Any]],
+    *,
+    segment: str,
+    scope_column: str,
+    scope_values: Sequence[str],
+) -> int:
+    """Apply predicate-scoped replace on an active transaction (no commit)."""
+    if scope_column not in _INSTRUMENT_COLUMNS:
+        raise ValueError(f"invalid scope column: {scope_column!r}")
+    if not segment:
+        raise ValueError("segment is required")
+    values = [str(v) for v in scope_values if str(v)]
+    if not values:
+        raise ValueError("scope_values must be non-empty")
+    now = _now()
+    rows: list[tuple[Any, ...]] = []
+    for r in records:
+        if str(r.get("segment") or "") != segment:
+            raise ValueError(
+                f"record outside scoped segment {segment!r}: "
+                f"{r.get('segment')!r}")
+        row = _instrument_row(provider, r, now)
+        if row is not None:
+            rows.append(row)
+    if not rows:
+        raise ValueError("scoped replace received no valid records")
+
+    placeholders = ", ".join("?" for _ in values)
+    scope_pred = f"segment = ? AND {scope_column} IN ({placeholders})"
+    scope_args: tuple[Any, ...] = (segment, *values)
+    conn.execute(
+        f"CREATE TEMP TABLE IF NOT EXISTS {_SCOPE_TEMP_TABLE} "
+        "(instrument_token TEXT PRIMARY KEY)")
+    conn.execute(f"DELETE FROM {_SCOPE_TEMP_TABLE}")
+    try:
+        conn.executemany(
+            f"INSERT INTO {_SCOPE_TEMP_TABLE} (instrument_token) "
+            "VALUES (?)",
+            [(str(row[1]),) for row in rows],
+        )
+    except sqlite3.IntegrityError as exc:
+        raise ScopedReplaceConflict(
+            "duplicate instrument_token in scoped batch") from exc
+    conflict = conn.execute(
+        f"SELECT i.instrument_token FROM instruments i "
+        f"JOIN {_SCOPE_TEMP_TABLE} t "
+        "ON t.instrument_token = i.instrument_token "
+        "WHERE i.provider = ? AND ("
+        "i.segment IS NULL OR i.segment <> ? OR "
+        f"i.{scope_column} IS NULL OR "
+        f"i.{scope_column} NOT IN ({placeholders})) LIMIT 1",
+        (provider, segment, *values),
+    ).fetchone()
+    if conflict is not None:
+        raise ScopedReplaceConflict(
+            f"{provider}: token {conflict[0]} already exists outside "
+            f"{segment}/{scope_column}={values}")
+    conn.execute(
+        f"DELETE FROM instruments WHERE provider = ? AND {scope_pred}",
+        (provider, *scope_args),
+    )
+    _insert_instrument_rows(conn, rows)
+    conn.execute(f"DELETE FROM {_SCOPE_TEMP_TABLE}")
+    return len(rows)
 
 
 def replace_provider_instruments_scoped_at(
@@ -475,69 +555,87 @@ def replace_provider_instruments_scoped(
       The transaction rolls back and :class:`ScopedReplaceConflict` is
       raised, leaving the catalogue untouched.
     """
-    if scope_column not in _INSTRUMENT_COLUMNS:
-        raise ValueError(f"invalid scope column: {scope_column!r}")
-    if not segment:
-        raise ValueError("segment is required")
-    values = [str(v) for v in scope_values if str(v)]
-    if not values:
-        raise ValueError("scope_values must be non-empty")
-    now = _now()
-    rows: list[tuple[Any, ...]] = []
-    for r in records:
-        if str(r.get("segment") or "") != segment:
-            raise ValueError(
-                f"record outside scoped segment {segment!r}: "
-                f"{r.get('segment')!r}")
-        row = _instrument_row(provider, r, now)
-        if row is not None:
-            rows.append(row)
-    if not rows:
-        raise ValueError("scoped replace received no valid records")
-
-    placeholders = ", ".join("?" for _ in values)
-    scope_pred = f"segment = ? AND {scope_column} IN ({placeholders})"
-    scope_args: tuple[Any, ...] = (segment, *values)
     try:
         conn.execute("BEGIN IMMEDIATE")
-        conn.execute(
-            f"CREATE TEMP TABLE IF NOT EXISTS {_SCOPE_TEMP_TABLE} "
-            "(instrument_token TEXT PRIMARY KEY)")
-        conn.execute(f"DELETE FROM {_SCOPE_TEMP_TABLE}")
-        try:
-            conn.executemany(
-                f"INSERT INTO {_SCOPE_TEMP_TABLE} (instrument_token) "
-                "VALUES (?)",
-                [(str(row[1]),) for row in rows],
-            )
-        except sqlite3.IntegrityError as exc:
-            raise ScopedReplaceConflict(
-                "duplicate instrument_token in scoped batch") from exc
-        conflict = conn.execute(
-            f"SELECT i.instrument_token FROM instruments i "
-            f"JOIN {_SCOPE_TEMP_TABLE} t "
-            "ON t.instrument_token = i.instrument_token "
-            "WHERE i.provider = ? AND ("
-            "i.segment IS NULL OR i.segment <> ? OR "
-            f"i.{scope_column} IS NULL OR "
-            f"i.{scope_column} NOT IN ({placeholders})) LIMIT 1",
-            (provider, segment, *values),
-        ).fetchone()
-        if conflict is not None:
-            raise ScopedReplaceConflict(
-                f"{provider}: token {conflict[0]} already exists outside "
-                f"{segment}/{scope_column}={values}")
-        conn.execute(
-            f"DELETE FROM instruments WHERE provider = ? AND {scope_pred}",
-            (provider, *scope_args),
-        )
-        _insert_instrument_rows(conn, rows)
-        conn.execute(f"DELETE FROM {_SCOPE_TEMP_TABLE}")
+        count = _apply_scoped_replace(
+            conn, provider, records, segment=segment,
+            scope_column=scope_column, scope_values=scope_values)
         conn.commit()
-        return len(rows)
+        return count
     except Exception:
         conn.rollback()
         raise
+
+
+def replace_provider_instruments_upstox_atomic_at(
+    db_path: str,
+    provider: str,
+    *,
+    enabled_segments: Sequence[str],
+    kept_records: list[dict[str, Any]],
+    write_scopes: dict[str, Any] | None = None,
+) -> tuple[int, set[str]]:
+    """Atomically replace all enabled Upstox segments in one transaction.
+
+    Applies predicate-scoped segment writes (e.g. BSE_FO SENSEX-only) and
+    segment-scoped writes for remaining enabled segments within a single
+    connection/transaction. Any failure rolls back the entire refresh.
+    """
+    scopes = write_scopes or {}
+    enabled = [str(s) for s in enabled_segments if s]
+    conn = open_instrument_connection(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        written = 0
+        covered_segments: set[str] = set()
+
+        for seg, scope in scopes.items():
+            if seg not in enabled:
+                continue
+            seg_rows = [r for r in kept_records if str(r.get("segment") or "") == seg]
+            if not seg_rows:
+                # Preserve existing scoped rows when no in-scope rows survived.
+                continue
+            written += _apply_scoped_replace(
+                conn, provider, seg_rows,
+                segment=scope.segment, scope_column=scope.column,
+                scope_values=scope.values)
+            covered_segments.add(seg)
+
+        other_segments = [s for s in enabled if s not in scopes]
+        if other_segments:
+            other_rows = [r for r in kept_records
+                          if str(r.get("segment") or "") in set(other_segments)]
+            written += _apply_segmented_replace(
+                conn, provider, other_rows, other_segments)
+            covered_segments.update(
+                s for s in other_segments
+                if any(str(r.get("segment") or "") == s for r in other_rows))
+        elif not scopes:
+            # Backward-compatible full replace for provider when no scopes/other split.
+            now = _now()
+            rows = [row for r in kept_records if (row := _instrument_row(provider, r, now))]
+            conn.execute("DELETE FROM instruments WHERE provider = ?", (provider,))
+            _insert_instrument_rows(conn, rows)
+            written = len(rows)
+            covered_segments.update(
+                str(r.get("segment") or "") for r in kept_records if r.get("segment"))
+
+        conn.commit()
+        return written, covered_segments
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# Supported product discovery excludes out-of-scope BSE derivatives that may
+# remain in storage for provider diagnostics/scoped-sync preservation.
+# Approved BSE F&O scope: SENSEX only (authoritative metadata).
+_SUPPORTED_PRODUCT_SQL = (
+    "(segment <> 'BSE_FO' OR segment IS NULL OR UPPER(COALESCE(underlying, '')) = 'SENSEX')"
+)
 
 
 def search_instruments(
@@ -572,7 +670,8 @@ def search_instruments(
     scope: list[str] = [instrument_type] if instrument_type else list(types or ())
     if ranked and not scope:
         scope = ["INDEX", "EQUITY", "ETF"]
-    sql = f"SELECT {', '.join(_INSTRUMENT_COLUMNS)} FROM instruments WHERE 1=1"
+    sql = (f"SELECT {', '.join(_INSTRUMENT_COLUMNS)} FROM instruments "
+           f"WHERE {_SUPPORTED_PRODUCT_SQL}")
     args: list[Any] = []
     if q:
         match = "tradingsymbol LIKE ? OR name LIKE ?"
@@ -657,7 +756,7 @@ def find_by_exact_symbol(
         return []
     sql = (f"SELECT {', '.join(_INSTRUMENT_COLUMNS)} FROM instruments "
            "WHERE (UPPER(tradingsymbol) = ? OR UPPER(underlying) = ?) "
-           "AND instrument_type IS NOT NULL")
+           f"AND instrument_type IS NOT NULL AND {_SUPPORTED_PRODUCT_SQL}")
     args: list[Any] = [want, want]
     if provider:
         sql += " AND provider = ?"
@@ -697,7 +796,7 @@ def derivative_expiries(
     """
     sql = ("SELECT DISTINCT expiry FROM instruments "
            "WHERE underlying = ? AND instrument_type = ? "
-           "AND expiry IS NOT NULL")
+           f"AND expiry IS NOT NULL AND {_SUPPORTED_PRODUCT_SQL}")
     args: list[Any] = [underlying, instrument_type]
     if exchange:
         sql += " AND exchange = ?"
@@ -726,7 +825,7 @@ def option_strikes(
     """
     sql = (f"SELECT {', '.join(_INSTRUMENT_COLUMNS)} FROM instruments "
            "WHERE underlying = ? AND expiry = ? "
-           "AND instrument_type = 'OPTION'")
+           f"AND instrument_type = 'OPTION' AND {_SUPPORTED_PRODUCT_SQL}")
     args: list[Any] = [underlying, expiry]
     if exchange:
         sql += " AND exchange = ?"
@@ -1497,7 +1596,7 @@ def list_future_contracts(
     ``limit <= 0`` or ``None`` returns the complete result set (no silent cap).
     """
     sql = (f"SELECT {', '.join(_INSTRUMENT_COLUMNS)} FROM instruments "
-           "WHERE instrument_type = 'FUTURE'")
+           f"WHERE instrument_type = 'FUTURE' AND {_SUPPORTED_PRODUCT_SQL}")
     args: list[Any] = []
     if exchange:
         sql += " AND exchange = ?"
