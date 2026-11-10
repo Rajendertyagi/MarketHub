@@ -527,21 +527,30 @@ class FyersTbtFeed:
         # accidentally on reconnect (channel capacity is enforced separately).
         async with self._ws_lock:
             ws = self._ws
-        subscribed_count = 0
-        if ws and _socket_is_open(ws):
-            channels_to_resume: set[int] = set()
-            for symbol in accepted:
-                ch = await self._send_subscribe(symbol, ws=ws)
-                if ch is not None:
-                    channels_to_resume.add(ch)
-                    subscribed_count += 1
-                else:
+            subscribed_count = 0
+            if ws and _socket_is_open(ws):
+                channels_to_resume: set[int] = set()
+                for symbol in accepted:
                     async with self._lock:
-                        self._desired_symbols.discard(symbol)
-            if channels_to_resume:
-                await self._send_channel_control(ws, resume_channels=sorted(channels_to_resume))
-        else:
-            subscribed_count = len(accepted)
+                        if symbol not in self._desired_symbols:
+                            continue
+                        ch = self._get_or_create_channel(symbol)
+                        if ch is None:
+                            self._desired_symbols.discard(symbol)
+                            self._release_channel(symbol)
+                            continue
+                    sent = await self._send_subscribe(symbol, ws=ws, channel=ch)
+                    if sent:
+                        channels_to_resume.add(ch)
+                        subscribed_count += 1
+                    else:
+                        # Send failed (socket issue); keep desired/mapping for reconnect.
+                        pass
+                if channels_to_resume:
+                    await self._send_channel_control(ws, resume_channels=sorted(channels_to_resume))
+            else:
+                async with self._lock:
+                    subscribed_count = sum(1 for s in accepted if s in self._desired_symbols)
 
         logger.info(
             "TBT feed: subscribed to %d symbols (total: %d, tier=%s, limit=%d)",
@@ -554,46 +563,72 @@ class FyersTbtFeed:
         async with self._lock:
             removed = [s for s in symbols if s in self._desired_symbols]
             self._desired_symbols.difference_update(removed)
+            removed_channels = {s: self._channel_map.get(s) for s in removed}
 
         # If connected, send unsubscribe immediately
         async with self._ws_lock:
             ws = self._ws
-        if ws and _socket_is_open(ws):
-            channels_to_pause: set[int] = set()
+            if ws and _socket_is_open(ws):
+                channels_to_pause: set[int] = set()
+                for symbol in removed:
+                    async with self._lock:
+                        if symbol in self._desired_symbols:
+                            continue
+                        ch = self._channel_map.get(symbol, removed_channels.get(symbol))
+                    if ch is None:
+                        continue
+                    await self._send_unsubscribe(symbol, ws=ws, channel=ch)
+                    async with self._lock:
+                        if symbol not in self._desired_symbols and not self._channel_has_desired_symbols(ch):
+                            channels_to_pause.add(ch)
+                if channels_to_pause:
+                    await self._send_channel_control(ws, pause_channels=sorted(channels_to_pause))
+
+        # Reclaim channel mappings for symbols no longer desired so channel IDs can
+        # be safely reused over the connection lifetime (capacity stays separate).
+        async with self._lock:
             for symbol in removed:
-                ch = await self._send_unsubscribe(symbol, ws=ws)
-                if ch is not None and not self._channel_has_desired_symbols(ch):
-                    channels_to_pause.add(ch)
-            if channels_to_pause:
-                await self._send_channel_control(ws, pause_channels=sorted(channels_to_pause))
+                self._release_channel(symbol)
 
         logger.info("TBT feed: unsubscribed from %d symbols (remaining: %d)", len(removed), len(self._desired_symbols))
         self._stats["unsubscribes"] += len(removed)
 
     async def _resubscribe_all(self, ws: Any) -> None:
         """Resubscribe to all desired symbols after (re)connect and resume channels."""
-        async with self._lock:
-            symbols = list(self._desired_symbols)
-
-        channels: set[int] = set()
-        failed: list[str] = []
-        for symbol in symbols:
-            ch = await self._send_subscribe(symbol, ws=ws)
-            if ch is not None:
-                channels.add(ch)
-            else:
-                failed.append(symbol)
-
-        # If channel allocation fails, drop from desired so rejected/unallocatable
-        # symbols cannot remain desired or be retried indefinitely on reconnect.
-        if failed:
+        async with self._ws_lock:
+            if not ws or not _socket_is_open(ws):
+                return
             async with self._lock:
-                for symbol in failed:
-                    self._desired_symbols.discard(symbol)
+                symbols = list(self._desired_symbols)
 
-        # Official protocol: subscribing does not start stream; resume channels (type 2).
-        if channels:
-            await self._send_channel_control(ws, resume_channels=sorted(channels))
+            channels: set[int] = set()
+            failed: list[str] = []
+            for symbol in symbols:
+                async with self._lock:
+                    if symbol not in self._desired_symbols:
+                        continue
+                    ch = self._get_or_create_channel(symbol)
+                if ch is None:
+                    failed.append(symbol)
+                    continue
+                sent = await self._send_subscribe(symbol, ws=ws, channel=ch)
+                if sent:
+                    channels.add(ch)
+                else:
+                    # Send failed; keep desired/mapping for a future reconnect attempt.
+                    pass
+
+            # If channel allocation fails, drop from desired so rejected/unallocatable
+            # symbols cannot remain desired or be retried indefinitely on reconnect.
+            if failed:
+                async with self._lock:
+                    for symbol in failed:
+                        self._desired_symbols.discard(symbol)
+                        self._release_channel(symbol)
+
+            # Official protocol: subscribing does not start stream; resume channels (type 2).
+            if channels:
+                await self._send_channel_control(ws, resume_channels=sorted(channels))
 
         logger.info(
             "TBT feed: resubscribed to %d symbols after reconnect (dropped=%d)",
@@ -604,24 +639,43 @@ class FyersTbtFeed:
         """Resubscribe to a single symbol (after sequence gap)."""
         async with self._ws_lock:
             ws = self._ws
-        if not ws or not _socket_is_open(ws):
-            return
-        await self._send_unsubscribe(symbol, ws=ws)
-        ch = await self._send_subscribe(symbol, ws=ws)
-        if ch is not None:
-            await self._send_channel_control(ws, resume_channels=[ch])
+            if not ws or not _socket_is_open(ws):
+                return
+            async with self._lock:
+                if symbol not in self._desired_symbols:
+                    return
+                ch = self._channel_map.get(symbol) or self._get_or_create_channel(symbol)
+                if ch is None:
+                    self._desired_symbols.discard(symbol)
+                    self._release_channel(symbol)
+                    return
+            await self._send_unsubscribe(symbol, ws=ws, channel=ch)
+            async with self._lock:
+                if symbol not in self._desired_symbols:
+                    return
+            sent = await self._send_subscribe(symbol, ws=ws, channel=ch)
+            if sent:
+                async with self._lock:
+                    if symbol not in self._desired_symbols:
+                        return
+                await self._send_channel_control(ws, resume_channels=[ch])
 
-    async def _send_subscribe(self, symbol: str, ws: Any | None = None) -> int | None:
-        """Send subscribe message for a symbol. Returns channel number."""
+    async def _send_subscribe(self, symbol: str, ws: Any | None = None, channel: int | None = None) -> bool:
+        """Send subscribe message for a symbol. Returns True if sent.
+
+        Callers that need serialized send sequences should hold _ws_lock.
+        """
         if ws is None:
             async with self._ws_lock:
                 ws = self._ws
         if not ws or not _socket_is_open(ws):
-            return None
+            return False
 
-        channel = self._get_or_create_channel(symbol)
         if channel is None:
-            return None
+            async with self._lock:
+                channel = self._get_or_create_channel(symbol)
+        if channel is None:
+            return False
         msg = {
             "type": TBT_SUBSCRIBE_TYPE,
             "data": {
@@ -633,17 +687,22 @@ class FyersTbtFeed:
         }
         await ws.send(json.dumps(msg))
         logger.debug("TBT feed: subscribed to %s on channel %d", symbol, channel)
-        return channel
+        return True
 
-    async def _send_unsubscribe(self, symbol: str, ws: Any | None = None) -> int | None:
-        """Send unsubscribe message for a symbol. Returns channel number."""
+    async def _send_unsubscribe(self, symbol: str, ws: Any | None = None, channel: int | None = None) -> bool:
+        """Send unsubscribe message for a symbol. Returns True if sent.
+
+        Callers that need serialized send sequences should hold _ws_lock.
+        """
         if ws is None:
             async with self._ws_lock:
                 ws = self._ws
         if not ws or not _socket_is_open(ws):
-            return None
+            return False
 
-        channel = self._channel_map.get(symbol, 1)
+        if channel is None:
+            async with self._lock:
+                channel = self._channel_map.get(symbol, 1)
         msg = {
             "type": TBT_SUBSCRIBE_TYPE,
             "data": {
@@ -655,7 +714,7 @@ class FyersTbtFeed:
         }
         await ws.send(json.dumps(msg))
         logger.debug("TBT feed: unsubscribed from %s", symbol)
-        return channel
+        return True
 
     async def _send_channel_control(
         self,
@@ -663,7 +722,10 @@ class FyersTbtFeed:
         resume_channels: list[int] | None = None,
         pause_channels: list[int] | None = None,
     ) -> None:
-        """Send type-2 switch-channel message (resume/pause)."""
+        """Send type-2 switch-channel message (resume/pause).
+
+        Callers that need serialized send sequences should hold _ws_lock.
+        """
         if not ws or not _socket_is_open(ws):
             return
         resume = [str(c) for c in (resume_channels or [])]
@@ -678,17 +740,34 @@ class FyersTbtFeed:
             },
         }
         await ws.send(json.dumps(msg))
-        for c in (resume_channels or []):
-            self._active_channels.add(int(c))
-        for c in (pause_channels or []):
-            self._active_channels.discard(int(c))
+        async with self._lock:
+            for c in (resume_channels or []):
+                self._active_channels.add(int(c))
+            for c in (pause_channels or []):
+                self._active_channels.discard(int(c))
         logger.debug("TBT feed: channel control resume=%s pause=%s", resume, pause)
 
     def _channel_has_desired_symbols(self, channel: int) -> bool:
+        """Caller must hold self._lock when concurrent access is possible."""
         for sym, ch in self._channel_map.items():
             if ch == channel and sym in self._desired_symbols:
                 return True
         return False
+
+    def _release_channel(self, symbol: str) -> None:
+        """Release a symbol's channel mapping when it is no longer desired.
+
+        Caller must hold self._lock when concurrent access is possible.
+        A channel ID becomes reusable only when no desired symbols remain mapped to it.
+        Active-channel state is cleared for fully released channels.
+        """
+        if symbol in self._desired_symbols:
+            return
+        channel = self._channel_map.pop(symbol, None)
+        if channel is None:
+            return
+        if not self._channel_has_desired_symbols(channel):
+            self._active_channels.discard(channel)
 
     def _resolve_tbt_limits(self) -> dict[str, Any]:
         """Resolve TBT entitlement limits (tier-aware) using existing resolution where possible.
@@ -737,15 +816,23 @@ class FyersTbtFeed:
         return limits
 
     def _get_or_create_channel(self, symbol: str) -> int | None:
-        """Get or create a channel for a symbol, enforcing channel capacity."""
+        """Get or create a channel for a symbol, enforcing channel capacity.
+
+        Caller must hold self._lock when concurrent access is possible.
+        Channel IDs (1..max_channels) are reused when freed (no desired symbols mapped),
+        so lifetime unique symbols do not exhaust capacity while active usage stays within limits.
+        """
         if symbol in self._channel_map:
             return self._channel_map[symbol]
         limits = self._resolve_tbt_limits()
         max_channels = int(limits.get("channels_per_connection", MAX_CHANNELS_PER_CONNECTION))
-        if self._next_channel <= max_channels:
-            self._channel_map[symbol] = self._next_channel
-            self._next_channel += 1
-            return self._channel_map[symbol]
+        used = set(self._channel_map.values())
+        for channel in range(1, max_channels + 1):
+            if channel not in used:
+                self._channel_map[symbol] = channel
+                if channel >= self._next_channel:
+                    self._next_channel = channel + 1
+                return channel
         logger.warning(
             "TBT feed: channel capacity reached (%d/%d), cannot allocate channel for %s",
             max_channels, max_channels, symbol,
@@ -816,7 +903,13 @@ class FyersTbtFeed:
         try:
             self._books.invalidate_all()
         finally:
-            self._active_channels.clear()
+            async with self._lock:
+                self._active_channels.clear()
+                # Drop stale channel mappings for symbols no longer desired; keep mappings
+                # for desired symbols so reconnect/resubscribe remains consistent.
+                stale = [sym for sym in list(self._channel_map) if sym not in self._desired_symbols]
+                for sym in stale:
+                    self._channel_map.pop(sym, None)
             async with self._ws_lock:
                 self._ws = None
             if self._state != "auth_required":

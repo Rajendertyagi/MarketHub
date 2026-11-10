@@ -1585,13 +1585,13 @@ class TestTBTEntitlementLimits:
     async def test_channel_capacity_enforced_separately(self):
         feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "prime"}, AsyncMock())
         # Force channel exhaustion independent of symbol entitlement for this unit check.
-        feed._next_channel = 51
+        feed._channel_map = {f"NSE:USED{i}-EQ": i for i in range(1, 51)}
         ws = AsyncMock()
         ws.open = True
         feed._ws = ws
         feed._desired_symbols.add("NSE:AAA-EQ")
-        ch = await feed._send_subscribe("NSE:AAA-EQ", ws=ws)
-        assert ch is None
+        sent = await feed._send_subscribe("NSE:AAA-EQ", ws=ws)
+        assert sent is False
         assert feed._stats["last_error"] == "channel_capacity_reached"
         assert ws.send.await_count == 0
 
@@ -1630,7 +1630,8 @@ class TestTBTEntitlementLimits:
     @pytest.mark.asyncio
     async def test_channel_capacity_failure_does_not_leave_symbol_desired(self):
         feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "prime"}, AsyncMock())
-        feed._next_channel = 51  # exhaust channels
+        # Exhaust all channel IDs without leaving a free slot.
+        feed._channel_map = {f"NSE:USED{i}-EQ": i for i in range(1, 51)}
         ws = AsyncMock()
         ws.open = True
         feed._ws = ws
@@ -1642,12 +1643,266 @@ class TestTBTEntitlementLimits:
     async def test_reconnect_drops_unallocatable_desired_symbols(self):
         feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "prime"}, AsyncMock())
         feed._desired_symbols.add("NSE:AAA-EQ")
-        feed._next_channel = 51  # cannot allocate
+        # Exhaust all channel IDs without leaving a free slot.
+        feed._channel_map = {f"NSE:USED{i}-EQ": i for i in range(1, 51)}
         ws = AsyncMock()
         ws.open = True
         await feed._resubscribe_all(ws)
         assert "NSE:AAA-EQ" not in feed.desired_symbols
         assert feed._stats["last_error"] == "channel_capacity_reached"
+
+
+class TestTBTChannelAllocationLifecycle:
+    @pytest.mark.asyncio
+    async def test_sequential_unique_symbols_reuse_channels_within_tier_limit(self):
+        # Prime tier: 5 symbols/connection active at once, but >50 unique over lifetime.
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "prime"}, AsyncMock())
+        ws = AsyncMock()
+        ws.open = True
+        feed._ws = ws
+        for i in range(60):
+            sym = f"NSE:SYM{i}-EQ"
+            await feed.subscribe([sym])
+            assert sym in feed.desired_symbols
+            assert len(feed.desired_symbols) == 1
+            await feed.unsubscribe([sym])
+            assert sym not in feed.desired_symbols
+        # All channel IDs should be reusable/freed; no exhaustion despite >50 unique symbols.
+        assert feed._stats.get("last_error") != "channel_capacity_reached"
+        assert len(feed._channel_map) == 0
+
+    @pytest.mark.asyncio
+    async def test_unsubscribe_reclaims_channel_for_reuse(self):
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "prime"}, AsyncMock())
+        ws = AsyncMock()
+        ws.open = True
+        feed._ws = ws
+        await feed.subscribe(["NSE:AAA-EQ"])
+        ch1 = feed._channel_map["NSE:AAA-EQ"]
+        await feed.unsubscribe(["NSE:AAA-EQ"])
+        assert "NSE:AAA-EQ" not in feed._channel_map
+        await feed.subscribe(["NSE:BBB-EQ"])
+        assert feed._channel_map["NSE:BBB-EQ"] == ch1
+
+    @pytest.mark.asyncio
+    async def test_reconnect_and_subsequent_channel_reuse(self):
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "prime"}, AsyncMock())
+        ws = AsyncMock()
+        ws.open = True
+        feed._ws = ws
+        await feed.subscribe(["NSE:AAA-EQ"])
+        ch1 = feed._channel_map["NSE:AAA-EQ"]
+        await feed.unsubscribe(["NSE:AAA-EQ"])
+        # Simulate reconnect resubscribe with no desired symbols, then reuse channel.
+        await feed._resubscribe_all(ws)
+        await feed.subscribe(["NSE:BBB-EQ"])
+        assert feed._channel_map["NSE:BBB-EQ"] == ch1
+        # Reconnect with active desired symbol keeps mapping correct and allows later reuse.
+        await feed._resubscribe_all(ws)
+        assert feed._channel_map["NSE:BBB-EQ"] == ch1
+        await feed.unsubscribe(["NSE:BBB-EQ"])
+        await feed.subscribe(["NSE:CCC-EQ"])
+        assert feed._channel_map["NSE:CCC-EQ"] == ch1
+
+    @pytest.mark.asyncio
+    async def test_existing_channel_mappings_remain_correct_for_active_symbols(self):
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "prime"}, AsyncMock())
+        ws = AsyncMock()
+        ws.open = True
+        feed._ws = ws
+        await feed.subscribe(["NSE:AAA-EQ", "NSE:BBB-EQ", "NSE:CCC-EQ"])
+        ch_a = feed._channel_map["NSE:AAA-EQ"]
+        ch_b = feed._channel_map["NSE:BBB-EQ"]
+        ch_c = feed._channel_map["NSE:CCC-EQ"]
+        await feed.unsubscribe(["NSE:BBB-EQ"])
+        assert feed._channel_map["NSE:AAA-EQ"] == ch_a
+        assert feed._channel_map["NSE:CCC-EQ"] == ch_c
+        assert "NSE:BBB-EQ" not in feed._channel_map
+        await feed.subscribe(["NSE:DDD-EQ"])
+        assert feed._channel_map["NSE:AAA-EQ"] == ch_a
+        assert feed._channel_map["NSE:CCC-EQ"] == ch_c
+        assert feed._channel_map["NSE:DDD-EQ"] == ch_b  # reused freed channel
+
+    @pytest.mark.asyncio
+    async def test_no_duplicate_or_stale_channel_subscriptions(self):
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "prime"}, AsyncMock())
+        ws = AsyncMock()
+        ws.open = True
+        feed._ws = ws
+        await feed.subscribe(["NSE:AAA-EQ"])
+        await feed.unsubscribe(["NSE:AAA-EQ"])
+        await feed.subscribe(["NSE:BBB-EQ"])
+
+        def _msgs():
+            return [json.loads(c.args[0]) for c in ws.send.call_args_list]
+
+        msgs = _msgs()
+        # BBB should be subscribed on the reused channel; AAA must not remain desired/mapped.
+        sub_msgs = [m for m in msgs if m.get("type") == 1 and m.get("data", {}).get("subs") == 1]
+        unsub_msgs = [m for m in msgs if m.get("type") == 1 and m.get("data", {}).get("subs") == -1]
+        assert any("NSE:AAA-EQ" in m["data"].get("symbols", []) for m in sub_msgs)
+        assert any("NSE:AAA-EQ" in m["data"].get("symbols", []) for m in unsub_msgs)
+        assert any("NSE:BBB-EQ" in m["data"].get("symbols", []) for m in sub_msgs)
+        assert "NSE:AAA-EQ" not in feed.desired_symbols
+        assert "NSE:AAA-EQ" not in feed._channel_map
+        assert "NSE:BBB-EQ" in feed.desired_symbols
+        # No duplicate mapping for active symbol and no stale mapping for removed symbol.
+        assert list(feed._channel_map.keys()).count("NSE:BBB-EQ") == 1
+        assert len(set(feed._channel_map.values())) == len(feed._channel_map)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_subscribe_unsubscribe_send_sequences_serialized(self):
+        """Send sequences are serialized on the connection (no interleaved op messages)."""
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "prime"}, AsyncMock())
+        feed._desired_symbols.add("NSE:AAA-EQ")
+        feed._channel_map["NSE:AAA-EQ"] = 1
+        feed._next_channel = 2
+
+        events: list[dict] = []
+        first_send_started = asyncio.Event()
+        allow_first_send = asyncio.Event()
+
+        class _SlowWS:
+            open = True
+            def __init__(self):
+                self.count = 0
+            async def send(self, payload):
+                self.count += 1
+                msg = json.loads(payload)
+                events.append(msg)
+                if self.count == 1:
+                    first_send_started.set()
+                    await allow_first_send.wait()
+            async def close(self):
+                return None
+
+        ws = _SlowWS()
+        feed._ws = ws
+
+        # Unsubscribe holds send lock across its sequence; subscribe must not interleave.
+        t1 = asyncio.create_task(feed.unsubscribe(["NSE:AAA-EQ"]))
+        await first_send_started.wait()
+        t2 = asyncio.create_task(feed.subscribe(["NSE:BBB-EQ"]))
+        await asyncio.sleep(0)  # let subscribe attempt to enter send section
+        allow_first_send.set()
+        await asyncio.gather(t1, t2)
+
+        # First operation's messages form a contiguous prefix (serialized send sequence).
+        # Unsubscribe sends type-1 unsub for AAA then type-2 pause for channel 1.
+        assert events[0]["type"] == 1
+        assert events[0]["data"]["subs"] == -1
+        assert events[0]["data"]["symbols"] == ["NSE:AAA-EQ"]
+        assert events[1]["type"] == 2
+        assert "1" in events[1]["data"].get("pauseChannels", [])
+        # Subscribe messages follow after unsubscribe sequence completes.
+        sub_msgs = [m for m in events[2:] if m.get("type") == 1 and m.get("data", {}).get("subs") == 1]
+        assert any("NSE:BBB-EQ" in m["data"].get("symbols", []) for m in sub_msgs)
+
+    @pytest.mark.asyncio
+    async def test_stale_subscribe_after_unsubscribe_converges_to_desired_state(self):
+        """Subscribe suspended before ws send lock must not send stale subscribe after unsubscribe."""
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "prime"}, AsyncMock())
+        ws = AsyncMock()
+        ws.open = True
+        feed._ws = ws
+
+        class _GateLock:
+            def __init__(self, inner: asyncio.Lock):
+                self._inner = inner
+                self.gate_subscribe = False
+                self.subscribe_waiting = asyncio.Event()
+                self.allow_subscribe = asyncio.Event()
+
+            async def __aenter__(self):
+                task = asyncio.current_task()
+                name = task.get_name() if task else ""
+                if self.gate_subscribe and name == "sub":
+                    self.subscribe_waiting.set()
+                    await self.allow_subscribe.wait()
+                await self._inner.__aenter__()
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return await self._inner.__aexit__(exc_type, exc, tb)
+
+        gate = _GateLock(feed._ws_lock)
+        feed._ws_lock = gate
+
+        gate.gate_subscribe = True
+        t_sub = asyncio.create_task(feed.subscribe(["NSE:AAA-EQ"]), name="sub")
+        await gate.subscribe_waiting.wait()
+        # Desired updated by subscribe, but send section not yet entered.
+        assert "NSE:AAA-EQ" in feed.desired_symbols
+
+        # Unsubscribe wins ws send lock first and removes desired state.
+        await feed.unsubscribe(["NSE:AAA-EQ"])
+        assert "NSE:AAA-EQ" not in feed.desired_symbols
+
+        gate.allow_subscribe.set()
+        await t_sub
+
+        msgs = [json.loads(c.args[0]) for c in ws.send.call_args_list]
+        sub_msgs = [m for m in msgs if m.get("type") == 1 and m.get("data", {}).get("subs") == 1]
+        unsub_msgs = [m for m in msgs if m.get("type") == 1 and m.get("data", {}).get("subs") == -1]
+        # Symbol was never sent/subscribed on wire before unsubscribe won; stale subscribe must not be sent.
+        assert not any("NSE:AAA-EQ" in m["data"].get("symbols", []) for m in sub_msgs)
+        assert not any("NSE:AAA-EQ" in m["data"].get("symbols", []) for m in unsub_msgs)
+        assert "NSE:AAA-EQ" not in feed.desired_symbols
+        assert "NSE:AAA-EQ" not in feed._channel_map
+
+    @pytest.mark.asyncio
+    async def test_stale_unsubscribe_after_subscribe_converges_to_desired_state(self):
+        """Unsubscribe suspended before ws send lock must not send stale unsubscribe after resubscribe/add."""
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "prime"}, AsyncMock())
+        ws = AsyncMock()
+        ws.open = True
+        feed._ws = ws
+        feed._desired_symbols.add("NSE:AAA-EQ")
+        feed._channel_map["NSE:AAA-EQ"] = 1
+        feed._next_channel = 2
+
+        class _GateLock:
+            def __init__(self, inner: asyncio.Lock):
+                self._inner = inner
+                self.gate_unsub = False
+                self.unsub_waiting = asyncio.Event()
+                self.allow_unsub = asyncio.Event()
+
+            async def __aenter__(self):
+                task = asyncio.current_task()
+                name = task.get_name() if task else ""
+                if self.gate_unsub and name == "unsub":
+                    self.unsub_waiting.set()
+                    await self.allow_unsub.wait()
+                await self._inner.__aenter__()
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return await self._inner.__aexit__(exc_type, exc, tb)
+
+        gate = _GateLock(feed._ws_lock)
+        feed._ws_lock = gate
+
+        gate.gate_unsub = True
+        t_unsub = asyncio.create_task(feed.unsubscribe(["NSE:AAA-EQ"]), name="unsub")
+        await gate.unsub_waiting.wait()
+        assert "NSE:AAA-EQ" not in feed.desired_symbols
+
+        # Subscribe wins ws send lock first and restores desired state.
+        await feed.subscribe(["NSE:AAA-EQ"])
+        assert "NSE:AAA-EQ" in feed.desired_symbols
+
+        gate.allow_unsub.set()
+        await t_unsub
+
+        msgs = [json.loads(c.args[0]) for c in ws.send.call_args_list]
+        sub_msgs = [m for m in msgs if m.get("type") == 1 and m.get("data", {}).get("subs") == 1]
+        unsub_msgs = [m for m in msgs if m.get("type") == 1 and m.get("data", {}).get("subs") == -1]
+        # Subscribe protocol sent; stale unsubscribe must not be sent after desired restored.
+        assert any("NSE:AAA-EQ" in m["data"].get("symbols", []) for m in sub_msgs)
+        assert not any("NSE:AAA-EQ" in m["data"].get("symbols", []) for m in unsub_msgs)
+        assert "NSE:AAA-EQ" in feed.desired_symbols
+        assert "NSE:AAA-EQ" in feed._channel_map
 
 
 class TestTBTCorrectiveTaskC:
