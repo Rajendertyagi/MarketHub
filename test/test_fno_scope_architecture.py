@@ -365,3 +365,92 @@ def test_out_of_scope_bse_derivatives_excluded_from_supported_discovery():
         assert store.list_future_contracts(underlying="BANKEX", exchange="BSE") == []
     finally:
         tmp.cleanup()
+
+
+def test_option_underlyings_and_expiries_exclude_out_of_scope_bse_derivatives():
+    tmp, store, catalog = _catalog()
+    try:
+        store.replace_provider_instruments("upstox", [
+            # Supported NSE F&O product
+            {
+                "provider": "upstox", "instrument_token": "NSE_FO|NIFTY-FUT",
+                "provider_symbol": "NSE_FO|NIFTY-FUT", "exchange": "NSE",
+                "segment": "NSE_FO", "tradingsymbol": "NIFTY FUT 29 DEC 26",
+                "name": "NIFTY", "instrument_type": "FUTURE",
+                "underlying": "NIFTY", "expiry": "2026-12-29",
+            },
+            {
+                "provider": "upstox", "instrument_token": "NSE_FO|NIFTY-CE",
+                "provider_symbol": "NSE_FO|NIFTY-CE", "exchange": "NSE",
+                "segment": "NSE_FO", "tradingsymbol": "NIFTY 24000 CE 29 DEC 26",
+                "name": "NIFTY", "instrument_type": "OPTION",
+                "underlying": "NIFTY", "expiry": "2026-12-29",
+                "strike": 24000.0, "option_type": "CE",
+            },
+            # Supported SENSEX BSE_FO
+            {
+                "provider": "upstox", "instrument_token": "BSE_FO|S-FUT",
+                "provider_symbol": "BSE_FO|S-FUT", "exchange": "BSE",
+                "segment": "BSE_FO", "tradingsymbol": "SENSEX FUT 29 DEC 26",
+                "name": "SENSEX", "instrument_type": "FUTURE",
+                "underlying": "SENSEX", "expiry": "2026-12-29",
+            },
+            {
+                "provider": "upstox", "instrument_token": "BSE_FO|S-CE",
+                "provider_symbol": "BSE_FO|S-CE", "exchange": "BSE",
+                "segment": "BSE_FO", "tradingsymbol": "SENSEX 80000 CE 29 DEC 26",
+                "name": "SENSEX", "instrument_type": "OPTION",
+                "underlying": "SENSEX", "expiry": "2026-12-29",
+                "strike": 80000.0, "option_type": "CE",
+            },
+            # Out-of-scope BSE derivatives (stored for diagnostics/preservation)
+            {
+                "provider": "upstox", "instrument_token": "BSE_FO|BANKEX-FUT",
+                "provider_symbol": "BSE_FO|BANKEX-FUT", "exchange": "BSE",
+                "segment": "BSE_FO", "tradingsymbol": "BANKEX FUT 29 DEC 26",
+                "name": "BANKEX", "instrument_type": "FUTURE",
+                "underlying": "BANKEX", "expiry": "2026-12-29",
+            },
+            {
+                "provider": "upstox", "instrument_token": "BSE_FO|BANKEX-CE",
+                "provider_symbol": "BSE_FO|BANKEX-CE", "exchange": "BSE",
+                "segment": "BSE_FO", "tradingsymbol": "BANKEX 50000 CE 29 DEC 26",
+                "name": "BANKEX", "instrument_type": "OPTION",
+                "underlying": "BANKEX", "expiry": "2026-12-29",
+                "strike": 50000.0, "option_type": "CE",
+            },
+            {
+                "provider": "upstox", "instrument_token": "BSE_FO|SENSEX50-FUT",
+                "provider_symbol": "BSE_FO|SENSEX50-FUT", "exchange": "BSE",
+                "segment": "BSE_FO", "tradingsymbol": "SENSEX50 FUT 29 DEC 26",
+                "name": "SENSEX50", "instrument_type": "FUTURE",
+                "underlying": "SENSEX50", "expiry": "2026-12-29",
+            },
+            {
+                "provider": "upstox", "instrument_token": "BSE_FO|RELIANCE-FUT",
+                "provider_symbol": "BSE_FO|RELIANCE-FUT", "exchange": "BSE",
+                "segment": "BSE_FO", "tradingsymbol": "RELIANCE FUT 29 DEC 26",
+                "name": "RELIANCE", "instrument_type": "FUTURE",
+                "underlying": "RELIANCE", "expiry": "2026-12-29",
+            },
+        ])
+
+        # Raw diagnostic lookup remains unchanged.
+        for token in ("BSE_FO|BANKEX-FUT", "BSE_FO|BANKEX-CE",
+                      "BSE_FO|SENSEX50-FUT", "BSE_FO|RELIANCE-FUT"):
+            assert store.get_instrument("upstox", token) is not None
+
+        underlyings = {r["underlying"] for r in store.option_underlyings(limit=100)}
+        assert "NIFTY" in underlyings
+        assert "SENSEX" in underlyings
+        assert "BANKEX" not in underlyings
+        assert "SENSEX50" not in underlyings
+        assert "RELIANCE" not in underlyings
+
+        assert store.option_expiries("NIFTY") == ["2026-12-29"]
+        assert store.option_expiries("SENSEX") == ["2026-12-29"]
+        assert store.option_expiries("BANKEX") == []
+        assert store.option_expiries("SENSEX50") == []
+        assert store.option_expiries("RELIANCE") == []
+    finally:
+        tmp.cleanup()

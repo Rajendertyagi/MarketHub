@@ -1369,7 +1369,7 @@ def option_underlyings(
 ) -> list[dict[str, Any]]:
     """Distinct option underlyings, optionally filtered by name/symbol."""
     sql = ("SELECT DISTINCT underlying FROM instruments "
-           "WHERE underlying IS NOT NULL")
+           f"WHERE underlying IS NOT NULL AND {_SUPPORTED_PRODUCT_SQL}")
     args: list[Any] = []
     if q:
         sql += " AND (underlying LIKE ? OR tradingsymbol LIKE ?)"
@@ -1391,7 +1391,7 @@ def option_expiries(
     try:
         rows = conn.execute(
             "SELECT DISTINCT expiry FROM instruments "
-            "WHERE underlying = ? AND expiry IS NOT NULL "
+            f"WHERE underlying = ? AND expiry IS NOT NULL AND {_SUPPORTED_PRODUCT_SQL} "
             "ORDER BY expiry", (underlying,))
         return [r["expiry"] for r in rows]
     finally:
