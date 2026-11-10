@@ -1,10 +1,11 @@
 # FYERS TBT Corrective Implementation Plan (P0-A)
 
-**Date:** 2026-11-10 (final end-to-end execution update: 2026-11-11)
+**Date:** 2026-11-10 (historical updates through 2026-11-11; four-workstream follow-up execution: 2026-11-11)
 **Repository:** `Rajendertyagi/MarketHub`
 **Branch:** `review/scanner-phase1`
-**HEAD:** `03bf72d044189d941c04b8a001d0f8e7cabffb5e` (committed/pushed baseline; working tree contains uncommitted final TBT corrections under review)
-**Status:** TBT-01/02/03/04/05/05a/06/07/08 implemented and tested with mocks. Dynamic URL discovery/auth contract and server subscribe/resume acknowledgement semantics investigated and documented from available evidence (partially resolved/documented; no invented protocol behavior). Account-wide entitlement enforcement investigated (no existing coordination mechanism; local per-feed-instance enforcement only — genuine account-wide enforcement BLOCKED pending architectural/external coordination decision). TBT-09 mocked regression verification completed; **live broker/runtime verification BLOCKED** (no approved credentials/environment available in this execution).
+**Current committed baseline (HEAD):** `2185356c6e30a82157d1b5b7f87b07889fe33e61` (`fix(fyers): finalize TBT discovery fallback and protocol handling`, pushed to `origin/review/scanner-phase1`; parent `03bf72d044189d941c04b8a001d0f8e7cabffb5e`)
+**Working tree (this execution):** uncommitted follow-up changes for Workstreams A–D reconciliation (see §16); `docs/performance/` preserved/untracked.
+**Status:** TBT-01/02/03/04/05/05a/06/07/08 implemented and tested with mocks in committed baseline. This follow-up: **Workstream A** (positive subscribe/resume ack and error correlation) remains **UNRESOLVED** by available authoritative evidence (no invented semantics; safe behavior preserved). **Workstream B** (dynamic URL discovery/auth) resolved with a security-first decision: undocumented credential-bearing discovery to `https://api-t1.fyers.in/indus/home/tbtws` removed; documented fixed endpoint `wss://rtsocket-api.fyers.in/versova` with official `Authorization: <appId:accessToken>` used. **Workstream C** (genuine account-wide entitlement enforcement) remains **BLOCKED** (no existing cross-process/shared coordination mechanism; local per-feed-instance enforcement only, `account_wide_enforced=false`). **Workstream D** (live runtime verification, TBT-09) remains **BLOCKED** (no approved credentials/environment available). Historical sections below preserve earlier execution records, including statements that were accurate at the time they were written.
 **Scope:** FYERS TBT only. Minimal corrective changes to fix identified integration gaps.
 **Source of truth:** This document. Must be updated immediately after every individual task.
 
@@ -552,14 +553,13 @@ All tasks are individually numbered. Status must be updated after each task. Do 
 
 ## 7) Current State
 
-- **Plan file:** `docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (updated through TBT-07 channel-allocation correction on committed baseline `53a48e3`)
-- **Git:** `review/scanner-phase1` at `53a48e361ce5f06365a304f7cfdf9e6907f02d48` (HEAD unchanged this session; working tree has uncommitted TBT-07 correction changes)
-- **Working tree (reconciled):** `?? docs/performance/` (pre-existing, preserved), modified `brokers/fyers/tbt/feed.py`, modified `test/test_fyers_tbt.py`, modified `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`. No other implementation files changed.
-- **Implemented (prior sessions):** TBT-04 (shutdown + corrective recv-task cleanup), TBT-05 (auth), TBT-06 (channel protocol), TBT-05a (symbol propagation/runtime sync), TBT-08 (fresh-snapshot gating). Focused and broader mocked regressions executed (see TBT-09, §11, §12).
-- **Implemented/audited (committed `53a48e3` + this correction):** TBT-07 entitlement-aware limits audited and hardened (tier-aware TBT symbol limits via existing resolution where possible, separate channel-capacity enforcement, graceful rejection/logging, status reporting; rejected/unallocatable symbols cannot remain desired or resubscribe on reconnect). Channel-allocation lifecycle corrected: unsubscribe reclaims mappings, channel IDs are safely reused when freed, cleanup drops stale non-desired mappings, and lifetime unique symbols no longer exhaust channel capacity while active usage stays within limits. **Locally enforced:** per-instance/connection ceilings (channels 50, tier-mapped symbol limits for this feed instance). **Not globally enforced:** account-wide symbols/connections across multiple feed instances/connections/users (requires external coordination; documented).
-- **Remaining gaps:** TBT-09 live runtime verification (pending approved credentials/environment).
-- **Explicit issues/uncertainties (tracked):** (1) Dynamic URL discovery endpoint (`https://api-t1.fyers.in/indus/home/tbtws`) auth contract/necessity remains **UNRESOLVED** (preserved). (2) Server acknowledgement semantics for subscribe/resume remain **UNRESOLVED**. (3) Runtime/live broker behavior **not verified** (mocked tests only). (4) Account-wide TBT limits across multiple connections/users require external coordination (documented).
-- **TBT-01/02/03/04/05/06/05a/07/08 outcomes:** Preserved/extended (see §2, §9, §10, §11, §12, §13, §14). TBT-09 broader regression rerun recorded (no failures/regressions observed in executed suites).
+- **Plan file:** `docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (reconciled to committed baseline `2185356` and updated with §16 four-workstream follow-up execution).
+- **Git:** `review/scanner-phase1` at committed HEAD `2185356c6e30a82157d1b5b7f87b07889fe33e61` (pushed). This execution leaves uncommitted follow-up changes for review (no commit/push performed).
+- **Working tree (reconciled, this execution):** `?? docs/performance/` (pre-existing, preserved), modified `brokers/fyers/tbt/feed.py`, modified `test/test_fyers_tbt.py`, modified `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`. No other implementation files changed.
+- **Implemented (committed baseline `2185356`):** TBT-01/02/03/04/05/05a/06/07/08 implemented and tested with mocks; discovery fallback/protocol handling finalized per §15 (historical record). Focused and broader mocked regressions recorded in prior sections.
+- **Implemented (this follow-up, uncommitted):** **Workstream B** security-first resolution applied — undocumented credential-bearing dynamic URL discovery removed; documented fixed WS endpoint `wss://rtsocket-api.fyers.in/versova` used directly with official `Authorization: <appId:accessToken>`. Protocol/status notes and tests updated to reflect evidence-based behavior (no credential transmission to unverified endpoint). **Workstream A** investigated (proto/code/docs evidence available locally): no authoritative positive subscribe/resume ack or error correlation established; safe behavior preserved and explicitly reported as unresolved. **Workstream C** investigated: no existing cross-process/shared coordination mechanism found; genuine account-wide enforcement remains blocked (local per-feed-instance enforcement only). **Workstream D** assessed: no approved credentials/environment available; live runtime verification blocked.
+- **Remaining gaps/blockers:** TBT-09 live runtime verification (**BLOCKED**, no approved credentials/environment). Positive subscribe/resume ack and error correlation (**UNRESOLVED**, no authoritative evidence). Genuine account-wide TBT entitlement enforcement across connections/users/processes (**BLOCKED**, requires shared coordination/architectural decision). Historical sections may describe earlier intermediate states; current committed baseline and this follow-up are authoritative for present status.
+- **TBT-01/02/03/04/05/06/05a/07/08 outcomes:** Preserved (see §2, §9–§15 and §16).
 
 ---
 
@@ -569,20 +569,20 @@ All tasks are individually numbered. Status must be updated after each task. Do 
 2. **TBT-02: Verify method signatures & lifecycle contracts — DONE (corrected)**
 3. **TBT-03: Investigate FYERS TBT protocol and lifecycle integration (auth, channel resume, shutdown) — DONE** (investigation/documentation only)
 4. **TBT-04: Deterministic shutdown and task lifecycle — DONE** (implemented + corrective recv-task cleanup; mocked tests)
-5. **TBT-05: Authentication correction (TBT WS `appId:accessToken`) — DONE** (implemented + mocked tests; dynamic URL auth contract preserved/unresolved)
-6. **TBT-06: Channel subscription and resume protocol (type-2) — DONE** (implemented + mocked tests)
+5. **TBT-05: Authentication correction (TBT WS `appId:accessToken`) — DONE** (implemented + mocked tests). Dynamic URL discovery auth contract/necessity resolved for implementation by **security-first removal** of undocumented credential-bearing discovery in §16 (documented fixed endpoint used).
+6. **TBT-06: Channel subscription and resume protocol (type-2) — DONE** (implemented + mocked tests). Positive subscribe/resume acknowledgement and error correlation remain **UNRESOLVED** (no authoritative evidence; safe behavior preserved).
 7. **TBT-05a: Propagate desired symbols from FyersFeed to FyersTbtFeed — DONE** (corrective Task B; mocked tests)
 8. **TBT-08: Fix reconnect recovery (invalidate stale books + require fresh snapshots) — DONE** (corrective Task C; mocked tests)
-9. **TBT-07: Enforce entitlement-aware limits — DONE** (tier-aware TBT limits, separate channel capacity, graceful handling; mocked tests)
-10. **TBT-09: Verification & regression — IN PROGRESS (partial)** (broader mocked regression recorded; live runtime verification pending)
+9. **TBT-07: Enforce entitlement-aware limits — DONE (local scope)** (tier-aware TBT limits, separate channel capacity, graceful handling; mocked tests). Genuine account-wide enforcement across connections/users/processes remains **BLOCKED** (no existing shared coordination mechanism).
+10. **TBT-09: Verification & regression — BLOCKED (live runtime)** (mocked regressions completed/passing; live broker/runtime verification blocked pending approved credentials/environment).
 
-**Dependency notes:**
-- **Dynamic URL discovery auth contract** (`/indus/home/tbtws`) remains **UNRESOLVED**; existing behavior preserved (no guessing/removal without evidence).
-- **Server acknowledgement semantics** for subscribe/resume remain **UNRESOLVED**.
-- **Live broker/runtime verification** not performed.
-- **Account-wide TBT limits** across multiple connections/users require external coordination (documented).
+**Dependency notes (current):**
+- **Positive subscribe/resume ack and error correlation:** **UNRESOLVED** (no authoritative evidence in inspected proto/docs/artifacts; `ws.send()` success not treated as acceptance; server errors recorded without unsafe correlation/mutation).
+- **Dynamic URL discovery (`/indus/home/tbtws`):** undocumented credential-bearing request **removed** (security-first). Official fixed WS endpoint and auth header preserved.
+- **Account-wide TBT limits:** **BLOCKED** for genuine cross-instance/cross-process enforcement (no existing shared coordination). Local per-feed-instance enforcement remains explicit (`account_wide_enforced=false`).
+- **Live broker/runtime verification:** **BLOCKED** (no approved credentials/environment).
 
-**Next task:** TBT-09 live runtime verification with approved credentials/environment when available (or additional broader regression if identified). No Git history operations performed.
+**Next task:** Obtain approved FYERS test environment/credentials for TBT-09 market-data-only runtime verification; if/when authoritative protocol evidence becomes available, revisit ack/correlation and any verified discovery contract; if genuine account-wide enforcement is required, approve/implement shared coordination per §16 proposal. No Git history operations performed in this execution.
 
 ---
 
@@ -906,3 +906,142 @@ All tasks are individually numbered. Status must be updated after each task. Do 
 - No Git history operations, staging, commits, or pushes performed.
 - No credentials/tokens/secrets introduced into source, tests, logs, or documentation.
 - Changes limited to authorized FYERS TBT scope and canonical plan.
+
+---
+
+## 16) Four-Workstream Follow-up Execution Record (2026-11-11, uncommitted)
+
+### 16.1 Baseline and scope
+- **TASK ZONE:** FYERS ADAPTER / BROKER RUNTIME (TBT feed integration) — localized to TBT implementation, focused tests, and canonical plan.
+- **ALLOWED CHANGE SURFACE:** `brokers/fyers/tbt/feed.py`, `test/test_fyers_tbt.py`, `docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (no additional files required).
+- **PROTECTED/OUT-OF-SCOPE ZONES:** `app/auth/*`, credential storage/token persistence/OAuth/login/session restoration, application startup/composition, source/feed lifecycle ownership outside minimal TBT behavior, persistence schema, canonical market models, unrelated providers/features, `docs/performance/`.
+- **Branch/HEAD (verified):** `review/scanner-phase1` @ `2185356c6e30a82157d1b5b7f87b07889fe33e61` (parent `03bf72d044189d941c04b8a001d0f8e7cabffb5e`, pushed). No commit/push/amend/rebase/reset/branch switch performed.
+- **Working tree (before):** clean except `?? docs/performance/` (preserved).
+- **Working tree (after):** `?? docs/performance/` (preserved), modified `brokers/fyers/tbt/feed.py`, modified `test/test_fyers_tbt.py`, modified `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`.
+
+### 16.2 Workstream A — Subscribe/resume acknowledgements and error correlation
+- **Initial problem:** Positive subscribe/resume acknowledgement and server error correlation were previously undocumented/unresolved; implementation must not invent protocol semantics or treat `ws.send()` as server acceptance.
+- **Evidence investigated (available locally):**
+  - `brokers/fyers/tbt/proto/msg_pb2.py` inspected: no ack/request/correlation/subscribe/resume response fields identified in generated descriptors/classes.
+  - `brokers/fyers/tbt/feed.py` protocol handling: server `SocketMessage.error` carries `msg` only; no documented request/symbol/channel correlation available to attribute errors safely.
+  - Existing plan records and official doc references (§2, §11, §15): type-1 subscribe/unsubscribe and type-2 resume/pause are documented; positive per-request ack/correlation semantics not established by fetched/available evidence.
+  - External authoritative SDK/docs fetch not available in this execution environment (web search tool unavailable/HTTP 402); no installed `fyers_apiv3` package found locally.
+- **Final decision:** **UNRESOLVED** (evidence-limited). Do not implement positive ack/resume ack handling or error correlation because no authoritative format/semantics were established. Preserve safe behavior: `ws.send()` success is not server acceptance; server errors are recorded for diagnostics only and do not mutate desired subscriptions or channel mappings.
+- **Files changed:** `brokers/fyers/tbt/feed.py` (clarified protocol comments/status notes: `positive_subscribe_ack`/`positive_resume_ack` explicitly undocumented), `test/test_fyers_tbt.py` (added status/protocol-notes assertion; preserved error non-mutation coverage), `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`.
+- **Implementation completed:** Evidence-based documentation/status hardening only; no invented request IDs, correlation fields, response parsing, or timeout behavior.
+- **Tests and results:** Covered by focused TBT suite (see §16.7), including `test_server_error_response_handled`, `test_server_error_response_does_not_mutate_desired_or_channel_state`, `test_status_reports_protocol_ack_and_discovery_semantics`.
+- **Remaining blockers:** Authoritative FYERS protocol/SDK evidence for positive subscribe/resume ack and error correlation (request/symbol/channel/ordering/timeout semantics).
+
+### 16.3 Workstream B — Dynamic URL discovery and authentication (security-first)
+- **Initial problem:** Implementation previously sent raw access token in `Authorization` header to `https://api-t1.fyers.in/indus/home/tbtws` (best-effort discovery) while endpoint necessity/auth contract was unverified; official WS endpoint/auth are documented.
+- **Evidence investigated:**
+  - Official TBT WS contract (documented in code/plan): endpoint `wss://rtsocket-api.fyers.in/versova`, header `Authorization: <appId:accessToken>`.
+  - Discovery endpoint `https://api-t1.fyers.in/indus/home/tbtws` not established as required/safe by available authoritative evidence in this execution; prior behavior transmitted credentials to unverified endpoint.
+  - No installed official SDK source found locally; external authoritative verification unavailable in this environment.
+- **Final decision (security-first):** Remove undocumented credential-bearing discovery request. Use documented fixed WS endpoint directly. Do not replace with another undocumented auth assumption. Preserve official WS auth format and no-credential-logging behavior.
+- **Files changed:** `brokers/fyers/tbt/feed.py` (`_fetch_ws_url` now returns fixed endpoint without HTTP/credential transmission; session/status/protocol notes updated), `test/test_fyers_tbt.py` (replaced discovery-header/fallback-via-HTTP tests with assertions that no credential-bearing discovery request is made and fixed endpoint is used), `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`.
+- **Implementation completed:** `_fetch_ws_url(token)` no longer performs `httpx` GET or sends `Authorization` token to discovery endpoint; returns `wss://rtsocket-api.fyers.in/versova`. `status().protocol_notes.dynamic_url_discovery` reports `disabled_unverified_credential_bearing_endpoint`. WS connect continues to use `Authorization: <appId:accessToken>`.
+- **Tests and results:** `test_tbt1_endpoint_auth_acquisition`, `test_ws_url_resolution_uses_documented_fixed_endpoint_without_credential_bearing_discovery`, `test_ws_url_resolution_does_not_depend_on_discovery_response`, existing WS auth/missing app_id/token/log-redaction tests, and full focused TBT suite passed (see §16.7).
+- **Remaining blockers:** If future authoritative evidence proves discovery is required and specifies a safe/verified auth contract, revisit with that evidence only.
+
+### 16.4 Workstream C — Genuine account-wide entitlement enforcement
+- **Initial problem:** FYERS TBT symbol limits apply per user across all connections; implementation/status previously and currently local to feed instance (`enforcement_scope=local_feed_instance`, `account_wide_enforced=false`).
+- **Evidence investigated:**
+  - `brokers/fyers/tbt/feed.py`: one TBT WS connection per `FyersTbtFeed` instance; local desired-set/channel enforcement and tier-mapped limits.
+  - `brokers/fyers/feed.py`: parent owns one `FyersTbtFeed` per feed instance; TBT started/stopped with feed lifecycle.
+  - `sources/__init__.py`, `sources/registry.py`, `app/server.py`: sources/feeds are constructed per configured source instance; multiple instances/processes are architecturally possible.
+  - `providers/capacity.py`, `providers/registry.py`: entitlement/tier resolution and capability metadata (no cross-process reservation/lease for TBT symbol usage).
+  - `app/subscriptions/manager.py`, `app/subscriptions/service.py`: in-process lease/allocation/reconciliation for market-data subscriptions (not a cross-process TBT account-wide symbol/connection reservation mechanism).
+  - Repository search: no existing cross-process coordination primitive for TBT entitlements (no file locks/leases/shared reservation service specific to this need); SQLite/persistence modules exist but introducing schema/coordination changes is out of protected scope without approved design.
+- **Final decision:** **BLOCKED** for genuine account-wide enforcement. Do not falsely claim account-wide enforcement via in-process-only structures. Keep local per-feed-instance enforcement explicit and accurate.
+- **Files changed:** `docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (this record/proposal). No safe implementation change identified within existing shared infrastructure that would provide genuine cross-instance/cross-process enforcement.
+- **Implementation completed:** No claim escalation; status remains `enforcement_scope=local_feed_instance`, `account_wide_enforced=false`. Existing local safeguards preserved (tier-mapped per-instance/per-connection symbol ceilings, 50-channel capacity separate, graceful rejection, no desired-state persistence for rejected/unallocatable symbols, channel reuse/reclamation, send serialization/convergence).
+- **Tests and results:** Existing entitlement/channel/concurrency tests remain passing (see §16.7). No new cross-process enforcement implemented (none safely possible with available infrastructure).
+- **Remaining blockers / minimal architecture proposal (concrete):**
+  - **Required shared state:** account-scoped reservation registry keyed by a verified FYERS account identity (not `app_id` alone unless proven unique), tracking active TBT connections, reserved symbols per connection, and aggregate symbols-per-user across all connections/processes; include owner/process/instance/session identifiers and heartbeat/lease expiry.
+  - **Atomic operations:** compare-and-reserve/release for (a) connection slot, (b) symbol slot per connection, (c) symbol slot per user aggregate; all-or-nothing admission for subscribe batches; idempotent release on unsubscribe/disconnect/stop.
+  - **Lease expiration/cleanup:** time-bounded leases with periodic renewal; crash-safe stale-lease reaping on startup and during reconciliation; deterministic cleanup on cancellation, reconnect replacement, and process termination.
+  - **Ownership identity:** stable account identity derived from approved broker/account metadata available without exposing secrets; separate connection identity per feed instance/socket session.
+  - **Consistency rules:** enforce Standard/Prime ceilings (symbols/user across connections, symbols/connection, connections/user) separately from 50 channels/connection; reject admissions that would exceed any ceiling; never leave desired/allocated state inconsistent with reservation outcome.
+  - **Deployment implications:** requires a shared coordination backend reachable by all MarketHub processes using the same FYERS account (e.g. existing DB-backed lease table with transactional/atomic semantics, or an approved external coordinator). Introduces cross-process dependency/availability considerations and requires explicit schema/design approval (protected persistence/architecture decision).
+  - **Status until implemented:** keep `account_wide_enforced=false` and report local scope only.
+
+### 16.5 Workstream D — Real FYERS TBT runtime verification
+- **Initial problem:** TBT-09 live runtime verification requires approved FYERS test environment and existing authorized credentials; mocked tests must not be conflated with live broker verification.
+- **Evidence investigated (no secrets exposed):**
+  - Environment variables checked by name only: `FYERS_APP_ID`/`FYERS_CLIENT_ID` unset, `FYERS_ACCESS_TOKEN`/`FYERS_TOKEN` unset.
+  - `config.json` exists (structure inspected without reading secret values into report/logs); no approved runtime credential availability confirmed for this execution.
+  - No live broker/OAuth/WebSocket/runtime actions performed.
+- **Final decision:** **BLOCKED** (approved credentials/environment unavailable). No fabricated runtime results.
+- **Files changed:** `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`.
+- **Implementation completed:** N/A (verification blocked).
+- **Tests and results:** Mocked/deterministic suites only (see §16.7). **No live broker observations.**
+- **Remaining blockers / exact execution checklist (market-data-only, approved environment):**
+  1. Confirm approved FYERS test account/environment and existing authorized credentials/session are available (do not print/paste/store/log tokens, app secrets, auth headers, or sensitive responses).
+  2. Start MarketHub/FYERS feed with TBT enabled for supported NSE equity/NFO symbols within approved entitlement limits.
+  3. Verify authentication and WS connection to `wss://rtsocket-api.fyers.in/versova` with `Authorization: <appId:accessToken>` (sanitized evidence only).
+  4. Verify type-1 subscribe and type-2 channel resume behavior; record subscription result categories.
+  5. Verify receipt of initial depth snapshot and correct processing of subsequent delta packets (sanitized counts/timestamps/symbol classes only).
+  6. Verify unsubscribe and channel pause behavior.
+  7. Verify server-error handling/diagnostics without desired/channel-state corruption.
+  8. Verify disconnect/reconnect recovery and fresh snapshot requirement after reconnect/sequence gaps.
+  9. Verify entitlement/channel-limit behavior within approved account limits (local enforcement observations; do not claim account-wide unless proven).
+  10. Verify clean shutdown/cancellation with no orphaned tasks/sockets.
+  11. Record sanitized evidence: timestamp, environment type, connection/subscription/snapshot-delta/reconnect/shutdown results, relevant error categories, limitations. Never record secrets.
+
+### 16.6 Cross-cutting reliability review (this execution)
+- Reviewed TBT lifecycle/auth/URL resolution, send serialization (`_ws_lock`), desired-state revalidation, channel allocation/reuse/reclamation, reconnect/resubscribe, snapshot gating/sequence-gap recovery, server-error handling, and status/diagnostics.
+- Confirmed no network I/O while holding `_lock`; `_ws_lock` serializes protocol send sequences; desired state revalidated before allocation/sends/resume/pause.
+- Preserved TBT-07 channel-reuse/concurrency fixes and TBT-08 snapshot recovery behavior.
+- No unrelated abstractions or broad rewrites introduced.
+
+### 16.7 Tests and verification (this execution)
+- `python -m pytest test/test_fyers_tbt.py -q` → **92 passed, 1 skipped** (exit 0)
+- `python -m pytest test/test_fyers_feed.py -q` → **12 passed** (exit 0)
+- `python -m pytest test/test_architecture_boundaries.py -q` → **17 passed** (exit 0)
+- `python -m pytest test/test_fyers_socket_lifecycle.py test/test_fyers_dynamic_subscriptions.py test/test_fyers_reconnect_mapping.py test/test_fyers_integration.py -q` → **23 passed** (exit 0)
+- `python -m pytest test/test_provider_capacity.py test/test_subscriptions.py test/test_subscription_manager.py test/test_subscription_demand.py test/test_subscription_failover_lifecycle.py test/test_subscription_reconcile_lifecycle.py test/test_runtime_subscriptions.py test/test_md_subscriptions.py -q` → **61 passed** (exit 0)
+- `python -m pytest test/test_source_lifecycle.py test/test_source_controls.py test/test_reconnect.py test/test_mcp_3e_reconnect_restart.py -q` → **29 passed** (exit 0)
+- `python -m pytest test/test_fyers_capabilities.py test/test_fyers_decoder.py test/test_fyers_config_architecture.py -q` → **29 passed** (exit 0)
+- `git diff --check` → exit 0 (no whitespace/error output)
+
+**Notes:** All results above are mocked/deterministic/local tests; no live broker verification performed.
+
+### 16.8 Security assessment
+- **Undocumented discovery request (`https://api-t1.fyers.in/indus/home/tbtws`):** **REMOVED** from runtime behavior. `_fetch_ws_url()` no longer performs HTTP discovery and no longer transmits any credential/token to that endpoint.
+- **Credentials transmitted to unverified endpoint:** **No.** No access token, app ID, or Authorization header is sent to the unverified discovery endpoint by the updated implementation.
+- **Official WS auth:** Preserved as `Authorization: <appId:accessToken>` to `wss://rtsocket-api.fyers.in/versova`.
+- **Logging/secrets:** No credentials, raw tokens, auth headers, or sensitive responses logged; existing redaction expectations preserved.
+
+### 16.9 Account-wide enforcement assessment
+- **Genuinely cross-instance and cross-process:** **No.**
+- **Actual scope/mechanism:** Local enforcement per `FyersTbtFeed` instance/connection only (`enforcement_scope=local_feed_instance`, `account_wide_enforced=false`). Mechanism: tier-resolved TBT symbol ceilings applied to the instance's desired set (`min(symbols_per_user, symbols_per_connection)` for this connection), separate 50-channel-per-connection capacity with safe reuse/reclamation, graceful rejection, and no desired-state persistence for rejected/unallocatable symbols. No shared reservation/lease/coordination across feed instances or processes.
+
+### 16.10 Live runtime verification assessment
+- **Actual broker observations:** **None** (blocked; no approved credentials/environment available).
+- **Mocked tests:** Passing as listed in §16.7; these validate deterministic/local behavior only and must not be conflated with live broker verification.
+
+### 16.11 Canonical plan reconciliation
+- Header/current baseline/status reconciled to committed HEAD `2185356c6e30a82157d1b5b7f87b07889fe33e61` (pushed) while preserving historical execution records and their original context.
+- Added this dated follow-up execution section (§16) with evidence, decisions, implementation, files changed, tests/results, blockers, security/account-wide/live assessments, and remaining risks.
+- Explicit statuses recorded: Workstream A **UNRESOLVED**, Workstream B **DONE (security-first, evidence-based)**, Workstream C **BLOCKED** (genuine account-wide), Workstream D/TBT-09 live runtime **BLOCKED**.
+
+### 16.12 Git state (end of execution)
+- **Branch:** `review/scanner-phase1`
+- **Starting HEAD:** `2185356c6e30a82157d1b5b7f87b07889fe33e61`
+- **Changed files (this execution):** `brokers/fyers/tbt/feed.py`, `test/test_fyers_tbt.py`, `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`
+- **Diff summary:** see final report (`git diff --stat`); uncommitted, no commit/push performed.
+- **Preserved:** `docs/performance/` untracked; no unrelated files modified/staged/committed.
+
+### 16.13 Remaining decisions / external blockers
+- **Protocol (external/authoritative evidence required):** positive subscribe/resume acknowledgement semantics and server error correlation (request/symbol/channel/ordering/timeout), if they exist.
+- **Architecture/infrastructure (approved design required):** shared cross-process coordination for genuine account-wide TBT entitlement enforcement (identity, atomic reservations, leases/expiry, cleanup, deployment backend).
+- **Environment/credentials (approved access required):** TBT-09 live market-data-only runtime verification in an approved FYERS environment with existing authorized credentials.
+
+### 16.14 Confirmations
+- No live broker/OAuth/WebSocket/runtime actions performed; no trading/order placement.
+- No credentials, tokens, auth headers, or sensitive responses printed, pasted, stored, or logged.
+- No auth/startup foundation, credential storage, token persistence, OAuth/login/session restoration, persistence schema, or canonical market model changes.
+- No new dependencies/config/DB/credential-storage/schema changes introduced.
+- `docs/performance/` and unrelated user files preserved; no unrelated files staged/committed.
+- No commit, push, amend, rebase, reset, or branch switch performed.

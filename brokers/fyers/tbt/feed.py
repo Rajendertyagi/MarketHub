@@ -277,9 +277,8 @@ class FyersTbtFeed:
                 return "auth_required"
 
             # Resolve WebSocket URL. Official docs specify fixed endpoint
-            # wss://rtsocket-api.fyers.in/versova; dynamic discovery is preserved
-            # as best-effort but its auth contract/necessity is not established by
-            # fetched official docs. Discovery failures fall back to fixed endpoint.
+            # wss://rtsocket-api.fyers.in/versova with Authorization: <appId:accessToken>.
+            # Undocumented credential-bearing dynamic discovery is not used.
             ws_url = await self._fetch_ws_url(token)
             if not ws_url:
                 logger.error("TBT feed: failed to resolve WebSocket URL")
@@ -418,10 +417,12 @@ class FyersTbtFeed:
             socket_msg.ParseFromString(message)
 
             # Server error response. Official docs: error=true, empty feeds, msg
-            # describes the error. No documented positive per-subscribe/resume ack
-            # or request/symbol/channel correlation, so ws.send() success must not
-            # be treated as server acceptance and this error cannot be safely
-            # attributed to a specific request. Record for diagnostics only.
+            # describes the error. No authoritative evidence in available docs/SDK
+            # artifacts/proto inspected establishes a positive per-subscribe/resume
+            # acknowledgement or request/symbol/channel correlation, so ws.send()
+            # success must not be treated as server acceptance and this error cannot
+            # be safely attributed to a specific request. Record for diagnostics only
+            # without mutating desired subscriptions or channel mappings.
             if socket_msg.error:
                 logger.warning("TBT feed: server error: %s", socket_msg.msg)
                 self._stats["last_error"] = socket_msg.msg
@@ -855,43 +856,15 @@ class FyersTbtFeed:
 
         Official docs specify fixed endpoint wss://rtsocket-api.fyers.in/versova
         with Authorization: <appId:accessToken>. Dynamic discovery via
-        GET https://api-t1.fyers.in/indus/home/tbtws is preserved as best-effort
-        (existing behavior) but its auth contract/necessity is not established by
-        fetched official docs. On discovery failure or malformed/missing response,
-        fall back to the documented fixed endpoint. No credentials are logged.
+        GET https://api-t1.fyers.in/indus/home/tbtws was previously attempted as
+        best-effort, but its official necessity and authentication contract are
+        not established by available authoritative evidence. As a security-first
+        decision, this implementation does not transmit credentials to that
+        unverified endpoint and uses the documented fixed endpoint directly.
+        No credentials are logged.
         """
-        fixed_url = "wss://rtsocket-api.fyers.in/versova"
-        try:
-            import httpx
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    "https://api-t1.fyers.in/indus/home/tbtws",
-                    headers={"Authorization": token},
-                    timeout=10.0,
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    socket_url = data.get("data", {}).get("socket_url")
-                    if isinstance(socket_url, str) and socket_url.strip():
-                        return socket_url.strip()
-                    logger.warning(
-                        "TBT feed: dynamic URL discovery returned no socket_url; "
-                        "falling back to documented fixed endpoint"
-                    )
-                    return fixed_url
-                logger.warning(
-                    "TBT feed: dynamic URL discovery failed (%d); "
-                    "falling back to documented fixed endpoint",
-                    resp.status_code,
-                )
-                return fixed_url
-        except Exception as e:
-            logger.warning(
-                "TBT feed: dynamic URL discovery error (%s); "
-                "falling back to documented fixed endpoint",
-                type(e).__name__,
-            )
-            return fixed_url
+        del token  # intentionally unused: no credential-bearing discovery request
+        return "wss://rtsocket-api.fyers.in/versova"
 
     # -------------------------------------------------------------------------
     # Helpers
@@ -963,9 +936,11 @@ class FyersTbtFeed:
             "symbols": list(self._desired_symbols),
             "protocol_notes": {
                 "ws_endpoint": "wss://rtsocket-api.fyers.in/versova",
-                "dynamic_url_discovery": "best_effort_unverified_auth_contract",
+                "dynamic_url_discovery": "disabled_unverified_credential_bearing_endpoint",
                 "send_success_is_server_ack": False,
                 "server_error_correlation": "undocumented",
+                "positive_subscribe_ack": "undocumented",
+                "positive_resume_ack": "undocumented",
             },
             "tbt_limits": {
                 "tier": limits.get("tier"),

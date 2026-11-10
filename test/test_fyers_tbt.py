@@ -102,14 +102,9 @@ async def tbt_feed(token_getter, config, market_service):
 class TestTBTProtocol:
     @pytest.mark.asyncio
     async def test_tbt1_endpoint_auth_acquisition(self, tbt_feed, token_getter):
-        """TBT1: Verify endpoint URL fetch."""
-        mock_url = "wss://test.fyers.in"
-        # Mock the fetch method directly
-        async def mock_fetch(token):
-            return mock_url
-        tbt_feed._fetch_ws_url = mock_fetch
+        """TBT1: Verify documented fixed endpoint is used (no credential-bearing discovery)."""
         url = await tbt_feed._fetch_ws_url("test_token")
-        assert url == mock_url
+        assert url == "wss://rtsocket-api.fyers.in/versova"
 
     @pytest.mark.asyncio
     async def test_tbt2_subscribe_message_correct(self, tbt_feed):
@@ -1008,15 +1003,11 @@ class TestTBTAuthentication:
         assert feed._state == "auth_required"
 
     @pytest.mark.asyncio
-    async def test_dynamic_url_request_preserves_raw_token_header(self, monkeypatch):
+    async def test_ws_url_resolution_uses_documented_fixed_endpoint_without_credential_bearing_discovery(self, monkeypatch):
+        """Security-first: do not transmit credentials to unverified discovery endpoint."""
         import httpx
 
-        captured = {}
-
-        class _Resp:
-            status_code = 200
-            def json(self):
-                return {"data": {"socket_url": "wss://tbt.example/ws"}}
+        called = {"count": 0}
 
         class _Client:
             async def __aenter__(self):
@@ -1024,86 +1015,20 @@ class TestTBTAuthentication:
             async def __aexit__(self, exc_type, exc, tb):
                 return False
             async def get(self, url, headers=None, timeout=None):
-                captured["url"] = url
-                captured["headers"] = headers
-                return _Resp()
+                called["count"] += 1
+                raise AssertionError("credential-bearing discovery request must not be made")
 
         monkeypatch.setattr(httpx, "AsyncClient", lambda: _Client())
 
         feed = FyersTbtFeed(lambda: "raw-token", {"tbt_enabled": True, "app_id": "APP-1"}, AsyncMock())
         url = await feed._fetch_ws_url("raw-token")
 
-        assert url == "wss://tbt.example/ws"
-        assert captured["headers"]["Authorization"] == "raw-token"
+        assert url == "wss://rtsocket-api.fyers.in/versova"
+        assert called["count"] == 0
 
     @pytest.mark.asyncio
-    async def test_dynamic_url_discovery_non_200_falls_back_to_fixed_endpoint(self, monkeypatch):
-        import httpx
-
-        class _Resp:
-            status_code = 401
-            def json(self):
-                return {}
-
-        class _Client:
-            async def __aenter__(self):
-                return self
-            async def __aexit__(self, exc_type, exc, tb):
-                return False
-            async def get(self, url, headers=None, timeout=None):
-                return _Resp()
-
-        monkeypatch.setattr(httpx, "AsyncClient", lambda: _Client())
-        feed = FyersTbtFeed(lambda: "raw-token", {"tbt_enabled": True, "app_id": "APP-1"}, AsyncMock())
-        url = await feed._fetch_ws_url("raw-token")
-        assert url == "wss://rtsocket-api.fyers.in/versova"
-
-    @pytest.mark.asyncio
-    async def test_dynamic_url_discovery_missing_socket_url_falls_back_to_fixed_endpoint(self, monkeypatch):
-        import httpx
-
-        class _Resp:
-            status_code = 200
-            def json(self):
-                return {"data": {}}
-
-        class _Client:
-            async def __aenter__(self):
-                return self
-            async def __aexit__(self, exc_type, exc, tb):
-                return False
-            async def get(self, url, headers=None, timeout=None):
-                return _Resp()
-
-        monkeypatch.setattr(httpx, "AsyncClient", lambda: _Client())
-        feed = FyersTbtFeed(lambda: "raw-token", {"tbt_enabled": True, "app_id": "APP-1"}, AsyncMock())
-        url = await feed._fetch_ws_url("raw-token")
-        assert url == "wss://rtsocket-api.fyers.in/versova"
-
-    @pytest.mark.asyncio
-    async def test_dynamic_url_discovery_malformed_response_falls_back_to_fixed_endpoint(self, monkeypatch):
-        import httpx
-
-        class _Resp:
-            status_code = 200
-            def json(self):
-                raise ValueError("bad json")
-
-        class _Client:
-            async def __aenter__(self):
-                return self
-            async def __aexit__(self, exc_type, exc, tb):
-                return False
-            async def get(self, url, headers=None, timeout=None):
-                return _Resp()
-
-        monkeypatch.setattr(httpx, "AsyncClient", lambda: _Client())
-        feed = FyersTbtFeed(lambda: "raw-token", {"tbt_enabled": True, "app_id": "APP-1"}, AsyncMock())
-        url = await feed._fetch_ws_url("raw-token")
-        assert url == "wss://rtsocket-api.fyers.in/versova"
-
-    @pytest.mark.asyncio
-    async def test_dynamic_url_discovery_exception_falls_back_to_fixed_endpoint(self, monkeypatch):
+    async def test_ws_url_resolution_does_not_depend_on_discovery_response(self, monkeypatch):
+        """Fixed endpoint is returned regardless of discovery availability/contract."""
         import httpx
 
         class _Client:
@@ -1112,12 +1037,12 @@ class TestTBTAuthentication:
             async def __aexit__(self, exc_type, exc, tb):
                 return False
             async def get(self, url, headers=None, timeout=None):
-                raise RuntimeError("network down")
+                raise AssertionError("discovery must not be called")
 
         monkeypatch.setattr(httpx, "AsyncClient", lambda: _Client())
         feed = FyersTbtFeed(lambda: "raw-token", {"tbt_enabled": True, "app_id": "APP-1"}, AsyncMock())
-        url = await feed._fetch_ws_url("raw-token")
-        assert url == "wss://rtsocket-api.fyers.in/versova"
+        assert await feed._fetch_ws_url("raw-token") == "wss://rtsocket-api.fyers.in/versova"
+        assert await feed._fetch_ws_url("") == "wss://rtsocket-api.fyers.in/versova"
 
     @pytest.mark.asyncio
     async def test_no_token_or_auth_header_exposed_in_logs(self, monkeypatch, caplog):
@@ -1291,6 +1216,19 @@ class TestTBTChannelProtocol:
         assert feed.desired_symbols == {"NSE:AAA-EQ", "NSE:BBB-EQ"}
         assert feed._channel_map == {"NSE:AAA-EQ": 1, "NSE:BBB-EQ": 2}
         assert feed._active_channels == {1, 2}
+
+    @pytest.mark.asyncio
+    async def test_status_reports_protocol_ack_and_discovery_semantics(self):
+        """Protocol notes must reflect evidence-based ack/correlation/discovery state."""
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP"}, AsyncMock())
+        st = feed.status()
+        notes = st["protocol_notes"]
+        assert notes["ws_endpoint"] == "wss://rtsocket-api.fyers.in/versova"
+        assert notes["dynamic_url_discovery"] == "disabled_unverified_credential_bearing_endpoint"
+        assert notes["send_success_is_server_ack"] is False
+        assert notes["server_error_correlation"] == "undocumented"
+        assert notes["positive_subscribe_ack"] == "undocumented"
+        assert notes["positive_resume_ack"] == "undocumented"
 
     @pytest.mark.asyncio
     async def test_snapshot_and_delta_book_behavior_preserved(self, market_service):
