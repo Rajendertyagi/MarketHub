@@ -437,39 +437,63 @@ class TestTBTMarketService:
 
 class TestTBTLifecycle:
     @pytest.mark.asyncio
-    async def test_tbt19_stop_closes_task(self, tbt_feed):
+    async def test_tbt19_stop_closes_task(self, tbt_feed, monkeypatch):
+        from brokers.fyers.tbt import feed as tbt_feed_mod
+
+        ws = _FakeWS(block_recv=True)
+        monkeypatch.setattr(tbt_feed_mod, "ws_connect", _FakeWSConnect(ws))
+        async def _url(_token):
+            return "wss://tbt.example/ws"
+        tbt_feed._fetch_ws_url = _url
+
         stop_event = asyncio.Event()
         tbt_feed._task = asyncio.create_task(tbt_feed.run(None, stop_event))
-        
+
         await asyncio.sleep(0.1)
-        
+
         stop_event.set()
         await asyncio.sleep(0.1)
-        
+
         assert tbt_feed._task.done()
 
     @pytest.mark.asyncio
-    async def test_tbt20_restart_single_task(self, tbt_feed):
+    async def test_tbt20_restart_single_task(self, tbt_feed, monkeypatch):
+        from brokers.fyers.tbt import feed as tbt_feed_mod
+
+        ws = _FakeWS(block_recv=True)
+        monkeypatch.setattr(tbt_feed_mod, "ws_connect", _FakeWSConnect(ws))
+        async def _url(_token):
+            return "wss://tbt.example/ws"
+        tbt_feed._fetch_ws_url = _url
+
         stop_event = asyncio.Event()
-        
+
         task1 = asyncio.create_task(tbt_feed.run(None, stop_event))
         await asyncio.sleep(0.1)
-        
+
         stop_event.set()
         await task1
-        
+
         # Just verify it stopped cleanly
         assert tbt_feed._state in ["stopped", "disconnected"]
 
     @pytest.mark.asyncio
-    async def test_tbt21_no_duplicate_connection(self, tbt_feed):
+    async def test_tbt21_no_duplicate_connection(self, tbt_feed, monkeypatch):
+        from brokers.fyers.tbt import feed as tbt_feed_mod
+
+        ws = _FakeWS(block_recv=True)
+        monkeypatch.setattr(tbt_feed_mod, "ws_connect", _FakeWSConnect(ws))
+        async def _url(_token):
+            return "wss://tbt.example/ws"
+        tbt_feed._fetch_ws_url = _url
+
         stop_event = asyncio.Event()
         task = asyncio.create_task(tbt_feed.run(None, stop_event))
         await asyncio.sleep(0.1)
-        
+
         # Verify task was created
         assert task is not None
-        
+
         stop_event.set()
         await task
 
@@ -1013,6 +1037,89 @@ class TestTBTAuthentication:
         assert captured["headers"]["Authorization"] == "raw-token"
 
     @pytest.mark.asyncio
+    async def test_dynamic_url_discovery_non_200_falls_back_to_fixed_endpoint(self, monkeypatch):
+        import httpx
+
+        class _Resp:
+            status_code = 401
+            def json(self):
+                return {}
+
+        class _Client:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+            async def get(self, url, headers=None, timeout=None):
+                return _Resp()
+
+        monkeypatch.setattr(httpx, "AsyncClient", lambda: _Client())
+        feed = FyersTbtFeed(lambda: "raw-token", {"tbt_enabled": True, "app_id": "APP-1"}, AsyncMock())
+        url = await feed._fetch_ws_url("raw-token")
+        assert url == "wss://rtsocket-api.fyers.in/versova"
+
+    @pytest.mark.asyncio
+    async def test_dynamic_url_discovery_missing_socket_url_falls_back_to_fixed_endpoint(self, monkeypatch):
+        import httpx
+
+        class _Resp:
+            status_code = 200
+            def json(self):
+                return {"data": {}}
+
+        class _Client:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+            async def get(self, url, headers=None, timeout=None):
+                return _Resp()
+
+        monkeypatch.setattr(httpx, "AsyncClient", lambda: _Client())
+        feed = FyersTbtFeed(lambda: "raw-token", {"tbt_enabled": True, "app_id": "APP-1"}, AsyncMock())
+        url = await feed._fetch_ws_url("raw-token")
+        assert url == "wss://rtsocket-api.fyers.in/versova"
+
+    @pytest.mark.asyncio
+    async def test_dynamic_url_discovery_malformed_response_falls_back_to_fixed_endpoint(self, monkeypatch):
+        import httpx
+
+        class _Resp:
+            status_code = 200
+            def json(self):
+                raise ValueError("bad json")
+
+        class _Client:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+            async def get(self, url, headers=None, timeout=None):
+                return _Resp()
+
+        monkeypatch.setattr(httpx, "AsyncClient", lambda: _Client())
+        feed = FyersTbtFeed(lambda: "raw-token", {"tbt_enabled": True, "app_id": "APP-1"}, AsyncMock())
+        url = await feed._fetch_ws_url("raw-token")
+        assert url == "wss://rtsocket-api.fyers.in/versova"
+
+    @pytest.mark.asyncio
+    async def test_dynamic_url_discovery_exception_falls_back_to_fixed_endpoint(self, monkeypatch):
+        import httpx
+
+        class _Client:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+            async def get(self, url, headers=None, timeout=None):
+                raise RuntimeError("network down")
+
+        monkeypatch.setattr(httpx, "AsyncClient", lambda: _Client())
+        feed = FyersTbtFeed(lambda: "raw-token", {"tbt_enabled": True, "app_id": "APP-1"}, AsyncMock())
+        url = await feed._fetch_ws_url("raw-token")
+        assert url == "wss://rtsocket-api.fyers.in/versova"
+
+    @pytest.mark.asyncio
     async def test_no_token_or_auth_header_exposed_in_logs(self, monkeypatch, caplog):
         from brokers.fyers.tbt import feed as tbt_feed_mod
 
@@ -1165,6 +1272,25 @@ class TestTBTChannelProtocol:
         msg.msg = "some server error"
         await tbt_feed._handle_message(msg.SerializeToString())
         assert tbt_feed._stats["last_error"] == "some server error"
+
+    @pytest.mark.asyncio
+    async def test_server_error_response_does_not_mutate_desired_or_channel_state(self):
+        """Server error has no documented correlation; must not alter desired/channel state."""
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "prime"}, AsyncMock())
+        feed._desired_symbols.update({"NSE:AAA-EQ", "NSE:BBB-EQ"})
+        feed._channel_map = {"NSE:AAA-EQ": 1, "NSE:BBB-EQ": 2}
+        feed._active_channels = {1, 2}
+        feed._next_channel = 3
+
+        msg = msg_pb2.SocketMessage()
+        msg.error = True
+        msg.msg = "subscription rejected"
+        await feed._handle_message(msg.SerializeToString())
+
+        assert feed._stats["last_error"] == "subscription rejected"
+        assert feed.desired_symbols == {"NSE:AAA-EQ", "NSE:BBB-EQ"}
+        assert feed._channel_map == {"NSE:AAA-EQ": 1, "NSE:BBB-EQ": 2}
+        assert feed._active_channels == {1, 2}
 
     @pytest.mark.asyncio
     async def test_snapshot_and_delta_book_behavior_preserved(self, market_service):

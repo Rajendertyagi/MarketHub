@@ -276,13 +276,14 @@ class FyersTbtFeed:
                 logger.error("TBT feed: missing app_id for TBT WebSocket auth")
                 return "auth_required"
 
-            # Fetch WebSocket URL (dynamic discovery preserved).
-            # Contract for this endpoint is not established in fetched official docs;
-            # preserve existing behavior (raw token header) and do not guess.
+            # Resolve WebSocket URL. Official docs specify fixed endpoint
+            # wss://rtsocket-api.fyers.in/versova; dynamic discovery is preserved
+            # as best-effort but its auth contract/necessity is not established by
+            # fetched official docs. Discovery failures fall back to fixed endpoint.
             ws_url = await self._fetch_ws_url(token)
             if not ws_url:
-                logger.error("TBT feed: failed to fetch WebSocket URL")
-                self._stats["last_error"] = "failed_to_fetch_url"
+                logger.error("TBT feed: failed to resolve WebSocket URL")
+                self._stats["last_error"] = "failed_to_resolve_url"
                 return "transient"
 
             self._ws_url = ws_url
@@ -416,6 +417,11 @@ class FyersTbtFeed:
             socket_msg = msg_pb2.SocketMessage()
             socket_msg.ParseFromString(message)
 
+            # Server error response. Official docs: error=true, empty feeds, msg
+            # describes the error. No documented positive per-subscribe/resume ack
+            # or request/symbol/channel correlation, so ws.send() success must not
+            # be treated as server acceptance and this error cannot be safely
+            # attributed to a specific request. Record for diagnostics only.
             if socket_msg.error:
                 logger.warning("TBT feed: server error: %s", socket_msg.msg)
                 self._stats["last_error"] = socket_msg.msg
@@ -845,12 +851,16 @@ class FyersTbtFeed:
     # -------------------------------------------------------------------------
 
     async def _fetch_ws_url(self, token: str) -> str | None:
-        """Fetch dynamic WebSocket URL from Fyers API.
+        """Resolve TBT WebSocket URL.
 
-        Note: Official docs document fixed endpoint wss://rtsocket-api.fyers.in/versova
-        but do not document this discovery endpoint's auth contract. Existing behavior
-        (raw token Authorization header) is preserved pending evidence.
+        Official docs specify fixed endpoint wss://rtsocket-api.fyers.in/versova
+        with Authorization: <appId:accessToken>. Dynamic discovery via
+        GET https://api-t1.fyers.in/indus/home/tbtws is preserved as best-effort
+        (existing behavior) but its auth contract/necessity is not established by
+        fetched official docs. On discovery failure or malformed/missing response,
+        fall back to the documented fixed endpoint. No credentials are logged.
         """
+        fixed_url = "wss://rtsocket-api.fyers.in/versova"
         try:
             import httpx
             async with httpx.AsyncClient() as client:
@@ -861,12 +871,27 @@ class FyersTbtFeed:
                 )
                 if resp.status_code == 200:
                     data = resp.json()
-                    return data.get("data", {}).get("socket_url")
-                else:
-                    logger.error("TBT feed: failed to fetch URL: %d", resp.status_code)
+                    socket_url = data.get("data", {}).get("socket_url")
+                    if isinstance(socket_url, str) and socket_url.strip():
+                        return socket_url.strip()
+                    logger.warning(
+                        "TBT feed: dynamic URL discovery returned no socket_url; "
+                        "falling back to documented fixed endpoint"
+                    )
+                    return fixed_url
+                logger.warning(
+                    "TBT feed: dynamic URL discovery failed (%d); "
+                    "falling back to documented fixed endpoint",
+                    resp.status_code,
+                )
+                return fixed_url
         except Exception as e:
-            logger.error("TBT feed: error fetching URL: %s", type(e).__name__)
-        return None
+            logger.warning(
+                "TBT feed: dynamic URL discovery error (%s); "
+                "falling back to documented fixed endpoint",
+                type(e).__name__,
+            )
+            return fixed_url
 
     # -------------------------------------------------------------------------
     # Helpers
@@ -936,6 +961,12 @@ class FyersTbtFeed:
             "last_message_at": self._stats["last_message_at"],
             "safe_last_error": self._stats["last_error"],
             "symbols": list(self._desired_symbols),
+            "protocol_notes": {
+                "ws_endpoint": "wss://rtsocket-api.fyers.in/versova",
+                "dynamic_url_discovery": "best_effort_unverified_auth_contract",
+                "send_success_is_server_ack": False,
+                "server_error_correlation": "undocumented",
+            },
             "tbt_limits": {
                 "tier": limits.get("tier"),
                 "source": limits.get("source"),
@@ -943,6 +974,8 @@ class FyersTbtFeed:
                 "symbols_per_connection": limits.get("symbols_per_connection"),
                 "channels_per_connection": limits.get("channels_per_connection"),
                 "connections_per_user": limits.get("connections_per_user"),
+                "enforcement_scope": "local_feed_instance",
+                "account_wide_enforced": False,
             },
         }
 
