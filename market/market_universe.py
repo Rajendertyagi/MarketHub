@@ -107,9 +107,9 @@ def _resolve_index_cached(key: str, catalog: Any) -> list[Member]:
 
 def _resolve_fno(catalog: Any) -> list[Member]:
     today = date.today().isoformat()
-    # Enumeration only — no contract counts needed here.
-    rows = fno_underlying_rows(catalog, provider="upstox", today=today,
-                               limit=2000)
+    # Enumeration only — provider-neutral membership.
+    rows = fno_underlying_rows(catalog, provider=None, today=today,
+                               limit=5000)
     members: list[Member] = []
     for r in rows or []:
         token = r.get("equity_key")
@@ -120,7 +120,10 @@ def _resolve_fno(catalog: Any) -> list[Member]:
 
 
 def _resolve_nse_eq(catalog: Any) -> list[Member]:
+    # Prefer Upstox equity rows for stable storage keys when available.
     rows = catalog.equity_universe(provider="upstox", limit=5000)
+    if not rows:
+        rows = catalog.equity_universe(provider=None, limit=5000)
     members: list[Member] = []
     for r in rows or []:
         token = r.get("instrument_token")

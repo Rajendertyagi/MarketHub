@@ -88,12 +88,19 @@ def _master_rows():
         # MCX (filtered by default)
         _u("MCX_FO|569467", "MCX_FO", "MCX", "CE", "GOLD MCX CE",
            expiry=1790706599000, strike=147000.0),
-        # BSE equity + FO (filtered by default)
+        # BSE equity (filtered by default)
         _u("BSE_EQ|INE002A01018", "BSE_EQ", "BSE", "EQ", "RELIANCE",
            isin="INE002A01018"),
-        _u("BSE_FO|1", "BSE_FO", "BSE", "FUT", "RELIANCE BSE FUT",
-           expiry=1790706599000),
-        # BSE index (kept by default — SENSEX/BANKEX live here)
+        # BSE F&O: only supported SENSEX contracts are in scope.
+        _u("BSE_FO|1", "BSE_FO", "BSE", "FUT", "SENSEX FUT",
+           und="SENSEX", expiry=1790706599000),
+        _u("BSE_FO|2", "BSE_FO", "BSE", "CE", "SENSEX 80000 CE",
+           und="SENSEX", expiry=1790706599000, strike=80000.0),
+        _u("BSE_FO|3", "BSE_FO", "BSE", "PE", "SENSEX 80000 PE",
+           und="SENSEX", expiry=1790706599000, strike=80000.0),
+        _u("BSE_FO|9", "BSE_FO", "BSE", "FUT", "BANKEX FUT",
+           und="BANKEX", expiry=1790706599000),
+        # BSE index (kept by default)
         _u("BSE_INDEX|SENSEX", "BSE_INDEX", "BSE", "INDEX", "SENSEX"),
         # BCD/NCD (filtered by default)
         _u("BCD_FO|1", "BCD_FO", "BCD", "FUT", "BCD THING",
@@ -184,15 +191,15 @@ def test_upstox_filter(runner: R) -> None:
     # sync with defaults via the real sync path (fetch faked)
     result = cat.sync_upstox(fetch=lambda url: json.dumps(
         _master_rows()).encode())
-    runner.assert_eq("ux-parsed", result["parsed"], 11)
-    runner.assert_eq("ux-kept", result["kept"], 6)
-    runner.assert_eq("ux-filtered", result["filtered"], 5)
+    runner.assert_eq("ux-parsed", result["parsed"], 14)
+    runner.assert_eq("ux-kept", result["kept"], 8)
+    runner.assert_eq("ux-filtered", result["filtered"], 6)
     segs = result["segments"]
     runner.assert_eq("ux-nse-eq", segs.get("NSE_EQ"), 1)
     runner.assert_eq("ux-nse-fo", segs.get("NSE_FO"), 2)
     runner.assert_eq("ux-nse-index", segs.get("NSE_INDEX"), 1)
     runner.assert_eq("ux-bse-index", segs.get("BSE_INDEX"), 1)
-    runner.assert_eq("ux-bse-fo", segs.get("BSE_FO"), 1)
+    runner.assert_eq("ux-bse-fo", segs.get("BSE_FO"), 3)
     for absent in ("NSE_COM", "MCX_FO", "BSE_EQ", "BCD_FO",
                    "NCD_FO"):
         runner.assert_eq(f"ux-absent-{absent}", segs.get(absent), None)

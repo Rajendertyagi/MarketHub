@@ -485,10 +485,10 @@ def build_market_routes(
         the map still renders (tiles simply mark fno=False).
         """
         try:
-            # Enumeration only — the contract counts are not needed here.
+            # Enumeration only — provider-neutral membership.
             rows = _fno_underlying_rows(
-                index_catalog, provider="upstox",
-                today=date.today().isoformat(), limit=2000)
+                index_catalog, provider=None,
+                today=date.today().isoformat(), limit=5000)
             return {str(r.get("symbol", "")).upper() for r in (rows or [])}
         except Exception:
             return set()

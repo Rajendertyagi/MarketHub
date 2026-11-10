@@ -69,7 +69,7 @@ def test_registry_is_single_source() -> None:
     assert mi.FNO_INDEX_LABELS is reg.FNO_INDEX_LABELS
     assert reg.FNO_INDEX_LABELS == (
         "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50",
-        "NIFTYFPI", "SENSEX", "BANKEX",
+        "SENSEX",
     )
     # MAJOR_INDICES (provider map) must cover the canonical index labels.
     assert [e["label"] for e in mi.MAJOR_INDICES] == list(reg.INDEX_LABELS)
@@ -78,12 +78,10 @@ def test_registry_is_single_source() -> None:
 def test_broader_indices_are_not_fno() -> None:
     from market.index_registry import is_fno_index
     for label in ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY",
-                  "NIFTYNXT50", "NIFTYFPI"):
+                  "NIFTYNXT50", "SENSEX"):
         assert is_fno_index(label) is True
-    for label in ("INDIA VIX",):
+    for label in ("INDIA VIX", "NIFTYFPI", "BANKEX"):
         assert is_fno_index(label) is False
-    for label in ("SENSEX", "BANKEX"):
-        assert is_fno_index(label) is True
 
 
 # -- dynamic universe --------------------------------------------------------
@@ -93,7 +91,7 @@ def test_index_underlyings_are_the_canonical_fno_set() -> None:
     us = index_underlyings()
     assert [u.symbol for u in us] == [
         "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50",
-        "NIFTYFPI", "SENSEX", "BANKEX",
+        "SENSEX",
     ]
     assert all(u.kind == KIND_INDEX for u in us)
 
@@ -107,10 +105,10 @@ def test_fno_underlyings_index_plus_catalog_stocks() -> None:
     catalog, _store, _tmp = _catalog()
     us = fno_underlyings(catalog, provider="upstox")
     symbols = [u.symbol for u in us]
-    # eight indices first, then the catalog stock underlying
-    assert symbols[:8] == [
+    # supported F&O indices first, then the catalog stock underlying
+    assert symbols[:6] == [
         "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50",
-        "NIFTYFPI", "SENSEX", "BANKEX",
+        "SENSEX",
     ]
     assert "RELIANCE" in symbols
     # NIFTY appears once (index), not duplicated by a stock row

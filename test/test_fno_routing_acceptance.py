@@ -5,8 +5,8 @@ Each gate asserts a REQUIRED behaviour of the implemented data path
 against the REAL catalogue shape (both providers, cross-provider
 duplicates, short symbols, multiple expiries, NSE + BSE):
 
-  G1  Every supported index-F&O underlying (INCLUDING NIFTYFPI)
-      resolves to a canonical identity and a provider request reference.
+  G1  Every supported index-F&O underlying in approved scope resolves to a
+      canonical identity and a provider request reference.
   G2  Catalogue-derived stock contracts include SHORT symbols and
       MULTIPLE expiries.
   G3  The nearest-two-futures plan respects provider capabilities and
@@ -101,14 +101,13 @@ def _opt(provider, token, psym, tsym, underlying, expiry, strike, otype):
 
 def _build_rows():
     _ROWS.clear()
-    # The six canonical F&O index underlyings, both providers.
+    # Supported canonical F&O index underlyings, both providers.
     for label, fyers_sym, upstox_sym in (
         ("NIFTY", "NSE:NIFTY50-INDEX", "NSE_INDEX|Nifty 50"),
         ("BANKNIFTY", "NSE:NIFTYBANK-INDEX", "NSE_INDEX|Nifty Bank"),
         ("FINNIFTY", "NSE:FINNIFTY-INDEX", "NSE_INDEX|Nifty Fin Service"),
         ("MIDCPNIFTY", "NSE:MIDCPNIFTY-INDEX", "NSE_INDEX|NIFTY MID SELECT"),
         ("NIFTYNXT50", "NSE:NIFTYNXT50-INDEX", "NSE_INDEX|Nifty Next 50"),
-        ("NIFTYFPI", "NSE:NIFTYFPI150-INDEX", "NSE_INDEX|Nifty FPI 150"),
     ):
         _idx("upstox", upstox_sym, upstox_sym, label, None)
         _idx("fyers", f"fy-{label}", fyers_sym, fyers_sym, label)
@@ -170,10 +169,10 @@ def _catalog():
 
 
 # ---------------------------------------------------------------------------
-# G1 — index-F&O underlyings, including NIFTYFPI
+# G1 — supported index-F&O underlyings
 # ---------------------------------------------------------------------------
 
-def test_g1_all_fno_indices_resolve_including_niftyfpi() -> None:
+def test_g1_all_supported_fno_indices_resolve() -> None:
     from app.market_indices import (
         OPTION_CHAIN_INDICES,
         index_provider_keys,
@@ -181,17 +180,19 @@ def test_g1_all_fno_indices_resolve_including_niftyfpi() -> None:
     )
     from market.index_registry import FNO_INDEX_LABELS
 
-    assert "NIFTYFPI" in FNO_INDEX_LABELS
-    assert "NIFTYFPI" in OPTION_CHAIN_INDICES
-    # The catalogue spelling maps to the canonical label.
+    assert "NIFTYFPI" not in FNO_INDEX_LABELS
+    assert "BANKEX" not in FNO_INDEX_LABELS
+    assert "SENSEX" in FNO_INDEX_LABELS
+    assert "NIFTYFPI" not in OPTION_CHAIN_INDICES
+    # The catalogue spelling still maps to canonical label for identity.
     assert label_for_underlying("NIFTYFPI") == "NIFTYFPI"
 
     catalog, _store, tmp = _catalog()
     try:
-        # Every index the fixture lists must resolve to a provider key.
+        # Every NSE F&O index in the fixture must resolve to provider keys.
         for label in FNO_INDEX_LABELS:
-            if label in ("SENSEX", "BANKEX"):
-                # BSE indices are not in this NSE-shaped fixture.
+            if label == "SENSEX":
+                # BSE index not in this NSE-shaped fixture.
                 continue
             keys = index_provider_keys(catalog, label)
             assert keys, f"no provider feed key for {label}"

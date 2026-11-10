@@ -3,17 +3,18 @@
 The set of underlyings that have listed F&O contracts is DERIVED, never
 hardcoded:
 
-    canonical six F&O indices (market.index_registry)
+    canonical F&O indices (market.index_registry, supported scope)
         +
     stock underlyings discovered from the instruments catalog
-        (``catalog.fno_universe`` — live, non-expired F&O membership)
+        (live, non-expired F&O membership)
 
 Expiries and contracts are always catalog-derived. No broker is referenced,
 no provider key is hardcoded, and this module imports neither ``app`` nor
 ``brokers`` (architecture boundary: canonical market layer).
 
-Scope: NSE equity derivatives (indices + stock F&O). Provider-specific feed
-keys are resolved by the app/routing layer from the catalog, never here.
+Scope: NSE equity derivatives (indices + stock F&O) and BSE SENSEX F&O as
+defined by the canonical index registry. Provider-specific feed keys are
+resolved by the app/routing layer from the catalog, never here.
 """
 
 from __future__ import annotations
@@ -108,18 +109,18 @@ def _build_futures_index(catalog: Any, *,
     lister = getattr(catalog, "list_future_contracts", None)
     if callable(lister):
         try:
-            rows = lister(exchange=exchange, limit=20000) or []
+            rows = lister(exchange=exchange, limit=0) or []
         except TypeError:
             # A catalogue that does not accept the ``exchange`` argument (a
             # light-weight double) is still supported.
-            rows = lister(limit=20000) or []
+            rows = lister(limit=0) or []
     else:
         # A catalogue without the bulk read model: fall back to the
         # per-underlying search so the read model still resolves the
         # contracts. The bulk read remains the production path.
         try:
             rows = catalog.search(instrument_type=FUTURE, exchange=exchange,
-                                  limit=20000) or []
+                                  limit=0) or []
         except Exception:
             rows = []
     index: dict[tuple[str, str], list[dict[str, Any]]] = {}
@@ -202,14 +203,14 @@ class Contract:
 
 
 def index_underlyings() -> list[Underlying]:
-    """The canonical six F&O index underlyings (from the neutral registry)."""
+    """Canonical F&O index underlyings (from the neutral registry)."""
     return [
         Underlying(symbol=e.label, kind=KIND_INDEX, exchange=e.exchange)
         for e in CANONICAL_INDICES if e.is_fno
     ]
 
 
-def _read_fno_underlying_rows(catalog: Any, *, provider: str, today: str,
+def _read_fno_underlying_rows(catalog: Any, *, provider: str | None, today: str,
                               limit: int) -> list[dict[str, Any]]:
     """Read the enumeration model, falling back to the count model.
 
@@ -218,19 +219,30 @@ def _read_fno_underlying_rows(catalog: Any, *, provider: str, today: str,
     """
     fn = getattr(catalog, "fno_underlying_rows", None)
     if callable(fn):
-        return list(fn(provider=provider, today=today, limit=limit) or [])
-    return list(catalog.fno_universe(provider=provider, today=today,
-                                     limit=limit) or [])
+        try:
+            return list(fn(provider=provider, today=today, limit=limit) or [])
+        except TypeError:
+            # Legacy catalog doubles may require provider.
+            if provider is None:
+                return list(fn(provider="upstox", today=today, limit=limit) or [])
+            raise
+    try:
+        return list(catalog.fno_universe(provider=provider, today=today,
+                                         limit=limit) or [])
+    except TypeError:
+        if provider is None:
+            return list(catalog.fno_universe(provider="upstox", today=today,
+                                             limit=limit) or [])
+        raise
 
 
-def fno_underlying_rows(catalog: Any, *, provider: str,
+def fno_underlying_rows(catalog: Any, *, provider: str | None = None,
                         today: str | None = None,
                         limit: int = 2000) -> list[dict[str, Any]]:
     """Canonical, cached ENUMERATION of F&O stock underlyings (no counts).
 
-    Callers that only need universe membership use this instead of
-    ``fno_universe``, which additionally aggregates contract counts. Memoized
-    per (provider, day, catalog epoch) at the canonical read-model boundary.
+    When ``provider`` is None, membership is provider-neutral across enabled
+    providers. Memoized per (provider, day, catalog epoch).
     """
     day = today or date.today().isoformat()
     version = _catalog_version(catalog)
@@ -240,13 +252,12 @@ def fno_underlying_rows(catalog: Any, *, provider: str,
                                           today=day, limit=limit))
 
 
-def stock_underlyings(catalog: Any, *, provider: str,
+def stock_underlyings(catalog: Any, *, provider: str | None = None,
                       today: str | None = None,
                       limit: int = 2000) -> list[Underlying]:
     """Stock F&O underlyings from the canonical enumeration read model.
 
-    ``provider`` is REQUIRED — the caller decides which provider's catalog
-    rows to enumerate; there is no hardcoded default provider.
+    ``provider`` defaults to None (provider-neutral union).
     """
     rows = fno_underlying_rows(catalog, provider=provider, today=today,
                                limit=limit)
@@ -259,10 +270,10 @@ def stock_underlyings(catalog: Any, *, provider: str,
     return out
 
 
-def fno_underlyings(catalog: Any, *, provider: str,
+def fno_underlyings(catalog: Any, *, provider: str | None = None,
                     today: str | None = None,
                     limit: int = 2000) -> list[Underlying]:
-    """All F&O underlyings: six canonical indices + catalog stock underlyings."""
+    """All F&O underlyings: canonical F&O indices + catalog stock underlyings."""
     indices = index_underlyings()
     seen = {u.symbol for u in indices}
     stocks = [u for u in stock_underlyings(

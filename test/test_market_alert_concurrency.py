@@ -173,7 +173,7 @@ async def test_crosses_below_two_quotes(runner: R) -> None:
 
     with tempfile.TemporaryDirectory() as tmp:
         store = _mk_store(tmp)
-        alert = _create_alert(store, operator="crosses_below", threshold=100.0)
+        _create_alert(store, operator="crosses_below", threshold=100.0)
         engine = AlertEngine(store)
         r1 = await engine.evaluate(_quote("T1", 101.0, ts=_ts(1)))
         r2 = await engine.evaluate(_quote("T1", 99.0, ts=_ts(2)))
@@ -418,7 +418,7 @@ async def test_lock_registry_cleanup_after_delete(runner: R) -> None:
             ids.append(a["id"])
         engine = AlertEngine(store)
         # Touch locks by evaluating matching quotes (no hits needed to create locks? hit creates lock)
-        for i, aid in enumerate(ids):
+        for i, _aid in enumerate(ids):
             await engine.evaluate(_quote(f"T{i}", 110.0, ts=_ts(i + 1), tradingsymbol=f"S{i}"))
         for aid in ids:
             store.delete_alert(aid)

@@ -203,11 +203,19 @@ def sync_upstox_master(
                               tuple[list[dict[str, Any]], dict[str, int], int]],
     enabled_segments: Sequence[str],
     provider: str = "upstox",
+    validate_master: Callable[[str, Sequence[dict[str, Any]]], None] | None = None,
+    report_fn: Callable[[str, Sequence[dict[str, Any]]],
+                        dict[str, Any] | None] | None = None,
+    write_scopes: dict[str, WriteScope] | None = None,
 ) -> SyncResult:
     """Refresh the Upstox catalogue from one master file.
 
     The whole provider is one unit here (Upstox publishes a single BOD
     master), so a failure leaves the stored catalogue untouched.
+
+    ``write_scopes`` allows predicate-scoped replacement for specific
+    segments (e.g. BSE_FO Sensex-only) so rows outside the declared scope
+    are preserved. Other enabled segments are replaced segment-wise.
     """
     result = SyncResult(provider=provider, enabled=list(enabled_segments))
     try:
@@ -232,6 +240,8 @@ def sync_upstox_master(
     result.parsed = len(parsed_records)
     try:
         validate_upstox_master(parsed_records, enabled_segments)
+        if validate_master is not None:
+            validate_master("complete", parsed_records)
     except MasterValidationError as exc:
         result.ok = False
         result.aborted = True
@@ -239,6 +249,11 @@ def sync_upstox_master(
         result.failures.append(result.reason)
         logger.warning("upstox catalogue sync aborted (%s)", result.reason)
         return result
+
+    if report_fn is not None:
+        report = report_fn("complete", parsed_records)
+        if report is not None:
+            result.details["complete"] = dict(report)
 
     kept, seg_counts, filtered = filter_records(parsed_records,
                                                 enabled_segments)
@@ -250,7 +265,55 @@ def sync_upstox_master(
         return result
     result.kept = len(kept)
     result.filtered = filtered
-    result.records = store.replace_provider_instruments(provider, kept)
+
+    scopes = write_scopes or {}
+    try:
+        from core.persistence.modules import products as _products
+
+        written = 0
+        covered_segments: set[str] = set()
+        # Predicate-scoped segments first (preserve rows outside scope).
+        for seg, scope in scopes.items():
+            if seg not in enabled_segments:
+                continue
+            seg_rows = [r for r in kept if _segment_of(r) == seg]
+            if not seg_rows:
+                # No in-scope rows survived; do not delete existing scoped rows.
+                continue
+            count = _products.replace_provider_instruments_scoped_at(
+                store.db_path, provider, seg_rows,
+                segment=scope.segment, scope_column=scope.column,
+                scope_values=scope.values)
+            written += count
+            covered_segments.add(seg)
+            if "complete" in result.details:
+                result.details["complete"]["persisted"] = (
+                    result.details["complete"].get("persisted", 0) + count)
+
+        other_segments = [s for s in enabled_segments if s not in scopes]
+        other_rows = [r for r in kept if _segment_of(r) in set(other_segments)]
+        if other_segments:
+            count = _products.replace_provider_instruments_segmented_at(
+                store.db_path, provider, other_rows, other_segments)
+            written += count
+            covered_segments.update(
+                s for s in other_segments
+                if any(_segment_of(r) == s for r in other_rows))
+        elif not scopes:
+            # No scopes and no other-segment path taken above only when empty;
+            # fall back to full replace for backward compatibility.
+            written = store.replace_provider_instruments(provider, kept)
+            covered_segments.update(seg_counts.keys())
+
+        result.records = written
+    except Exception as exc:
+        result.ok = False
+        result.aborted = True
+        result.reason = f"write failed: {type(exc).__name__}"
+        result.failures.append(result.reason)
+        logger.warning("upstox catalogue sync aborted (%s)", result.reason)
+        return result
+
     result.segment_counts = dict(seg_counts)
     result.masters = {"complete": "updated"}
     logger.info("upstox instrument sync: %d kept / %d parsed (%d filtered)",

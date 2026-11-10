@@ -1304,31 +1304,66 @@ def option_expiries(
 # ---------------------------------------------------------------------------
 
 def fno_underlying_rows(
-    conn: sqlite3.Connection, *, provider: str, today: str, limit: int = 2000,
+    conn: sqlite3.Connection, *, provider: str | None = None, today: str,
+    limit: int = 2000,
 ) -> list[dict[str, Any]]:
     """ENUMERATION read model: F&O stock underlyings, no contract counts.
 
-    Identical membership to :func:`fno_universe` but without the per-underlying
-    ``count(DISTINCT ...)`` aggregation — for callers that only need the
-    universe (navigation, coverage, universe resolution). Count consumers must
-    keep using :func:`fno_universe`.
+    When ``provider`` is None, membership is provider-neutral across all
+    providers (union of live NSE_FO contracts) and each underlying appears once
+    by canonical underlying identity. A representative equity row is chosen
+    deterministically (preferring Upstox, then Fyers) for display/routing hints.
+    When ``provider`` is set, membership is scoped to that provider.
     """
-    sql = """
-        SELECT DISTINCT f.underlying AS symbol,
-               eq.name AS name,
-               eq.instrument_token AS equity_key
-        FROM instruments f
-        JOIN instruments eq
-             ON eq.provider = f.provider
-             AND eq.segment = 'NSE_EQ'
-             AND eq.underlying = f.underlying
-        WHERE f.provider = ?
-          AND f.segment = 'NSE_FO'
-          AND f.instrument_type IN ('FUTURE', 'OPTION')
-          AND f.expiry >= ?
-        ORDER BY f.underlying LIMIT ?
-    """
-    args: list[Any] = [provider, today, max(1, min(int(limit), 1000))]
+    lim = max(1, min(int(limit), 5000))
+    if provider is not None:
+        sql = """
+            SELECT DISTINCT f.underlying AS symbol,
+                   eq.name AS name,
+                   eq.instrument_token AS equity_key
+            FROM instruments f
+            JOIN instruments eq
+                 ON eq.provider = f.provider
+                 AND eq.segment = 'NSE_EQ'
+                 AND eq.underlying = f.underlying
+            WHERE f.provider = ?
+              AND f.segment = 'NSE_FO'
+              AND f.instrument_type IN ('FUTURE', 'OPTION')
+              AND f.expiry >= ?
+            ORDER BY f.underlying LIMIT ?
+        """
+        args: list[Any] = [provider, today, lim]
+    else:
+        sql = """
+            WITH live AS (
+                SELECT DISTINCT underlying
+                FROM instruments
+                WHERE segment = 'NSE_FO'
+                  AND instrument_type IN ('FUTURE', 'OPTION')
+                  AND expiry >= ?
+                  AND underlying IS NOT NULL AND underlying != ''
+            ),
+            eq_ranked AS (
+                SELECT eq.underlying AS symbol,
+                       eq.name AS name,
+                       eq.instrument_token AS equity_key,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY eq.underlying
+                           ORDER BY CASE eq.provider
+                               WHEN 'upstox' THEN 0
+                               WHEN 'fyers' THEN 1
+                               ELSE 2 END, eq.provider, eq.instrument_token
+                       ) AS rn
+                FROM instruments eq
+                WHERE eq.segment = 'NSE_EQ'
+                  AND eq.underlying IN (SELECT underlying FROM live)
+            )
+            SELECT symbol, name, equity_key
+            FROM eq_ranked
+            WHERE rn = 1
+            ORDER BY symbol LIMIT ?
+        """
+        args = [today, lim]
     conn.row_factory = sqlite3.Row
     try:
         return [dict(r) for r in conn.execute(sql, args)]
@@ -1337,61 +1372,110 @@ def fno_underlying_rows(
 
 
 def fno_universe(
-    conn: sqlite3.Connection, *, provider: str, today: str,
+    conn: sqlite3.Connection, *, provider: str | None = None, today: str,
     q: str | None = None, limit: int = 500,
 ) -> list[dict[str, Any]]:
     """Equity underlyings with live (non-expired) F&O contracts.
 
-    Derived from structured catalog relationships — never a hard-coded
-    list, never substring matching:
-
-      * derivatives: segment NSE_FO, instrument_type FUTURE/OPTION,
-        underlying = the derivative's `underlying` column;
-      * the underlying is a STOCK (not an index) because an NSE_EQ cash row
-        whose canonical ``underlying`` equals the derivative's ``underlying``
-        must exist (indices live in the NSE_INDEX segment and have no cash
-        row). The link is the canonical ``underlying`` column for EVERY
-        provider — never a provider-native symbol;
-      * membership requires at least one contract with expiry >= today,
-        so expired-only underlyings drop out automatically after sync.
-
-    One grouped query — the universe is cheap to browse (no N+1, no
-    contract dumps). Returns underlyings, not contracts.
+    When ``provider`` is None, membership and counts are provider-neutral
+    across all providers (union). Contracts are deduped by canonical contract
+    identity (underlying, expiry, instrument_type, strike, option_type) so a
+    contract listed by multiple providers is counted once. Each underlying
+    appears once with a deterministically chosen representative equity row.
+    When ``provider`` is set, behavior is scoped to that provider.
     """
-    sql = """
-        SELECT f.underlying AS symbol,
-               eq.name AS name,
-               eq.instrument_token AS equity_key,
-               COUNT(DISTINCT CASE WHEN f.instrument_type = 'FUTURE'
-                    THEN f.expiry END) AS future_expiries,
-               COUNT(DISTINCT CASE WHEN f.instrument_type = 'OPTION'
-                    THEN f.expiry END) AS option_expiries,
-               COUNT(DISTINCT CASE WHEN f.instrument_type = 'FUTURE'
-                    THEN f.instrument_token END) AS futures_count,
-               COUNT(DISTINCT CASE WHEN f.instrument_type = 'OPTION'
-                    THEN f.instrument_token END) AS options_count,
-               MIN(CASE WHEN f.instrument_type = 'FUTURE'
-                    THEN f.expiry END) AS nearest_future,
-               MIN(CASE WHEN f.instrument_type = 'OPTION'
-                    THEN f.expiry END) AS nearest_option
-        FROM instruments f
-        JOIN instruments eq
-             ON eq.provider = f.provider
-             AND eq.segment = 'NSE_EQ'
-             AND eq.underlying = f.underlying
-        WHERE f.provider = ?
-          AND f.segment = 'NSE_FO'
-          AND f.instrument_type IN ('FUTURE', 'OPTION')
-          AND f.expiry >= ?
-        GROUP BY f.underlying
-    """
-    args: list[Any] = [provider, today]
-    if q:
-        sql += " HAVING f.underlying LIKE ? OR eq.name LIKE ?"
-        like = f"%{q}%"
-        args += [like, like]
-    sql += " ORDER BY f.underlying LIMIT ?"
-    args.append(max(1, min(int(limit), 1000)))
+    lim = max(1, min(int(limit), 5000))
+    if provider is not None:
+        sql = """
+            SELECT f.underlying AS symbol,
+                   eq.name AS name,
+                   eq.instrument_token AS equity_key,
+                   COUNT(DISTINCT CASE WHEN f.instrument_type = 'FUTURE'
+                        THEN f.expiry END) AS future_expiries,
+                   COUNT(DISTINCT CASE WHEN f.instrument_type = 'OPTION'
+                        THEN f.expiry END) AS option_expiries,
+                   COUNT(DISTINCT CASE WHEN f.instrument_type = 'FUTURE'
+                        THEN f.instrument_token END) AS futures_count,
+                   COUNT(DISTINCT CASE WHEN f.instrument_type = 'OPTION'
+                        THEN f.instrument_token END) AS options_count,
+                   MIN(CASE WHEN f.instrument_type = 'FUTURE'
+                        THEN f.expiry END) AS nearest_future,
+                   MIN(CASE WHEN f.instrument_type = 'OPTION'
+                        THEN f.expiry END) AS nearest_option
+            FROM instruments f
+            JOIN instruments eq
+                 ON eq.provider = f.provider
+                 AND eq.segment = 'NSE_EQ'
+                 AND eq.underlying = f.underlying
+            WHERE f.provider = ?
+              AND f.segment = 'NSE_FO'
+              AND f.instrument_type IN ('FUTURE', 'OPTION')
+              AND f.expiry >= ?
+            GROUP BY f.underlying
+        """
+        args: list[Any] = [provider, today]
+        if q:
+            sql += " HAVING f.underlying LIKE ? OR eq.name LIKE ?"
+            like = f"%{q}%"
+            args += [like, like]
+        sql += " ORDER BY f.underlying LIMIT ?"
+        args.append(lim)
+    else:
+        sql = """
+            WITH live AS (
+                SELECT DISTINCT underlying, expiry, instrument_type, strike, option_type
+                FROM instruments
+                WHERE segment = 'NSE_FO'
+                  AND instrument_type IN ('FUTURE', 'OPTION')
+                  AND expiry >= ?
+                  AND underlying IS NOT NULL AND underlying != ''
+            ),
+            eq_ranked AS (
+                SELECT eq.underlying AS symbol,
+                       eq.name AS name,
+                       eq.instrument_token AS equity_key,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY eq.underlying
+                           ORDER BY CASE eq.provider
+                               WHEN 'upstox' THEN 0
+                               WHEN 'fyers' THEN 1
+                               ELSE 2 END, eq.provider, eq.instrument_token
+                       ) AS rn
+                FROM instruments eq
+                WHERE eq.segment = 'NSE_EQ'
+                  AND eq.underlying IN (SELECT DISTINCT underlying FROM live)
+            ),
+            agg AS (
+                SELECT underlying AS symbol,
+                       COUNT(DISTINCT CASE WHEN instrument_type = 'FUTURE'
+                            THEN expiry END) AS future_expiries,
+                       COUNT(DISTINCT CASE WHEN instrument_type = 'OPTION'
+                            THEN expiry END) AS option_expiries,
+                       COUNT(CASE WHEN instrument_type = 'FUTURE' THEN 1 END)
+                            AS futures_count,
+                       COUNT(CASE WHEN instrument_type = 'OPTION' THEN 1 END)
+                            AS options_count,
+                       MIN(CASE WHEN instrument_type = 'FUTURE'
+                            THEN expiry END) AS nearest_future,
+                       MIN(CASE WHEN instrument_type = 'OPTION'
+                            THEN expiry END) AS nearest_option
+                FROM live
+                GROUP BY underlying
+            )
+            SELECT a.symbol, e.name, e.equity_key,
+                   a.future_expiries, a.option_expiries,
+                   a.futures_count, a.options_count,
+                   a.nearest_future, a.nearest_option
+            FROM agg a
+            JOIN eq_ranked e ON e.symbol = a.symbol AND e.rn = 1
+        """
+        args = [today]
+        if q:
+            sql += " WHERE a.symbol LIKE ? OR e.name LIKE ?"
+            like = f"%{q}%"
+            args += [like, like]
+        sql += " ORDER BY a.symbol LIMIT ?"
+        args.append(lim)
     conn.row_factory = sqlite3.Row
     try:
         return [dict(r) for r in conn.execute(sql, args)]

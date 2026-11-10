@@ -17,7 +17,7 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from api.routes import build_market_routes
-from market.scanner import ScanResult, ScannerEngine
+from market.scanner import ScannerEngine, ScanResult
 
 EXPECTED_SCANNERS = [d.name for d in ScannerEngine._scanner_defs()]
 
@@ -114,8 +114,15 @@ class _BoomEngine(_SlowEngine):
         raise RuntimeError("boom")
 
 
+_DEFAULT = object()
+
+
 @contextmanager
-def _app(*, catalog=_Catalog(), market=_MarketService(), engine_cls=_FastEngine):
+def _app(*, catalog=_DEFAULT, market=_DEFAULT, engine_cls=_FastEngine):
+    if catalog is _DEFAULT:
+        catalog = _Catalog()
+    if market is _DEFAULT:
+        market = _MarketService()
     import api.routes as routes_mod
     orig = routes_mod.ScannerEngine
     routes_mod.ScannerEngine = engine_cls

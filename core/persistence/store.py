@@ -1657,7 +1657,7 @@ class EventStore:
         finally:
             conn.close()
 
-    def fno_universe(self, *, provider: str, today: str,
+    def fno_universe(self, *, provider: str | None = None, today: str,
                      q: str | None = None, limit: int = 500) -> list[dict]:
         conn = self._open(self._db_path)
         try:
@@ -1666,7 +1666,7 @@ class EventStore:
         finally:
             conn.close()
 
-    def fno_underlying_rows(self, *, provider: str, today: str,
+    def fno_underlying_rows(self, *, provider: str | None = None, today: str,
                             limit: int = 2000) -> list[dict]:
         """Enumeration read model: F&O stock underlyings (no counts)."""
         conn = self._open(self._db_path)
