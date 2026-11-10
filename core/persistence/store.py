@@ -1199,6 +1199,61 @@ class EventStore:
         finally:
             conn.close()
 
+    def commit_market_alert_trigger_with_event(
+        self,
+        *,
+        alert_id: int,
+        exchange: str | None,
+        instrument_token: str | None,
+        tradingsymbol: str | None,
+        field: str | None,
+        operator: str | None,
+        threshold: float | None,
+        observed_value: float | None,
+        provider: str | None,
+        triggered_at: str | None = None,
+        event_id: str,
+        event_type: str,
+        event_source: str,
+        event_timestamp: str,
+        event_data: dict[str, Any],
+        event_routing: dict[str, Any] | None = None,
+    ) -> tuple[int, int] | None:
+        """Atomically commit market-alert trigger, history, and canonical event.
+
+        Returns ``(history_id, event_sequence)`` when committed, or ``None``
+        when the alert was not triggerable (already triggered/disabled/deleted/
+        raced). The event is persisted and consumer-materialized in the same
+        transaction as the trigger commitment.
+        """
+        if triggered_at is None:
+            triggered_at = datetime.now(timezone.utc).isoformat()
+        conn = self._open(self._db_path)
+        try:
+            return _products.commit_market_alert_trigger_with_event(
+                conn,
+                alert_id=alert_id,
+                exchange=exchange,
+                instrument_token=instrument_token,
+                tradingsymbol=tradingsymbol,
+                field=field,
+                operator=operator,
+                threshold=threshold,
+                observed_value=observed_value,
+                provider=provider,
+                triggered_at=triggered_at,
+                event_id=event_id,
+                event_type=event_type,
+                event_source=event_source,
+                event_timestamp=event_timestamp,
+                event_data=event_data,
+                event_routing=event_routing,
+                materialize_fn=lambda c, eid, seq, rt: _events.materialize_event_state(
+                    c, eid, seq, rt, self.is_event_relevant_internal),
+            )
+        finally:
+            conn.close()
+
     def load_enabled_alerts(self) -> list[dict[str, Any]]:
         conn = self._open(self._db_path)
         try:

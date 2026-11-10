@@ -84,13 +84,13 @@ async def test_dup_gt_same_rule(runner: R) -> None:
         alert = _create_alert(store, operator="gt", threshold=100.0)
         engine = AlertEngine(store)
 
-        # Hold first publish so second evaluation overlaps trigger path.
+        # Hold first live finalization so second evaluation overlaps trigger path.
         import core.events as ev
-        orig = ev.publish_event
+        orig = ev.finalize_persisted_event
         gate = asyncio.Event()
         entered = 0
 
-        async def slow_publish(*a, **k):
+        async def slow_finalize(*a, **k):
             nonlocal entered
             entered += 1
             if entered == 1:
@@ -102,14 +102,14 @@ async def test_dup_gt_same_rule(runner: R) -> None:
                 gate.set()
             return await orig(*a, **k)
 
-        ev.publish_event = slow_publish
+        ev.finalize_persisted_event = slow_finalize
         try:
             results = await _run_concurrent_evals(
                 engine,
                 [_quote("T1", 110.0, ts=_ts(1)), _quote("T1", 111.0, ts=_ts(2))],
             )
         finally:
-            ev.publish_event = orig
+            ev.finalize_persisted_event = orig
 
         fired_total = sum(len(r) for r in results)
         alerts = store.list_market_alerts()
@@ -272,21 +272,21 @@ async def test_failure_in_one_alert_does_not_block_others(runner: R) -> None:
         a2 = _create_alert(store, token="T2", tradingsymbol="BBB", operator="gt", threshold=100.0)
         engine = AlertEngine(store)
 
-        orig_commit = store.commit_market_alert_trigger
+        orig_commit = store.commit_market_alert_trigger_with_event
 
         def flaky_commit(**kw):
             if kw.get("alert_id") == a1["id"]:
                 raise RuntimeError("boom")
             return orig_commit(**kw)
 
-        store.commit_market_alert_trigger = flaky_commit  # type: ignore[assignment]
+        store.commit_market_alert_trigger_with_event = flaky_commit  # type: ignore[assignment]
         try:
             results = await _run_concurrent_evals(
                 engine,
                 [_quote("T1", 110.0, ts=_ts(1)), _quote("T2", 110.0, ts=_ts(1), tradingsymbol="BBB")],
             )
         finally:
-            store.commit_market_alert_trigger = orig_commit  # type: ignore[assignment]
+            store.commit_market_alert_trigger_with_event = orig_commit  # type: ignore[assignment]
 
         fired_ids = sorted(n["alert_id"] for r in results for n in r)
         runner.assert_eq("one-fails-other-fires", fired_ids, [a2["id"]])
@@ -309,7 +309,7 @@ async def test_alert_disabled_while_waiting(runner: R) -> None:
         # can be disabled concurrently; conditional commit must not fire.
         # Commit runs on the event-loop thread, so mutations/release happen in
         # a background thread.
-        orig_commit = store.commit_market_alert_trigger
+        orig_commit = store.commit_market_alert_trigger_with_event
         import threading
         entered = threading.Event()
         release = threading.Event()
@@ -325,7 +325,7 @@ async def test_alert_disabled_while_waiting(runner: R) -> None:
             release.wait(timeout=2.0)
             return orig_commit(**kw)
 
-        store.commit_market_alert_trigger = blocking_commit  # type: ignore[assignment]
+        store.commit_market_alert_trigger_with_event = blocking_commit  # type: ignore[assignment]
         t = threading.Thread(target=mutate_and_release, daemon=True)
         t.start()
         try:
@@ -333,7 +333,7 @@ async def test_alert_disabled_while_waiting(runner: R) -> None:
         finally:
             release.set()
             t.join(timeout=2.0)
-            store.commit_market_alert_trigger = orig_commit  # type: ignore[assignment]
+            store.commit_market_alert_trigger_with_event = orig_commit  # type: ignore[assignment]
 
         hist = store.list_alert_trigger_history(alert_id=alert["id"], limit=10)
         alerts = {a["id"]: a for a in store.list_market_alerts()}
@@ -354,7 +354,7 @@ async def test_alert_deleted_while_waiting(runner: R) -> None:
         # can be deleted concurrently; conditional commit must not fire.
         # Commit runs on the event-loop thread, so mutations/release happen in
         # a background thread.
-        orig_commit = store.commit_market_alert_trigger
+        orig_commit = store.commit_market_alert_trigger_with_event
         import threading
         entered = threading.Event()
         release = threading.Event()
@@ -370,7 +370,7 @@ async def test_alert_deleted_while_waiting(runner: R) -> None:
             release.wait(timeout=2.0)
             return orig_commit(**kw)
 
-        store.commit_market_alert_trigger = blocking_commit  # type: ignore[assignment]
+        store.commit_market_alert_trigger_with_event = blocking_commit  # type: ignore[assignment]
         t = threading.Thread(target=mutate_and_release, daemon=True)
         t.start()
         try:
@@ -378,7 +378,7 @@ async def test_alert_deleted_while_waiting(runner: R) -> None:
         finally:
             release.set()
             t.join(timeout=2.0)
-            store.commit_market_alert_trigger = orig_commit  # type: ignore[assignment]
+            store.commit_market_alert_trigger_with_event = orig_commit  # type: ignore[assignment]
 
         # Deleted alert: atomic commit updates 0 rows -> no trigger.
         hist = store.list_alert_trigger_history(alert_id=alert["id"], limit=10)
@@ -436,21 +436,24 @@ async def test_trigger_persistence_fails_no_fire(runner: R) -> None:
         store = _mk_store(tmp)
         alert = _create_alert(store, operator="gt", threshold=100.0)
         engine = AlertEngine(store)
-        orig = store.commit_market_alert_trigger
+        orig = store.commit_market_alert_trigger_with_event
 
         def boom(**kw):
             raise RuntimeError("persist boom")
 
-        store.commit_market_alert_trigger = boom  # type: ignore[assignment]
+        store.commit_market_alert_trigger_with_event = boom  # type: ignore[assignment]
         try:
             fired = await engine.evaluate(_quote("T1", 110.0, ts=_ts(1)))
         finally:
-            store.commit_market_alert_trigger = orig  # type: ignore[assignment]
+            store.commit_market_alert_trigger_with_event = orig  # type: ignore[assignment]
         runner.assert_eq("persist-fail-no-fire", len(fired), 0)
         alerts = store.list_market_alerts()
         runner.assert_eq("persist-fail-still-inactive", alerts[0]["state"], "inactive")
         hist = store.list_alert_trigger_history(alert_id=alert["id"], limit=10)
         runner.assert_eq("persist-fail-no-history", len(hist), 0)
+        events = [e for e in store.list_pending(limit=10)
+                  if e.get("type") == "alert.triggered"]
+        runner.assert_eq("persist-fail-no-event", len(events), 0)
 
 
 async def test_event_publish_fails_after_durable_commit(runner: R) -> None:
@@ -461,22 +464,28 @@ async def test_event_publish_fails_after_durable_commit(runner: R) -> None:
         alert = _create_alert(store, operator="gt", threshold=100.0)
         engine = AlertEngine(store)
         import core.events as ev
-        orig = ev.publish_event
+        orig_finalize = ev.finalize_persisted_event
+        orig_publish = ev.publish_event
 
         async def boom(*a, **k):
             raise RuntimeError("publish boom")
 
+        ev.finalize_persisted_event = boom
         ev.publish_event = boom
         try:
             fired = await engine.evaluate(_quote("T1", 110.0, ts=_ts(1)))
         finally:
-            ev.publish_event = orig
+            ev.finalize_persisted_event = orig_finalize
+            ev.publish_event = orig_publish
 
         # Durable trigger commitment must remain (at-most-once commitment).
         alerts = store.list_market_alerts()
         hist = store.list_alert_trigger_history(alert_id=alert["id"], limit=10)
+        events = store.list_pending(limit=10)
+        triggered = [e for e in events if e.get("type") == "alert.triggered"]
         runner.assert_eq("publish-fail-durable-state", alerts[0]["state"], "triggered")
         runner.assert_eq("publish-fail-durable-history", len(hist), 1)
+        runner.assert_eq("publish-fail-durable-event", len(triggered), 1)
         # Notification reflects committed trigger in current implementation.
         runner.assert_eq("publish-fail-notification-once", len(fired), 1)
 
@@ -505,29 +514,125 @@ async def test_retry_after_partial_failure_no_duplicate(runner: R) -> None:
         alert = _create_alert(store, operator="gt", threshold=100.0)
         engine = AlertEngine(store)
         import core.events as ev
-        orig = ev.publish_event
+        orig_finalize = ev.finalize_persisted_event
+        orig_publish = ev.publish_event
         calls = {"n": 0}
 
-        async def flaky_publish(*a, **k):
+        async def flaky_finalize(*a, **k):
             calls["n"] += 1
             if calls["n"] == 1:
                 raise RuntimeError("publish boom once")
-            return await orig(*a, **k)
+            return await orig_finalize(*a, **k)
 
-        ev.publish_event = flaky_publish
+        ev.finalize_persisted_event = flaky_finalize
+        ev.publish_event = flaky_finalize
         try:
             fired1 = await engine.evaluate(_quote("T1", 110.0, ts=_ts(1)))
             # Retry evaluation with another satisfying quote; commit must not duplicate.
             fired2 = await engine.evaluate(_quote("T1", 111.0, ts=_ts(2)))
         finally:
-            ev.publish_event = orig
+            ev.finalize_persisted_event = orig_finalize
+            ev.publish_event = orig_publish
 
         hist = store.list_alert_trigger_history(alert_id=alert["id"], limit=10)
         alerts = store.list_market_alerts()
+        events = [e for e in store.list_pending(limit=10)
+                  if e.get("type") == "alert.triggered"]
         runner.assert_eq("partial-first-committed", len(fired1), 1)
         runner.assert_eq("partial-retry-no-duplicate-fire", len(fired2), 0)
         runner.assert_eq("partial-history-once", len(hist), 1)
+        runner.assert_eq("partial-event-once", len(events), 1)
         runner.assert_eq("partial-state-triggered", alerts[0]["state"], "triggered")
+
+
+async def test_atomic_commit_state_history_event(runner: R) -> None:
+    from app.alerts import AlertEngine
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _mk_store(tmp)
+        alert = _create_alert(store, operator="gt", threshold=100.0)
+        engine = AlertEngine(store)
+        fired = await engine.evaluate(_quote("T1", 110.0, ts=_ts(1)))
+        alerts = store.list_market_alerts()
+        hist = store.list_alert_trigger_history(alert_id=alert["id"], limit=10)
+        events = [e for e in store.list_pending(limit=10)
+                  if e.get("type") == "alert.triggered"]
+        runner.assert_eq("atomic-fire-once", len(fired), 1)
+        runner.assert_eq("atomic-state-triggered", alerts[0]["state"], "triggered")
+        runner.assert_eq("atomic-history-once", len(hist), 1)
+        runner.assert_eq("atomic-event-once", len(events), 1)
+        runner.assert_eq("atomic-event-alert-id",
+                         events[0]["data"]["alert_id"], alert["id"])
+        runner.assert_eq("atomic-event-source", events[0]["source"], "alert_engine")
+
+
+async def test_persistence_failure_rolls_back_all_three(runner: R) -> None:
+    from app.alerts import AlertEngine
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _mk_store(tmp)
+        alert = _create_alert(store, operator="gt", threshold=100.0)
+        engine = AlertEngine(store)
+        orig = store.commit_market_alert_trigger_with_event
+
+        def boom(**kw):
+            raise RuntimeError("persist boom")
+
+        store.commit_market_alert_trigger_with_event = boom  # type: ignore[assignment]
+        try:
+            fired = await engine.evaluate(_quote("T1", 110.0, ts=_ts(1)))
+        finally:
+            store.commit_market_alert_trigger_with_event = orig  # type: ignore[assignment]
+
+        alerts = store.list_market_alerts()
+        hist = store.list_alert_trigger_history(alert_id=alert["id"], limit=10)
+        events = [e for e in store.list_pending(limit=10)
+                  if e.get("type") == "alert.triggered"]
+        runner.assert_eq("rollback-no-fire", len(fired), 0)
+        runner.assert_eq("rollback-state-inactive", alerts[0]["state"], "inactive")
+        runner.assert_eq("rollback-no-history", len(hist), 0)
+        runner.assert_eq("rollback-no-event", len(events), 0)
+
+
+async def test_finalize_failure_keeps_durable_event_discoverable(runner: R) -> None:
+    from app.alerts import AlertEngine
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _mk_store(tmp)
+        alert = _create_alert(store, operator="gt", threshold=100.0)
+        engine = AlertEngine(store)
+        import core.events as ev
+        orig_finalize = ev.finalize_persisted_event
+
+        async def boom(*a, **k):
+            raise RuntimeError("finalize boom")
+
+        ev.finalize_persisted_event = boom
+        try:
+            fired = await engine.evaluate(_quote("T1", 110.0, ts=_ts(1)))
+        finally:
+            ev.finalize_persisted_event = orig_finalize
+
+        events = [e for e in store.list_pending(limit=10)
+                  if e.get("type") == "alert.triggered"]
+        runner.assert_eq("discoverable-fire-once", len(fired), 1)
+        runner.assert_eq("discoverable-event-once", len(events), 1)
+        runner.assert_true("discoverable-event-id", bool(events[0].get("id")))
+        runner.assert_eq("discoverable-event-payload-alert",
+                         events[0]["data"]["alert_id"], alert["id"])
+
+        # "Restart"/new engine context: durable committed event remains
+        # discoverable with original id/payload and no duplicate trigger.
+        engine2 = AlertEngine(store)
+        fired2 = await engine2.evaluate(_quote("T1", 120.0, ts=_ts(2)))
+        events2 = [e for e in store.list_pending(limit=10)
+                   if e.get("type") == "alert.triggered"]
+        hist = store.list_alert_trigger_history(alert_id=alert["id"], limit=10)
+        runner.assert_eq("restart-no-refire", len(fired2), 0)
+        runner.assert_eq("restart-event-still-once", len(events2), 1)
+        runner.assert_eq("restart-history-still-once", len(hist), 1)
+        runner.assert_eq("restart-same-event-id", events2[0]["id"], events[0]["id"])
+        runner.assert_eq("restart-same-payload", events2[0]["data"], events[0]["data"])
 
 
 async def main() -> bool:
@@ -552,6 +657,9 @@ async def main() -> bool:
         test_event_publish_fails_after_durable_commit,
         test_restart_after_durable_commit_no_duplicate,
         test_retry_after_partial_failure_no_duplicate,
+        test_atomic_commit_state_history_event,
+        test_persistence_failure_rolls_back_all_three,
+        test_finalize_failure_keeps_durable_event_discoverable,
     ]
     for fn in tests:
         try:

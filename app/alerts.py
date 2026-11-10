@@ -19,6 +19,7 @@ import asyncio
 import logging
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -195,13 +196,38 @@ class AlertEngine:
                 if _provider is None:
                     _provider = self._provider_for(quote.instrument_token)
 
-                # Durable trigger commitment: state + history in one DB
-                # transaction, committed only if still inactive/enabled.
+                event_data = build_alert_triggered_data(
+                    alert_family="market",
+                    alert_id=alert_id,
+                    consumer_id=None,
+                    condition={
+                        "field": current.get("field"),
+                        "operator": current.get("operator"),
+                        "threshold": current.get("threshold"),
+                    },
+                    observed={"value": value},
+                    instrument={
+                        "exchange": current.get("exchange"),
+                        "instrument_token": current.get("instrument_token"),
+                        "tradingsymbol": current.get("tradingsymbol"),
+                    },
+                    one_shot=False,
+                    metadata={},
+                )
+                event_id = uuid.uuid4().hex
+                event_timestamp = triggered_at
+                event_routing = None
+
+                # Durable trigger commitment: alert state + history + canonical
+                # alert.triggered event in one DB transaction when supported.
                 # This is the at-most-once trigger commitment boundary.
+                committed = None
+                event_sequence = None
                 try:
-                    commit_fn = getattr(self._store, "commit_market_alert_trigger", None)
-                    if callable(commit_fn):
-                        committed = commit_fn(
+                    commit_with_event = getattr(
+                        self._store, "commit_market_alert_trigger_with_event", None)
+                    if callable(commit_with_event):
+                        committed = commit_with_event(
                             alert_id=alert_id,
                             exchange=current.get("exchange"),
                             instrument_token=current.get("instrument_token"),
@@ -212,13 +238,19 @@ class AlertEngine:
                             observed_value=value,
                             provider=_provider,
                             triggered_at=triggered_at,
+                            event_id=event_id,
+                            event_type="alert.triggered",
+                            event_source=ALERT_ENGINE_SOURCE,
+                            event_timestamp=event_timestamp,
+                            event_data=event_data,
+                            event_routing=event_routing,
                         )
+                        if committed is not None:
+                            _, event_sequence = committed
                     else:
-                        # Backward-compatible fallback for stores without the
-                        # atomic commit API (e.g. lightweight test doubles).
-                        self._store.record_trigger(alert_id)
-                        try:
-                            self._store.record_alert_trigger_history(
+                        commit_fn = getattr(self._store, "commit_market_alert_trigger", None)
+                        if callable(commit_fn):
+                            committed = commit_fn(
                                 alert_id=alert_id,
                                 exchange=current.get("exchange"),
                                 instrument_token=current.get("instrument_token"),
@@ -230,10 +262,27 @@ class AlertEngine:
                                 provider=_provider,
                                 triggered_at=triggered_at,
                             )
-                        except Exception as exc:
-                            logger.warning("alert trigger history persist failed: %s",
-                                           type(exc).__name__)
-                        committed = True
+                        else:
+                            # Backward-compatible fallback for stores without the
+                            # atomic commit API (e.g. lightweight test doubles).
+                            self._store.record_trigger(alert_id)
+                            try:
+                                self._store.record_alert_trigger_history(
+                                    alert_id=alert_id,
+                                    exchange=current.get("exchange"),
+                                    instrument_token=current.get("instrument_token"),
+                                    tradingsymbol=current.get("tradingsymbol"),
+                                    field=current.get("field"),
+                                    operator=current.get("operator"),
+                                    threshold=current.get("threshold"),
+                                    observed_value=value,
+                                    provider=_provider,
+                                    triggered_at=triggered_at,
+                                )
+                            except Exception as exc:
+                                logger.warning("alert trigger history persist failed: %s",
+                                               type(exc).__name__)
+                            committed = True
                 except Exception as exc:
                     logger.warning("alert trigger persist failed: %s",
                                    type(exc).__name__)
@@ -247,36 +296,35 @@ class AlertEngine:
                             stale["state"] = "triggered"
                     continue
 
-                # Canonical durable event publication — exactly one per
-                # committed trigger. Failure here must not roll back the
-                # durable trigger commitment (at-most-once commitment).
+                # Live publication/fanout for the committed trigger event.
+                # When the event was atomically persisted with the trigger,
+                # finalize without re-inserting it. If live delivery fails
+                # after commit, the durable event remains discoverable.
                 try:
-                    await events.publish_event(
-                        event_type="alert.triggered",
-                        source=ALERT_ENGINE_SOURCE,
-                        data=build_alert_triggered_data(
-                            alert_family="market",
-                            alert_id=alert_id,
-                            consumer_id=None,
-                            condition={
-                                "field": current.get("field"),
-                                "operator": current.get("operator"),
-                                "threshold": current.get("threshold"),
-                            },
-                            observed={"value": value},
-                            instrument={
-                                "exchange": current.get("exchange"),
-                                "instrument_token": current.get("instrument_token"),
-                                "tradingsymbol": current.get("tradingsymbol"),
-                            },
-                            one_shot=False,
-                            metadata={},
-                        ),
-                        persistent=True,
-                        routing=None,
-                        store=self._store,
-                        bus=self._bus,
-                    )
+                    if event_sequence is not None:
+                        event = {
+                            "id": event_id,
+                            "type": "alert.triggered",
+                            "source": ALERT_ENGINE_SOURCE,
+                            "timestamp": event_timestamp,
+                            "data": event_data,
+                            "persistent": True,
+                            "sequence": event_sequence,
+                        }
+                        if event_routing is not None:
+                            event["routing"] = event_routing
+                        await events.finalize_persisted_event(
+                            event, self._store, self._bus)
+                    else:
+                        await events.publish_event(
+                            event_type="alert.triggered",
+                            source=ALERT_ENGINE_SOURCE,
+                            data=event_data,
+                            persistent=True,
+                            routing=event_routing,
+                            store=self._store,
+                            bus=self._bus,
+                        )
                 except Exception as exc:
                     logger.warning("alert trigger event publish failed: %s",
                                    type(exc).__name__)

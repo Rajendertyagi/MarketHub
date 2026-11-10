@@ -1060,6 +1060,83 @@ def commit_market_alert_trigger(
         raise
 
 
+def commit_market_alert_trigger_with_event(
+    conn: sqlite3.Connection,
+    *,
+    alert_id: int,
+    exchange: str | None,
+    instrument_token: str | None,
+    tradingsymbol: str | None,
+    field: str | None,
+    operator: str | None,
+    threshold: float | None,
+    observed_value: float | None,
+    provider: str | None,
+    triggered_at: str,
+    event_id: str,
+    event_type: str,
+    event_source: str,
+    event_timestamp: str,
+    event_data: dict[str, Any],
+    event_routing: dict[str, Any] | None,
+    materialize_fn,
+) -> tuple[int, int] | None:
+    """Atomically commit market-alert trigger, history, and canonical event.
+
+    Performs in ONE ``BEGIN IMMEDIATE`` transaction:
+      1. conditional market_alerts state transition (inactive+enabled -> triggered)
+      2. alert_trigger_history insert
+      3. persistent_events insert
+      4. consumer materialization for the event
+
+    Returns ``(history_id, event_sequence)`` on commit, or ``None`` when the
+    alert was not triggerable (already triggered/disabled/deleted/raced).
+    Any failure rolls back everything.
+    """
+    import json
+
+    data_json = json.dumps(event_data, ensure_ascii=False, allow_nan=False)
+    routing_json = (
+        json.dumps(event_routing, ensure_ascii=False, allow_nan=False)
+        if event_routing is not None else None
+    )
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        cur = conn.execute(
+            "UPDATE market_alerts SET state = 'triggered', triggered_at = ? "
+            "WHERE id = ? AND enabled = 1 AND state = 'inactive'",
+            (triggered_at, alert_id),
+        )
+        if cur.rowcount != 1:
+            conn.rollback()
+            return None
+        hist = conn.execute(
+            "INSERT INTO alert_trigger_history "
+            "(alert_id, exchange, instrument_token, tradingsymbol, field, "
+            " operator, threshold, observed_value, provider, triggered_at, "
+            " created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (alert_id, exchange, instrument_token, tradingsymbol, field,
+             operator, threshold if threshold is None else float(threshold),
+             observed_value if observed_value is None else float(observed_value),
+             provider, triggered_at, _now()),
+        )
+        conn.execute(
+            "INSERT INTO persistent_events "
+            "(id, type, source, timestamp, data, routing, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (event_id, event_type, event_source, event_timestamp,
+             data_json, routing_json, event_timestamp),
+        )
+        seq = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        materialize_fn(conn, event_id, seq, event_routing)
+        conn.commit()
+        return int(hist.lastrowid), int(seq)
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def load_enabled_alerts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     try:
