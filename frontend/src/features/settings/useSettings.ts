@@ -13,6 +13,7 @@ import {
   forgetUpstoxSession,
   getAppSettings,
   getChatStatus,
+  getFyersFeedConfig,
   getFyersSettings,
   getNewsSources,
   getSourcesStatus,
@@ -135,6 +136,13 @@ export function useFyersSettings() {
   });
 }
 
+export function useFyersFeedConfig() {
+  return useQuery({
+    queryKey: ["settings", "fyers-feed"],
+    queryFn: ({ signal }) => getFyersFeedConfig(signal),
+  });
+}
+
 export function useSaveFyersCredentials() {
   const qc = useQueryClient();
   return useMutation({
@@ -155,9 +163,11 @@ export function useForgetFyersSession() {
 export function useSaveFyersFeedConfig() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (enabled: boolean) => saveFyersFeedConfig(enabled),
+    mutationFn: (config: { enabled: boolean; tbt_enabled?: boolean; tbt_symbols?: string[] }) =>
+      saveFyersFeedConfig(config),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["settings", "fyers"] });
+      qc.invalidateQueries({ queryKey: ["settings", "fyers-feed"] });
       qc.invalidateQueries({ queryKey: ["settings", "sources"] });
     },
   });
@@ -265,4 +275,4 @@ export function useBackup() {
   });
 }
 
-export type { FyersSettings, UpstoxFeedConfig };
+export type { FyersFeedConfig, FyersSettings, UpstoxFeedConfig };

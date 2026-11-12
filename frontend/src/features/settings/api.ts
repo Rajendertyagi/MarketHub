@@ -7,6 +7,7 @@ import {
   actionResultSchema,
   appSettingsSchema,
   chatStatusSchema,
+  fyersFeedConfigSchema,
   fyersSettingsSchema,
   newsSourcesResponseSchema,
   sourceControlResultSchema,
@@ -21,6 +22,7 @@ import type {
   BackupResult,
   ChatConfigInput,
   ChatStatus,
+  FyersFeedConfig,
   FyersSettings,
   NewsSource,
   NewsSourcesResponse,
@@ -201,14 +203,21 @@ export async function forgetFyersSession(signal?: AbortSignal): Promise<unknown>
   return request(FYERS_SESSION, { method: "DELETE", signal });
 }
 
+export async function getFyersFeedConfig(signal?: AbortSignal): Promise<FyersFeedConfig> {
+  return request<FyersFeedConfig>(FYERS_FEED, {
+    schema: fyersFeedConfigSchema,
+    signal,
+  });
+}
+
 export async function saveFyersFeedConfig(
-  enabled: boolean,
+  config: { enabled: boolean; tbt_enabled?: boolean; tbt_symbols?: string[] },
   signal?: AbortSignal,
-): Promise<SourceControlResult> {
-  return request<SourceControlResult>(FYERS_FEED, {
+): Promise<FyersFeedConfig> {
+  return request<FyersFeedConfig>(FYERS_FEED, {
     method: "POST",
-    body: { enabled },
-    schema: sourceControlResultSchema,
+    body: config,
+    schema: fyersFeedConfigSchema,
     signal,
   });
 }

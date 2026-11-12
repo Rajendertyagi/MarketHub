@@ -1650,6 +1650,10 @@ def build_fyers_auth_routes(cred_store: Any,
             if isinstance(_st, dict):
                 source_state = _st.get("state")
                 task_running = _st.get("task_running")
+        tbt_symbols = _fy_cfg.get("tbt_symbols") if configured else None
+        if not isinstance(tbt_symbols, list):
+            tbt_symbols = []
+        tbt_symbols = [s for s in tbt_symbols if isinstance(s, str) and s.strip()]
         return _json({
             "configured": configured,
             "enabled": bool(_fy_cfg.get("enabled")) if configured else False,
@@ -1657,6 +1661,8 @@ def build_fyers_auth_routes(cred_store: Any,
             "state": source_state,
             "task_running": task_running,
             "restart_required": configured and not registered,
+            "tbt_enabled": bool(_fy_cfg.get("tbt_enabled")) if configured else False,
+            "tbt_symbols": tbt_symbols,
         })
 
     async def _save_feed(request: Request) -> Response:
@@ -1664,23 +1670,65 @@ def build_fyers_auth_routes(cred_store: Any,
             body = await request.json()
         except Exception:
             return _json({"error": "invalid JSON body"}, 400)
-        enabled = bool(body.get("enabled", True))
+        if not isinstance(body, dict):
+            return _json({"error": "invalid JSON body"}, 400)
+
+        existing_cfg = (sources_cfg or {}).get("fyers") if isinstance((sources_cfg or {}).get("fyers"), dict) else {}
+        enabled = bool(body.get("enabled", existing_cfg.get("enabled", True)))
+
         instruments = body.get("instruments")
         if not isinstance(instruments, list) or not instruments:
-            existing = (sources_cfg or {}).get("fyers", {}).get("instruments")
-            instruments = existing if isinstance(existing, list) and existing \
+            existing_instruments = existing_cfg.get("instruments")
+            instruments = existing_instruments if isinstance(existing_instruments, list) and existing_instruments \
                 else [
                     {"key": "NSE:NIFTY50-INDEX", "exchange": "NSE",
                      "tradingsymbol": "NIFTY 50"},
                     {"key": "NSE:BANKNIFTY-INDEX", "exchange": "NSE",
                      "tradingsymbol": "BANKNIFTY"},
                 ]
+
+        tbt_enabled = bool(body.get("tbt_enabled", existing_cfg.get("tbt_enabled", False)))
+        raw_tbt_symbols = body.get("tbt_symbols", existing_cfg.get("tbt_symbols", []))
+        if raw_tbt_symbols is None:
+            raw_tbt_symbols = []
+        if isinstance(raw_tbt_symbols, str):
+            # Accept comma/newline separated input for convenience.
+            parts = []
+            for chunk in raw_tbt_symbols.replace("\r", "\n").replace(",", "\n").split("\n"):
+                chunk = chunk.strip()
+                if chunk:
+                    parts.append(chunk)
+            raw_tbt_symbols = parts
+        if not isinstance(raw_tbt_symbols, list):
+            return _json({"error": "tbt_symbols must be a list of strings"}, 400)
+        tbt_symbols: list[str] = []
+        seen: set[str] = set()
+        for item in raw_tbt_symbols:
+            if not isinstance(item, str):
+                return _json({"error": "tbt_symbols must be a list of strings"}, 400)
+            sym = item.strip()
+            if not sym or sym in seen:
+                continue
+            if len(sym) > 128:
+                return _json({"error": "tbt_symbols entries too long"}, 400)
+            seen.add(sym)
+            tbt_symbols.append(sym)
+
         feed_cfg = {
             "type": "fyers_feed",
             "enabled": enabled,
             "mode": "full",
             "instruments": instruments,
+            "tbt_enabled": tbt_enabled,
+            "tbt_symbols": tbt_symbols,
         }
+
+        # Detect if running source needs restart to apply TBT/feed changes.
+        prev_tbt_enabled = bool(existing_cfg.get("tbt_enabled", False))
+        prev_tbt_symbols = existing_cfg.get("tbt_symbols") if isinstance(existing_cfg.get("tbt_symbols"), list) else []
+        prev_tbt_symbols = [s for s in prev_tbt_symbols if isinstance(s, str) and s.strip()]
+        tbt_changed = (prev_tbt_enabled != tbt_enabled) or (prev_tbt_symbols != tbt_symbols)
+
         if sources_cfg is not None:
             sources_cfg["fyers"] = feed_cfg
         if persist_source_fn is not None:
@@ -1688,14 +1736,30 @@ def build_fyers_auth_routes(cred_store: Any,
                 persist_source_fn(feed_cfg)
             except Exception:
                 logger.warning("failed to persist fyers source config")
+
         result: dict[str, Any] = {
             "configured": True,
             "enabled": enabled,
             "registered": False,
+            "tbt_enabled": tbt_enabled,
+            "tbt_symbols": tbt_symbols,
         }
+
         if enabled:
             # Register + start at runtime (no server restart required).
-            if start_source_fn is not None:
+            # If TBT settings changed while source is running, restart to apply.
+            running = False
+            if source_manager is not None:
+                try:
+                    running = bool(source_manager.task_running("fyers"))
+                except Exception:
+                    running = False
+            if tbt_changed and running and source_manager is not None:
+                try:
+                    await source_manager.restart_source("fyers")
+                except Exception:
+                    logger.exception("fyers feed restart failed")
+            elif start_source_fn is not None:
                 try:
                     await start_source_fn()
                 except Exception:
@@ -1705,21 +1769,25 @@ def build_fyers_auth_routes(cred_store: Any,
                 if source_manager is not None else False)
             result["restart_required"] = not result["registered"]
         else:
-            # Disable: stop the running source; keep the (stopped) registration
-            # and remove the durable config so a restart won't auto-start it.
+            # Disable: stop the running source but keep config (with enabled=false)
+            # so TBT/feed settings are preserved in the UI.
             if source_manager is not None and \
                     "fyers" in (source_manager.enabled_sources or {}):
                 try:
                     await source_manager.stop_source("fyers")
                 except Exception:
                     logger.exception("fyers feed stop failed")
+            # Keep config persisted with enabled=false to preserve settings.
             if sources_cfg is not None:
-                sources_cfg.pop("fyers", None)
+                sources_cfg["fyers"] = feed_cfg
             if persist_source_fn is not None:
                 try:
-                    persist_source_fn(None)
+                    persist_source_fn(feed_cfg)
                 except Exception:
-                    logger.warning("failed to remove fyers source config")
+                    logger.warning("failed to persist fyers source config")
+            result["registered"] = (
+                "fyers" in (source_manager.enabled_sources or {})
+                if source_manager is not None else False)
         return _json(result)
 
     async def _delete_feed(request: Request) -> Response:

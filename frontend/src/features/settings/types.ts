@@ -70,6 +70,18 @@ export interface FyersSettings {
   stored_access_present?: boolean;
 }
 
+// ── Fyers feed config (GET|POST /api/settings/fyers/feed) ───────────────────
+export interface FyersFeedConfig {
+  configured?: boolean;
+  enabled?: boolean;
+  registered?: boolean;
+  state?: string | null;
+  task_running?: boolean | null;
+  restart_required?: boolean;
+  tbt_enabled?: boolean;
+  tbt_symbols?: string[];
+}
+
 // ── Generic save/delete credential result ───────────────────────────────────
 export interface SaveResult {
   configured?: boolean;
