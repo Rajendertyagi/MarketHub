@@ -1780,30 +1780,99 @@ def build_fyers_auth_routes(cred_store: Any,
                     task_running = bool(source_manager.task_running("fyers")) if source_manager is not None else False
                 except Exception:
                     task_running = False
+            result_runtime_config_applied = runtime_applied
         else:
-            # Fallback (legacy): best-effort start/restart/stop without guaranteed reconfig
+            # Fallback (legacy): best-effort runtime control without guaranteed
+            # reconfiguration of an existing source instance.
+            runtime_config_applied = False
             try:
+                def _is_registered() -> bool:
+                    return "fyers" in (source_manager.enabled_sources or {}) if source_manager is not None else False
+
+                def _is_running() -> bool:
+                    if source_manager is None:
+                        return False
+                    try:
+                        return bool(source_manager.task_running("fyers"))
+                    except Exception:
+                        return False
+
                 if enabled:
-                    running = False
-                    if source_manager is not None:
-                        try:
-                            running = bool(source_manager.task_running("fyers"))
-                        except Exception:
-                            running = False
-                    if running and source_manager is not None:
-                        await source_manager.restart_source("fyers")
-                        restarted = True
-                        runtime_applied = True
-                    elif start_source_fn is not None:
-                        await start_source_fn()
-                        started = True
-                        runtime_applied = True
-                    else:
+                    was_running = _is_running()
+                    if was_running and source_manager is not None:
+                        restart_ok = await source_manager.restart_source("fyers")
+                        task_running = _is_running()
+                        restarted = bool(restart_ok) and task_running
+                        if not restarted:
+                            runtime_error = "restart_failed:task_not_running" if restart_ok else "restart_failed"
+                        # Legacy path restarts same instance/config; cannot guarantee new config applied.
                         runtime_applied = False
+                        runtime_config_applied = False
+                    else:
+                        # Start path: prefer start_source_fn if provided (it may register+start),
+                        # otherwise use SourceManager.start_source directly. Do not invoke both.
+                        if start_source_fn is not None:
+                            before_running = _is_running()
+                            cb_result = await start_source_fn()
+                            task_running = _is_running()
+                            if isinstance(cb_result, str):
+                                start_result = cb_result
+                                if cb_result == "started":
+                                    started = (not before_running) and task_running
+                                    if not started and not task_running:
+                                        runtime_error = "start_failed:task_not_running"
+                                elif cb_result == "already_running":
+                                    started = False
+                                elif cb_result in ("not_ready", "unknown"):
+                                    started = False
+                                    runtime_error = f"{cb_result}: source not started"
+                                else:
+                                    started = (not before_running) and task_running
+                                    if not started and not task_running:
+                                        runtime_error = f"start_failed:unexpected_result:{cb_result}"
+                            else:
+                                # None/unknown return: infer from actual task liveness.
+                                started = (not before_running) and task_running
+                                if not started and not task_running:
+                                    runtime_error = "start_failed:task_not_running"
+                        elif source_manager is not None:
+                            before_running = _is_running()
+                            sm_result = await source_manager.start_source("fyers")
+                            start_result = sm_result
+                            task_running = _is_running()
+                            if sm_result == "started":
+                                started = (not before_running) and task_running
+                                if not started and not task_running:
+                                    runtime_error = "start_failed:task_not_running"
+                            elif sm_result == "already_running":
+                                started = False
+                            elif sm_result in ("not_ready", "unknown"):
+                                started = False
+                                runtime_error = f"{sm_result}: source not started"
+                            else:
+                                started = (not before_running) and task_running
+                                if not started and not task_running:
+                                    runtime_error = f"start_failed:unexpected_result:{sm_result}"
+                        else:
+                            runtime_error = "start_unavailable"
+                        # Legacy path cannot guarantee new config applied to existing/new instance.
+                        runtime_applied = False
+                        runtime_config_applied = False
                 else:
-                    if source_manager is not None and "fyers" in (source_manager.enabled_sources or {}):
-                        await source_manager.stop_source("fyers")
-                    runtime_applied = True
+                    # Disabled: stop and verify task is actually stopped.
+                    if source_manager is not None and _is_registered():
+                        stop_ok = await source_manager.stop_source("fyers")
+                        task_running = _is_running()
+                        if not stop_ok or task_running:
+                            runtime_error = "stop_failed:task_running" if task_running else "stop_failed"
+                            runtime_applied = False
+                        else:
+                            # Runtime control (stop) succeeded; config application to instance not guaranteed/needed.
+                            runtime_applied = False
+                    else:
+                        task_running = _is_running()
+                        runtime_applied = False
+                    runtime_config_applied = False
             except Exception as exc:
                 runtime_error = f"runtime_failed:{type(exc).__name__}"
             registered = "fyers" in (source_manager.enabled_sources or {}) if source_manager is not None else False
@@ -1811,6 +1880,7 @@ def build_fyers_auth_routes(cred_store: Any,
                 task_running = bool(source_manager.task_running("fyers")) if source_manager is not None else False
             except Exception:
                 task_running = False
+            result_runtime_config_applied = runtime_config_applied
 
         result: dict[str, Any] = {
             "configured": True,
@@ -1819,6 +1889,7 @@ def build_fyers_auth_routes(cred_store: Any,
             "tbt_symbols": tbt_symbols,
             "persisted": persisted,
             "runtime_applied": runtime_applied,
+            "runtime_config_applied": result_runtime_config_applied,
             "registered": registered,
             "task_running": task_running,
             "started": started,
@@ -1833,7 +1904,11 @@ def build_fyers_auth_routes(cred_store: Any,
             result["error"] = "runtime_apply_failed"
         # Back-compat hint: restart_required only when not registered/applied as expected
         if enabled:
-            result["restart_required"] = not (registered and runtime_applied and runtime_error is None)
+            if apply_source_fn is not None:
+                result["restart_required"] = not (registered and runtime_applied and runtime_error is None)
+            else:
+                # Legacy fallback cannot guarantee config applied to runtime instance.
+                result["restart_required"] = True if runtime_error is None else True
         else:
             result["restart_required"] = False
         return _json(result)

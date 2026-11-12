@@ -724,3 +724,219 @@ def test_apply_reports_unknown_without_claiming_started(monkeypatch):
     assert res["task_running"] is False
     assert res["start_result"] == "unknown"
     assert "unknown" in (res.get("error") or "")
+
+
+# ---------------- legacy fallback (no apply_source_fn) ----------------
+
+class _LegacySM:
+    def __init__(self, *, running=False, registered=True, start_result="started", restart_ok=True, stop_ok=True):
+        self.enabled_sources = {"fyers": object()} if registered else {}
+        self._running = {"fyers"} if running else set()
+        self.start_result = start_result
+        self.restart_ok = restart_ok
+        self.stop_ok = stop_ok
+        self.start_calls = 0
+        self.restart_calls = 0
+        self.stop_calls = 0
+        self.fail_restart = False
+        self.fail_stop = False
+        self.keep_running_after_stop = False
+        self.set_running_on_start = True
+        self.set_running_on_restart = True
+
+    def task_running(self, name):
+        return name in self._running
+
+    async def start_source(self, name):
+        self.start_calls += 1
+        if self.start_result == "started" and self.set_running_on_start:
+            self._running.add(name)
+        return self.start_result
+
+    async def restart_source(self, name):
+        self.restart_calls += 1
+        if self.fail_restart:
+            raise RuntimeError("restart boom")
+        # restart stops old task then starts new one if successful
+        self._running.discard(name)
+        if self.restart_ok and self.set_running_on_restart:
+            self._running.add(name)
+        return self.restart_ok
+
+    async def stop_source(self, name):
+        self.stop_calls += 1
+        if self.fail_stop:
+            raise RuntimeError("stop boom")
+        if self.stop_ok and not self.keep_running_after_stop:
+            self._running.discard(name)
+        return self.stop_ok
+
+
+def _build_legacy_app(*, source_manager=None, sources_cfg=None, start_source_fn=None, persist_source_fn=lambda cfg: True):
+    store = _make_store()
+    routes = build_fyers_auth_routes(
+        store,
+        runtime_auth=FyersRuntimeAuth(),
+        redirect_uri="http://localhost:7070/auth/fyers/callback",
+        source_manager=source_manager,
+        sources_cfg=sources_cfg if sources_cfg is not None else {},
+        start_source_fn=start_source_fn,
+        persist_source_fn=persist_source_fn,
+        apply_source_fn=None,
+    )
+    return Starlette(routes=routes)
+
+
+def test_legacy_start_callback_returns_normally_but_task_not_running():
+    sm = _LegacySM(running=False, registered=True)
+    async def start_fn():
+        return None  # returns without raising, but task never starts
+    app = _build_legacy_app(source_manager=sm, sources_cfg={}, start_source_fn=start_fn)
+    c = TestClient(app)
+    r = c.post("/api/settings/fyers/feed", json={"enabled": True, "tbt_enabled": True, "tbt_symbols": ["NSE:AAA-EQ"]})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["started"] is False
+    assert body["task_running"] is False
+    assert body["runtime_applied"] is False
+    assert body["runtime_config_applied"] is False
+    assert body.get("runtime_error")
+    assert body.get("restart_required") is True
+
+
+def test_legacy_start_callback_none_but_task_transitions_to_running():
+    sm = _LegacySM(running=False, registered=True)
+    async def start_fn():
+        sm._running.add("fyers")  # genuinely transitions to running
+        return None
+    app = _build_legacy_app(source_manager=sm, sources_cfg={}, start_source_fn=start_fn)
+    c = TestClient(app)
+    r = c.post("/api/settings/fyers/feed", json={"enabled": True})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["started"] is True
+    assert body["task_running"] is True
+    assert body["runtime_applied"] is False
+    assert body["runtime_config_applied"] is False
+    assert body.get("runtime_error") is None
+
+
+def test_legacy_start_source_manager_not_ready_or_unknown():
+    for sr in ("not_ready", "unknown"):
+        sm = _LegacySM(running=False, registered=True, start_result=sr)
+        sm.set_running_on_start = False
+        app = _build_legacy_app(source_manager=sm, sources_cfg={}, start_source_fn=None)
+        c = TestClient(app)
+        r = c.post("/api/settings/fyers/feed", json={"enabled": True})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["started"] is False
+        assert body["task_running"] is False
+        assert body.get("start_result") == sr
+        assert body.get("runtime_error")
+        assert body["runtime_applied"] is False
+
+
+def test_legacy_already_running_no_new_start():
+    sm = _LegacySM(running=True, registered=True)
+    app = _build_legacy_app(source_manager=sm, sources_cfg={}, start_source_fn=None)
+    c = TestClient(app)
+    r = c.post("/api/settings/fyers/feed", json={"enabled": True})
+    assert r.status_code == 200
+    body = r.json()
+    # running path takes restart branch, not start
+    assert sm.start_calls == 0
+    assert sm.restart_calls == 1
+    assert body["started"] is False
+
+
+def test_legacy_restart_success_but_task_not_running():
+    sm = _LegacySM(running=True, registered=True, restart_ok=True)
+    sm.set_running_on_restart = False
+    app = _build_legacy_app(source_manager=sm, sources_cfg={}, start_source_fn=None)
+    c = TestClient(app)
+    r = c.post("/api/settings/fyers/feed", json={"enabled": True})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["restarted"] is False
+    assert body["task_running"] is False
+    assert body.get("runtime_error")
+    assert body["runtime_applied"] is False
+
+
+def test_legacy_restart_raises_or_reports_failure():
+    sm = _LegacySM(running=True, registered=True)
+    sm.fail_restart = True
+    app = _build_legacy_app(source_manager=sm, sources_cfg={}, start_source_fn=None)
+    c = TestClient(app)
+    r = c.post("/api/settings/fyers/feed", json={"enabled": True})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["restarted"] is False
+    assert body.get("runtime_error")
+    assert body["runtime_applied"] is False
+
+
+def test_legacy_disabled_stop_succeeds_and_task_stopped():
+    sm = _LegacySM(running=True, registered=True, stop_ok=True)
+    app = _build_legacy_app(source_manager=sm, sources_cfg={}, start_source_fn=None)
+    c = TestClient(app)
+    r = c.post("/api/settings/fyers/feed", json={"enabled": False})
+    assert r.status_code == 200
+    body = r.json()
+    assert sm.stop_calls == 1
+    assert body["task_running"] is False
+    assert body.get("runtime_error") is None
+    assert body["runtime_applied"] is False
+
+
+def test_legacy_disabled_stop_fails_or_task_remains_running():
+    sm = _LegacySM(running=True, registered=True, stop_ok=True)
+    sm.keep_running_after_stop = True
+    app = _build_legacy_app(source_manager=sm, sources_cfg={}, start_source_fn=None)
+    c = TestClient(app)
+    r = c.post("/api/settings/fyers/feed", json={"enabled": False})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["task_running"] is True
+    assert body.get("runtime_error")
+    assert body["runtime_applied"] is False
+
+
+def test_legacy_does_not_falsely_claim_runtime_config_applied():
+    sm = _LegacySM(running=False, registered=True, start_result="started")
+    app = _build_legacy_app(source_manager=sm, sources_cfg={}, start_source_fn=None)
+    c = TestClient(app)
+    r = c.post("/api/settings/fyers/feed", json={"enabled": True, "tbt_enabled": True, "tbt_symbols": ["NSE:XYZ-EQ"]})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["task_running"] is True
+    assert body["runtime_applied"] is False
+    assert body["runtime_config_applied"] is False
+    assert body.get("restart_required") is True
+
+
+def test_existing_production_apply_source_fn_behavior_unchanged():
+    # Production path with apply_source_fn must still report truthfully as before.
+    sm = FakeSourceManager()
+    async def apply_fn(feed_cfg, start_if_enabled=True):
+        src = FakeSource("fyers", feed_cfg)
+        if "fyers" in sm.enabled_sources:
+            await sm.replace_source("fyers", src, feed_cfg)
+        else:
+            sm.register(src)
+            sm._configs["fyers"] = dict(feed_cfg)
+        if feed_cfg.get("enabled", True) and start_if_enabled:
+            await sm.start_source("fyers")
+            return {"runtime_applied": True, "registered": True, "task_running": True, "started": True, "start_result": "started"}
+        return {"runtime_applied": True, "registered": True, "task_running": False}
+    app, _ = _build_app(source_manager=sm, sources_cfg={}, apply_source_fn=apply_fn, persist_source_fn=lambda cfg: True)
+    c = TestClient(app)
+    r = c.post("/api/settings/fyers/feed", json={"enabled": True, "tbt_enabled": True, "tbt_symbols": ["NSE:PROD-EQ"]})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["runtime_applied"] is True
+    assert body["runtime_config_applied"] is True
+    assert body["started"] is True
+    assert body["task_running"] is True
+    assert body.get("restart_required") is False
