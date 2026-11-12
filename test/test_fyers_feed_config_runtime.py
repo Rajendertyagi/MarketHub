@@ -3,18 +3,26 @@
 Covers:
 - strict boolean validation for enabled/tbt_enabled
 - runtime reconfiguration applies to actual source instance/config
-- stop+await before replacement when running
+- stop+await before replacement when running (real SourceManager)
+- failed cancellation does not replace old source/config (real SourceManager)
+- old task cannot remain active alongside replacement (real SourceManager)
+- fresh stop event used for new instance (real SourceManager)
 - stopped registered source gets latest config before start
 - disable preserves settings and re-enable applies them
 - first-time registration receives runtime deps/injection
+- start_source not_ready/unknown not reported as started
+- failed start with task_running=false accurately reported
+- intentionally disabled feed can have runtime config applied without running
+- persistence success/read failure/write failure/missing callback reporting
 - failed restart/reconfiguration not reported as successfully applied
 
-No live broker traffic. Uses fake sources/managers.
+No live broker traffic. Uses fake sources/managers and narrow real SourceManager tests.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 import tempfile
@@ -22,6 +30,7 @@ import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -29,6 +38,7 @@ from api.product_routes import build_fyers_auth_routes
 from app.fyers_runtime_auth import FyersRuntimeAuth
 from app.secrets_store import CredentialStore
 from core.persistence.store import EventStore
+from sources import SourceManager
 
 
 class FakeSource:
@@ -117,6 +127,8 @@ def _build_app(*, source_manager=None, sources_cfg=None, apply_source_fn=None, s
     return Starlette(routes=routes), store
 
 
+# ---------------- API validation / behavior ----------------
+
 def test_enabled_must_be_boolean():
     app, _ = _build_app()
     c = TestClient(app)
@@ -137,14 +149,16 @@ def test_valid_boolean_inputs_accepted():
     sm = FakeSourceManager()
     sources_cfg = {}
     async def apply_fn(feed_cfg, start_if_enabled=True):
-        # simulate first-time registration/start
         src = FakeSource("fyers", feed_cfg)
-        await sm.replace_source("fyers", src, feed_cfg) if "fyers" in sm.enabled_sources else sm.register(src)
-        sm._configs["fyers"] = dict(feed_cfg)
+        if "fyers" in sm.enabled_sources:
+            await sm.replace_source("fyers", src, feed_cfg)
+        else:
+            sm.register(src)
+            sm._configs["fyers"] = dict(feed_cfg)
         if feed_cfg.get("enabled", True) and start_if_enabled:
             await sm.start_source("fyers")
-        return {"runtime_applied": True, "registered": True, "task_running": sm.task_running("fyers"), "started": True}
-    app, _ = _build_app(source_manager=sm, sources_cfg=sources_cfg, apply_source_fn=apply_fn)
+        return {"runtime_applied": True, "registered": True, "task_running": sm.task_running("fyers"), "started": True, "start_result": "started"}
+    app, _ = _build_app(source_manager=sm, sources_cfg=sources_cfg, apply_source_fn=apply_fn, persist_source_fn=lambda cfg: True)
     c = TestClient(app)
     r = c.post("/api/settings/fyers/feed", json={"enabled": True, "tbt_enabled": False, "tbt_symbols": []})
     assert r.status_code == 200
@@ -157,7 +171,6 @@ def test_valid_boolean_inputs_accepted():
 
 def test_running_source_receives_updated_tbt_settings_and_stops_before_replace():
     sm = FakeSourceManager()
-    # existing running source with old config
     old_cfg = {"type": "fyers_feed", "enabled": True, "mode": "full", "instruments": [], "tbt_enabled": False, "tbt_symbols": []}
     old_src = FakeSource("fyers", old_cfg)
     sm.register(old_src)
@@ -165,16 +178,15 @@ def test_running_source_receives_updated_tbt_settings_and_stops_before_replace()
     sm._running.add("fyers")
 
     async def apply_fn(feed_cfg, start_if_enabled=True):
-        # build new instance with new config
         new_src = FakeSource("fyers", feed_cfg)
-        await sm.replace_source("fyers", new_src, feed_cfg)  # should stop if running
+        await sm.replace_source("fyers", new_src, feed_cfg)
         if feed_cfg.get("enabled", True) and start_if_enabled:
             await sm.start_source("fyers")
-            return {"runtime_applied": True, "registered": True, "task_running": True, "restarted": True}
+            return {"runtime_applied": True, "registered": True, "task_running": True, "restarted": True, "start_result": "started"}
         return {"runtime_applied": True, "registered": True, "task_running": sm.task_running("fyers")}
 
     sources_cfg = {"fyers": dict(old_cfg)}
-    app, _ = _build_app(source_manager=sm, sources_cfg=sources_cfg, apply_source_fn=apply_fn)
+    app, _ = _build_app(source_manager=sm, sources_cfg=sources_cfg, apply_source_fn=apply_fn, persist_source_fn=lambda cfg: True)
     c = TestClient(app)
     r = c.post("/api/settings/fyers/feed", json={"enabled": True, "tbt_enabled": True, "tbt_symbols": ["NSE:RELIANCE-EQ"]})
     assert r.status_code == 200
@@ -182,14 +194,12 @@ def test_running_source_receives_updated_tbt_settings_and_stops_before_replace()
     assert body["runtime_applied"] is True
     assert body["registered"] is True
     assert body["task_running"] is True
-    # verify stop happened before replace and new config applied
     assert ("stop_for_replace", "fyers") in sm.events
     replace_events = [e for e in sm.events if e[0] == "replace"]
     assert replace_events, sm.events
     assert replace_events[-1][2]["tbt_enabled"] is True
     assert replace_events[-1][2]["tbt_symbols"] == ["NSE:RELIANCE-EQ"]
     assert replace_events[-1][3]["tbt_enabled"] is True
-    # stop_for_replace must come before replace
     idx_stop = sm.events.index(("stop_for_replace", "fyers"))
     idx_replace = next(i for i, e in enumerate(sm.events) if e[0] == "replace")
     assert idx_stop < idx_replace
@@ -201,25 +211,23 @@ def test_stopped_registered_source_receives_latest_config_before_start():
     old_src = FakeSource("fyers", old_cfg)
     sm.register(old_src)
     sm._configs["fyers"] = dict(old_cfg)
-    # not running
 
     async def apply_fn(feed_cfg, start_if_enabled=True):
         new_src = FakeSource("fyers", feed_cfg)
         await sm.replace_source("fyers", new_src, feed_cfg)
         if feed_cfg.get("enabled", True) and start_if_enabled:
             await sm.start_source("fyers")
-            return {"runtime_applied": True, "registered": True, "task_running": True, "started": True}
+            return {"runtime_applied": True, "registered": True, "task_running": True, "started": True, "start_result": "started"}
         return {"runtime_applied": True, "registered": True, "task_running": False}
 
     sources_cfg = {"fyers": dict(old_cfg)}
-    app, _ = _build_app(source_manager=sm, sources_cfg=sources_cfg, apply_source_fn=apply_fn)
+    app, _ = _build_app(source_manager=sm, sources_cfg=sources_cfg, apply_source_fn=apply_fn, persist_source_fn=lambda cfg: True)
     c = TestClient(app)
     r = c.post("/api/settings/fyers/feed", json={"enabled": True, "tbt_enabled": True, "tbt_symbols": ["NSE:INFY-EQ"]})
     assert r.status_code == 200
     body = r.json()
     assert body["runtime_applied"] is True
     assert body["task_running"] is True
-    # replace happened, then start used new config
     replace_events = [e for e in sm.events if e[0] == "replace"]
     start_events = [e for e in sm.events if e[0] == "start"]
     assert replace_events and start_events
@@ -247,23 +255,20 @@ def test_disable_preserves_settings_and_reenable_applies_them():
                 await sm.stop_source("fyers")
         return {"runtime_applied": True, "registered": True, "task_running": sm.task_running("fyers")}
 
-    app, _ = _build_app(source_manager=sm, sources_cfg=sources_cfg, apply_source_fn=apply_fn)
+    app, _ = _build_app(source_manager=sm, sources_cfg=sources_cfg, apply_source_fn=apply_fn, persist_source_fn=lambda cfg: True)
     c = TestClient(app)
 
-    # enable with TBT settings
     r1 = c.post("/api/settings/fyers/feed", json={"enabled": True, "tbt_enabled": True, "tbt_symbols": ["NSE:SBIN-EQ"]})
     assert r1.status_code == 200
     assert sources_cfg["fyers"]["tbt_enabled"] is True
     assert sources_cfg["fyers"]["tbt_symbols"] == ["NSE:SBIN-EQ"]
 
-    # disable but preserve settings
     r2 = c.post("/api/settings/fyers/feed", json={"enabled": False, "tbt_enabled": True, "tbt_symbols": ["NSE:SBIN-EQ"]})
     assert r2.status_code == 200
     assert sources_cfg["fyers"]["enabled"] is False
     assert sources_cfg["fyers"]["tbt_enabled"] is True
     assert sources_cfg["fyers"]["tbt_symbols"] == ["NSE:SBIN-EQ"]
 
-    # re-enable: saved settings must be applied
     r3 = c.post("/api/settings/fyers/feed", json={"enabled": True})
     assert r3.status_code == 200
     body = r3.json()
@@ -285,11 +290,10 @@ def test_failed_restart_not_reported_as_successfully_applied():
     async def apply_fn(feed_cfg, start_if_enabled=True):
         new_src = FakeSource("fyers", feed_cfg)
         await sm.replace_source("fyers", new_src, feed_cfg)
-        # simulate restart/start failure after replacement
         return {"runtime_applied": False, "registered": True, "task_running": False, "error": "restart_failed:RuntimeError"}
 
     sources_cfg = {"fyers": dict(old_cfg)}
-    app, _ = _build_app(source_manager=sm, sources_cfg=sources_cfg, apply_source_fn=apply_fn)
+    app, _ = _build_app(source_manager=sm, sources_cfg=sources_cfg, apply_source_fn=apply_fn, persist_source_fn=lambda cfg: True)
     c = TestClient(app)
     r = c.post("/api/settings/fyers/feed", json={"enabled": True, "tbt_enabled": True, "tbt_symbols": ["NSE:RELIANCE-EQ"]})
     assert r.status_code == 200
@@ -307,16 +311,16 @@ def test_first_time_registration_via_apply_receives_config():
     sources_cfg = {}
 
     async def apply_fn(feed_cfg, start_if_enabled=True):
-        # simulate server-side build with runtime deps injected (represented in cfg here)
         assert feed_cfg.get("tbt_enabled") is True
+        assert feed_cfg.get("tbt_symbols") == ["NSE:TCS-EQ"]
         src = FakeSource("fyers", feed_cfg)
         sm.register(src)
         sm._configs["fyers"] = dict(feed_cfg)
         if start_if_enabled:
             await sm.start_source("fyers")
-        return {"runtime_applied": True, "registered": True, "task_running": sm.task_running("fyers"), "started": True}
+        return {"runtime_applied": True, "registered": True, "task_running": sm.task_running("fyers"), "started": True, "start_result": "started"}
 
-    app, _ = _build_app(source_manager=sm, sources_cfg=sources_cfg, apply_source_fn=apply_fn)
+    app, _ = _build_app(source_manager=sm, sources_cfg=sources_cfg, apply_source_fn=apply_fn, persist_source_fn=lambda cfg: True)
     c = TestClient(app)
     r = c.post("/api/settings/fyers/feed", json={"enabled": True, "tbt_enabled": True, "tbt_symbols": ["NSE:TCS-EQ"]})
     assert r.status_code == 200
@@ -324,7 +328,12 @@ def test_first_time_registration_via_apply_receives_config():
     assert body["runtime_applied"] is True
     assert body["registered"] is True
     assert body["task_running"] is True
-    assert ("register", "fyers", {"type": "fyers_feed", "enabled": True, "mode": "full", "instruments": body.get("instruments") or sources_cfg["fyers"]["instruments"], "tbt_enabled": True, "tbt_symbols": ["NSE:TCS-EQ"]}) or any(e[0] == "register" and e[2].get("tbt_enabled") is True for e in sm.events)
+    register_events = [e for e in sm.events if e[0] == "register" and e[1] == "fyers"]
+    assert register_events, sm.events
+    assert register_events[-1][2]["tbt_enabled"] is True
+    assert register_events[-1][2]["tbt_symbols"] == ["NSE:TCS-EQ"]
+    assert sm._configs["fyers"]["tbt_enabled"] is True
+    assert sm._configs["fyers"]["tbt_symbols"] == ["NSE:TCS-EQ"]
 
 
 def test_tbt_symbols_string_and_dedup_preserved():
@@ -334,9 +343,384 @@ def test_tbt_symbols_string_and_dedup_preserved():
         sm.register(src)
         sm._configs["fyers"] = dict(feed_cfg)
         return {"runtime_applied": True, "registered": True, "task_running": False}
-    app, _ = _build_app(source_manager=sm, sources_cfg={}, apply_source_fn=apply_fn)
+    app, _ = _build_app(source_manager=sm, sources_cfg={}, apply_source_fn=apply_fn, persist_source_fn=lambda cfg: True)
     c = TestClient(app)
     r = c.post("/api/settings/fyers/feed", json={"enabled": False, "tbt_enabled": True, "tbt_symbols": "NSE:AAA-EQ, NSE:BBB-EQ\nNSE:AAA-EQ"})
     assert r.status_code == 200
     body = r.json()
     assert body["tbt_symbols"] == ["NSE:AAA-EQ", "NSE:BBB-EQ"]
+
+
+# ---------------- start result handling ----------------
+
+def test_start_not_ready_not_reported_as_started():
+    sm = FakeSourceManager()
+    async def apply_fn(feed_cfg, start_if_enabled=True):
+        return {"runtime_applied": True, "registered": True, "task_running": False, "started": False, "restarted": False, "start_result": "not_ready", "error": "not_ready: source prerequisites unmet (authentication/token required)"}
+    app, _ = _build_app(source_manager=sm, sources_cfg={}, apply_source_fn=apply_fn, persist_source_fn=lambda cfg: True)
+    c = TestClient(app)
+    r = c.post("/api/settings/fyers/feed", json={"enabled": True, "tbt_enabled": True, "tbt_symbols": []})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["runtime_applied"] is True
+    assert body["started"] is False
+    assert body["restarted"] is False
+    assert body["task_running"] is False
+    assert body.get("start_result") == "not_ready"
+    assert body.get("runtime_error")
+
+
+def test_start_unknown_not_reported_as_started():
+    sm = FakeSourceManager()
+    async def apply_fn(feed_cfg, start_if_enabled=True):
+        return {"runtime_applied": False, "registered": False, "task_running": False, "started": False, "restarted": False, "start_result": "unknown", "error": "unknown: source not registered/configured"}
+    app, _ = _build_app(source_manager=sm, sources_cfg={}, apply_source_fn=apply_fn, persist_source_fn=lambda cfg: True)
+    c = TestClient(app)
+    r = c.post("/api/settings/fyers/feed", json={"enabled": True})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["started"] is False
+    assert body["restarted"] is False
+    assert body["task_running"] is False
+    assert body.get("start_result") == "unknown"
+    assert body.get("runtime_error")
+
+
+def test_failed_start_with_task_not_running_reported_accurately():
+    sm = FakeSourceManager()
+    async def apply_fn(feed_cfg, start_if_enabled=True):
+        return {"runtime_applied": True, "registered": True, "task_running": False, "started": False, "restarted": False, "start_result": "started", "error": "start_failed:task_not_running"}
+    app, _ = _build_app(source_manager=sm, sources_cfg={}, apply_source_fn=apply_fn, persist_source_fn=lambda cfg: True)
+    c = TestClient(app)
+    r = c.post("/api/settings/fyers/feed", json={"enabled": True})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["runtime_applied"] is True
+    assert body["registered"] is True
+    assert body["started"] is False
+    assert body["task_running"] is False
+    assert body.get("runtime_error")
+
+
+def test_disabled_feed_can_apply_config_without_running():
+    sm = FakeSourceManager()
+    async def apply_fn(feed_cfg, start_if_enabled=True):
+        src = FakeSource("fyers", feed_cfg)
+        sm.register(src)
+        sm._configs["fyers"] = dict(feed_cfg)
+        return {"runtime_applied": True, "registered": True, "task_running": False, "started": False, "restarted": False}
+    app, _ = _build_app(source_manager=sm, sources_cfg={}, apply_source_fn=apply_fn, persist_source_fn=lambda cfg: True)
+    c = TestClient(app)
+    r = c.post("/api/settings/fyers/feed", json={"enabled": False, "tbt_enabled": True, "tbt_symbols": ["NSE:ABC-EQ"]})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["enabled"] is False
+    assert body["runtime_applied"] is True
+    assert body["registered"] is True
+    assert body["task_running"] is False
+    assert body.get("runtime_error") is None
+    assert body.get("error") is None
+
+
+# ---------------- persistence reporting ----------------
+
+def test_persistence_success_reports_persisted_true():
+    sm = FakeSourceManager()
+    async def apply_fn(feed_cfg, start_if_enabled=True):
+        return {"runtime_applied": True, "registered": True, "task_running": False}
+    app, _ = _build_app(source_manager=sm, sources_cfg={}, apply_source_fn=apply_fn, persist_source_fn=lambda cfg: True)
+    c = TestClient(app)
+    r = c.post("/api/settings/fyers/feed", json={"enabled": False})
+    assert r.status_code == 200
+    assert r.json()["persisted"] is True
+
+
+def test_persistence_read_failure_reports_persisted_false():
+    sm = FakeSourceManager()
+    async def apply_fn(feed_cfg, start_if_enabled=True):
+        return {"runtime_applied": True, "registered": True, "task_running": False}
+    app, _ = _build_app(source_manager=sm, sources_cfg={}, apply_source_fn=apply_fn, persist_source_fn=lambda cfg: False)
+    c = TestClient(app)
+    r = c.post("/api/settings/fyers/feed", json={"enabled": False})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["persisted"] is False
+    assert body.get("persist_error")
+
+
+def test_persistence_write_failure_not_reported_as_success():
+    sm = FakeSourceManager()
+    async def apply_fn(feed_cfg, start_if_enabled=True):
+        return {"runtime_applied": True, "registered": True, "task_running": False}
+    def bad_persist(cfg):
+        raise OSError("disk full")
+    app, _ = _build_app(source_manager=sm, sources_cfg={}, apply_source_fn=apply_fn, persist_source_fn=bad_persist)
+    c = TestClient(app)
+    r = c.post("/api/settings/fyers/feed", json={"enabled": False})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["persisted"] is False
+    assert body.get("persist_error") == "OSError"
+    assert body["runtime_applied"] is True  # runtime can still succeed
+
+
+def test_missing_persistence_callback_not_durable():
+    sm = FakeSourceManager()
+    async def apply_fn(feed_cfg, start_if_enabled=True):
+        return {"runtime_applied": True, "registered": True, "task_running": False}
+    app, _ = _build_app(source_manager=sm, sources_cfg={}, apply_source_fn=apply_fn, persist_source_fn=None)
+    c = TestClient(app)
+    r = c.post("/api/settings/fyers/feed", json={"enabled": False})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["persisted"] is False
+
+
+# ---------------- real SourceManager lifecycle tests ----------------
+
+class _FakeBgManager:
+    def __init__(self):
+        self.tasks: dict[str, asyncio.Task] = {}
+        self.status_map: dict[str, dict] = {}
+        self.cancel_calls: list[str] = []
+        self.fail_cancel: set[str] = set()
+        self.hang_cancel: set[str] = set()
+
+    async def start(self, name: str, coro):
+        task = asyncio.create_task(coro, name=name)
+        self.tasks[name] = task
+        self.status_map[name] = {"status": "running"}
+        def _done(_t):
+            self.status_map[name] = {"status": "done"}
+        task.add_done_callback(_done)
+        return task
+
+    def status(self, name: str):
+        st = self.status_map.get(name, {"status": "missing"})
+        return {name: st}
+
+    async def cancel_and_wait(self, name: str):
+        self.cancel_calls.append(name)
+        if name in self.fail_cancel:
+            raise RuntimeError("cancel failed")
+        task = self.tasks.get(name)
+        if task is None:
+            self.status_map[name] = {"status": "done"}
+            return
+        task.cancel()
+        if name in self.hang_cancel:
+            # simulate task not terminating
+            self.status_map[name] = {"status": "running"}
+            return
+        try:
+            await task
+        except BaseException:
+            pass
+        self.status_map[name] = {"status": "done"}
+
+
+class _RunSource:
+    def __init__(self, name: str, config: dict):
+        self.name = name
+        self._config = dict(config)
+        self.run_count = 0
+        self.stop_events = []
+
+    async def run(self, publisher, stop_event):
+        self.run_count += 1
+        self.stop_events.append(stop_event)
+        await stop_event.wait()
+
+    def status(self):
+        return {"state": "stopped"}
+
+
+async def _init_sm(bg):
+    sm = SourceManager()
+    await sm.initialize(bg, store=None, bus=None, metrics=None)
+    return sm
+
+
+def test_real_replace_stops_and_awaits_before_replacing():
+    async def _run():
+        bg = _FakeBgManager()
+        sm = await _init_sm(bg)
+        old = _RunSource("fyers", {"v": 1})
+        new = _RunSource("fyers", {"v": 2})
+        sm.register(old)
+        sm._configs["fyers"] = {"v": 1}
+        await sm._start_one("fyers", old, {"v": 1})
+        await asyncio.sleep(0)
+        assert sm.task_running("fyers") is True
+        await sm.replace_source("fyers", new, {"v": 2})
+        assert bg.cancel_calls == ["source:fyers"]
+        assert sm.task_running("fyers") is False
+        assert sm.enabled_sources["fyers"] is new
+        assert sm._configs["fyers"] == {"v": 2}
+        assert sm._stop_events["fyers"] is not old.stop_events[-1]
+    asyncio.run(_run())
+
+
+def test_real_replace_failed_cancel_preserves_old_source_and_config():
+    async def _run():
+        bg = _FakeBgManager()
+        bg.fail_cancel.add("source:fyers")
+        sm = await _init_sm(bg)
+        old = _RunSource("fyers", {"v": 1})
+        new = _RunSource("fyers", {"v": 2})
+        sm.register(old)
+        sm._configs["fyers"] = {"v": 1}
+        await sm._start_one("fyers", old, {"v": 1})
+        await asyncio.sleep(0)
+        with pytest.raises(RuntimeError):
+            await sm.replace_source("fyers", new, {"v": 2})
+        assert sm.enabled_sources["fyers"] is old
+        assert sm._configs["fyers"] == {"v": 1}
+    asyncio.run(_run())
+
+
+def test_real_replace_aborts_if_task_still_running_after_stop():
+    async def _run():
+        bg = _FakeBgManager()
+        bg.hang_cancel.add("source:fyers")
+        sm = await _init_sm(bg)
+        old = _RunSource("fyers", {"v": 1})
+        new = _RunSource("fyers", {"v": 2})
+        sm.register(old)
+        sm._configs["fyers"] = {"v": 1}
+        await sm._start_one("fyers", old, {"v": 1})
+        await asyncio.sleep(0)
+        with pytest.raises(RuntimeError):
+            await sm.replace_source("fyers", new, {"v": 2})
+        assert sm.enabled_sources["fyers"] is old
+        assert sm._configs["fyers"] == {"v": 1}
+        assert sm.task_running("fyers") is True
+    asyncio.run(_run())
+
+
+def test_real_replace_uses_fresh_stop_event_for_new_instance():
+    async def _run():
+        bg = _FakeBgManager()
+        sm = await _init_sm(bg)
+        old = _RunSource("fyers", {"v": 1})
+        new = _RunSource("fyers", {"v": 2})
+        sm.register(old)
+        sm._configs["fyers"] = {"v": 1}
+        await sm._start_one("fyers", old, {"v": 1})
+        await asyncio.sleep(0)
+        old_ev = sm._stop_events["fyers"]
+        await sm.replace_source("fyers", new, {"v": 2})
+        new_ev = sm._stop_events["fyers"]
+        assert new_ev is not old_ev
+        assert not new_ev.is_set()
+        # start new instance and ensure it runs with fresh event
+        await sm._start_one("fyers", new, {"v": 2})
+        await asyncio.sleep(0)
+        assert sm.task_running("fyers") is True
+        assert new.stop_events[-1] is new_ev
+        new_ev.set()
+        await asyncio.sleep(0)
+    asyncio.run(_run())
+
+
+# ---------------- persistence function tests (real function, controlled config path) ----------------
+
+def test_persist_fyers_source_config_success(tmp_path, monkeypatch):
+    import app.server as srv
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text(json.dumps({"sources": {"other": {"type": "x"}}, "keep": 1}), encoding="utf-8")
+    monkeypatch.setattr(srv, "CONFIG_PATH", str(cfg_path))
+    ok = srv._persist_fyers_source_config({"type": "fyers_feed", "enabled": True, "tbt_enabled": True, "tbt_symbols": ["NSE:AAA-EQ"]})
+    assert ok is True
+    data = json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert data["keep"] == 1
+    assert data["sources"]["other"]["type"] == "x"
+    assert data["sources"]["fyers"]["tbt_enabled"] is True
+
+
+def test_persist_fyers_source_config_read_failure_returns_false(tmp_path, monkeypatch):
+    import app.server as srv
+    cfg_path = tmp_path / "config.json"
+    # missing file -> read failure
+    monkeypatch.setattr(srv, "CONFIG_PATH", str(cfg_path))
+    ok = srv._persist_fyers_source_config({"type": "fyers_feed", "enabled": True})
+    assert ok is False
+    assert not cfg_path.exists()
+
+
+def test_persist_fyers_source_config_write_failure_raises(tmp_path, monkeypatch):
+    import app.server as srv
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text(json.dumps({"keep": 1}), encoding="utf-8")
+    monkeypatch.setattr(srv, "CONFIG_PATH", str(cfg_path))
+    def boom(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(os, "replace", boom)
+    with pytest.raises(OSError):
+        srv._persist_fyers_source_config({"type": "fyers_feed", "enabled": True})
+    # original preserved
+    data = json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert data == {"keep": 1}
+
+
+# ---------------- real _apply_fyers_feed_config start result handling ----------------
+
+class _ApplyFakeSM:
+    def __init__(self, start_result="started"):
+        self.enabled_sources = {}
+        self._configs = {}
+        self._running = set()
+        self.start_result = start_result
+    def register(self, source):
+        self.enabled_sources[source.name] = source
+    def task_running(self, name):
+        return name in self._running
+    async def start_source(self, name):
+        if self.start_result == "started":
+            self._running.add(name)
+        return self.start_result
+    async def replace_source(self, name, source, cfg):
+        self.enabled_sources[name] = source
+        self._configs[name] = dict(cfg)
+        return True
+    def update_config(self, name, cfg):
+        self._configs[name] = dict(cfg)
+        return True
+
+def _patch_apply_env(monkeypatch, sm):
+    import app.server as srv
+    monkeypatch.setattr(srv, "_source_manager", sm)
+    monkeypatch.setattr(srv, "_market_service", object())
+    monkeypatch.setattr(srv, "_instrument_catalog", object())
+    monkeypatch.setattr(srv, "_fyers_source_name", None)
+    monkeypatch.setattr(srv, "_on_source_state_change", lambda *a, **k: None)
+    monkeypatch.setattr(srv, "_inject_fyers_source_config", lambda cfgs: None)
+    monkeypatch.setattr(srv, "_persist_fyers_source_config", lambda cfg: True)
+    import sources.registry as reg
+    def fake_create(cfg, market_service=None):
+        return FakeSource("fyers", cfg)
+    monkeypatch.setattr(reg, "_create_fyers_feed", fake_create)
+
+def test_apply_reports_not_ready_without_claiming_started(monkeypatch):
+    import app.server as srv
+    sm = _ApplyFakeSM(start_result="not_ready")
+    _patch_apply_env(monkeypatch, sm)
+    res = asyncio.run(srv._apply_fyers_feed_config({"type":"fyers_feed","enabled":True,"mode":"full","instruments":[],"tbt_enabled":True,"tbt_symbols":[]}))
+    assert res["runtime_applied"] is True
+    assert res["registered"] is True
+    assert res["started"] is False
+    assert res["restarted"] is False
+    assert res["task_running"] is False
+    assert res["start_result"] == "not_ready"
+    assert "not_ready" in (res.get("error") or "")
+
+def test_apply_reports_unknown_without_claiming_started(monkeypatch):
+    import app.server as srv
+    sm = _ApplyFakeSM(start_result="unknown")
+    _patch_apply_env(monkeypatch, sm)
+    res = asyncio.run(srv._apply_fyers_feed_config({"type":"fyers_feed","enabled":True,"mode":"full","instruments":[],"tbt_enabled":False,"tbt_symbols":[]}))
+    assert res["started"] is False
+    assert res["restarted"] is False
+    assert res["task_running"] is False
+    assert res["start_result"] == "unknown"
+    assert "unknown" in (res.get("error") or "")

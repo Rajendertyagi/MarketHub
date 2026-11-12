@@ -453,7 +453,7 @@ _DEFAULT_FYERS_INSTRUMENTS = [
 ]
 
 
-def _persist_fyers_source_config(feed_cfg: dict[str, Any] | None = None) -> None:
+def _persist_fyers_source_config(feed_cfg: dict[str, Any] | None = None) -> bool:
     """Write (or remove, when None) the durable ``sources.fyers`` config.
 
     Secrets NEVER touch config.json — only the source shape (type/enabled/
@@ -462,6 +462,9 @@ def _persist_fyers_source_config(feed_cfg: dict[str, Any] | None = None) -> None
     SAFETY: writes are atomic (temp file + os.replace) so a failed write can
     never truncate or corrupt the live config. If the current config cannot be
     read we ABORT rather than overwriting a good config with an empty one.
+
+    Returns True only after a successful atomic replacement. Returns False when
+    the current config cannot be read. Write failures are raised.
     """
     import tempfile
     try:
@@ -471,7 +474,7 @@ def _persist_fyers_source_config(feed_cfg: dict[str, Any] | None = None) -> None
         # Never wipe a config we cannot read — leave the file untouched.
         _app_logger.warning(
             "fyers source config not persisted: could not read %s", CONFIG_PATH)
-        return
+        return False
     if not isinstance(_cfg, dict):
         _cfg = {}
     _sources = _cfg.get("sources")
@@ -500,6 +503,7 @@ def _persist_fyers_source_config(feed_cfg: dict[str, Any] | None = None) -> None
         except OSError:
             pass
         raise
+    return True
 
 
 def _build_fyers_runtime_cfg(base_cfg: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -567,7 +571,7 @@ async def _apply_fyers_feed_config(feed_cfg: dict[str, Any], *, start_if_enabled
 
     Ensures the registered FyersFeed instance and SourceManager config reflect
     feed_cfg. Stops/awaits old task before replacement when running. Returns a
-    status dict with persisted/runtime_applied/registered/task_running/error.
+    status dict with runtime_applied/registered/task_running/start results/error.
     """
     global _fyers_source_name
     result: dict[str, Any] = {
@@ -576,6 +580,7 @@ async def _apply_fyers_feed_config(feed_cfg: dict[str, Any], *, start_if_enabled
         "task_running": False,
         "started": False,
         "restarted": False,
+        "start_result": None,
         "error": None,
     }
     enabled = bool(feed_cfg.get("enabled", True)) if isinstance(feed_cfg, dict) else True
@@ -594,6 +599,31 @@ async def _apply_fyers_feed_config(feed_cfg: dict[str, Any], *, start_if_enabled
             was_running = bool(_source_manager.task_running(existing_name))
         except Exception:
             was_running = False
+
+    def _finalize_task_running() -> None:
+        try:
+            result["task_running"] = bool(_source_manager.task_running(name))
+        except Exception:
+            result["task_running"] = False
+
+    def _handle_start_result(start_result: Any, *, restart_intent: bool) -> None:
+        result["start_result"] = start_result
+        if start_result == "started":
+            result["started"] = not restart_intent
+            result["restarted"] = restart_intent
+            return
+        if start_result == "already_running":
+            # Task is running; do not claim a new start/restart occurred.
+            result["started"] = False
+            result["restarted"] = False
+            return
+        if start_result == "not_ready":
+            result["error"] = "not_ready: source prerequisites unmet (authentication/token required)"
+            return
+        if start_result == "unknown":
+            result["error"] = "unknown: source not registered/configured"
+            return
+        result["error"] = f"start_failed:unexpected_result:{start_result}"
 
     try:
         if existing_name is None:
@@ -614,11 +644,16 @@ async def _apply_fyers_feed_config(feed_cfg: dict[str, Any], *, start_if_enabled
             result["runtime_applied"] = True
             if enabled and start_if_enabled:
                 try:
-                    await _source_manager.start_source(name)
-                    result["started"] = True
+                    start_result = await _source_manager.start_source(name)
+                    _handle_start_result(start_result, restart_intent=False)
                 except Exception as exc:
                     result["error"] = f"start_failed:{type(exc).__name__}"
-            result["task_running"] = bool(_source_manager.task_running(name))
+            _finalize_task_running()
+            # If start reported started but task not running, report accurately.
+            if result.get("started") and not result["task_running"]:
+                result["started"] = False
+                if not result.get("error"):
+                    result["error"] = "start_failed:task_not_running"
             return result
 
         # Existing registration: replace instance/config so runtime uses latest settings
@@ -626,46 +661,52 @@ async def _apply_fyers_feed_config(feed_cfg: dict[str, Any], *, start_if_enabled
         if built is None:
             result["error"] = "build_failed"
             result["registered"] = True
-            result["task_running"] = bool(_source_manager.task_running(name))
+            _finalize_task_running()
             return result
         _feed, _runtime_cfg = built
-        # replace_source stops+awaits if running, then swaps instance/config
+        # replace_source stops+awaits if running, then swaps instance/config.
+        # On failure it preserves existing source/config and raises.
         await _source_manager.replace_source(name, _feed, _runtime_cfg)
         _fyers_source_name = name
         result["registered"] = True
         result["runtime_applied"] = True
 
         if enabled and start_if_enabled:
-            if was_running:
-                try:
-                    await _source_manager.start_source(name)
-                    result["restarted"] = True
-                except Exception as exc:
-                    result["error"] = f"restart_failed:{type(exc).__name__}"
-            else:
-                # Stopped/registered: start with new config if requested
-                try:
-                    await _source_manager.start_source(name)
-                    result["started"] = True
-                except Exception as exc:
-                    result["error"] = f"start_failed:{type(exc).__name__}"
+            restart_intent = was_running
+            try:
+                start_result = await _source_manager.start_source(name)
+                _handle_start_result(start_result, restart_intent=restart_intent)
+            except Exception as exc:
+                result["error"] = f"{'restart_failed' if restart_intent else 'start_failed'}:{type(exc).__name__}"
         else:
-            # Disabled: ensure stopped (replace_source already stopped if running)
+            # Disabled or not requested to start: ensure stopped if somehow running.
             if _source_manager.task_running(name):
                 try:
                     await _source_manager.stop_source(name)
                 except Exception:
                     pass
 
-        result["task_running"] = bool(_source_manager.task_running(name))
+        _finalize_task_running()
+        # Correct started/restarted claims against actual task state.
+        if result.get("started") and not result["task_running"]:
+            result["started"] = False
+            if not result.get("error"):
+                result["error"] = "start_failed:task_not_running"
+        if result.get("restarted") and not result["task_running"]:
+            result["restarted"] = False
+            if not result.get("error"):
+                result["error"] = "restart_failed:task_not_running"
+        # Disabled feed: config applied with task not running is intentional, not an error.
+        if not enabled and result.get("runtime_applied") and not result["task_running"] and result.get("error") in (None,):
+            pass
         return result
     except Exception as exc:
         result["error"] = f"apply_failed:{type(exc).__name__}"
         try:
             result["registered"] = name in (_source_manager.enabled_sources or {})
-            result["task_running"] = bool(_source_manager.task_running(name))
         except Exception:
             pass
+        _finalize_task_running()
         return result
 
 

@@ -1737,13 +1737,17 @@ def build_fyers_auth_routes(cred_store: Any,
             sources_cfg["fyers"] = feed_cfg
         if persist_source_fn is not None:
             try:
-                persist_source_fn(feed_cfg)
-                persisted = True
+                persist_result = persist_source_fn(feed_cfg)
+                persisted = bool(persist_result) if isinstance(persist_result, bool) else True
+                if not persisted:
+                    persist_error = "persist_failed"
             except Exception as exc:
+                persisted = False
                 persist_error = type(exc).__name__
                 logger.warning("failed to persist fyers source config")
         else:
-            persisted = True  # in-memory only
+            # No persistence callback: in-memory application only, not durable.
+            persisted = False
 
         runtime_applied = False
         registered = False
@@ -1751,6 +1755,7 @@ def build_fyers_auth_routes(cred_store: Any,
         runtime_error = None
         started = False
         restarted = False
+        start_result = None
 
         if apply_source_fn is not None:
             try:
@@ -1762,6 +1767,7 @@ def build_fyers_auth_routes(cred_store: Any,
                     runtime_error = apply_result.get("error")
                     started = bool(apply_result.get("started"))
                     restarted = bool(apply_result.get("restarted"))
+                    start_result = apply_result.get("start_result")
                 else:
                     runtime_applied = bool(apply_result)
                     registered = "fyers" in (source_manager.enabled_sources or {}) if source_manager is not None else False
@@ -1787,10 +1793,13 @@ def build_fyers_auth_routes(cred_store: Any,
                     if running and source_manager is not None:
                         await source_manager.restart_source("fyers")
                         restarted = True
+                        runtime_applied = True
                     elif start_source_fn is not None:
                         await start_source_fn()
                         started = True
-                    runtime_applied = True
+                        runtime_applied = True
+                    else:
+                        runtime_applied = False
                 else:
                     if source_manager is not None and "fyers" in (source_manager.enabled_sources or {}):
                         await source_manager.stop_source("fyers")
@@ -1815,6 +1824,8 @@ def build_fyers_auth_routes(cred_store: Any,
             "started": started,
             "restarted": restarted,
         }
+        if start_result is not None:
+            result["start_result"] = start_result
         if persist_error:
             result["persist_error"] = persist_error
         if runtime_error:

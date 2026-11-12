@@ -490,10 +490,16 @@ class SourceManager:
         If the source is currently running, stop and await its task before
         replacing the instance/config. The caller is responsible for starting
         the new instance if desired.
+
+        On termination failure the existing source/config are preserved and a
+        RuntimeError is raised.
         """
         if source is None or not isinstance(cfg, dict):
-            return False
-        # Stop if running
+            raise ValueError("replace_source requires a source and config dict")
+        if name not in self._sources or name not in self._configs:
+            raise KeyError(f"unknown source '{name}'")
+
+        # Stop if running and verify termination before replacement.
         if self.task_running(name):
             stop_event = self._stop_events.get(name)
             if stop_event is not None:
@@ -504,15 +510,23 @@ class SourceManager:
                 try:
                     await self._bg_manager.cancel_and_wait(f"source:{name}")
                 except Exception as exc:
-                    logger.debug("replace_source: cancel task for '%s' raised: %s", name, exc)
-        # Replace instance and config
+                    logger.error(
+                        "replace_source: failed to stop '%s' before replacement: %s",
+                        name, type(exc).__name__)
+                    raise RuntimeError(
+                        f"failed to stop source '{name}' before replacement") from exc
+            if self.task_running(name):
+                logger.error(
+                    "replace_source: source '%s' still running after stop; aborting replacement",
+                    name)
+                raise RuntimeError(
+                    f"source '{name}' still running after stop; replacement aborted")
+
+        # Replace instance and config only after old task is confirmed stopped.
         self._sources[name] = source
         self._configs[name] = dict(cfg)
-        if name not in self._stop_events:
-            self._stop_events[name] = asyncio.Event()
-        else:
-            # Fresh stop event for new instance
-            self._stop_events[name] = asyncio.Event()
+        # Fresh stop event for the replacement instance.
+        self._stop_events[name] = asyncio.Event()
         self._operator_stopped.discard(name)
         return True
 
