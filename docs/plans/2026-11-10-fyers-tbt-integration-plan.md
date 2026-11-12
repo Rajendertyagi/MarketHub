@@ -1,11 +1,11 @@
 # FYERS TBT Corrective Implementation Plan (P0-A)
 
-**Date:** 2026-11-10 (historical updates through 2026-11-11; four-workstream follow-up execution and publication reconciliation: 2026-11-11)
+**Date:** 2026-11-10 (historical updates through 2026-11-11; four-workstream follow-up execution/publication reconciliation and activation/runtime verification record: 2026-11-11)
 **Repository:** `Rajendertyagi/MarketHub`
 **Branch:** `review/scanner-phase1`
-**Current committed baseline (HEAD):** `60482455f967027b63bcd8a705c9e1bee7fc6fa8` (`docs(fyers): reconcile TBT publication record`, pushed and verified on `origin/review/scanner-phase1`; parent `25d08a1b5069337e683be405d45463aff44a0dbc`)
-**Previous committed baseline:** `2185356c6e30a82157d1b5b7f87b07889fe33e61` (`fix(fyers): finalize TBT discovery fallback and protocol handling`, pushed to `origin/review/scanner-phase1`; parent `03bf72d044189d941c04b8a001d0f8e7cabffb5e`)
-**Working tree:** clean except `?? docs/performance/` (preserved/untracked) unless otherwise noted by a later execution record.
+**Current committed baseline (HEAD):** `2c66e038d5f385ad338a37c0b46928f677655fbc` (`docs(fyers): finalize TBT readiness and verification plan`, pushed and verified on `origin/review/scanner-phase1`; parent `2f5a89f5d88e384a182624b8916848e3850db442`)
+**Previous committed baseline:** `60482455f967027b63bcd8a705c9e1bee7fc6fa8` (`docs(fyers): reconcile TBT publication record`, pushed and verified on `origin/review/scanner-phase1`; parent `25d08a1b5069337e683be405d45463aff44a0dbc`)
+**Working tree (at this edit):** `?? docs/performance/` preserved/untracked; local activation/runtime-verification changes present (`config.json`, `config.json.pre_tbt_activation_20261111_191221.bak`, and this plan update) unless otherwise noted. Historical records below preserve their original working-tree statements.
 **Status (reconciled 2026-11-11, audit-based; see §16.16):** TBT-01/02/03/04/05/05a/06/07/08 implemented and tested with mocks in committed baselines. **Workstream A** (positive subscribe/resume ack and error correlation) remains **UNRESOLVED** by available authoritative evidence (no invented semantics; current conservative implementation appropriate; no protocol-semantic code changes justified without new authoritative evidence). **Workstream B** (dynamic URL discovery/auth) is **DONE** for the security-first implementation decision: undocumented credential-bearing discovery to `https://api-t1.fyers.in/indus/home/tbtws` is disabled; documented fixed endpoint `wss://rtsocket-api.fyers.in/versova` with official `Authorization: <appId:accessToken>` is used (live connectivity not thereby verified). **Workstream C** is **DONE for the current evidenced single-process, self-hosted deployment**: local per-feed-instance enforcement is sufficient for that deployment and `account_wide_enforced=false` remains explicit; genuine account-wide enforcement across multiple processes/instances sharing the same FYERS account is **not required by the evidenced deployment** and would require separate architecture/implementation (no Redis, distributed locks, database reservations, migrations, or lease infrastructure introduced). **Workstream D** (live runtime verification, TBT-09) remains **BLOCKED** pending approved FYERS test environment/access and actual recorded observations; readiness checklist prepared in §16.16. Historical sections below preserve earlier execution records, including statements that were accurate at the time they were written.
 **Scope:** FYERS TBT only. Minimal corrective changes to fix identified integration gaps.
 **Source of truth:** This document. Must be updated immediately after every individual task.
@@ -1129,3 +1129,192 @@ All tasks are individually numbered. Status must be updated after each task. Do 
 - No branch switching, rebase, reset, amend, force-push, commit, or push performed.
 - No live FYERS connections or OAuth performed; no credentials/tokens accessed.
 - `docs/performance/` and unrelated working-tree changes preserved.
+
+### 16.17 Activation and runtime verification record (2026-11-11, actual local runtime; no live depth delivery verified)
+
+> **Record type:** Actual activation/restart/runtime observation in the local running environment. No live FYERS TBT market-depth delivery was verified. No credentials/tokens/auth headers/sensitive responses were accessed, printed, copied, persisted, or logged. No OAuth/login/logout/refresh/credential mutation performed. No trading/order placement/account mutation performed.
+
+- **TASK ZONE:** FYERS ADAPTER / BROKER RUNTIME (TBT activation, runtime verification, evidence-based remediation assessment) with minimal config/plan changes only.
+- **ALLOWED CHANGE SURFACE (this execution):** `config.json` (minimal `sources.fyers.tbt_enabled` activation), recoverable backup `config.json.pre_tbt_activation_20261111_191221.bak`, `docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (this record). No source/test fixes required by observed evidence.
+- **PROTECTED/OUT-OF-SCOPE ZONES:** `app/auth/*`, credential storage/token persistence/OAuth/login/session restoration, application startup/composition redesign, persistence schema, canonical market models, unrelated providers/features, `docs/performance/` (preserved).
+
+#### 16.17.1 Repository/runtime identity (revalidated)
+- **Repository root:** `D:\Temp\MarketHub` (**VERIFIED**)
+- **Branch/HEAD:** `review/scanner-phase1` @ `2c66e038d5f385ad338a37c0b46928f677655fbc` (**VERIFIED**; equal to `origin/review/scanner-phase1`)
+- **Working tree before activation:** `?? docs/performance/` only (**VERIFIED**)
+- **Pre-activation running instance:** PID `16612`, `C:\Users\RTPC\AppData\Local\Python\pythoncore-3.15-64\python.exe`, cmdline `python -c "import sys; sys.path.insert(0, ''); from app.server import main; main()"`, created `11/10/2026 8:54:52 PM`, listening on `127.0.0.1:7070` (**VERIFIED**). Launcher evidence: PID `16912` cmd `C:\WINDOWS\system32\cmd.exe /K "D:\Temp\MarketHub\start_market_hub.bat"` (**VERIFIED**). Process working directory not directly retrievable (**NOT VERIFIED**), but bootstrap/launcher/config/runtime-path evidence strongly indicated `D:\Temp\MarketHub` checkout/config.
+- **Effective config source:** repo `config.json` (`host=127.0.0.1`, `port=7070`, `data_dir="data_test"`); runtime paths resolved to `D:\Temp\MarketHub\data` (`MARKETHUB_DATA_DIR` override semantics as reported by runtime paths; no `data/config.json`) (**VERIFIED**). No `MARKETHUB`/FYERS env overrides observed in shell environment (**VERIFIED** for inspected shell; process env **NOT VERIFIED**).
+- **Pre-activation runtime evidence:** `/health` 200; FYERS auth authenticated/active (no secrets inspected), parent FYERS feed `streaming`/task running, 99 configured/subscribed/resolved instruments; nested TBT `{"enabled": false, "state": "not_started"}` (**VERIFIED**). Pre-activation snapshot saved to `D:\Coding\OpenCode\user\tmp\opencode\tbt_pre_activation_20261111_191221.json`.
+
+#### 16.17.2 Configuration change and restart
+- **Recoverable copy preserved:** `config.json.pre_tbt_activation_20261111_191221.bak` (**VERIFIED**).
+- **Exact key changed:** `sources.fyers.tbt_enabled`
+- **Original value:** absent (effective default `false`) (**VERIFIED**)
+- **New value:** `true` (**VERIFIED**)
+- **Other settings:** preserved; no full-file regeneration (**VERIFIED** by targeted JSON update).
+- **Restart:** PID `16612` stopped (targeted) and new MarketHub process started from `D:\Temp\MarketHub` using existing bootstrap command with same Python executable: PID `28140`, created `11/11/2026 7:12:49 PM`, listening on `127.0.0.1:7070` (**VERIFIED**). `/health` returned 200 after restart (**VERIFIED**). Restart consumed updated config as evidenced by nested TBT enabled/connected status and startup logs (**VERIFIED**).
+
+#### 16.17.3 Authentication and parent FYERS feed (post-restart)
+- **Authentication:** diagnostics reported FYERS `authenticated=true`, `auth_state="authenticated"`, `access_token_active=true`, `login_required=false`, `session_persisted=true`, `session_restored=true`, `last_auth_status="restored_access_token"` (no secrets inspected) (**VERIFIED** runtime-reported).
+- **Parent FYERS feed:** `state="streaming"`, task running, `auth_required=false`, `not_ready_reason=null`, 99 configured/subscribed/resolved instruments, frames/data flowing at observation (**VERIFIED**).
+- **Token/App ID injection (code/runtime evidence):** parent feed passes existing `access_token_getter` and `_app_id_getter` into `FyersTbtFeed`; TBT constructs WS auth as `<appId:accessToken>` to fixed endpoint `wss://rtsocket-api.fyers.in/versova` (**VERIFIED** in code/log-consistent behavior). Actual broker acceptance of auth is **VERIFIED** only insofar as TBT reached connected/resubscribed state without auth-required/error transition in observed window; no secret/header values inspected.
+
+#### 16.17.4 TBT lifecycle and subscription evidence (post-restart)
+- **TBT enabled/effective:** `tbt.enabled=true` (**VERIFIED**).
+- **Construction/start:** logs show `TBT depth channel started`, `TBT feed: starting` (**VERIFIED**).
+- **WebSocket connection:** logs show `TBT feed: connected` to documented fixed endpoint path; status `tbt.state="connected"` (**VERIFIED**).
+- **Desired propagation/subscription attempts:** logs/status show 1 symbol accepted and 98 rejected due to standard tier local limits (`tier=standard`, `symbols_per_user=1`, `symbols_per_connection=1`, `effective=1`, `enforcement_scope=local_feed_instance`, `account_wide_enforced=false`); `desired_count=1`, `symbols=["BSE:BANKEX-INDEX"]`, `safe_last_error="entitlement_limit_reached"` (**VERIFIED**).
+- **Subscribe/resume sent:** logs show `TBT feed: resubscribed to 1 symbols after reconnect (dropped=0)` (**VERIFIED** as local send/resubscribe sequence). **Server acceptance NOT VERIFIED** (`ws.send()` success is not server acceptance; positive subscribe/resume ack and error correlation remain undocumented/unresolved).
+- **Task/running indicators:** parent FYERS feed task running; TBT status reported `task_running=false` (feed-local field not set by implementation) while logs/state indicate active session (**VERIFIED** as reported; field semantics limited).
+
+#### 16.17.5 Depth delivery and MarketService publication
+- **Initial snapshot received:** **NOT VERIFIED** (`snapshot_count=0`).
+- **Incremental depth updates received/applied:** **NOT VERIFIED** (`delta_count=0`, `last_message_at=null`).
+- **Snapshot-before-delta ordering:** **NOT VERIFIED** in live runtime (no live depth messages observed).
+- **Depth published into existing MarketService:** **NOT VERIFIED** (no snapshot/delta evidence; no depth endpoint/state evidence obtained).
+- **Freshness/correct instrument association in live depth:** **NOT VERIFIED**.
+- **Likely blockers/constraints (not defects proven):** observation occurred outside active market-depth conditions for the selected symbol and/or symbol/entitlement suitability for TBT depth not established; only one locally admitted symbol (`BSE:BANKEX-INDEX`, index) under standard tier. No fabricated data substituted.
+
+#### 16.17.6 Tests (mocked/local)
+- **Command:** `python -m pytest -q test/test_fyers_tbt.py`
+- **Result:** `92 passed, 1 skipped in 3.32s` (exit 0) (**VERIFIED**, mocked/local; not live broker verification).
+- **Broader relevant suites:** not rerun in this activation record beyond focused TBT suite (prior committed baselines recorded broader mocked results).
+
+#### 16.17.7 Fixes implemented
+- **None.** No demonstrated implementation defect required a code fix during this activation/verification pass.
+
+#### 16.17.8 Completion matrix (this activation pass)
+| Criterion | Status | Evidence |
+|---|---|---|
+| Effective configuration enables TBT | **DONE** | `sources.fyers.tbt_enabled=true` in effective `config.json`; runtime `tbt.enabled=true` |
+| Correct MarketHub process restarted | **DONE** | PID `16612` stopped; PID `28140` started from `D:\Temp\MarketHub`, listening on `127.0.0.1:7070`, `/health` 200 |
+| Parent FYERS feed remains healthy | **DONE** | Post-restart `streaming`, task running, auth not required, data flowing/liveness live at observation |
+| Existing authentication works | **DONE** (runtime-reported) | Diagnostics show authenticated/active session restored; no secrets inspected |
+| TBT instance is constructed | **DONE** | Startup logs/status indicate TBT channel/feed started |
+| TBT task is running | **NOT VERIFIED** (field/observability) | TBT feed-local `task_running=false` reported; logs show active session/connected/resubscribed; parent task running |
+| WebSocket connection succeeds | **DONE** | `TBT feed: connected`, `tbt.state="connected"` |
+| Broker authentication is accepted | **NOT VERIFIED** (inferred, not explicitly proven) | Connected without auth-required/error transition observed; no explicit broker auth-accept message documented/observed |
+| Desired instruments propagate | **DONE** (local admission) | 1 symbol admitted, 98 rejected by local standard-tier limits; desired set reflects admitted symbol |
+| Subscriptions accepted/evidenced per documented protocol behavior | **NOT VERIFIED** | Local subscribe/resume sent; server acceptance/ack/correlation undocumented |
+| Valid initial snapshots arrive | **NOT VERIFIED** | `snapshot_count=0`, `last_message_at=null` |
+| Incremental updates arrive | **NOT VERIFIED** | `delta_count=0` |
+| Snapshot/delta ordering is correct | **NOT VERIFIED** | No live depth messages observed |
+| Depth is published into existing MarketService | **NOT VERIFIED** | No live depth evidence |
+| Depth data remains fresh and correctly associated with instruments | **NOT VERIFIED** | No live depth evidence |
+| Reconnect and shutdown behavior are verified | **NOT VERIFIED** (live) | Not exercised in this runtime pass; mocked coverage exists |
+| Relevant tests pass | **DONE** (mocked) | `test/test_fyers_tbt.py`: 92 passed, 1 skipped |
+| No unrelated changes or user data are lost | **DONE** | `docs/performance/` preserved; changes limited to config activation, backup, and plan record |
+
+#### 16.17.9 Remaining blockers / minimal next actions
+- **Live depth delivery (external/environment):** **BLOCKED/NOT VERIFIED** pending approved market-hours/session with TBT-eligible symbol(s) and entitlement conditions permitting observable depth; capture sanitized evidence for snapshot/delta, ordering, MarketService publication, freshness, reconnect/shutdown as applicable.
+- **Protocol semantics (external evidence):** Workstream A remains **UNRESOLVED** (positive subscribe/resume ack and error correlation undocumented); do not treat `ws.send()` as acceptance.
+- **Observability:** consider (only if needed, separately justified) minimal diagnostics to expose TBT parent-task state and MarketService depth publication evidence without secrets/noisy logging.
+- **No further config/code changes justified now** without new runtime evidence of a specific defect.
+
+#### 16.17.10 Git/change state (end of this record)
+- **Branch/HEAD:** `review/scanner-phase1` @ `2c66e038d5f385ad338a37c0b46928f677655fbc` (unchanged)
+- **Changed/untracked (local, uncommitted):** `M config.json`, `?? config.json.pre_tbt_activation_20261111_191221.bak`, `M docs/plans/2026-11-10-fyers-tbt-integration-plan.md`, `?? docs/performance/` (preserved)
+- **No commit/push/amend/rebase/reset/merge/branch switch performed.**
+
+### 16.18 Controlled live-depth verification investigation (2026-11-11, no live broker testing performed)
+
+> **Record type:** Controlled post-activation investigation. **No new broker messages sent** (no subscribe/unsubscribe/pause/resume/reconnect/restart triggered for testing). No credentials/tokens/auth headers/sensitive responses accessed, printed, copied, persisted, or logged. No OAuth/login/logout/refresh/credential mutation. No trading/order placement/account mutation.
+
+- **TASK ZONE:** FYERS ADAPTER / BROKER RUNTIME (controlled TBT live-depth verification investigation, evidence collection, plan reconciliation)
+- **ALLOWED CHANGE SURFACE (this execution):** `docs/plans/2026-11-10-fyers-tbt-integration-plan.md` (this record). No config/source/test/runtime changes.
+- **PROTECTED/OUT-OF-SCOPE ZONES:** unchanged; `docs/performance/` preserved.
+
+#### 16.18.1 Current state revalidated (before any action)
+- **Repository/runtime:** `D:\Temp\MarketHub`, `review/scanner-phase1` @ `2c66e038d5f385ad338a37c0b46928f677655fbc` (equal to origin), working tree includes prior local activation artifacts plus this plan update; `docs/performance/` preserved (**VERIFIED**).
+- **Process:** PID `28140` (`C:\Users\RTPC\AppData\Local\Python\pythoncore-3.15-64\python.exe`, started `11/11/2026 7:12:49 PM`, cwd `D:\Temp\MarketHub`, bootstrap `app.server.main()`), listening `127.0.0.1:7070`, `/health` 200 (**VERIFIED**). No restart performed.
+- **Effective config:** `sources.fyers.tbt_enabled=true` in `D:\Temp\MarketHub\config.json` (gitignored; backup `config.json.pre_tbt_activation_20261111_191221.bak` preserved) (**VERIFIED**).
+- **Auth/parent feed:** FYERS authenticated/active/restored (runtime-reported, no secrets inspected); parent feed `streaming`, task running, 99 configured/subscribed/resolved (**VERIFIED**). Parent feed liveness reported stale at observation (`last_frame_at=2026-11-11T13:43:21.994693+00:00`) (**VERIFIED** as reported).
+- **TBT lifecycle/status:** `enabled=true`, `state="connected"`, `desired_count=1`, `subscribed_count=0`, `snapshot_count=0`, `delta_count=0`, `malformed_count=0`, `sequence_gap_count=0`, `reconnect_count=0`, `last_message_at=null`, `safe_last_error="entitlement_limit_reached"`, `symbols=["BSE:BANKEX-INDEX"]` (**VERIFIED**).
+- **Limits/entitlement (local):** `tier=standard`, `source=declared_default` (no `tbt_tier`/`tier`/`plan` hint in config), `symbols_per_user=1`, `symbols_per_connection=1`, `channels_per_connection=50`, `connections_per_user=1`, `enforcement_scope=local_feed_instance`, `account_wide_enforced=false` (**VERIFIED**). Actual broker account entitlement **NOT VERIFIED** (cannot be inferred from local config; no credential/account access performed).
+- **Logs/diagnostics:** TBT connected and resubscribed once at startup (`resubscribed to 1 symbols after reconnect (dropped=0)`); no subsequent TBT inbound message/snapshot/delta/error evidence observed in logs/status (**VERIFIED**).
+
+#### 16.18.2 Offline investigation (no live testing)
+- **Admitted symbol selection:** parent desired set is sorted; `BSE:BANKEX-INDEX` is first of 99 desired symbols, explaining admission under 1-symbol local limit (**VERIFIED** from runtime status/order evidence). 98 symbols rejected locally at startup.
+- **Instrument eligibility for TBT depth:** `BSE:BANKEX-INDEX` is an index symbol. TBT provides market depth (order book) snapshots/deltas; index eligibility for TBT depth is **NOT VERIFIED** from available authoritative/runtime evidence in this session. Selecting/replacing symbol would require broker subscription changes and is not performed.
+- **Market conditions:** observation time ~19:27 IST / 13:57 UTC, Wednesday 2026-11-11; Indian cash/derivatives market session not active at this time (**VERIFIED** by local time context). Live depth arrival not expected under closed-market conditions.
+- **Protocol evidence:** `ws.send()` success is not server acceptance; positive subscribe/resume ack and server-error correlation remain undocumented/unresolved (Workstream A). Current diagnostics do not distinguish local send from broker acceptance (**VERIFIED** by implementation/status/protocol notes).
+- **Task-state observability:** TBT status reports `task_running=false` because `FyersTbtFeed.status()` checks `self._task` (never assigned in feed; parent owns `FyersFeed._tbt_task`). Parent FYERS task is running and TBT session is connected/active by logs/status (**VERIFIED** code/runtime evidence). This is a **status-field/reporting mismatch/observability issue**, not evidence of a stopped TBT session. No lifecycle architecture change made; no minimal field fix applied in this pass (no demonstrated runtime defect requiring change, and modifying code would require retest/restart outside this controlled no-broker-traffic investigation).
+
+#### 16.18.3 Controlled live-test decision
+- **Live testing performed:** **NO** (no broker requests sent).
+- **Stop conditions met:** market conditions unsuitable; TBT eligibility of admitted/current candidate not established; broker entitlement not established beyond local default; additional requests would be exploratory without clear diagnostic basis. Per policy, live testing stopped/not initiated.
+- **Bounded observation:** existing runtime diagnostics/logs reviewed; no useful inbound TBT depth evidence present.
+
+#### 16.18.4 Results
+- **Inbound WebSocket messages (live):** none observed (**VERIFIED** by status/logs; no packet capture performed).
+- **Snapshot/delta/MarketService publication:** **NOT VERIFIED** (no live depth data).
+- **Defects fixed:** none.
+- **Tests:** not rerun in this investigation (no code changes). Prior mocked result in this session: `python -m pytest -q test/test_fyers_tbt.py` → `92 passed, 1 skipped` (exit 0).
+
+#### 16.18.5 Remaining blockers / minimum required to proceed
+- **Market window (external):** perform controlled verification during an active market session for the selected instrument.
+- **Instrument eligibility (evidence required):** confirm at least one TBT-eligible, actively trading symbol permitted by verified entitlement/limits; prefer a liquid equity/F&O instrument with expected depth over an index unless eligibility is confirmed.
+- **Broker entitlement (external/account evidence):** confirm actual FYERS TBT entitlement/tier/limits for the account (cannot be inferred from local `declared_default` standard tier).
+- **Protocol acceptance (external/undocumented):** server-side subscribe acceptance/rejection/ack semantics remain undocumented; any future test must record sanitized inbound messages/errors without assuming acceptance.
+- **Next suitable controlled test:** one confirmed eligible symbol, one controlled subscribe operation (or use existing admitted symbol only if confirmed eligible), bounded observation (≤60s, extend only without extra broker requests and with evidence-based reason), no retries/reconnect loops/symbol cycling.
+
+#### 16.18.6 Git/change state (end of this record)
+- **Branch/HEAD:** `review/scanner-phase1` @ `2c66e038d5f385ad338a37c0b46928f677655fbc` (unchanged)
+- **Changed/untracked (local, uncommitted):** `M docs/plans/2026-11-10-fyers-tbt-integration-plan.md`, `?? config.json.pre_tbt_activation_20261111_191221.bak`, `?? docs/performance/` (preserved); `config.json` remains locally modified (gitignored) with `tbt_enabled=true`.
+- **No commit/push/amend/rebase/reset/merge/branch switch performed. No restart/config/code/test changes performed in this investigation.**
+
+
+### 16.20 TBT instrument eligibility/selection correction and reconciliation (2026-11-11, offline implementation; live depth not verified)
+
+> **Record type:** Corrective implementation and reconciliation. **No live broker testing performed in this execution.** No subscribe/unsubscribe/pause/resume/reconnect/restart/config/credential/subscription changes sent to broker; no credentials/tokens/auth headers/sensitive responses accessed, printed, copied, persisted, or logged. No OAuth/login/logout/refresh/credential mutation. No trading/order placement/account mutation.
+
+- **TASK ZONE:** FYERS ADAPTER / BROKER RUNTIME (TBT instrument eligibility/selection, status/diagnostics, focused tests, plan reconciliation)
+- **ALLOWED CHANGE SURFACE (this execution):** `brokers/fyers/feed.py`, `brokers/fyers/tbt/feed.py`, `brokers/fyers/tbt/order_book.py`, `sources/registry.py`, `app/server.py`, `config.example.json`, `test/test_fyers_feed.py`, `test/test_fyers_tbt.py`, `docs/plans/2026-11-10-fyers-tbt-integration-plan.md`. No restart performed.
+- **PROTECTED/OUT-OF-SCOPE ZONES:** `app/auth/*`, credential storage/token persistence/OAuth/login/session restoration, application startup/composition redesign beyond minimal catalog/config injection for TBT eligibility resolution, subscription enforcement limit semantics (documented Standard/Prime limits preserved), persistence schema, canonical market models, unrelated providers/features, `docs/performance/` (preserved), user `config.json` (not auto-modified).
+
+#### 16.20.1 Official FYERS TBT contract (source of truth, reconciled)
+- **Supported TBT depth scope (documented):** NSE Equity instruments and NFO (NSE Futures & Options) instruments only. BSE indices, NSE indices, BSE cash equities, BSE F&O, and other exchanges/segments are **not** treated as supported TBT depth instruments absent authoritative confirmation. Regular HSM feed eligibility does **not** imply TBT depth eligibility.
+- **Standard/free plan (default):** 1 TBT symbol per user across all connections, 1 active connection per app per user, 1 symbol per connection, 50 channels per connection. Sufficient for one-symbol TBT use case. No tier upgrade/limit increase performed.
+- **Protocol (existing, preserved):** fixed endpoint `wss://rtsocket-api.fyers.in/versova`, `Authorization: <appId:accessToken>`, type 1 subscribe/unsubscribe, type 2 resume/pause, protobuf snapshot then incremental deltas. No positive subscribe/resume ack or error-correlation semantics assumed/invented (Workstream A remains **UNRESOLVED**).
+
+#### 16.20.2 Root cause in prior implementation (supersedes inaccurate prior implication that selection was correct)
+- `FyersFeed._start_tbt_channel()` passed the unfiltered parent desired instrument set to `FyersTbtFeed.subscribe()`.
+- `FyersTbtFeed.subscribe()` applied the Standard 1-symbol local entitlement cap to candidates in received order, admitting the first candidate regardless of TBT eligibility.
+- Parent desired set was sorted (`tuple(sorted(...))`), so an unsupported instrument (e.g. `BSE:BANKEX-INDEX`) could appear first and consume the only Standard slot while eligible NSE Equity/NFO candidates were rejected by the local cap.
+- No TBT-specific supported-instrument filter using authoritative canonical metadata existed before entitlement admission.
+- **Demonstrated runtime evidence (prior):** admitted `BSE:BANKEX-INDEX` (unsupported for TBT depth), 98 rejected by local Standard limit, `snapshot_count=0`, `delta_count=0`, `last_message_at=null` (**VERIFIED** in prior records; live depth delivery **NOT VERIFIED**).
+
+#### 16.20.3 Eligibility/selection design and files changed
+- **Authoritative metadata:** canonical instrument catalog (`InstrumentCatalog.get_by_key` / provider symbol resolution) used; no second catalog/persistence layer. Catalog injected into FYERS source config by composition root/registry (`app/server.py`, `sources/registry.py`) for minimal resolver dependency.
+- **Eligibility policy (fail closed):** eligible only `NSE_EQ/EQUITY`, `NSE_FO/FUTURE`, `NSE_FO/OPTION`. Excluded `NSE_INDEX/INDEX`, `BSE_EQ/EQUITY`, `BSE_INDEX/INDEX`, `BSE_FO/*`, other segments/types. ETFs excluded unless authoritative evidence confirms (not assumed). Missing/unavailable/insufficient metadata → `instrument_metadata_unavailable` (not subscribed). `symbol.startswith("NSE:")` not used as eligibility proof. Exact FYERS `provider_symbol` preserved for socket subscription.
+- **Selection sequence (corrected):** parent desired set → resolve canonical metadata → exclude ineligible/unknown → retain eligible candidates → apply explicit `tbt_symbols` selection if configured (exact provider symbols, validated, explicit order preserved, unsupported explicit selections not silently replaced) else deterministic fallback from original user-configured instrument order (`instrument_keys_ordered`) then stable sorted remainder → apply Standard/Prime entitlement limits → sync selected admitted set to TBT feed. Eligibility filtering occurs **before** entitlement limits.
+- **Optional config:** `tbt_symbols` supported (exact FYERS provider symbols, validated via canonical metadata). Documented in `config.example.json`; user `config.json` not auto-modified.
+- **TBT sync:** parent computes selected eligible admitted set and diffs TBT desired state (`subscribe`/`unsubscribe`) so ineligible symbols cannot consume slots; TBT feed entitlement enforcement remains as defense-in-depth.
+- **Status/diagnostics:** parent TBT status now exposes selection diagnostics (`eligible_count`, `ineligible_count`, `ineligible_reasons`, `admitted_symbols`, `rejected_by_entitlement`, `selection_source`) and aliases (`subscribe_sent_count`, `valid_book_count`, `last_actual_error`) while preserving existing fields. TBT feed status adds `subscribe_sent_count`, `valid_book_count`, `last_actual_error`, `last_admission_warning`; `safe_last_error` preserved for compatibility. `ws.send()` not treated as broker acceptance; admission warnings separated from actual transport/protocol errors where distinguishable.
+- **Task-status fix preserved:** parent-owned `_tbt_task` remains source of truth; nested `task_running` reflects actual parent task state (minimal fix retained).
+
+#### 16.20.4 Standard/free-tier behavior after fix
+- Standard effective limit remains 1 symbol per user/connection for this single-connection feed instance (Prime 5/connection, 15/user as documented local ceilings). 50 channels/connection remains separate capacity constraint.
+- Unsupported/ineligible symbols are filtered out before entitlement admission and cannot consume the Standard slot. Deterministic selection ensures a valid eligible NSE Equity/NFO candidate is admitted when available (subject to metadata availability and configured/desired set).
+
+#### 16.20.5 Regression tests and exact exit codes (offline/mocked)
+- **`python -m pytest -q test/test_fyers_tbt.py`** → **93 passed, 1 skipped in 3.27s**, exit `0` (**VERIFIED**)
+- **`python test/test_fyers_feed.py`** → custom runner **47 passed, 0 failed, 47 total**, exit `0` (**VERIFIED**; pre-existing runner discrepancy fixed by awaiting async tests in main)
+- **Focused coverage added/updated:** critical selection regression (unsupported BSE index before valid NSE equity must not consume Standard slot), explicit `tbt_symbols` not silently replaced, metadata-unavailable fail-closed, eligibility matrix (NSE_EQ/EQUITY, NSE_FO/FUTURE, NSE_FO/OPTION admitted; NSE index, BSE cash equity, BSE F&O, ETF rejected), Prime limit selection, parent-owned task status, and existing TBT corrective tests updated for eligibility-aware behavior.
+
+#### 16.20.6 Runtime/live verification
+- **Not performed.** No restart, no live broker traffic, no market-session observation in this execution. Prior runtime (PID `28140`, not restarted) does not include this fix.
+- **Live verification status:** **BLOCKED/NOT READY in this execution** (requires suitable market session, confirmed TBT-eligible actively trading NSE Equity/NFO symbol with authoritative canonical metadata, verified account TBT entitlement, healthy/authenticated runtime, and controlled restart/observation window). Do not claim live depth delivery.
+
+#### 16.20.7 Remaining blockers
+- Actual broker/account TBT entitlement/tier/limits: **UNKNOWN** (local default is conservative policy only).
+- Workstream A (positive subscribe/resume ack and error correlation): **UNRESOLVED**.
+- Live snapshot/delta/MarketService publication: **NOT VERIFIED**.
+- Controlled live test must follow bounded procedure (one eligible symbol, max 60s observation, no cycling/retries/repeated reconnects/blind testing) only when prerequisites satisfied.
+
+#### 16.20.8 Git/change state (end of this record)
+- **Branch/HEAD:** `review/scanner-phase1` @ `2c66e038d5f385ad338a37c0b46928f677655fbc` (unchanged)
+- **Changed tracked files:** `M brokers/fyers/feed.py`, `M brokers/fyers/tbt/feed.py`, `M brokers/fyers/tbt/order_book.py`, `M sources/registry.py`, `M app/server.py`, `M config.example.json`, `M test/test_fyers_feed.py`, `M test/test_fyers_tbt.py`, `M docs/plans/2026-11-10-fyers-tbt-integration-plan.md`
+- **Untracked/preserved:** `?? config.json.pre_tbt_activation_20261111_191221.bak`, `?? docs/performance/` (preserved)
+- **Local runtime config (gitignored):** `config.json` retains `sources.fyers.tbt_enabled=true` (not auto-modified by this implementation)
+- **No commit/push/amend/rebase/reset/merge/branch switch/cleanup/restart/live broker traffic performed.**

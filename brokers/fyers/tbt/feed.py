@@ -145,6 +145,7 @@ class FyersTbtFeed:
             "unsubscribes": 0,
             "last_message_at": None,
             "last_error": None,
+            "last_admission_warning": None,
         }
 
         # WebSocket
@@ -529,7 +530,10 @@ class FyersTbtFeed:
                 limits.get("tier"), per_user, per_conn, effective_limit,
                 len(rejected), ", ".join(rejected[:5]),
             )
+            # Admission/limit condition (not a transport/protocol error). Preserve
+            # safe_last_error for compatibility; track actual errors separately.
             self._stats["last_error"] = "entitlement_limit_reached"
+            self._stats["last_admission_warning"] = "entitlement_limit_reached"
 
         # If connected, send subscribe immediately. If channel allocation fails,
         # remove the symbol from desired state so it cannot be retried/subscribed
@@ -922,6 +926,10 @@ class FyersTbtFeed:
     def status(self) -> dict[str, Any]:
         """Return current status and statistics."""
         limits = self._resolve_tbt_limits()
+        last_error = self._stats.get("last_error")
+        admission_warning = self._stats.get("last_admission_warning")
+        # Admission/limit conditions are not transport/protocol errors.
+        last_actual_error = None if last_error == admission_warning else last_error
         return {
             "enabled": self._config.get("tbt_enabled", False),
             "state": self._state,
@@ -934,7 +942,11 @@ class FyersTbtFeed:
             "sequence_gap_count": self._stats["sequence_gaps"],
             "reconnect_count": self._stats["reconnects"],
             "last_message_at": self._stats["last_message_at"],
-            "safe_last_error": self._stats["last_error"],
+            "safe_last_error": last_error,
+            "last_actual_error": last_actual_error,
+            "last_admission_warning": admission_warning,
+            "subscribe_sent_count": self._stats.get("subscribes", 0),
+            "valid_book_count": self._books.valid_count,
             "symbols": list(self._desired_symbols),
             "protocol_notes": {
                 "ws_endpoint": "wss://rtsocket-api.fyers.in/versova",

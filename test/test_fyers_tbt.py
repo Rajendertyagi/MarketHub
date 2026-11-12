@@ -1435,13 +1435,20 @@ class TestTBTCorrectiveTaskB:
             return "wss://tbt.example/ws"
         monkeypatch.setattr(tbt_feed_mod.FyersTbtFeed, "_fetch_ws_url", _fake_fetch)
 
+        class _Cat:
+            def get_by_key(self, key):
+                if key in ("NSE:AAA-EQ", "NSE:BBB-EQ"):
+                    return {"provider_symbol": key, "segment": "NSE_EQ", "instrument_type": "EQUITY"}
+                return None
+
         feed = FyersFeed.__new__(FyersFeed)
         feed._name = "fyers"
         feed._tbt_enabled = True
         feed._tbt_feed = None
         feed._tbt_task = None
+        feed._tbt_last_selection = {}
         feed._access_token_getter = lambda: "rawtoken"
-        feed._config = {"tbt_enabled": True, "app_id": "APP-1", "tbt_tier": "prime"}
+        feed._config = {"tbt_enabled": True, "app_id": "APP-1", "tbt_tier": "prime", "instrument_catalog": _Cat()}
         feed._market_service = AsyncMock()
         feed._app_id = "APP-1"
         feed._credential_store = None
@@ -1471,10 +1478,23 @@ class TestTBTCorrectiveTaskB:
             def __init__(self):
                 self.subscribed = []
                 self.unsubscribed = []
+                self._desired = set()
             async def subscribe(self, symbols):
                 self.subscribed.append(list(symbols))
+                self._desired.update(symbols)
             async def unsubscribe(self, symbols):
                 self.unsubscribed.append(list(symbols))
+                for s in symbols:
+                    self._desired.discard(s)
+            @property
+            def desired_symbols(self):
+                return set(self._desired)
+
+        class _Cat:
+            def get_by_key(self, key):
+                if key in ("NSE:AAA-EQ", "NSE:BBB-EQ"):
+                    return {"provider_symbol": key, "segment": "NSE_EQ", "instrument_type": "EQUITY"}
+                return None
 
         feed = FyersFeed.__new__(FyersFeed)
         feed._name = "fyers"
@@ -1482,6 +1502,8 @@ class TestTBTCorrectiveTaskB:
         feed._sub_lock = asyncio.Lock()
         feed._state = "stopped"
         feed._tbt_feed = _Tbt()
+        feed._tbt_last_selection = {}
+        feed._config = {"tbt_tier": "prime", "instrument_catalog": _Cat(), "instrument_keys_ordered": ["NSE:AAA-EQ"]}
         feed._hsm_symbols = {}
         feed._hsm_by_topic = {}
         feed._last_data_at = {}
@@ -1498,23 +1520,30 @@ class TestTBTCorrectiveTaskB:
 
         added = await feed.add_instruments(["NSE:BBB-EQ"])
         assert added == 1
-        assert feed._tbt_feed.subscribed[-1] == ["NSE:BBB-EQ"]
+        assert "NSE:BBB-EQ" in feed._tbt_feed.desired_symbols
 
         removed = await feed.remove_instruments(["NSE:BBB-EQ"])
         assert removed == 1
-        assert feed._tbt_feed.unsubscribed[-1] == ["NSE:BBB-EQ"]
+        assert "NSE:BBB-EQ" not in feed._tbt_feed.desired_symbols
 
     @pytest.mark.asyncio
     async def test_add_remove_before_tbt_connection_readiness_retained(self):
         from brokers.fyers.feed import FyersFeed
 
-        tbt = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP"}, AsyncMock())
+        tbt = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP", "tbt_tier": "prime"}, AsyncMock())
+        class _Cat:
+            def get_by_key(self, key):
+                if key in ("NSE:AAA-EQ", "NSE:BBB-EQ"):
+                    return {"provider_symbol": key, "segment": "NSE_EQ", "instrument_type": "EQUITY"}
+                return None
         feed = FyersFeed.__new__(FyersFeed)
         feed._name = "fyers"
         feed._desired = ("NSE:AAA-EQ",)
         feed._sub_lock = asyncio.Lock()
         feed._state = "stopped"
         feed._tbt_feed = tbt
+        feed._tbt_last_selection = {}
+        feed._config = {"tbt_tier": "prime", "instrument_catalog": _Cat(), "instrument_keys_ordered": ["NSE:AAA-EQ"]}
         feed._hsm_symbols = {}
         feed._hsm_by_topic = {}
         feed._last_data_at = {}
@@ -2115,8 +2144,25 @@ class TestTBTCorrectiveTaskC:
         assert book is not None and book.awaiting_snapshot is True and book.is_empty
 
 
+    @pytest.mark.asyncio
+    async def test_status_task_running_reflects_attached_task(self):
+        # task_running should reflect the actual run task when attached (parent-owned).
+        feed = FyersTbtFeed(lambda: "raw", {"tbt_enabled": True, "app_id": "APP"}, AsyncMock())
+
+        class _DoneTask:
+            def done(self):
+                return True
+
+        class _LiveTask:
+            def done(self):
+                return False
+
+        assert feed.status()["task_running"] is False
+        feed._task = _LiveTask()
+        assert feed.status()["task_running"] is True
+        feed._task = _DoneTask()
+        assert feed.status()["task_running"] is False
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
-
-
-

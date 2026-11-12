@@ -525,6 +525,7 @@ def _ensure_fyers_source_registered() -> str | None:
     _fy_cfg["source_name"] = "fyers"
     # Inject runtime-only wiring (getter / store / redirect). Never secrets.
     _inject_fyers_source_config({"fyers": _fy_cfg})
+    _fy_cfg["instrument_catalog"] = _instrument_catalog
     try:
         from sources.registry import _create_fyers_feed
         _feed = _create_fyers_feed(_fy_cfg, market_service=_market_service)
@@ -910,6 +911,16 @@ _x_twitter_service = _XTwitterService(
 FYERS_REDIRECT_URI = oauth_callback_url(
     get_public_base_url(_config), "fyers")
 _inject_fyers_source_config(SOURCES_CFG)
+for _name, _cfg in (SOURCES_CFG or {}).items():
+    if not isinstance(_cfg, dict):
+        continue
+    if _cfg.get("type") != "fyers_feed" and _name != "fyers":
+        continue
+    _cfg["instrument_catalog"] = _instrument_catalog
+    _cfg.setdefault("instrument_keys_ordered", [
+        i["key"] for i in _cfg.get("instruments", [])
+        if isinstance(i, dict) and i.get("key")
+    ])
 
 # ── Upstox durable session restore (before source-manager construction) ─────
 # Owned by app/auth/: UpstoxAuthService restores the persisted session into

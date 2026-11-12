@@ -213,6 +213,11 @@ class OrderBookStore:
         return len(self._books)
 
     @property
+    def valid_count(self) -> int:
+        """Number of books with a valid snapshot-initialized state."""
+        return sum(1 for b in self._books.values() if not b.awaiting_snapshot)
+
+    @property
     def symbols(self) -> frozenset[str]:
         """Set of tracked symbols."""
         return frozenset(self._books.keys())

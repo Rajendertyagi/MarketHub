@@ -398,6 +398,7 @@ class FyersFeed:
         self._tbt_enabled = config.get("tbt_enabled", False)
         self._tbt_feed = None
         self._tbt_task = None
+        self._tbt_last_selection: dict[str, Any] = {}
 
     # -- identity / status ------------------------------------------------------
 
@@ -788,14 +789,10 @@ class FyersFeed:
             frame = self._mutation_frame("SymbolUpdate", fresh)
             if frame is not None:
                 await self._send_mutation(frame)
-        # Propagate desired-instrument additions to the TBT channel (if active).
+        # Keep the optional TBT depth channel in sync with the selected eligible set.
         # Desired state is retained even if TBT is not yet connected.
         if self._tbt_feed is not None:
-            try:
-                await self._tbt_feed.subscribe(fresh)
-            except Exception as exc:
-                logger.debug("fyers feed %s: TBT subscribe sync failed: %s",
-                             self._name, type(exc).__name__)
+            await self._sync_tbt_desired()
         return len(fresh)
 
     async def add_instruments_detailed(self, symbols: list[str],
@@ -830,13 +827,9 @@ class FyersFeed:
             frame = self._mutation_frame("unsub", gone)
             if frame is not None:
                 await self._send_mutation(frame)
-        # Propagate desired-instrument removals to the TBT channel (if active).
+        # Keep the optional TBT depth channel in sync with the selected eligible set.
         if gone and self._tbt_feed is not None:
-            try:
-                await self._tbt_feed.unsubscribe(gone)
-            except Exception as exc:
-                logger.debug("fyers feed %s: TBT unsubscribe sync failed: %s",
-                             self._name, type(exc).__name__)
+            await self._sync_tbt_desired()
         # The resolved wire topic goes with the symbol: a reconnect
         # restores EXACTLY the current desired set (no ghost subscription
         # for an instrument nobody wants any more).
@@ -1469,6 +1462,179 @@ class FyersFeed:
 
     # -- TBT depth channel -------------------------------------------------------
 
+    _TBT_ELIGIBLE_SEGMENT_TYPES: set[tuple[str, str]] = {
+        ("NSE_EQ", "EQUITY"),
+        ("NSE_FO", "FUTURE"),
+        ("NSE_FO", "OPTION"),
+    }
+
+    def _tbt_catalog(self) -> Any:
+        return getattr(self, "_config", {}).get("instrument_catalog")
+
+    def _resolve_tbt_instrument_meta(self, symbol: str) -> dict[str, Any] | None:
+        """Resolve canonical instrument metadata for a FYERS provider symbol.
+
+        Uses the existing instrument catalog (authoritative). Returns None when
+        metadata is unavailable so callers can fail closed.
+        """
+        catalog = self._tbt_catalog()
+        if catalog is None:
+            return None
+        try:
+            row = catalog.get_by_key(symbol)
+        except Exception:
+            row = None
+        if not isinstance(row, dict):
+            return None
+        # Preserve exact provider symbol for socket subscription; metadata is for
+        # eligibility only.
+        return row
+
+    def _tbt_eligibility(self, symbol: str) -> tuple[bool, str, dict[str, Any] | None]:
+        """Return (eligible, reason, metadata_row) for TBT depth."""
+        row = self._resolve_tbt_instrument_meta(symbol)
+        if row is None:
+            return False, "instrument_metadata_unavailable", None
+        segment = str(row.get("segment") or "").strip().upper()
+        itype = str(row.get("instrument_type") or "").strip().upper()
+        if (segment, itype) in self._TBT_ELIGIBLE_SEGMENT_TYPES:
+            return True, "eligible", row
+        if not segment or not itype:
+            return False, "instrument_metadata_unavailable", row
+        return False, f"unsupported_tbt_instrument:{segment}/{itype}", row
+
+    def _tbt_configured_order(self) -> list[str]:
+        cfg = getattr(self, "_config", {})
+        ordered = cfg.get("instrument_keys_ordered")
+        if isinstance(ordered, list):
+            out = [s for s in ordered if isinstance(s, str) and s.strip()]
+            if out:
+                return out
+        keys = cfg.get("instrument_keys")
+        if isinstance(keys, list):
+            return [s for s in keys if isinstance(s, str) and s.strip()]
+        return []
+
+    def _tbt_effective_limit(self) -> int:
+        """Effective TBT symbol limit for this single-connection feed instance."""
+        cfg = getattr(self, "_config", {})
+        tier = "standard"
+        for key in ("tbt_tier", "tier", "plan"):
+            val = cfg.get(key)
+            if isinstance(val, str) and val.strip():
+                hint = val.strip().lower()
+                tier = hint if hint in ("standard", "prime") else "standard"
+                break
+        limits = {
+            "standard": {"symbols_per_user": 1, "symbols_per_connection": 1},
+            "prime": {"symbols_per_user": 15, "symbols_per_connection": 5},
+        }
+        lim = limits.get(tier, limits["standard"])
+        return max(0, min(int(lim["symbols_per_user"]), int(lim["symbols_per_connection"])))
+
+    def _select_tbt_symbols(self, desired: list[str]) -> dict[str, Any]:
+        """Compute TBT-eligible, deterministically selected symbols.
+
+        Eligibility filtering happens before entitlement limits. Explicit
+        tbt_symbols (if configured) are validated and preserved in order; unsupported
+        explicit selections are not silently replaced.
+        """
+        cfg = getattr(self, "_config", {})
+        desired_set = set(desired)
+        configured = cfg.get("tbt_symbols")
+        explicit = isinstance(configured, list) and any(
+            isinstance(s, str) and s.strip() for s in configured
+        )
+
+        if explicit:
+            # Preserve explicit user selection order; validate exact provider symbols.
+            seen: set[str] = set()
+            candidates: list[str] = []
+            for raw in configured:
+                if not isinstance(raw, str):
+                    continue
+                sym = raw.strip()
+                if not sym or sym in seen:
+                    continue
+                seen.add(sym)
+                candidates.append(sym)
+            selection_source = "tbt_symbols"
+        else:
+            # Deterministic fallback from original user-configured instrument order,
+            # then any other currently desired symbols in stable sorted order.
+            ordered: list[str] = []
+            seen: set[str] = set()
+            for sym in self._tbt_configured_order():
+                if sym in desired_set and sym not in seen:
+                    ordered.append(sym)
+                    seen.add(sym)
+            for sym in sorted(desired_set):
+                if sym not in seen:
+                    ordered.append(sym)
+                    seen.add(sym)
+            candidates = ordered
+            selection_source = "configured_order"
+
+        eligible: list[str] = []
+        ineligible: list[dict[str, str]] = []
+        for sym in candidates:
+            if sym not in desired_set:
+                # Explicit selections not currently desired are not subscribable now;
+                # record as ineligible for current selection without guessing.
+                if explicit:
+                    ineligible.append({"symbol": sym, "reason": "not_in_desired_set"})
+                continue
+            ok, reason, _row = self._tbt_eligibility(sym)
+            if ok:
+                eligible.append(sym)
+            else:
+                ineligible.append({"symbol": sym, "reason": reason})
+
+        limit = self._tbt_effective_limit()
+        admitted = eligible[:limit]
+        rejected_by_entitlement = eligible[limit:]
+
+        return {
+            "selection_source": selection_source,
+            "explicit": explicit,
+            "eligible_count": len(eligible),
+            "ineligible_count": len(ineligible),
+            "ineligible_reasons": ineligible,
+            "eligible_symbols": eligible,
+            "admitted_symbols": admitted,
+            "rejected_by_entitlement": rejected_by_entitlement,
+            "effective_limit": limit,
+        }
+
+    async def _sync_tbt_desired(self) -> None:
+        """Sync TBT feed to the currently selected eligible symbols."""
+        if not self._tbt_feed:
+            return
+        async with self._sub_lock:
+            desired = list(getattr(self, "_desired", ()))
+        selection = self._select_tbt_symbols(desired)
+        self._tbt_last_selection = selection
+        target = list(selection.get("admitted_symbols") or [])
+        target_set = set(target)
+        try:
+            current = set(getattr(self._tbt_feed, "desired_symbols", set()) or set())
+        except Exception:
+            current = set()
+        to_remove = sorted(current - target_set)
+        to_add = [s for s in target if s not in current]
+        if to_remove:
+            try:
+                await self._tbt_feed.unsubscribe(to_remove)
+            except Exception as e:
+                logger.debug("fyers feed %s: TBT unsubscribe sync failed: %s",
+                             self._name, type(e).__name__)
+        if to_add:
+            try:
+                await self._tbt_feed.subscribe(to_add)
+            except Exception as e:
+                logger.debug("fyers feed %s: TBT subscribe sync failed: %s",
+                             self._name, type(e).__name__)
+
     async def _start_tbt_channel(self, stop_event: asyncio.Event) -> None:
         """Start TBT depth channel if enabled."""
         if not self._tbt_enabled:
@@ -1489,17 +1655,17 @@ class FyersFeed:
                 market_service=self._market_service,
                 app_id_getter=_app_id_getter,
             )
+            self._tbt_last_selection = {}
 
-            # Seed TBT with the current desired instrument set so initial connect
-            # and reconnects restore the latest parent lifecycle state.
-            async with self._sub_lock:
-                desired = list(self._desired)
-            if desired:
-                await self._tbt_feed.subscribe(desired)
+            # Seed TBT with the selected eligible instrument set (filtered before
+            # entitlement limits) so initial connect/reconnects restore correct state.
+            await self._sync_tbt_desired()
 
             self._tbt_task = asyncio.create_task(
                 self._tbt_feed.run(publisher=None, stop_event=stop_event)
             )
+            # Parent owns the TBT run task; expose it for accurate status reporting.
+            self._tbt_feed._task = self._tbt_task
             logger.info("TBT depth channel started")
 
         except Exception as e:
@@ -1532,8 +1698,42 @@ class FyersFeed:
     def _tbt_status(self) -> dict[str, Any]:
         """Get TBT channel status."""
         if not self._tbt_feed:
-            return {"enabled": self._tbt_enabled, "state": "not_started"}
-        return self._tbt_feed.status()
+            base = {"enabled": self._tbt_enabled, "state": "not_started"}
+            if self._tbt_last_selection:
+                base.update({
+                    "eligible_count": self._tbt_last_selection.get("eligible_count", 0),
+                    "ineligible_count": self._tbt_last_selection.get("ineligible_count", 0),
+                    "ineligible_reasons": self._tbt_last_selection.get("ineligible_reasons", []),
+                    "admitted_symbols": self._tbt_last_selection.get("admitted_symbols", []),
+                    "rejected_by_entitlement": self._tbt_last_selection.get("rejected_by_entitlement", []),
+                })
+            return base
+        status = self._tbt_feed.status()
+        # Parent owns the TBT run task; report its actual state to avoid
+        # misleading feed-local task_running when the session is active.
+        task = self._tbt_task
+        status["task_running"] = task is not None and not task.done()
+
+        # Selection/eligibility diagnostics (computed from current desired set).
+        try:
+            desired = list(getattr(self, "_desired", ()))
+            selection = self._select_tbt_symbols(desired)
+            self._tbt_last_selection = selection
+        except Exception:
+            selection = getattr(self, "_tbt_last_selection", {}) or {}
+        status["eligible_count"] = selection.get("eligible_count", 0)
+        status["ineligible_count"] = selection.get("ineligible_count", 0)
+        status["ineligible_reasons"] = selection.get("ineligible_reasons", [])
+        status["admitted_symbols"] = selection.get("admitted_symbols", [])
+        status["rejected_by_entitlement"] = selection.get("rejected_by_entitlement", [])
+        status["selection_source"] = selection.get("selection_source")
+        status["subscribe_sent_count"] = status.get("subscribes", 0)
+        status["valid_book_count"] = status.get("subscribed_count", 0)
+        status["last_actual_error"] = status.get("safe_last_error")
+        # Preserve existing fields; clarify that entitlement_limit_reached from TBT
+        # feed may reflect local admission limits, but parent selection now filters
+        # ineligible symbols before entitlement.
+        return status
 
     def _fail(self, message: str) -> None:
         self._last_error = message

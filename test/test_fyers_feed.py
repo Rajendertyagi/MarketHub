@@ -470,21 +470,276 @@ async def test_ff11_terminal_outcome_no_crash(runner: R) -> None:
                      st.get("last_exit_reason") or "")
 
 
+
+async def test_ff_tbt_status_reports_parent_owned_task(runner: R) -> None:
+    # Parent-owned TBT task state must be reported accurately in nested status.
+    from brokers.fyers.feed import FyersFeed
+
+    cfg = {"source_name": "fyers", "instrument_keys": ["NSE:X"],
+           "app_id": "A", "access_token_getter": lambda: "T",
+           "ws_connect": lambda token: asyncio.sleep(0, result=None),
+           "utc_now_iso": lambda: "", "tbt_enabled": True}
+    feed = FyersFeed(config=cfg, auth=object(), market_service=None)
+
+    class _LiveTask:
+        def done(self):
+            return False
+
+    class _DoneTask:
+        def done(self):
+            return True
+
+    class _FakeTbt:
+        def status(self):
+            return {"enabled": True, "state": "connected", "task_running": False}
+
+    feed._tbt_feed = _FakeTbt()
+    feed._tbt_task = _LiveTask()
+    st = feed.status()["tbt"]
+    runner.assert_eq("FF-TBT-task-running-live", st.get("task_running"), True)
+
+    feed._tbt_task = _DoneTask()
+    st = feed.status()["tbt"]
+    runner.assert_eq("FF-TBT-task-running-done", st.get("task_running"), False)
+
+
+
+class _FakeCatalog:
+    def __init__(self, rows):
+        self._rows = {r["provider_symbol"]: r for r in rows}
+
+    def get_by_key(self, key):
+        return self._rows.get(key)
+
+
+async def test_ff_tbt_eligibility_filters_before_entitlement(runner: R) -> None:
+    # Unsupported BSE index must not consume Standard slot; eligible NSE equity must be admitted.
+    from brokers.fyers.feed import FyersFeed
+
+    catalog = _FakeCatalog([
+        {"provider_symbol": "BSE:BANKEX-INDEX", "segment": "BSE_INDEX", "instrument_type": "INDEX"},
+        {"provider_symbol": "NSE:RELIANCE-EQ", "segment": "NSE_EQ", "instrument_type": "EQUITY"},
+    ])
+    cfg = {
+        "source_name": "fyers",
+        "instrument_keys": ["BSE:BANKEX-INDEX", "NSE:RELIANCE-EQ"],
+        "instrument_keys_ordered": ["BSE:BANKEX-INDEX", "NSE:RELIANCE-EQ"],
+        "app_id": "A",
+        "access_token_getter": lambda: "T",
+        "ws_connect": lambda token: asyncio.sleep(0, result=None),
+        "utc_now_iso": lambda: "",
+        "tbt_enabled": True,
+        "instrument_catalog": catalog,
+        "tbt_tier": "standard",
+    }
+    feed = FyersFeed(config=cfg, auth=object(), market_service=None)
+
+    class _FakeTbt:
+        def __init__(self):
+            self.subscribed = []
+            self.unsubscribed = []
+            self._desired = set()
+        async def subscribe(self, symbols):
+            self.subscribed.append(list(symbols))
+            self._desired.update(symbols)
+        async def unsubscribe(self, symbols):
+            self.unsubscribed.append(list(symbols))
+            for s in symbols:
+                self._desired.discard(s)
+        @property
+        def desired_symbols(self):
+            return set(self._desired)
+        def status(self):
+            return {"enabled": True, "state": "connected", "task_running": False,
+                    "subscribes": 1, "subscribed_count": 1, "snapshot_count": 0,
+                    "delta_count": 0, "last_message_at": None, "safe_last_error": None}
+
+    feed._tbt_feed = _FakeTbt()
+    await feed._sync_tbt_desired()
+    st = feed._tbt_status()
+    runner.assert_eq("FF-TBT-admitted", st.get("admitted_symbols"), ["NSE:RELIANCE-EQ"])
+    runner.assert_eq("FF-TBT-eligible-count", st.get("eligible_count"), 1)
+    runner.assert_true("FF-TBT-ineligible-has-bse", any(
+        r.get("symbol") == "BSE:BANKEX-INDEX" for r in (st.get("ineligible_reasons") or [])))
+    runner.assert_eq("FF-TBT-rejected-entitlement", st.get("rejected_by_entitlement"), [])
+    runner.assert_eq("FF-TBT-subscribed", feed._tbt_feed.subscribed[-1], ["NSE:RELIANCE-EQ"])
+
+
+async def test_ff_tbt_explicit_symbols_not_silently_replaced(runner: R) -> None:
+    # Explicit unsupported selection must not be silently replaced; eligible later selection admitted if within limit.
+    from brokers.fyers.feed import FyersFeed
+
+    catalog = _FakeCatalog([
+        {"provider_symbol": "BSE:BANKEX-INDEX", "segment": "BSE_INDEX", "instrument_type": "INDEX"},
+        {"provider_symbol": "NSE:RELIANCE-EQ", "segment": "NSE_EQ", "instrument_type": "EQUITY"},
+    ])
+    cfg = {
+        "source_name": "fyers",
+        "instrument_keys": ["BSE:BANKEX-INDEX", "NSE:RELIANCE-EQ"],
+        "instrument_keys_ordered": ["BSE:BANKEX-INDEX", "NSE:RELIANCE-EQ"],
+        "app_id": "A",
+        "access_token_getter": lambda: "T",
+        "ws_connect": lambda token: asyncio.sleep(0, result=None),
+        "utc_now_iso": lambda: "",
+        "tbt_enabled": True,
+        "instrument_catalog": catalog,
+        "tbt_tier": "standard",
+        "tbt_symbols": ["BSE:BANKEX-INDEX", "NSE:RELIANCE-EQ"],
+    }
+    feed = FyersFeed(config=cfg, auth=object(), market_service=None)
+
+    class _FakeTbt:
+        def __init__(self):
+            self.subscribed = []
+            self._desired = set()
+        async def subscribe(self, symbols):
+            self.subscribed.append(list(symbols))
+            self._desired.update(symbols)
+        async def unsubscribe(self, symbols):
+            for s in symbols:
+                self._desired.discard(s)
+        @property
+        def desired_symbols(self):
+            return set(self._desired)
+        def status(self):
+            return {"enabled": True, "state": "connected", "task_running": False,
+                    "subscribes": 1, "subscribed_count": 1, "snapshot_count": 0,
+                    "delta_count": 0, "last_message_at": None, "safe_last_error": None}
+
+    feed._tbt_feed = _FakeTbt()
+    await feed._sync_tbt_desired()
+    st = feed._tbt_status()
+    runner.assert_eq("FF-TBT-explicit-admitted", st.get("admitted_symbols"), ["NSE:RELIANCE-EQ"])
+    runner.assert_true("FF-TBT-explicit-bse-ineligible", any(
+        r.get("symbol") == "BSE:BANKEX-INDEX" for r in (st.get("ineligible_reasons") or [])))
+
+
+async def test_ff_tbt_metadata_unavailable_fails_closed(runner: R) -> None:
+    from brokers.fyers.feed import FyersFeed
+
+    catalog = _FakeCatalog([])
+    cfg = {
+        "source_name": "fyers",
+        "instrument_keys": ["NSE:RELIANCE-EQ"],
+        "instrument_keys_ordered": ["NSE:RELIANCE-EQ"],
+        "app_id": "A",
+        "access_token_getter": lambda: "T",
+        "ws_connect": lambda token: asyncio.sleep(0, result=None),
+        "utc_now_iso": lambda: "",
+        "tbt_enabled": True,
+        "instrument_catalog": catalog,
+        "tbt_tier": "standard",
+    }
+    feed = FyersFeed(config=cfg, auth=object(), market_service=None)
+
+    class _FakeTbt:
+        def __init__(self):
+            self.subscribed = []
+            self._desired = set()
+        async def subscribe(self, symbols):
+            self.subscribed.append(list(symbols))
+            self._desired.update(symbols)
+        async def unsubscribe(self, symbols):
+            for s in symbols:
+                self._desired.discard(s)
+        @property
+        def desired_symbols(self):
+            return set(self._desired)
+        def status(self):
+            return {"enabled": True, "state": "connected", "task_running": False,
+                    "subscribes": 0, "subscribed_count": 0, "snapshot_count": 0,
+                    "delta_count": 0, "last_message_at": None, "safe_last_error": None}
+
+    feed._tbt_feed = _FakeTbt()
+    await feed._sync_tbt_desired()
+    st = feed._tbt_status()
+    runner.assert_eq("FF-TBT-no-meta-admitted", st.get("admitted_symbols"), [])
+    runner.assert_true("FF-TBT-no-meta-reason", any(
+        r.get("reason") == "instrument_metadata_unavailable" for r in (st.get("ineligible_reasons") or [])))
+
+
+
+async def test_ff_tbt_eligibility_matrix_and_prime_limit(runner: R) -> None:
+    from brokers.fyers.feed import FyersFeed
+
+    catalog = _FakeCatalog([
+        {"provider_symbol": "NSE:RELIANCE-EQ", "segment": "NSE_EQ", "instrument_type": "EQUITY"},
+        {"provider_symbol": "NSE:NIFTY24NOVFUT", "segment": "NSE_FO", "instrument_type": "FUTURE"},
+        {"provider_symbol": "NSE:NIFTY24NOV24000CE", "segment": "NSE_FO", "instrument_type": "OPTION"},
+        {"provider_symbol": "NSE:NIFTY50-INDEX", "segment": "NSE_INDEX", "instrument_type": "INDEX"},
+        {"provider_symbol": "BSE:RELIANCE-A", "segment": "BSE_EQ", "instrument_type": "EQUITY"},
+        {"provider_symbol": "BSE:SENSEX24NOVFUT", "segment": "BSE_FO", "instrument_type": "FUTURE"},
+        {"provider_symbol": "BSE:SENSEX24NOV80000CE", "segment": "BSE_FO", "instrument_type": "OPTION"},
+        {"provider_symbol": "NSE:NIFTYBEES-EQ", "segment": "NSE_EQ", "instrument_type": "ETF"},
+    ])
+    keys = [r["provider_symbol"] for r in catalog._rows.values()]
+    cfg = {
+        "source_name": "fyers",
+        "instrument_keys": keys,
+        "instrument_keys_ordered": keys,
+        "app_id": "A",
+        "access_token_getter": lambda: "T",
+        "ws_connect": lambda token: asyncio.sleep(0, result=None),
+        "utc_now_iso": lambda: "",
+        "tbt_enabled": True,
+        "instrument_catalog": catalog,
+        "tbt_tier": "prime",
+    }
+    feed = FyersFeed(config=cfg, auth=object(), market_service=None)
+
+    class _FakeTbt:
+        def __init__(self):
+            self.subscribed = []
+            self._desired = set()
+        async def subscribe(self, symbols):
+            self.subscribed.append(list(symbols))
+            self._desired.update(symbols)
+        async def unsubscribe(self, symbols):
+            for s in symbols:
+                self._desired.discard(s)
+        @property
+        def desired_symbols(self):
+            return set(self._desired)
+        def status(self):
+            return {"enabled": True, "state": "connected", "task_running": False,
+                    "subscribes": 1, "subscribed_count": 3, "snapshot_count": 0,
+                    "delta_count": 0, "last_message_at": None, "safe_last_error": None}
+
+    feed._tbt_feed = _FakeTbt()
+    await feed._sync_tbt_desired()
+    st = feed._tbt_status()
+    # Eligible: NSE_EQ/EQUITY, NSE_FO/FUTURE, NSE_FO/OPTION only (ETF excluded unless explicitly supported)
+    runner.assert_eq("FF-TBT-prime-admitted", st.get("admitted_symbols"),
+                     ["NSE:RELIANCE-EQ", "NSE:NIFTY24NOVFUT", "NSE:NIFTY24NOV24000CE"])
+    runner.assert_eq("FF-TBT-prime-eligible-count", st.get("eligible_count"), 3)
+    reasons = {r.get("symbol"): r.get("reason") for r in (st.get("ineligible_reasons") or [])}
+    runner.assert_true("FF-TBT-index-rejected", "NSE:NIFTY50-INDEX" in reasons)
+    runner.assert_true("FF-TBT-bse-eq-rejected", "BSE:RELIANCE-A" in reasons)
+    runner.assert_true("FF-TBT-bse-fo-fut-rejected", "BSE:SENSEX24NOVFUT" in reasons)
+    runner.assert_true("FF-TBT-bse-fo-opt-rejected", "BSE:SENSEX24NOV80000CE" in reasons)
+    runner.assert_true("FF-TBT-etf-rejected", "NSE:NIFTYBEES-EQ" in reasons)
+
+
 # -- main -------------------------------------------------------------------------
 
 
 async def main() -> bool:
     runner = R()
 
-    test_ff1_registry(runner)
-    test_ff2_factory_requires_getter(runner)
+    await test_ff1_registry(runner)
+    await test_ff2_factory_requires_getter(runner)
     test_ff10_hsm_key_extraction(runner)
     await test_ff12_symbol_resolution_real_path(runner)
     await test_ff13_resolution_failure_retries(runner)
 
     for coro_fn in (test_ff3_to_ff5_lifecycle, test_ff6_delta_frames,
                     test_ff7_clean_stop, test_ff8_transport_failure_reconnects,
-                    test_ff9_status_safe, test_ff11_terminal_outcome_no_crash):
+                    test_ff9_status_safe, test_ff11_terminal_outcome_no_crash,
+                    test_ff_tbt_status_reports_parent_owned_task,
+                    test_ff_tbt_eligibility_filters_before_entitlement,
+                    test_ff_tbt_explicit_symbols_not_silently_replaced,
+                    test_ff_tbt_metadata_unavailable_fails_closed,
+                    test_ff_tbt_eligibility_matrix_and_prime_limit):
         fn = getattr(sys.modules[__name__], coro_fn.__name__)
         await fn(runner)
 
