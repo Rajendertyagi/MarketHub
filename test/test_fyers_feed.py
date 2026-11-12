@@ -720,6 +720,50 @@ async def test_ff_tbt_eligibility_matrix_and_prime_limit(runner: R) -> None:
     runner.assert_true("FF-TBT-etf-rejected", "NSE:NIFTYBEES-EQ" in reasons)
 
 
+
+async def test_ff_tbt_status_preserves_canonical_child_fields(runner: R) -> None:
+    # Parent must preserve canonical TBT feed status fields (not overwrite with conflated values).
+    from brokers.fyers.feed import FyersFeed
+
+    cfg = {"source_name": "fyers", "instrument_keys": ["NSE:X"],
+           "app_id": "A", "access_token_getter": lambda: "T",
+           "ws_connect": lambda token: asyncio.sleep(0, result=None),
+           "utc_now_iso": lambda: "", "tbt_enabled": True}
+    feed = FyersFeed(config=cfg, auth=object(), market_service=None)
+
+    class _LiveTask:
+        def done(self):
+            return False
+
+    class _FakeTbt:
+        def status(self):
+            return {
+                "enabled": True,
+                "state": "connected",
+                "task_running": False,
+                "subscribes": 99,
+                "subscribed_count": 1,
+                "subscribe_sent_count": 1,
+                "valid_book_count": 0,
+                "safe_last_error": "entitlement_limit_reached",
+                "last_admission_warning": "entitlement_limit_reached",
+                "last_actual_error": None,
+                "snapshot_count": 0,
+                "delta_count": 0,
+                "last_message_at": None,
+            }
+
+    feed._tbt_feed = _FakeTbt()
+    feed._tbt_task = _LiveTask()
+    st = feed.status()["tbt"]
+    runner.assert_eq("FF-TBT-canonical-subscribe-sent", st.get("subscribe_sent_count"), 1)
+    runner.assert_eq("FF-TBT-canonical-valid-book", st.get("valid_book_count"), 0)
+    runner.assert_eq("FF-TBT-canonical-last-actual-error", st.get("last_actual_error"), None)
+    runner.assert_eq("FF-TBT-canonical-safe-last-error", st.get("safe_last_error"), "entitlement_limit_reached")
+    runner.assert_eq("FF-TBT-canonical-admission-warning", st.get("last_admission_warning"), "entitlement_limit_reached")
+    runner.assert_eq("FF-TBT-canonical-task-running", st.get("task_running"), True)
+
+
 # -- main -------------------------------------------------------------------------
 
 
@@ -736,6 +780,7 @@ async def main() -> bool:
                     test_ff7_clean_stop, test_ff8_transport_failure_reconnects,
                     test_ff9_status_safe, test_ff11_terminal_outcome_no_crash,
                     test_ff_tbt_status_reports_parent_owned_task,
+                    test_ff_tbt_status_preserves_canonical_child_fields,
                     test_ff_tbt_eligibility_filters_before_entitlement,
                     test_ff_tbt_explicit_symbols_not_silently_replaced,
                     test_ff_tbt_metadata_unavailable_fails_closed,

@@ -1727,12 +1727,10 @@ class FyersFeed:
         status["admitted_symbols"] = selection.get("admitted_symbols", [])
         status["rejected_by_entitlement"] = selection.get("rejected_by_entitlement", [])
         status["selection_source"] = selection.get("selection_source")
-        status["subscribe_sent_count"] = status.get("subscribes", 0)
-        status["valid_book_count"] = status.get("subscribed_count", 0)
-        status["last_actual_error"] = status.get("safe_last_error")
-        # Preserve existing fields; clarify that entitlement_limit_reached from TBT
-        # feed may reflect local admission limits, but parent selection now filters
-        # ineligible symbols before entitlement.
+        # Preserve canonical TBT feed status fields (subscribe_sent_count,
+        # valid_book_count, last_actual_error) supplied by FyersTbtFeed.status().
+        # Do not conflate sends with valid snapshot-initialized books or admission
+        # warnings with actual transport/protocol errors.
         return status
 
     def _fail(self, message: str) -> None:
