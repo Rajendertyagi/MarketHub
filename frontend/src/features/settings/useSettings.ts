@@ -35,6 +35,7 @@ import {
 import { SOURCES_REFRESH_MS } from "./constants";
 import type {
   ChatConfigInput,
+  FyersFeedConfig,
   FyersSettings,
   NewsSource,
   TestSourceInput,
