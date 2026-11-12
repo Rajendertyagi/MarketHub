@@ -1421,6 +1421,372 @@ class TestTBTCorrectiveTaskA:
         assert feed._tbt_task is None
 
 
+class TestTBTStatusSnapshotNoCatalogIO:
+    """Regression: FyersFeed.status()/_tbt_status() must be read-only snapshots
+    with zero catalog/database I/O (confirmed event-loop hang fix)."""
+
+    @staticmethod
+    def _make_feed(*, tbt_enabled=True, desired=(), catalog=None, tbt_feed_obj=None):
+        from brokers.fyers.feed import FyersFeed
+
+        feed = FyersFeed.__new__(FyersFeed)
+        feed._name = "fyers"
+        feed._state = "streaming"
+        feed._state_updated_at = None
+        feed._desired = tuple(desired)
+        feed._sub_lock = asyncio.Lock()
+        feed._tbt_enabled = tbt_enabled
+        feed._tbt_feed = tbt_feed_obj
+        feed._tbt_task = None
+        feed._tbt_last_selection = {}
+        feed._config = {"tbt_enabled": tbt_enabled, "app_id": "APP-1", "tbt_tier": "prime"}
+        if catalog is not None:
+            feed._config["instrument_catalog"] = catalog
+        feed._market_service = AsyncMock()
+        feed._app_id = "APP-1"
+        feed._credential_store = None
+        feed._access_token_getter = lambda: "rawtoken"
+        # Attributes used by FyersFeed.status() and helpers
+        feed._frames_received = 0
+        feed._malformed_frames = 0
+        feed._reconnect_count = 0
+        feed._connect_attempts = 0
+        feed._connected_at = None
+        feed._last_message_at = None
+        feed._last_error = None
+        feed._last_error_at = None
+        feed._last_exit_reason = None
+        feed._last_exit_at = None
+        feed._started_at = None
+        feed._transitions = []
+        feed._unresolved = {}
+        feed._hsm_symbols = {}
+        feed._hsm_by_topic = {}
+        feed._last_data_at = {}
+        feed._last_data_mono = {}
+        feed._last_frame_at = None
+        feed._last_frame_mono = None
+        feed._mutation_failures = 0
+        feed._last_mutation_error = None
+        feed._last_mutation_error_at = None
+        feed._index_value_rejections = 0
+        feed._unverified_index_ticks = 0
+        feed._mono = lambda: 0.0
+        feed.readiness_reason = lambda: None
+        return feed
+
+    def test_status_uses_cached_selection_and_never_queries_catalog(self):
+        calls = {"count": 0}
+
+        class _Cat:
+            def get_by_key(self, key):
+                calls["count"] += 1
+                return {"provider_symbol": key, "segment": "NSE_EQ", "instrument_type": "EQUITY"}
+
+        class _TbtFeed:
+            def status(self):
+                return {
+                    "state": "streaming",
+                    "subscribe_sent_count": 3,
+                    "valid_book_count": 1,
+                    "last_actual_error": None,
+                }
+
+        feed = self._make_feed(desired=("NSE:AAA-EQ",), catalog=_Cat(), tbt_feed_obj=_TbtFeed())
+        feed._tbt_last_selection = {
+            "selection_source": "configured_order",
+            "eligible_count": 1,
+            "ineligible_count": 0,
+            "ineligible_reasons": [],
+            "admitted_symbols": ["NSE:AAA-EQ"],
+            "rejected_by_entitlement": [],
+        }
+
+        for _ in range(5):
+            st = feed.status()
+            tbt = st["tbt"]
+            assert tbt["eligible_count"] == 1
+            assert tbt["ineligible_count"] == 0
+            assert tbt["admitted_symbols"] == ["NSE:AAA-EQ"]
+            assert tbt["rejected_by_entitlement"] == []
+            assert tbt["selection_source"] == "configured_order"
+            assert tbt["subscribe_sent_count"] == 3
+            assert tbt["valid_book_count"] == 1
+            assert tbt["last_actual_error"] is None
+
+        assert calls["count"] == 0
+
+    def test_status_with_raising_catalog_returns_cached_selection(self):
+        class _RaisingCat:
+            def get_by_key(self, key):
+                raise AssertionError("catalog must not be accessed during status")
+
+        class _TbtFeed:
+            def status(self):
+                return {"state": "streaming", "subscribe_sent_count": 1, "valid_book_count": 0, "last_actual_error": None}
+
+        feed = self._make_feed(desired=("NSE:AAA-EQ",), catalog=_RaisingCat(), tbt_feed_obj=_TbtFeed())
+        feed._tbt_last_selection = {
+            "selection_source": "tbt_symbols",
+            "eligible_count": 1,
+            "ineligible_count": 1,
+            "ineligible_reasons": [{"symbol": "NSE:IDX-INDEX", "reason": "unsupported_tbt_instrument:NSE_INDEX/INDEX"}],
+            "admitted_symbols": ["NSE:AAA-EQ"],
+            "rejected_by_entitlement": [],
+        }
+
+        st = feed.status()["tbt"]
+        assert st["eligible_count"] == 1
+        assert st["ineligible_count"] == 1
+        assert st["ineligible_reasons"][0]["symbol"] == "NSE:IDX-INDEX"
+        assert st["admitted_symbols"] == ["NSE:AAA-EQ"]
+        assert st["selection_source"] == "tbt_symbols"
+
+    @pytest.mark.asyncio
+    async def test_sync_tbt_desired_computes_and_caches_selection(self):
+        class _Cat:
+            def get_by_key(self, key):
+                if key == "NSE:AAA-EQ":
+                    return {"provider_symbol": key, "segment": "NSE_EQ", "instrument_type": "EQUITY"}
+                return None
+
+        class _TbtFeed:
+            def __init__(self):
+                self.desired_symbols = set()
+            async def subscribe(self, symbols):
+                self.desired_symbols.update(symbols)
+            async def unsubscribe(self, symbols):
+                for s in symbols:
+                    self.desired_symbols.discard(s)
+
+        feed = self._make_feed(desired=("NSE:AAA-EQ", "NSE:BAD-XX"), catalog=_Cat(), tbt_feed_obj=_TbtFeed())
+        await feed._sync_tbt_desired()
+
+        sel = feed._tbt_last_selection
+        assert sel["selection_source"] == "configured_order"
+        assert sel["eligible_count"] == 1
+        assert sel["ineligible_count"] == 1
+        assert sel["admitted_symbols"] == ["NSE:AAA-EQ"]
+        assert any(r["symbol"] == "NSE:BAD-XX" for r in sel["ineligible_reasons"])
+
+    @pytest.mark.asyncio
+    async def test_add_and_remove_refresh_selection_via_sync(self):
+        class _Cat:
+            def get_by_key(self, key):
+                if key in ("NSE:AAA-EQ", "NSE:BBB-EQ"):
+                    return {"provider_symbol": key, "segment": "NSE_EQ", "instrument_type": "EQUITY"}
+                return None
+
+        class _TbtFeed:
+            def __init__(self):
+                self.desired_symbols = set()
+            async def subscribe(self, symbols):
+                self.desired_symbols.update(symbols)
+            async def unsubscribe(self, symbols):
+                for s in symbols:
+                    self.desired_symbols.discard(s)
+
+        feed = self._make_feed(desired=("NSE:AAA-EQ",), catalog=_Cat(), tbt_feed_obj=_TbtFeed())
+        feed._state = "stopped"  # avoid mutation frame send path
+        await feed._sync_tbt_desired()
+        assert feed._tbt_last_selection["admitted_symbols"] == ["NSE:AAA-EQ"]
+
+        await feed.add_instruments(["NSE:BBB-EQ"])
+        assert set(feed._tbt_last_selection["admitted_symbols"]) == {"NSE:AAA-EQ", "NSE:BBB-EQ"}
+
+        await feed.remove_instruments(["NSE:AAA-EQ"])
+        assert feed._tbt_last_selection["admitted_symbols"] == ["NSE:BBB-EQ"]
+
+    def test_missing_or_invalid_cached_selection_is_honest(self):
+        class _RaisingCat:
+            def get_by_key(self, key):
+                raise AssertionError("catalog must not be accessed during status")
+
+        class _TbtFeed:
+            def status(self):
+                return {"state": "streaming"}
+
+        feed = self._make_feed(desired=("NSE:AAA-EQ",), catalog=_RaisingCat(), tbt_feed_obj=_TbtFeed())
+        feed._tbt_last_selection = None  # invalid/missing
+
+        st = feed.status()["tbt"]
+        assert st["eligible_count"] == 0
+        assert st["ineligible_count"] == 0
+        assert st["ineligible_reasons"] == []
+        assert st["admitted_symbols"] == []
+        assert st["rejected_by_entitlement"] == []
+        assert st["selection_source"] is None
+
+    @pytest.mark.asyncio
+    async def test_eligibility_and_entitlement_limits_unchanged(self):
+        class _Cat:
+            def get_by_key(self, key):
+                meta = {
+                    "NSE:EQ1-EQ": ("NSE_EQ", "EQUITY"),
+                    "NSE:FUT1": ("NSE_FO", "FUTURE"),
+                    "NSE:OPT1": ("NSE_FO", "OPTION"),
+                    "NSE:IDX-INDEX": ("NSE_INDEX", "INDEX"),
+                }
+                if key in meta:
+                    seg, it = meta[key]
+                    return {"provider_symbol": key, "segment": seg, "instrument_type": it}
+                return None
+
+        feed = self._make_feed(
+            desired=("NSE:EQ1-EQ", "NSE:FUT1", "NSE:OPT1", "NSE:IDX-INDEX", "NSE:MISSING-EQ"),
+            catalog=_Cat(),
+        )
+        feed._config["tbt_tier"] = "standard"  # limit 1
+        sel = feed._select_tbt_symbols(list(feed._desired))
+        assert sel["eligible_symbols"] == ["NSE:EQ1-EQ", "NSE:FUT1", "NSE:OPT1"]
+        assert sel["admitted_symbols"] == ["NSE:EQ1-EQ"]
+        assert sel["rejected_by_entitlement"] == ["NSE:FUT1", "NSE:OPT1"]
+        reasons = {r["symbol"]: r["reason"] for r in sel["ineligible_reasons"]}
+        assert reasons["NSE:IDX-INDEX"].startswith("unsupported_tbt_instrument:")
+        assert reasons["NSE:MISSING-EQ"] == "instrument_metadata_unavailable"
+
+        feed._config["tbt_tier"] = "prime"  # limit 5
+        sel2 = feed._select_tbt_symbols(list(feed._desired))
+        assert sel2["admitted_symbols"] == ["NSE:EQ1-EQ", "NSE:FUT1", "NSE:OPT1"]
+        assert sel2["rejected_by_entitlement"] == []
+
+    @pytest.mark.asyncio
+    async def test_start_tbt_channel_computes_initial_snapshot_before_status(self, monkeypatch):
+        from brokers.fyers.tbt import feed as tbt_feed_mod
+
+        ws = _FakeWS(block_recv=True)
+        connector = _FakeWSConnect(ws)
+        monkeypatch.setattr(tbt_feed_mod, "ws_connect", connector)
+
+        async def _fake_fetch(self, token):
+            return "wss://tbt.example/ws"
+        monkeypatch.setattr(tbt_feed_mod.FyersTbtFeed, "_fetch_ws_url", _fake_fetch)
+
+        class _Cat:
+            def get_by_key(self, key):
+                if key == "NSE:AAA-EQ":
+                    return {"provider_symbol": key, "segment": "NSE_EQ", "instrument_type": "EQUITY"}
+                return None
+
+        feed = self._make_feed(desired=("NSE:AAA-EQ",), catalog=_Cat())
+        stop = asyncio.Event()
+        await feed._start_tbt_channel(stop)
+        try:
+            # Status must report from cached snapshot without catalog access.
+            feed._config["instrument_catalog"] = type("R", (), {"get_by_key": lambda self, k: (_ for _ in ()).throw(AssertionError("no catalog in status"))})()
+            st = feed.status()["tbt"]
+            assert st["admitted_symbols"] == ["NSE:AAA-EQ"]
+            assert st["selection_source"] == "configured_order"
+        finally:
+            stop.set()
+            await feed._stop_tbt_channel()
+
+    def test_status_not_started_includes_selection_source_when_cached(self):
+        feed = self._make_feed(desired=("NSE:AAA-EQ",), catalog=None, tbt_feed_obj=None)
+        feed._tbt_last_selection = {
+            "selection_source": "tbt_symbols",
+            "eligible_count": 1,
+            "ineligible_count": 0,
+            "ineligible_reasons": [],
+            "admitted_symbols": ["NSE:AAA-EQ"],
+            "rejected_by_entitlement": [],
+        }
+        st = feed.status()["tbt"]
+        assert st["state"] == "not_started"
+        assert st["selection_source"] == "tbt_symbols"
+        assert st["admitted_symbols"] == ["NSE:AAA-EQ"]
+
+
+class TestTBTStatusApiNoCatalogIO:
+    def test_sources_status_endpoint_does_not_trigger_catalog_access(self):
+        """API-level regression: GET /api/sources/status must return without
+        catalog/database access via the actual source-status composition."""
+        from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+        from api.routes import build_market_routes
+        from sources import SourceManager
+        from brokers.fyers.feed import FyersFeed
+
+        class _RaisingCat:
+            def get_by_key(self, key):
+                raise AssertionError("catalog must not be accessed during /api/sources/status")
+
+        class _TbtFeed:
+            def status(self):
+                return {"state": "streaming", "subscribe_sent_count": 0, "valid_book_count": 0, "last_actual_error": None}
+
+        feed = FyersFeed.__new__(FyersFeed)
+        feed._name = "fyers"
+        feed._state = "streaming"
+        feed._state_updated_at = None
+        feed._desired = ("NSE:AAA-EQ",)
+        feed._sub_lock = asyncio.Lock()
+        feed._tbt_enabled = True
+        feed._tbt_feed = _TbtFeed()
+        feed._tbt_task = None
+        feed._tbt_last_selection = {
+            "selection_source": "configured_order",
+            "eligible_count": 1,
+            "ineligible_count": 0,
+            "ineligible_reasons": [],
+            "admitted_symbols": ["NSE:AAA-EQ"],
+            "rejected_by_entitlement": [],
+        }
+        feed._config = {"tbt_enabled": True, "app_id": "APP-1", "tbt_tier": "prime", "instrument_catalog": _RaisingCat()}
+        feed._market_service = None
+        feed._app_id = "APP-1"
+        feed._credential_store = None
+        feed._access_token_getter = lambda: "rawtoken"
+        feed._frames_received = 0
+        feed._malformed_frames = 0
+        feed._reconnect_count = 0
+        feed._connect_attempts = 0
+        feed._connected_at = None
+        feed._last_message_at = None
+        feed._last_error = None
+        feed._last_error_at = None
+        feed._last_exit_reason = None
+        feed._last_exit_at = None
+        feed._started_at = None
+        feed._transitions = []
+        feed._unresolved = {}
+        feed._hsm_symbols = {}
+        feed._hsm_by_topic = {}
+        feed._last_data_at = {}
+        feed._last_data_mono = {}
+        feed._last_frame_at = None
+        feed._last_frame_mono = None
+        feed._mutation_failures = 0
+        feed._last_mutation_error = None
+        feed._last_mutation_error_at = None
+        feed._index_value_rejections = 0
+        feed._unverified_index_ticks = 0
+        feed._mono = lambda: 0.0
+        feed.readiness_reason = lambda: None
+        # Use real FyersFeed.status() production path (no override)
+
+        sm = SourceManager()
+        sm.register(feed)
+
+        routes = build_market_routes(
+            market_broker=type("B", (), {"subscribe": lambda self: None})(),
+            market_service=None,
+            source_status_fn=lambda: [
+                dict(info, name=name) if isinstance(info, dict) else {"name": name}
+                for name, info in sm.get_status().items()
+            ],
+        )
+        app = Starlette(routes=routes)
+        with TestClient(app) as c:
+            r = c.get("/api/sources/status")
+        assert r.status_code == 200
+        data = r.json()
+        assert "sources" in data
+        fy = next(s for s in data["sources"] if s.get("name") == "fyers")
+        assert fy["tbt"]["admitted_symbols"] == ["NSE:AAA-EQ"]
+        assert fy["tbt"]["selection_source"] == "configured_order"
+
+
 class TestTBTCorrectiveTaskB:
     @pytest.mark.asyncio
     async def test_tbt_starts_with_parent_desired_instruments(self, monkeypatch):

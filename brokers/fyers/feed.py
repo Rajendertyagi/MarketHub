@@ -1696,31 +1696,37 @@ class FyersFeed:
             logger.info("TBT depth channel stopped")
 
     def _tbt_status(self) -> dict[str, Any]:
-        """Get TBT channel status."""
+        """Get TBT channel status.
+
+        Read-only, fast snapshot: uses the previously computed selection
+        (_tbt_last_selection) and never performs catalog/database lookups.
+        Selection is refreshed by _sync_tbt_desired() on desired-set changes
+        and during TBT startup.
+        """
+        selection = getattr(self, "_tbt_last_selection", None)
+        if not isinstance(selection, dict):
+            selection = {}
+
         if not self._tbt_feed:
             base = {"enabled": self._tbt_enabled, "state": "not_started"}
-            if self._tbt_last_selection:
+            if selection:
                 base.update({
-                    "eligible_count": self._tbt_last_selection.get("eligible_count", 0),
-                    "ineligible_count": self._tbt_last_selection.get("ineligible_count", 0),
-                    "ineligible_reasons": self._tbt_last_selection.get("ineligible_reasons", []),
-                    "admitted_symbols": self._tbt_last_selection.get("admitted_symbols", []),
-                    "rejected_by_entitlement": self._tbt_last_selection.get("rejected_by_entitlement", []),
+                    "eligible_count": selection.get("eligible_count", 0),
+                    "ineligible_count": selection.get("ineligible_count", 0),
+                    "ineligible_reasons": selection.get("ineligible_reasons", []),
+                    "admitted_symbols": selection.get("admitted_symbols", []),
+                    "rejected_by_entitlement": selection.get("rejected_by_entitlement", []),
+                    "selection_source": selection.get("selection_source"),
                 })
             return base
+
         status = self._tbt_feed.status()
         # Parent owns the TBT run task; report its actual state to avoid
         # misleading feed-local task_running when the session is active.
         task = self._tbt_task
         status["task_running"] = task is not None and not task.done()
 
-        # Selection/eligibility diagnostics (computed from current desired set).
-        try:
-            desired = list(getattr(self, "_desired", ()))
-            selection = self._select_tbt_symbols(desired)
-            self._tbt_last_selection = selection
-        except Exception:
-            selection = getattr(self, "_tbt_last_selection", {}) or {}
+        # Selection/eligibility diagnostics from cached snapshot only (no catalog I/O).
         status["eligible_count"] = selection.get("eligible_count", 0)
         status["ineligible_count"] = selection.get("ineligible_count", 0)
         status["ineligible_reasons"] = selection.get("ineligible_reasons", [])
