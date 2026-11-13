@@ -62,6 +62,7 @@ from core.persistence.modules.products import (
     migrate_v11_to_v12,
     migrate_v20_to_v21,
     migrate_v21_to_v22,
+    migrate_v24_to_v25,
 )
 from core.persistence.modules.schema import (
     SCHEMA_VERSION,
@@ -190,6 +191,8 @@ class EventStore:
                         migrate_v22_to_v23(conn)
                     elif current_version == 23:
                         migrate_v23_to_v24(conn)
+                    elif current_version == 24:
+                        migrate_v24_to_v25(conn)
                     else:
                         raise RuntimeError(
                             f"unsupported schema version {current_version}; "

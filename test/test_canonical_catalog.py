@@ -235,6 +235,23 @@ def test_get_by_key_resolves_fyers_provider_symbol() -> None:
                 "underlying": "RELIANCE",
                 "provider_symbol": "NSE:RELIANCE26OCTFUT",
             },
+            {
+                "provider": "fyers",
+                "instrument_token": "1011251126801",
+                "exchange": "NSE",
+                "tradingsymbol": "RELIANCE26OCT620CE",
+                "name": "RELIANCE",
+                "instrument_type": "OPTION",
+                "segment": "NSE_FO",
+                "expiry": "2026-10-27",
+                "strike": 620.0,
+                "option_type": "CE",
+                "lot_size": 500,
+                "tick_size": 0.05,
+                "isin": None,
+                "underlying": "RELIANCE",
+                "provider_symbol": "NSE:RELIANCE26OCT620CE",
+            },
         ])
         catalog = InstrumentCatalog(store)
         eq = catalog.get_by_key("NSE:RELIANCE-EQ")
@@ -247,6 +264,74 @@ def test_get_by_key_resolves_fyers_provider_symbol() -> None:
         assert fut["provider_symbol"] == "NSE:RELIANCE26OCTFUT"
         assert fut["segment"] == "NSE_FO"
         assert fut["instrument_type"] == "FUTURE"
+        opt = catalog.get_by_key("NSE:RELIANCE26OCT620CE")
+        assert opt is not None
+        assert opt["provider_symbol"] == "NSE:RELIANCE26OCT620CE"
+        assert opt["segment"] == "NSE_FO"
+        assert opt["instrument_type"] == "OPTION"
+
+
+def test_get_by_key_provider_symbol_scoped_to_fyers_and_precedence() -> None:
+    """Provider-symbol lookup must not return another provider's row; token lookup stays first."""
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _store(tmp)
+        store.replace_provider_instruments("fyers", [
+            {
+                "provider": "fyers",
+                "instrument_token": "FY-TOKEN-1",
+                "exchange": "NSE",
+                "tradingsymbol": "RELIANCE",
+                "name": "RELIANCE",
+                "instrument_type": "EQUITY",
+                "segment": "NSE_EQ",
+                "expiry": None, "strike": None, "option_type": None,
+                "lot_size": 1, "tick_size": 0.05, "isin": None,
+                "underlying": "RELIANCE",
+                "provider_symbol": "SHARED-SYM",
+            },
+        ])
+        store.replace_provider_instruments("upstox", [
+            {
+                "provider": "upstox",
+                "instrument_token": "UP-TOKEN-1",
+                "exchange": "NSE",
+                "tradingsymbol": "RELIANCE",
+                "name": "RELIANCE",
+                "instrument_type": "EQUITY",
+                "segment": "NSE_EQ",
+                "expiry": None, "strike": None, "option_type": None,
+                "lot_size": 1, "tick_size": 0.05, "isin": None,
+                "underlying": "RELIANCE",
+                "provider_symbol": "SHARED-SYM",
+            },
+        ])
+        catalog = InstrumentCatalog(store)
+        # Cross-provider identical provider_symbol: fyers-scoped lookup must return fyers row.
+        row = catalog.get_by_key("SHARED-SYM")
+        assert row is not None
+        assert row["provider"] == "fyers"
+        assert row["instrument_token"] == "FY-TOKEN-1"
+        # Token lookup remains first (upstox token resolves to upstox row).
+        up = catalog.get_by_key("UP-TOKEN-1")
+        assert up is not None
+        assert up["provider"] == "upstox"
+        # Missing/empty metadata keys fail closed.
+        assert catalog.get_by_key("") is None
+        assert catalog.get_by_key("NO-SUCH-SYMBOL") is None
+        # Upstox behavior unchanged: provider_symbol/token key resolves.
+        assert catalog.get_by_key("NSE_EQ|MISSING") is None
+
+
+def test_get_by_key_upstox_behavior_unchanged() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _store(tmp)
+        store.replace_provider_instruments(
+            "upstox", upstox_master_records(_upstox_rows()))
+        catalog = InstrumentCatalog(store)
+        row = catalog.get_by_key("NSE_EQ|INE002A01018")
+        assert row is not None
+        assert row["provider"] == "upstox"
+        assert row["tradingsymbol"] == "RELIANCE"
 
 
 # -- migration ---------------------------------------------------------------
@@ -308,6 +393,52 @@ def test_v22_migration_canonicalizes_and_is_idempotent() -> None:
             }
             assert after2 == after1
             assert con.execute("PRAGMA user_version").fetchone()[0] == 22
+        finally:
+            con.close()
+
+
+def test_v24_to_v25_migration_adds_provider_symbol_index() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _store(tmp)
+        con = sqlite3.connect(store.db_path)
+        try:
+            # Simulate a v24 database without the new index.
+            con.execute("DROP INDEX IF EXISTS idx_instr_provider_symbol")
+            con.execute("PRAGMA user_version = 24")
+            con.commit()
+            assert con.execute("PRAGMA user_version").fetchone()[0] == 24
+            assert con.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_instr_provider_symbol'"
+            ).fetchone() is None
+
+            P.migrate_v24_to_v25(con)
+
+            assert con.execute("PRAGMA user_version").fetchone()[0] == 25
+            row = con.execute(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_instr_provider_symbol'"
+            ).fetchone()
+            assert row is not None
+            assert "provider" in (row[0] or "")
+            assert "provider_symbol" in (row[0] or "")
+
+            # Idempotent
+            P.migrate_v24_to_v25(con)
+            assert con.execute("PRAGMA user_version").fetchone()[0] == 25
+        finally:
+            con.close()
+
+
+def test_fresh_schema_includes_provider_symbol_index() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _store(tmp)
+        con = sqlite3.connect(store.db_path)
+        try:
+            row = con.execute(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_instr_provider_symbol'"
+            ).fetchone()
+            assert row is not None
+            assert "provider" in (row[0] or "")
+            assert "provider_symbol" in (row[0] or "")
         finally:
             con.close()
 

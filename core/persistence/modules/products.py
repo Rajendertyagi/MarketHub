@@ -184,6 +184,13 @@ def create_instrument_read_indexes(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_instr_underlying
         ON instruments(underlying, provider, segment)
     """)
+    # Provider-native API symbol lookup (v25): FYERS feed/TBT keys resolve by
+    # provider_symbol (instrument_token holds fyToken). Without this index the
+    # lookup scans the provider partition/full table on large catalogs.
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_instr_provider_symbol
+        ON instruments(provider, provider_symbol, instrument_token)
+    """)
 
 
 def migrate_v20_to_v21(conn: sqlite3.Connection) -> None:
@@ -192,6 +199,14 @@ def migrate_v20_to_v21(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA user_version = 21")
     conn.commit()
     logger.info("migrated v20->v21: added instrument read indexes")
+
+
+def migrate_v24_to_v25(conn: sqlite3.Connection) -> None:
+    """Add provider_symbol lookup index for FYERS API-symbol resolution (idempotent)."""
+    create_instrument_read_indexes(conn)
+    conn.execute("PRAGMA user_version = 25")
+    conn.commit()
+    logger.info("migrated v24->v25: added provider_symbol instrument index")
 
 
 def create_product_tables(conn: sqlite3.Connection) -> None:

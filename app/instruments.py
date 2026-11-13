@@ -974,7 +974,8 @@ class InstrumentCatalog:
         # The Fyers REST/feed key is the API SYMBOL, which the catalogue
         # stores in ``provider_symbol`` rather than ``instrument_token``.
         try:
-            row = self._store.get_instrument_by_provider_symbol(key)
+            row = self._store.get_instrument_by_provider_symbol(
+                key, provider="fyers")
         except Exception:
             row = None
         if row:
