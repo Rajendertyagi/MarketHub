@@ -62,6 +62,7 @@ from core.persistence.modules.products import (
     migrate_v11_to_v12,
     migrate_v20_to_v21,
     migrate_v21_to_v22,
+    migrate_v24_to_v25,
 )
 from core.persistence.modules.schema import (
     SCHEMA_VERSION,
@@ -190,6 +191,8 @@ class EventStore:
                         migrate_v22_to_v23(conn)
                     elif current_version == 23:
                         migrate_v23_to_v24(conn)
+                    elif current_version == 24:
+                        migrate_v24_to_v25(conn)
                     else:
                         raise RuntimeError(
                             f"unsupported schema version {current_version}; "
@@ -798,6 +801,24 @@ class EventStore:
         conn = self._open(self._db_path)
         try:
             return _products.get_instrument(conn, provider, instrument_token)
+        finally:
+            conn.close()
+
+    def get_instrument_by_provider_symbol(
+        self, provider_symbol: str, *, provider: str | None = None,
+    ) -> dict[str, Any] | None:
+        conn = self._open(self._db_path)
+        try:
+            return _products.get_instrument_by_provider_symbol(
+                conn, provider_symbol, provider=provider)
+        finally:
+            conn.close()
+
+    def resolve_instrument_key(self, instrument_key: str) -> dict[str, Any] | None:
+        """Resolve a provider-native key with token-first then FYERS provider_symbol lookup."""
+        conn = self._open(self._db_path)
+        try:
+            return _products.resolve_instrument_key(conn, instrument_key)
         finally:
             conn.close()
 

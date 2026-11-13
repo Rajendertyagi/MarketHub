@@ -184,6 +184,13 @@ def create_instrument_read_indexes(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_instr_underlying
         ON instruments(underlying, provider, segment)
     """)
+    # Provider-native API symbol lookup (v25): FYERS feed/TBT keys resolve by
+    # provider_symbol (instrument_token holds fyToken). Without this index the
+    # lookup scans the provider partition/full table on large catalogs.
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_instr_provider_symbol
+        ON instruments(provider, provider_symbol, instrument_token)
+    """)
 
 
 def migrate_v20_to_v21(conn: sqlite3.Connection) -> None:
@@ -192,6 +199,14 @@ def migrate_v20_to_v21(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA user_version = 21")
     conn.commit()
     logger.info("migrated v20->v21: added instrument read indexes")
+
+
+def migrate_v24_to_v25(conn: sqlite3.Connection) -> None:
+    """Add provider_symbol lookup index for FYERS API-symbol resolution (idempotent)."""
+    create_instrument_read_indexes(conn)
+    conn.execute("PRAGMA user_version = 25")
+    conn.commit()
+    logger.info("migrated v24->v25: added provider_symbol instrument index")
 
 
 def create_product_tables(conn: sqlite3.Connection) -> None:
@@ -885,6 +900,58 @@ def get_instrument(
         return dict(row) if row else None
     finally:
         conn.row_factory = None
+
+
+def get_instrument_by_provider_symbol(
+    conn: sqlite3.Connection,
+    provider_symbol: str,
+    *,
+    provider: str | None = None,
+) -> dict[str, Any] | None:
+    """Find a row by its provider-native API symbol (provider_symbol).
+
+    FYERS feed/TBT keys are the API symbol stored in provider_symbol, while
+    instrument_token holds the fyToken; callers resolving a provider key must
+    be able to match either.
+    """
+    key = (provider_symbol or "").strip()
+    if not key:
+        return None
+    sql = (f"SELECT {', '.join(_INSTRUMENT_COLUMNS)} FROM instruments "
+           "WHERE provider_symbol = ?")
+    args: list[Any] = [key]
+    if provider:
+        sql += " AND provider = ?"
+        args.append(provider)
+    sql += " ORDER BY provider, instrument_token LIMIT 1"
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(sql, args).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.row_factory = None
+
+
+def resolve_instrument_key(
+    conn: sqlite3.Connection, instrument_key: str,
+) -> dict[str, Any] | None:
+    """Resolve a provider-native key using one connection.
+
+    Precedence (preserved): upstox instrument_token, fyers instrument_token,
+    fyers provider_symbol (exact, provider-scoped). Search fallback is handled
+    by the caller to preserve existing behavior.
+    """
+    key = str(instrument_key or "")
+    if not key:
+        return None
+    for provider in ("upstox", "fyers"):
+        row = get_instrument(conn, provider, key)
+        if row:
+            return row
+    row = get_instrument_by_provider_symbol(conn, key, provider="fyers")
+    if row:
+        return row
+    return None
 
 
 def instruments_sync_state(conn: sqlite3.Connection) -> list[dict[str, Any]]:
