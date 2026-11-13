@@ -196,6 +196,59 @@ def test_upstox_fno_universe_still_works() -> None:
         assert [r["symbol"] for r in rows] == ["RELIANCE"]
 
 
+def test_get_by_key_resolves_fyers_provider_symbol() -> None:
+    """FYERS feed/TBT keys are provider API symbols (provider_symbol), not fyTokens."""
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _store(tmp)
+        store.replace_provider_instruments("fyers", [
+            {
+                "provider": "fyers",
+                "instrument_token": "10100000002885",
+                "exchange": "NSE",
+                "tradingsymbol": "RELIANCE",
+                "name": "RELIANCE INDUSTRIES LTD",
+                "instrument_type": "EQUITY",
+                "segment": "NSE_EQ",
+                "expiry": None,
+                "strike": None,
+                "option_type": None,
+                "lot_size": 1,
+                "tick_size": 0.05,
+                "isin": "INE002A01018",
+                "underlying": "RELIANCE",
+                "provider_symbol": "NSE:RELIANCE-EQ",
+            },
+            {
+                "provider": "fyers",
+                "instrument_token": "1011251126800",
+                "exchange": "NSE",
+                "tradingsymbol": "RELIANCE26OCTFUT",
+                "name": "RELIANCE",
+                "instrument_type": "FUTURE",
+                "segment": "NSE_FO",
+                "expiry": "2026-10-27",
+                "strike": None,
+                "option_type": None,
+                "lot_size": 500,
+                "tick_size": 0.05,
+                "isin": None,
+                "underlying": "RELIANCE",
+                "provider_symbol": "NSE:RELIANCE26OCTFUT",
+            },
+        ])
+        catalog = InstrumentCatalog(store)
+        eq = catalog.get_by_key("NSE:RELIANCE-EQ")
+        assert eq is not None
+        assert eq["provider_symbol"] == "NSE:RELIANCE-EQ"
+        assert eq["segment"] == "NSE_EQ"
+        assert eq["instrument_type"] == "EQUITY"
+        fut = catalog.get_by_key("NSE:RELIANCE26OCTFUT")
+        assert fut is not None
+        assert fut["provider_symbol"] == "NSE:RELIANCE26OCTFUT"
+        assert fut["segment"] == "NSE_FO"
+        assert fut["instrument_type"] == "FUTURE"
+
+
 # -- migration ---------------------------------------------------------------
 
 def _native_rows() -> list[dict]:

@@ -801,6 +801,16 @@ class EventStore:
         finally:
             conn.close()
 
+    def get_instrument_by_provider_symbol(
+        self, provider_symbol: str, *, provider: str | None = None,
+    ) -> dict[str, Any] | None:
+        conn = self._open(self._db_path)
+        try:
+            return _products.get_instrument_by_provider_symbol(
+                conn, provider_symbol, provider=provider)
+        finally:
+            conn.close()
+
     def instruments_sync_state(self) -> list[dict[str, Any]]:
         conn = self._open(self._db_path)
         try:

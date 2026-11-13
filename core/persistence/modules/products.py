@@ -887,6 +887,36 @@ def get_instrument(
         conn.row_factory = None
 
 
+def get_instrument_by_provider_symbol(
+    conn: sqlite3.Connection,
+    provider_symbol: str,
+    *,
+    provider: str | None = None,
+) -> dict[str, Any] | None:
+    """Find a row by its provider-native API symbol (provider_symbol).
+
+    FYERS feed/TBT keys are the API symbol stored in provider_symbol, while
+    instrument_token holds the fyToken; callers resolving a provider key must
+    be able to match either.
+    """
+    key = (provider_symbol or "").strip()
+    if not key:
+        return None
+    sql = (f"SELECT {', '.join(_INSTRUMENT_COLUMNS)} FROM instruments "
+           "WHERE provider_symbol = ?")
+    args: list[Any] = [key]
+    if provider:
+        sql += " AND provider = ?"
+        args.append(provider)
+    sql += " ORDER BY provider, instrument_token LIMIT 1"
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(sql, args).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.row_factory = None
+
+
 def instruments_sync_state(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     try:
