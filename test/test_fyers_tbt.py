@@ -1703,9 +1703,10 @@ class TestTBTStatusApiNoCatalogIO:
         catalog/database access via the actual source-status composition."""
         from starlette.applications import Starlette
         from starlette.testclient import TestClient
+
         from api.routes import build_market_routes
-        from sources import SourceManager
         from brokers.fyers.feed import FyersFeed
+        from sources import SourceManager
 
         class _RaisingCat:
             def get_by_key(self, key):
