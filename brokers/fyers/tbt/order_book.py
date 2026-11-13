@@ -26,6 +26,7 @@ class LocalOrderBook:
         snapshot_count: Number of full snapshots applied
         delta_count: Number of delta updates applied
         last_sequence: Last seen sequence number
+        awaiting_snapshot: True until a fresh snapshot initializes/rehydrates the book
     """
 
     def __init__(
@@ -43,11 +44,13 @@ class LocalOrderBook:
         self.delta_count = 0
         self.last_sequence: int | None = None
         self.last_update_ts: datetime | None = None
+        self.awaiting_snapshot = True
 
     def apply_snapshot(self, depth: Depth, sequence: int) -> None:
         """Apply full snapshot (replace entire book).
 
         Clears existing state and rebuilds from complete depth data.
+        A fresh snapshot establishes/rehydrates the book.
         """
         self.bids.clear()
         self.asks.clear()
@@ -63,6 +66,7 @@ class LocalOrderBook:
         self.snapshot_count += 1
         self.last_sequence = sequence
         self.last_update_ts = depth.received_ts
+        self.awaiting_snapshot = False
 
     def apply_delta(self, depth: Depth, sequence: int) -> None:
         """Apply incremental delta (update/delete individual levels).
@@ -122,12 +126,12 @@ class LocalOrderBook:
         """Check if sequence number is valid (no gap).
 
         Returns:
-            True if sequence is valid (or first message)
-            False if gap detected (caller should invalidate book)
+            True if sequence is valid for a delta on an initialized book
+            False if gap detected or book is not initialized by a snapshot
         """
-        if self.last_sequence is None:
-            # First message, no previous sequence
-            return True
+        if self.awaiting_snapshot or self.last_sequence is None:
+            # Deltas require a fresh snapshot to establish the book first.
+            return False
 
         expected = self.last_sequence + 1
         if expected_seq != expected:
@@ -137,13 +141,14 @@ class LocalOrderBook:
         return True
 
     def invalidate(self) -> None:
-        """Clear all state, force full resubscribe."""
+        """Clear all state, force full resubscribe and require fresh snapshot."""
         self.bids.clear()
         self.asks.clear()
         self.snapshot_count = 0
         self.delta_count = 0
         self.last_sequence = None
         self.last_update_ts = None
+        self.awaiting_snapshot = True
 
     @property
     def is_empty(self) -> bool:
@@ -206,6 +211,11 @@ class OrderBookStore:
     def count(self) -> int:
         """Number of active books."""
         return len(self._books)
+
+    @property
+    def valid_count(self) -> int:
+        """Number of books with a valid snapshot-initialized state."""
+        return sum(1 for b in self._books.values() if not b.awaiting_snapshot)
 
     @property
     def symbols(self) -> frozenset[str]:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""OHLCV bar store tests (schema v24)."""
+"""OHLCV bar store tests (schema v24+; current schema v25)."""
 
 from __future__ import annotations
 
@@ -39,7 +39,8 @@ def test_schema_v24_has_market_bars() -> None:
     try:
         con = sqlite3.connect(store.db_path)
         try:
-            assert con.execute("PRAGMA user_version").fetchone()[0] == 24
+            # Fresh DB is at current schema; market_bars was introduced in v24.
+            assert con.execute("PRAGMA user_version").fetchone()[0] == 25
             names = {r[0] for r in con.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'")}
             assert "market_bars" in names
@@ -63,7 +64,8 @@ def test_v23_database_migrates_without_data_loss() -> None:
         reopened = EventStore(store.db_path)
         con = sqlite3.connect(reopened.db_path)
         try:
-            assert con.execute("PRAGMA user_version").fetchone()[0] == 24
+            # v23 migrates through v24 (market_bars) to current schema.
+            assert con.execute("PRAGMA user_version").fetchone()[0] == 25
             names = {r[0] for r in con.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'")}
             assert "market_bars" in names

@@ -59,15 +59,14 @@ export async function removeWatchlistItem(itemId: number, signal?: AbortSignal) 
 }
 
 export async function exportWatchlists(): Promise<Blob> {
-  const resp = await fetch("/api/watchlists/export");
-  if (!resp.ok) throw new Error("Export failed");
-  return resp.blob();
+  const data = await request<unknown>("/watchlists/export");
+  return new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
 }
 
 export async function importWatchlists(file: File) {
-  const form = new FormData();
-  form.append("file", file);
-  const resp = await fetch("/api/watchlists/import", { method: "POST", body: form });
-  if (!resp.ok) throw new Error("Import failed");
-  return resp.json();
+  const payload = JSON.parse(await file.text()) as unknown;
+  return request("/watchlists/import", {
+    method: "POST",
+    body: payload,
+  });
 }

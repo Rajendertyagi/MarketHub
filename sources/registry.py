@@ -176,6 +176,8 @@ def _create_fyers_feed(config: dict, *, market_service: Any = None) -> Any:
             if isinstance(i, dict) and i.get("key")]
     cfg = dict(config)
     cfg["instrument_keys"] = keys or ["NSE:NIFTY50-INDEX"]
+    # Preserve original user-configured instrument order for deterministic TBT fallback.
+    cfg.setdefault("instrument_keys_ordered", list(cfg["instrument_keys"]))
     return FyersFeed(config=cfg, auth=auth, market_service=market_service)
 
 

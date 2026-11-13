@@ -327,28 +327,6 @@ def _derive_segment(row: dict[str, Any]) -> str | None:
                              row.get("segment"))
 
 
-def _filter_by_segments(
-    records: list[dict[str, Any]], segments: frozenset[str] | set[str],
-) -> tuple[list[dict[str, Any]], dict[str, int], int]:
-    """Split parsed records into kept/filtered by MarketHub segment.
-
-    Returns (kept, per-segment kept counts, filtered count). Records with
-    no derivable segment are treated as filtered (unknown families stay
-    out unless a known segment claims them).
-    """
-    kept: list[dict[str, Any]] = []
-    counts: dict[str, int] = {}
-    filtered = 0
-    for r in records:
-        seg = _derive_segment(r)
-        if seg is not None and seg in segments:
-            kept.append(r)
-            counts[seg] = counts.get(seg, 0) + 1
-        else:
-            filtered += 1
-    return kept, counts, filtered
-
-
 #: Underlyings MarketHub requires from the BSE F&O universe.
 #: Only Sensex and its relevant BSE derivatives are in scope; BANKEX,
 #: SENSEX50, individual BSE stocks and unrelated BSE derivatives are
@@ -380,11 +358,11 @@ def _is_sensex_bse_fo(record: dict[str, Any]) -> bool:
 def _filter_sensex_bse_fo(
     records: list[dict[str, Any]], segments: frozenset[str] | set[str],
 ) -> tuple[list[dict[str, Any]], dict[str, int], int]:
-    """Filter FYERS records to the Sensex BSE_FO policy.
+    """Filter records to enabled segments and in-scope BSE_FO contracts.
 
-    Other segments (NSE_EQ, NSE_FO, NSE_CM index rows, ...) pass through
-    unchanged. Inside BSE_FO only authoritative-Sensex, active contracts
-    are kept; every other BSE_FO row is counted as filtered.
+    Inactive instruments are excluded when the provider marks them
+    (``active`` is False). Inside BSE_FO only authoritative-Sensex contracts
+    are kept, enforcing the supported BSE F&O product scope consistently.
     """
     kept: list[dict[str, Any]] = []
     counts: dict[str, int] = {}
@@ -394,9 +372,10 @@ def _filter_sensex_bse_fo(
         if seg is None or seg not in segments:
             filtered += 1
             continue
-        if seg == "BSE_FO" and (
-                _underlying_of(r) not in SENSEX_UNDERLYINGS
-                or not r.get("active", True)):
+        if not r.get("active", True):
+            filtered += 1
+            continue
+        if seg == "BSE_FO" and _underlying_of(r) not in SENSEX_UNDERLYINGS:
             filtered += 1
             continue
         kept.append(r)
@@ -439,16 +418,22 @@ def _sensex_scope_report(
     }
 
 
-def _validate_fyers_master_policy(
+def _validate_bse_sensex_policy(
     master: str, records: Sequence[dict[str, Any]],
+    *, enabled_segments: set[str] | None = None,
 ) -> None:
-    """Structural invariants for the selectively ingested BSE_FO master.
+    """Structural invariants for BSE_FO SENSEX contracts in a master.
 
     A truncated or mis-parsed master must retain the previous catalogue,
     never replace it with a partial Sensex set. Invariants are contractual
     (authoritative fields and F&O shape), not an arbitrary shrinkage %.
     """
-    if master != "BSE_FO":
+    if master == "BSE_FO":
+        pass
+    elif master == "complete":
+        if enabled_segments is not None and "BSE_FO" not in enabled_segments:
+            return
+    else:
         return
     active = [r for r in records
               if _is_sensex_bse_fo(r) and r.get("active", True)]
@@ -499,18 +484,28 @@ def _validate_fyers_master_policy(
                 f"has unsupported type {itype!r}")
 
 
+def _validate_fyers_master_policy(
+    master: str, records: Sequence[dict[str, Any]],
+) -> None:
+    _validate_bse_sensex_policy(master, records)
+
+
 def _sensex_master_report(
     master: str, records: Sequence[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    if master != "BSE_FO":
+    if master not in ("BSE_FO", "complete"):
         return None
     return _sensex_scope_report(records)
 
 
-#: Selective write scope: the BSE_FO master may only replace Sensex rows.
+#: Selective write scope: BSE_FO may only replace Sensex rows.
+BSE_SENSEX_WRITE_SCOPE = WriteScope(segment="BSE_FO", column="underlying",
+                                    values=("SENSEX",))
 FYERS_WRITE_SCOPES: dict[str, WriteScope] = {
-    "BSE_FO": WriteScope(segment="BSE_FO", column="underlying",
-                         values=("SENSEX",)),
+    "BSE_FO": BSE_SENSEX_WRITE_SCOPE,
+}
+UPSTOX_WRITE_SCOPES: dict[str, WriteScope] = {
+    "BSE_FO": BSE_SENSEX_WRITE_SCOPE,
 }
 
 
@@ -720,6 +715,10 @@ class InstrumentCatalog:
         Fail-safe: a download/parse failure, or a master that is empty or
         structurally incomplete, ABORTS the sync and leaves the stored
         catalogue untouched (no delete, no partial write).
+
+        BSE_FO ingestion is restricted to the supported SENSEX scope and
+        replaced with a predicate-scoped write so rows outside that scope are
+        preserved.
         """
         from app.catalog_sync import sync_upstox_master
 
@@ -731,16 +730,21 @@ class InstrumentCatalog:
             fetch=fetch,
             url=UPSTOX_MASTER_URL,
             parse=upstox_master_records,
-            filter_records=_filter_by_segments,
+            filter_records=_filter_sensex_bse_fo,
             enabled_segments=sorted(enabled),
             provider="upstox",
+            validate_master=lambda master, records: _validate_bse_sensex_policy(
+                master, records, enabled_segments=set(enabled)),
+            report_fn=_sensex_master_report,
+            write_scopes=UPSTOX_WRITE_SCOPES if "BSE_FO" in enabled else {},
         )
         self._notify_sync(result)
         payload = result.to_dict()
-        try:
-            payload["scope_audit"] = self.scope_audit("upstox")
-        except Exception:
-            logger.warning("upstox scope audit failed", exc_info=True)
+        if "BSE_FO" in enabled:
+            try:
+                payload["scope_audit"] = self.scope_audit("upstox")
+            except Exception:
+                logger.warning("upstox scope audit failed", exc_info=True)
         return payload
 
     def search(self, **kw: Any) -> list[dict[str, Any]]:
@@ -785,13 +789,13 @@ class InstrumentCatalog:
             store_epoch = 0
         return max(self._revision, store_epoch)
 
-    def fno_universe(self, *, provider: str, today: str,
+    def fno_universe(self, *, provider: str | None = None, today: str,
                      q: str | None = None, limit: int = 500) -> list[dict]:
         """Equity underlyings with non-expired F&O contracts (read model)."""
         return self._store.fno_universe(provider=provider, today=today,
                                         q=q, limit=limit)
 
-    def fno_underlying_rows(self, *, provider: str, today: str,
+    def fno_underlying_rows(self, *, provider: str | None = None, today: str,
                             limit: int = 2000) -> list[dict]:
         """Enumeration read model: F&O stock underlyings (no counts)."""
         return self._store.fno_underlying_rows(provider=provider, today=today,
@@ -960,15 +964,13 @@ class InstrumentCatalog:
         if not instrument_key:
             return None
         key = str(instrument_key)
-        for provider in ("upstox", "fyers"):
-            try:
-                row = self.get(provider, key)
-            except Exception:
-                row = None
-            if row:
-                return row
-        # The Fyers REST/feed key is the API SYMBOL, which the catalogue
-        # stores in ``provider_symbol`` rather than ``instrument_token``.
+        try:
+            row = self._store.resolve_instrument_key(key)
+        except Exception:
+            row = None
+        if row:
+            return row
+        # Preserve existing fallback: substring search then exact provider_symbol match.
         try:
             rows = self.search(q=key, limit=10)
         except Exception:

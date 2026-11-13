@@ -43,12 +43,14 @@ def _upstox_master(*, with_equity=True, with_future=True, with_option=True,
         rows.append({"instrument_key": "NSE_FO|42631", "exchange": "NSE",
                      "segment": "NSE_FO", "instrument_type": "FUT",
                      "trading_symbol": "RELIANCE25OCTFUT",
-                     "underlying_symbol": "RELIANCE"})
+                     "underlying_symbol": "RELIANCE",
+                     "expiry": 1798588799000})
     if with_option:
         rows.append({"instrument_key": "NSE_FO|42632", "exchange": "NSE",
                      "segment": "NSE_FO", "instrument_type": "CE",
                      "trading_symbol": "RELIANCE25OCT2500CE",
-                     "underlying_symbol": "RELIANCE", "strike_price": 2500})
+                     "underlying_symbol": "RELIANCE", "strike_price": 2500,
+                     "expiry": 1798588799000})
     if with_index:
         rows.append({"instrument_key": "NSE_INDEX|Nifty 50",
                      "exchange": "NSE", "segment": "NSE_INDEX",
@@ -56,7 +58,8 @@ def _upstox_master(*, with_equity=True, with_future=True, with_option=True,
                      "trading_symbol": "NIFTY 50", "name": "Nifty 50"})
     if with_bse:
         # The official master carries the BSE exchange too (BSE_INDEX /
-        # BSE_FO) - a master without them is a partial download.
+        # BSE_FO). BSE_FO must include valid active SENSEX contracts when
+        # BSE_FO is in scope.
         rows.append({"instrument_key": "BSE_INDEX|SENSEX",
                      "exchange": "BSE", "segment": "BSE_INDEX",
                      "instrument_type": "INDEX",
@@ -64,7 +67,18 @@ def _upstox_master(*, with_equity=True, with_future=True, with_option=True,
         rows.append({"instrument_key": "BSE_FO|801", "exchange": "BSE",
                      "segment": "BSE_FO", "instrument_type": "FUT",
                      "trading_symbol": "SENSEX25OCTFUT",
-                     "underlying_symbol": "SENSEX"})
+                     "underlying_symbol": "SENSEX",
+                     "expiry": 1798588799000})
+        rows.append({"instrument_key": "BSE_FO|802", "exchange": "BSE",
+                     "segment": "BSE_FO", "instrument_type": "CE",
+                     "trading_symbol": "SENSEX25OCT80000CE",
+                     "underlying_symbol": "SENSEX",
+                     "expiry": 1798588799000, "strike_price": 80000})
+        rows.append({"instrument_key": "BSE_FO|803", "exchange": "BSE",
+                     "segment": "BSE_FO", "instrument_type": "PE",
+                     "trading_symbol": "SENSEX25OCT80000PE",
+                     "underlying_symbol": "SENSEX",
+                     "expiry": 1798588799000, "strike_price": 80000})
     return json.dumps(rows).encode("utf-8")
 
 
@@ -486,9 +500,8 @@ def test_the_sensex_policy_is_provider_neutral() -> None:
 
     Upstox publishes ``underlying_symbol`` and the canonical segment; the
     policy reads that authoritative field (never the symbol shape), so the
-    provider-neutral selection is identical to the FYERS one. (The Upstox
-    write path is deliberately NOT filtered in this change: pruning its
-    existing BANKEX/SENSEX50 rows is a separate, destructive decision.)
+    provider-neutral selection is identical to the FYERS one. Upstox BSE_FO
+    ingestion applies the same Sensex-only policy and scoped replacement.
     """
     from app.instruments import _filter_sensex_bse_fo, upstox_master_records
 

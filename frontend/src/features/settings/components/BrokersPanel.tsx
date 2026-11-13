@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Button, Input } from "@/components/ui";
 import {
   clearFyersLoginResult,
@@ -19,6 +19,7 @@ import {
   useDeleteUpstoxCredentials,
   useForgetFyersSession,
   useForgetUpstoxSession,
+  useFyersFeedConfig,
   useFyersSettings,
   useSaveFyersCredentials,
   useSaveFyersFeedConfig,
@@ -259,6 +260,7 @@ const FYERS_LOGIN_COPY: Record<FyersLoginResult, { kind: "ok" | "err"; text: str
 
 function FyersBroker({ source }: { source?: MarketSource }) {
   const settings = useFyersSettings();
+  const feedConfig = useFyersFeedConfig();
   const saveCred = useSaveFyersCredentials();
   const forget = useForgetFyersSession();
   const saveFeed = useSaveFyersFeedConfig();
@@ -268,6 +270,9 @@ function FyersBroker({ source }: { source?: MarketSource }) {
   const [pin, setPin] = useState("");
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [feedEnabled, setFeedEnabled] = useState(false);
+  const [tbtEnabled, setTbtEnabled] = useState(false);
+  const [tbtSymbols, setTbtSymbols] = useState("");
   // Login result flag from the backend callback redirect (?fyers_auth=…).
   const [loginResult, setLoginResult] = useState<FyersLoginResult | null>(() =>
     readFyersLoginResult(),
@@ -291,6 +296,14 @@ function FyersBroker({ source }: { source?: MarketSource }) {
     : formatFyersAuthChip(s);
   const resultCopy = loginResult ? FYERS_LOGIN_COPY[loginResult] : null;
 
+  useEffect(() => {
+    const fc = feedConfig.data;
+    if (!fc) return;
+    setFeedEnabled(!!fc.enabled);
+    setTbtEnabled(!!fc.tbt_enabled);
+    setTbtSymbols((fc.tbt_symbols ?? []).join("\n"));
+  }, [feedConfig.data]);
+
   function dismissLoginResult() {
     setLoginResult(null);
     clearFyersLoginResult();
@@ -307,6 +320,18 @@ function FyersBroker({ source }: { source?: MarketSource }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  function parseTbtSymbols(input: string): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const part of input.replace(/\r/g, "\n").replace(/,/g, "\n").split("\n")) {
+      const sym = part.trim();
+      if (!sym || seen.has(sym)) continue;
+      seen.add(sym);
+      out.push(sym);
+    }
+    return out;
   }
 
   return (
@@ -452,14 +477,72 @@ function FyersBroker({ source }: { source?: MarketSource }) {
           </div>
         ) : null}
 
-        <SourceDetail
-          source={source}
-          feedEnabled={s.source_enabled}
-          onFeedToggle={() =>
-            setMsgAsync(() => saveFeed.mutateAsync(!s.source_enabled), "Feed updated.")
-          }
-          feedBusy={busy}
-        />
+        <SourceDetail source={source} />
+
+        <div className="auth-row">
+          <span className="auth-label">Feed</span>
+          <label className="hint" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input
+              type="checkbox"
+              checked={feedEnabled}
+              onChange={(e) => setFeedEnabled(e.target.checked)}
+              disabled={busy}
+            />
+            Enable Fyers market data feed
+          </label>
+        </div>
+
+        <div className="auth-row">
+          <span className="auth-label">TBT Depth</span>
+          <label className="hint" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input
+              type="checkbox"
+              checked={tbtEnabled}
+              onChange={(e) => setTbtEnabled(e.target.checked)}
+              disabled={busy}
+            />
+            Enable Tick-by-Tick 50-level depth (NSE Equity &amp; NFO only)
+          </label>
+        </div>
+
+        <div className="auth-row">
+          <label htmlFor={`${uid}-fyers-tbt-symbols`}>TBT Symbols</label>
+          <textarea
+            id={`${uid}-fyers-tbt-symbols`}
+            value={tbtSymbols}
+            onChange={(e) => setTbtSymbols(e.target.value)}
+            placeholder={"One exact FYERS provider symbol per line, e.g.\nNSE:RELIANCE-EQ"}
+            rows={3}
+            disabled={busy || !tbtEnabled}
+            spellCheck={false}
+            style={{ width: "100%", fontFamily: "inherit" }}
+          />
+          <span className="hint">
+            Optional. Exact provider symbols, validated against catalog metadata at runtime. Standard plan: 1 symbol.
+            Leave empty for deterministic fallback from configured instruments (eligible NSE Equity/NFO only). Changes apply on save (feed may restart if running).
+          </span>
+        </div>
+
+        <div className="auth-row">
+          <span className="auth-label">Feed Config</span>
+          <Button
+            className="btn btn-compact"
+            onClick={() =>
+              setMsgAsync(
+                () =>
+                  saveFeed.mutateAsync({
+                    enabled: feedEnabled,
+                    tbt_enabled: tbtEnabled,
+                    tbt_symbols: parseTbtSymbols(tbtSymbols),
+                  }),
+                "Fyers feed settings saved.",
+              )
+            }
+            disabled={busy}
+          >
+            Save Feed Settings
+          </Button>
+        </div>
 
         {msg ? <p className={`hint ${msg.kind}`}>{msg.text}</p> : null}
       </div>

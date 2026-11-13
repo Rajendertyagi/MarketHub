@@ -34,11 +34,12 @@ def test_capability_owns_canonical_fno_indices() -> None:
     # registry. The picker may not be a separate, smaller list.
     assert OPTION_CHAIN_INDICES == tuple(FNO_INDEX_LABELS)
 
-    # Every established F&O index is offered, including NIFTYFPI and
-    # NIFTYNXT50 (both were missing from the previous hardcoded list).
-    for label in ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY",
-                  "NIFTYNXT50", "NIFTYFPI", "SENSEX", "BANKEX"):
-        assert label in OPTION_CHAIN_INDICES, label
+    # Supported F&O index scope (NSE index F&O + BSE SENSEX F&O only).
+    assert list(FNO_INDEX_LABELS) == [
+        "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50", "SENSEX",
+    ]
+    for label in ("NIFTYFPI", "BANKEX"):
+        assert label not in OPTION_CHAIN_INDICES, label
 
     out = index_option_underlyings()
     labels = [u["label"] for u in out]

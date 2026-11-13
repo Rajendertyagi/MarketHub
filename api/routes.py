@@ -146,34 +146,39 @@ def build_market_routes(
             async with market_broker.subscribe() as lines:
                 async for line in lines:
                     # Live updates must reflect the SAME selected quote as
-                    # the snapshot: re-select the canonical instrument.
-                    cid = None
+                    # the snapshot: re-select the canonical instrument so
+                    # REST, SSE, WebUI and MCP see the same value, freshness
+                    # verdict and provenance.
+                    data = None
                     try:
-                        cid = json.loads(line).get("data", {}).get(
-                            "canonical_id")
+                        parsed = json.loads(line)
+                        data = parsed.get("data") if isinstance(parsed, dict) else None
                     except Exception:
-                        cid = None
-                    if cid:
-                        payload = None
-                        if quote_service is not None:
-                            # The SAME selection, identity, provenance and
-                            # freshness verdict as the REST read (the
-                            # provider comes from the catalogue, never from
-                            # the shape of a storage key).
-                            payload = await quote_service.quote(cid)
-                        elif quote_coordinator is not None:
-                            from market.quote_coordinator import (
-                                selected_quote_to_dict,
-                            )
-                            sel = await quote_coordinator.get_canonical_quote(
-                                cid)
-                            if sel is not None:
-                                payload = selected_quote_to_dict(sel)
-                        if payload is not None:
-                            yield _encode({"type": "quote", "data": payload})
-                            continue
-                    # Broker lines are raw JSON envelopes; frame them as
-                    # `quote` SSE events so the WebUI listener fires.
+                        data = None
+                    ref = None
+                    if isinstance(data, dict):
+                        ref = (data.get("canonical_id")
+                               or data.get("instrument_token")
+                               or data.get("tradingsymbol"))
+                    payload = None
+                    if ref and quote_service is not None:
+                        # The SAME selection, identity, provenance and
+                        # freshness verdict as the REST read (the provider
+                        # comes from the catalogue, never from the shape of
+                        # a storage key).
+                        payload = await quote_service.quote(str(ref))
+                    elif ref and quote_coordinator is not None:
+                        from market.quote_coordinator import selected_quote_to_dict
+                        sel = await quote_coordinator.get_canonical_quote(str(ref))
+                        if sel is not None:
+                            payload = selected_quote_to_dict(sel)
+                    if payload is not None:
+                        yield _encode({"type": "quote", "data": payload})
+                        continue
+                    # Fall back to the raw broker envelope when no canonical
+                    # selection is available (e.g. no canonical read service,
+                    # or an instrument not yet resolvable). This preserves
+                    # delivery while canonical paths remain the primary source.
                     yield ServerSentEvent(data=line, event="quote").encode()
 
         return EventSourceResponse(
@@ -324,6 +329,12 @@ def build_market_routes(
             return _read
         return market_service.get_quote_now
 
+    # Conservative fixed limit: bounds CPU/DB/threadpool pressure from parallel
+    # scanner fan-out (frontend can issue 9 requests on mount) while keeping
+    # compatibility (requests wait rather than fail). Permit is held until the
+    # worker thread actually finishes, even if the client disconnects/cancels.
+    _scanner_sem = asyncio.Semaphore(2)
+
     def _scanner_engine():
         if index_catalog is None:
             return None
@@ -353,12 +364,41 @@ def build_market_routes(
         except ValueError:
             atm_range = 5
         option_type = (request.query_params.get("option_type") or "both").upper()
+        reader = _reader()
+        await _scanner_sem.acquire()
+        released = False
         try:
-            result = engine.scan(
-                name, universe, _reader(), limit=limit,
-                expiry=expiry, atm_range=atm_range, option_type=option_type)
+            loop = asyncio.get_running_loop()
+            fut = loop.run_in_executor(
+                None,
+                lambda: engine.scan(
+                    name, universe, reader, limit=limit,
+                    expiry=expiry, atm_range=atm_range, option_type=option_type),
+            )
+            try:
+                # Shield keeps the executor future alive if the request is
+                # cancelled; the worker thread cannot be interrupted, so the
+                # concurrency permit must remain held until it actually finishes.
+                result = await asyncio.shield(fut)
+            except asyncio.CancelledError:
+                def _release(_fut: Any) -> None:
+                    try:
+                        _fut.exception()
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                    finally:
+                        try:
+                            _scanner_sem.release()
+                        except Exception:
+                            pass
+                fut.add_done_callback(_release)
+                released = True
+                raise
         except ValueError as exc:
             return _json({"error": str(exc)}, 400)
+        finally:
+            if not released:
+                _scanner_sem.release()
         return _json({"status": "ok", **result.to_dict()})
 
     async def _breadth(request: Request) -> Response:
@@ -450,10 +490,10 @@ def build_market_routes(
         the map still renders (tiles simply mark fno=False).
         """
         try:
-            # Enumeration only — the contract counts are not needed here.
+            # Enumeration only — provider-neutral membership.
             rows = _fno_underlying_rows(
-                index_catalog, provider="upstox",
-                today=date.today().isoformat(), limit=2000)
+                index_catalog, provider=None,
+                today=date.today().isoformat(), limit=5000)
             return {str(r.get("symbol", "")).upper() for r in (rows or [])}
         except Exception:
             return set()

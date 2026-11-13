@@ -267,16 +267,13 @@ async def _on_market_quote_update(quote: Quote) -> None:
         _app_logger.warning("market quote failed canonical JSON encoding; dropped")
         return
     _market_event_broker.broadcast(line)
-    # Alert engine consumes the same canonical quote (never polls REST).
-    # Market-alert triggers publish canonical durable alert.triggered events
-    # through the shared event pipeline (SSE fan-out included).
+    # Alert engines consume the same canonical quote (never polls REST).
+    # Evaluate sequentially so quote callbacks cannot interleave engine state
+    # transitions or trigger ordering; per-engine isolation is preserved.
     try:
         await _alert_engine.evaluate(quote)
     except Exception:
         _app_logger.warning("alert evaluation failed", exc_info=True)
-    # B2: market_condition alert engine — same canonical quote, provider-
-    # neutral identity resolution, atomic trigger persistence. Error-isolated
-    # so a condition-engine failure never breaks the market-alert path.
     try:
         await _condition_alert_engine.evaluate(quote)
     except Exception:
@@ -456,7 +453,7 @@ _DEFAULT_FYERS_INSTRUMENTS = [
 ]
 
 
-def _persist_fyers_source_config(feed_cfg: dict[str, Any] | None = None) -> None:
+def _persist_fyers_source_config(feed_cfg: dict[str, Any] | None = None) -> bool:
     """Write (or remove, when None) the durable ``sources.fyers`` config.
 
     Secrets NEVER touch config.json — only the source shape (type/enabled/
@@ -465,6 +462,9 @@ def _persist_fyers_source_config(feed_cfg: dict[str, Any] | None = None) -> None
     SAFETY: writes are atomic (temp file + os.replace) so a failed write can
     never truncate or corrupt the live config. If the current config cannot be
     read we ABORT rather than overwriting a good config with an empty one.
+
+    Returns True only after a successful atomic replacement. Returns False when
+    the current config cannot be read. Write failures are raised.
     """
     import tempfile
     try:
@@ -474,7 +474,7 @@ def _persist_fyers_source_config(feed_cfg: dict[str, Any] | None = None) -> None
         # Never wipe a config we cannot read — leave the file untouched.
         _app_logger.warning(
             "fyers source config not persisted: could not read %s", CONFIG_PATH)
-        return
+        return False
     if not isinstance(_cfg, dict):
         _cfg = {}
     _sources = _cfg.get("sources")
@@ -503,23 +503,12 @@ def _persist_fyers_source_config(feed_cfg: dict[str, Any] | None = None) -> None
         except OSError:
             pass
         raise
+    return True
 
 
-def _ensure_fyers_source_registered() -> str | None:
-    """Register a Fyers source in the SourceManager at runtime (idempotent).
-
-    Returns the registered source name, or None if the feed cannot be built.
-    Reuses the existing source lifecycle — no second registry, no parallel
-    runtime, no duplicate feed manager.
-    """
-    global _fyers_source_name
-    # Already registered (name "fyers" or a FyersFeed instance)?
-    for _n, _s in _source_manager.enabled_sources.items():
-        if _n == "fyers" or getattr(_s, "__class__", None).__name__ == "FyersFeed":
-            _fyers_source_name = _n
-            return _n
-    # Build the durable-ish source config (secrets stay in the encrypted store).
-    _fy_cfg = dict(SOURCES_CFG.get("fyers") or {})
+def _build_fyers_runtime_cfg(base_cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build a Fyers source config with runtime-only dependencies injected."""
+    _fy_cfg = dict(base_cfg or SOURCES_CFG.get("fyers") or {})
     if not _fy_cfg.get("type"):
         _fy_cfg["type"] = "fyers_feed"
     _fy_cfg.setdefault("enabled", True)
@@ -528,17 +517,45 @@ def _ensure_fyers_source_registered() -> str | None:
     _fy_cfg["source_name"] = "fyers"
     # Inject runtime-only wiring (getter / store / redirect). Never secrets.
     _inject_fyers_source_config({"fyers": _fy_cfg})
+    _fy_cfg["instrument_catalog"] = _instrument_catalog
+    return _fy_cfg
+
+
+def _build_fyers_feed_instance(base_cfg: dict[str, Any] | None = None) -> tuple[Any, dict[str, Any]] | None:
+    """Build a FyersFeed instance and its runtime config, or None on failure."""
+    _fy_cfg = _build_fyers_runtime_cfg(base_cfg)
     try:
         from sources.registry import _create_fyers_feed
         _feed = _create_fyers_feed(_fy_cfg, market_service=_market_service)
     except Exception:
         _app_logger.exception("failed to build fyers feed at runtime")
         return None
-    _source_manager.register(_feed)
     try:
         _feed.on_state_change = _on_source_state_change
     except Exception:
         pass
+    return _feed, _fy_cfg
+
+
+def _ensure_fyers_source_registered(base_cfg: dict[str, Any] | None = None) -> str | None:
+    """Register a Fyers source in the SourceManager at runtime (idempotent).
+
+    Returns the registered source name, or None if the feed cannot be built.
+    Reuses the existing source lifecycle — no second registry, no parallel
+    runtime, no duplicate feed manager. If already registered, returns it
+    without rebuilding (use _apply_fyers_feed_config to reconfigure).
+    """
+    global _fyers_source_name
+    # Already registered (name "fyers" or a FyersFeed instance)?
+    for _n, _s in _source_manager.enabled_sources.items():
+        if _n == "fyers" or getattr(_s, "__class__", None).__name__ == "FyersFeed":
+            _fyers_source_name = _n
+            return _n
+    built = _build_fyers_feed_instance(base_cfg)
+    if built is None:
+        return None
+    _feed, _fy_cfg = built
+    _source_manager.register(_feed)
     # Persist a secret-free source config so a restart keeps it enabled.
     try:
         _persist_fyers_source_config(_fy_cfg)
@@ -547,6 +564,150 @@ def _ensure_fyers_source_registered() -> str | None:
     SOURCES_CFG["fyers"] = _fy_cfg
     _fyers_source_name = "fyers"
     return "fyers"
+
+
+async def _apply_fyers_feed_config(feed_cfg: dict[str, Any], *, start_if_enabled: bool = True) -> dict[str, Any]:
+    """Apply a Fyers feed config to the runtime source manager.
+
+    Ensures the registered FyersFeed instance and SourceManager config reflect
+    feed_cfg. Stops/awaits old task before replacement when running. Returns a
+    status dict with runtime_applied/registered/task_running/start results/error.
+    """
+    global _fyers_source_name
+    result: dict[str, Any] = {
+        "runtime_applied": False,
+        "registered": False,
+        "task_running": False,
+        "started": False,
+        "restarted": False,
+        "start_result": None,
+        "error": None,
+    }
+    enabled = bool(feed_cfg.get("enabled", True)) if isinstance(feed_cfg, dict) else True
+    name = "fyers"
+    # Find existing registration
+    existing_name = None
+    for _n, _s in _source_manager.enabled_sources.items():
+        if _n == "fyers" or getattr(_s, "__class__", None).__name__ == "FyersFeed":
+            existing_name = _n
+            name = _n
+            break
+
+    was_running = False
+    if existing_name is not None:
+        try:
+            was_running = bool(_source_manager.task_running(existing_name))
+        except Exception:
+            was_running = False
+
+    def _finalize_task_running() -> None:
+        try:
+            result["task_running"] = bool(_source_manager.task_running(name))
+        except Exception:
+            result["task_running"] = False
+
+    def _handle_start_result(start_result: Any, *, restart_intent: bool) -> None:
+        result["start_result"] = start_result
+        if start_result == "started":
+            result["started"] = not restart_intent
+            result["restarted"] = restart_intent
+            return
+        if start_result == "already_running":
+            # Task is running; do not claim a new start/restart occurred.
+            result["started"] = False
+            result["restarted"] = False
+            return
+        if start_result == "not_ready":
+            result["error"] = "not_ready: source prerequisites unmet (authentication/token required)"
+            return
+        if start_result == "unknown":
+            result["error"] = "unknown: source not registered/configured"
+            return
+        result["error"] = f"start_failed:unexpected_result:{start_result}"
+
+    try:
+        if existing_name is None:
+            # First-time registration/build
+            built = _build_fyers_feed_instance(feed_cfg)
+            if built is None:
+                result["error"] = "build_failed"
+                return result
+            _feed, _runtime_cfg = built
+            _source_manager.register(_feed)
+            # Ensure manager knows config for start/restart
+            try:
+                _source_manager.update_config(name, _runtime_cfg)
+            except Exception:
+                pass
+            _fyers_source_name = name
+            result["registered"] = True
+            result["runtime_applied"] = True
+            if enabled and start_if_enabled:
+                try:
+                    start_result = await _source_manager.start_source(name)
+                    _handle_start_result(start_result, restart_intent=False)
+                except Exception as exc:
+                    result["error"] = f"start_failed:{type(exc).__name__}"
+            _finalize_task_running()
+            # If start reported started but task not running, report accurately.
+            if result.get("started") and not result["task_running"]:
+                result["started"] = False
+                if not result.get("error"):
+                    result["error"] = "start_failed:task_not_running"
+            return result
+
+        # Existing registration: replace instance/config so runtime uses latest settings
+        built = _build_fyers_feed_instance(feed_cfg)
+        if built is None:
+            result["error"] = "build_failed"
+            result["registered"] = True
+            _finalize_task_running()
+            return result
+        _feed, _runtime_cfg = built
+        # replace_source stops+awaits if running, then swaps instance/config.
+        # On failure it preserves existing source/config and raises.
+        await _source_manager.replace_source(name, _feed, _runtime_cfg)
+        _fyers_source_name = name
+        result["registered"] = True
+        result["runtime_applied"] = True
+
+        if enabled and start_if_enabled:
+            restart_intent = was_running
+            try:
+                start_result = await _source_manager.start_source(name)
+                _handle_start_result(start_result, restart_intent=restart_intent)
+            except Exception as exc:
+                result["error"] = f"{'restart_failed' if restart_intent else 'start_failed'}:{type(exc).__name__}"
+        else:
+            # Disabled or not requested to start: ensure stopped if somehow running.
+            if _source_manager.task_running(name):
+                try:
+                    await _source_manager.stop_source(name)
+                except Exception:
+                    pass
+
+        _finalize_task_running()
+        # Correct started/restarted claims against actual task state.
+        if result.get("started") and not result["task_running"]:
+            result["started"] = False
+            if not result.get("error"):
+                result["error"] = "start_failed:task_not_running"
+        if result.get("restarted") and not result["task_running"]:
+            result["restarted"] = False
+            if not result.get("error"):
+                result["error"] = "restart_failed:task_not_running"
+        # Disabled feed: config applied with task not running is intentional, not an error.
+        if not enabled and result.get("runtime_applied") and not result["task_running"] and result.get("error") in (None,):
+            pass
+        return result
+    except Exception as exc:
+        result["error"] = f"apply_failed:{type(exc).__name__}"
+        try:
+            result["registered"] = name in (_source_manager.enabled_sources or {})
+        except Exception:
+            pass
+        _finalize_task_running()
+        return result
 
 
 async def _start_fyers_source() -> None:
@@ -913,6 +1074,16 @@ _x_twitter_service = _XTwitterService(
 FYERS_REDIRECT_URI = oauth_callback_url(
     get_public_base_url(_config), "fyers")
 _inject_fyers_source_config(SOURCES_CFG)
+for _name, _cfg in (SOURCES_CFG or {}).items():
+    if not isinstance(_cfg, dict):
+        continue
+    if _cfg.get("type") != "fyers_feed" and _name != "fyers":
+        continue
+    _cfg["instrument_catalog"] = _instrument_catalog
+    _cfg.setdefault("instrument_keys_ordered", [
+        i["key"] for i in _cfg.get("instruments", [])
+        if isinstance(i, dict) and i.get("key")
+    ])
 
 # ── Upstox durable session restore (before source-manager construction) ─────
 # Owned by app/auth/: UpstoxAuthService restores the persisted session into
@@ -1710,6 +1881,7 @@ app = Starlette(
         persist_source_fn=_persist_fyers_source_config,
         auth_service=(_auth_service.fyers if _auth_service is not None
                       else None),
+        apply_source_fn=_apply_fyers_feed_config,
     )
     + _build_x_routes(_x_twitter_service)
     + _build_app_settings_routes(str(CONFIG_PATH))

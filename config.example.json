@@ -17,7 +17,9 @@
           "exchange": "NSE",
           "tradingsymbol": "NIFTY50"
         }
-      ]
+      ],
+      "tbt_enabled": false,
+      "tbt_symbols": []
     }
   }
 }

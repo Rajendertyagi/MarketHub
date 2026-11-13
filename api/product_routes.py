@@ -1399,7 +1399,8 @@ def build_fyers_auth_routes(cred_store: Any,
                             register_source_fn: Any = None,
                             start_source_fn: Any = None,
                             persist_source_fn: Any = None,
-                            auth_service: Any = None) -> list[Route]:
+                            auth_service: Any = None,
+                            apply_source_fn: Any = None) -> list[Route]:
     """Fyers credential storage + OAuth login/callback (encrypted store).
 
     Thin composition: request/receive auth input -> call FyersAuthService
@@ -1650,6 +1651,10 @@ def build_fyers_auth_routes(cred_store: Any,
             if isinstance(_st, dict):
                 source_state = _st.get("state")
                 task_running = _st.get("task_running")
+        tbt_symbols = _fy_cfg.get("tbt_symbols") if configured else None
+        if not isinstance(tbt_symbols, list):
+            tbt_symbols = []
+        tbt_symbols = [s for s in tbt_symbols if isinstance(s, str) and s.strip()]
         return _json({
             "configured": configured,
             "enabled": bool(_fy_cfg.get("enabled")) if configured else False,
@@ -1657,6 +1662,8 @@ def build_fyers_auth_routes(cred_store: Any,
             "state": source_state,
             "task_running": task_running,
             "restart_required": configured and not registered,
+            "tbt_enabled": bool(_fy_cfg.get("tbt_enabled")) if configured else False,
+            "tbt_symbols": tbt_symbols,
         })
 
     async def _save_feed(request: Request) -> Response:
@@ -1664,62 +1671,246 @@ def build_fyers_auth_routes(cred_store: Any,
             body = await request.json()
         except Exception:
             return _json({"error": "invalid JSON body"}, 400)
-        enabled = bool(body.get("enabled", True))
+        if not isinstance(body, dict):
+            return _json({"error": "invalid JSON body"}, 400)
+
+        existing_cfg = (sources_cfg or {}).get("fyers") if isinstance((sources_cfg or {}).get("fyers"), dict) else {}
+
+        # Strict boolean validation when provided
+        if "enabled" in body and not isinstance(body.get("enabled"), bool):
+            return _json({"error": "enabled must be a boolean"}, 400)
+        if "tbt_enabled" in body and not isinstance(body.get("tbt_enabled"), bool):
+            return _json({"error": "tbt_enabled must be a boolean"}, 400)
+
+        enabled = body.get("enabled") if isinstance(body.get("enabled"), bool) else bool(existing_cfg.get("enabled", True))
+
         instruments = body.get("instruments")
         if not isinstance(instruments, list) or not instruments:
-            existing = (sources_cfg or {}).get("fyers", {}).get("instruments")
-            instruments = existing if isinstance(existing, list) and existing \
+            existing_instruments = existing_cfg.get("instruments")
+            instruments = existing_instruments if isinstance(existing_instruments, list) and existing_instruments \
                 else [
                     {"key": "NSE:NIFTY50-INDEX", "exchange": "NSE",
                      "tradingsymbol": "NIFTY 50"},
                     {"key": "NSE:BANKNIFTY-INDEX", "exchange": "NSE",
                      "tradingsymbol": "BANKNIFTY"},
                 ]
+
+        tbt_enabled = body.get("tbt_enabled") if isinstance(body.get("tbt_enabled"), bool) else bool(existing_cfg.get("tbt_enabled", False))
+        raw_tbt_symbols = body.get("tbt_symbols", existing_cfg.get("tbt_symbols", []))
+        if raw_tbt_symbols is None:
+            raw_tbt_symbols = []
+        if isinstance(raw_tbt_symbols, str):
+            # Accept comma/newline separated input for convenience.
+            parts = []
+            for chunk in raw_tbt_symbols.replace("\r", "\n").replace(",", "\n").split("\n"):
+                chunk = chunk.strip()
+                if chunk:
+                    parts.append(chunk)
+            raw_tbt_symbols = parts
+        if not isinstance(raw_tbt_symbols, list):
+            return _json({"error": "tbt_symbols must be a list of strings"}, 400)
+        tbt_symbols: list[str] = []
+        seen: set[str] = set()
+        for item in raw_tbt_symbols:
+            if not isinstance(item, str):
+                return _json({"error": "tbt_symbols must be a list of strings"}, 400)
+            sym = item.strip()
+            if not sym or sym in seen:
+                continue
+            if len(sym) > 128:
+                return _json({"error": "tbt_symbols entries too long"}, 400)
+            seen.add(sym)
+            tbt_symbols.append(sym)
+
         feed_cfg = {
             "type": "fyers_feed",
             "enabled": enabled,
             "mode": "full",
             "instruments": instruments,
+            "tbt_enabled": tbt_enabled,
+            "tbt_symbols": tbt_symbols,
         }
+
+        persisted = False
+        persist_error = None
         if sources_cfg is not None:
             sources_cfg["fyers"] = feed_cfg
         if persist_source_fn is not None:
             try:
-                persist_source_fn(feed_cfg)
-            except Exception:
+                persist_result = persist_source_fn(feed_cfg)
+                persisted = bool(persist_result) if isinstance(persist_result, bool) else True
+                if not persisted:
+                    persist_error = "persist_failed"
+            except Exception as exc:
+                persisted = False
+                persist_error = type(exc).__name__
                 logger.warning("failed to persist fyers source config")
+        else:
+            # No persistence callback: in-memory application only, not durable.
+            persisted = False
+
+        runtime_applied = False
+        registered = False
+        task_running = False
+        runtime_error = None
+        started = False
+        restarted = False
+        start_result = None
+
+        if apply_source_fn is not None:
+            try:
+                apply_result = await apply_source_fn(feed_cfg, start_if_enabled=enabled)
+                if isinstance(apply_result, dict):
+                    runtime_applied = bool(apply_result.get("runtime_applied"))
+                    registered = bool(apply_result.get("registered"))
+                    task_running = bool(apply_result.get("task_running"))
+                    runtime_error = apply_result.get("error")
+                    started = bool(apply_result.get("started"))
+                    restarted = bool(apply_result.get("restarted"))
+                    start_result = apply_result.get("start_result")
+                else:
+                    runtime_applied = bool(apply_result)
+                    registered = "fyers" in (source_manager.enabled_sources or {}) if source_manager is not None else False
+                    task_running = bool(source_manager.task_running("fyers")) if source_manager is not None else False
+            except Exception as exc:
+                runtime_error = f"apply_failed:{type(exc).__name__}"
+                logger.exception("fyers feed runtime apply failed")
+                registered = "fyers" in (source_manager.enabled_sources or {}) if source_manager is not None else False
+                try:
+                    task_running = bool(source_manager.task_running("fyers")) if source_manager is not None else False
+                except Exception:
+                    task_running = False
+            result_runtime_config_applied = runtime_applied
+        else:
+            # Fallback (legacy): best-effort runtime control without guaranteed
+            # reconfiguration of an existing source instance.
+            runtime_config_applied = False
+            try:
+                def _is_registered() -> bool:
+                    return "fyers" in (source_manager.enabled_sources or {}) if source_manager is not None else False
+
+                def _is_running() -> bool:
+                    if source_manager is None:
+                        return False
+                    try:
+                        return bool(source_manager.task_running("fyers"))
+                    except Exception:
+                        return False
+
+                if enabled:
+                    was_running = _is_running()
+                    if was_running and source_manager is not None:
+                        restart_ok = await source_manager.restart_source("fyers")
+                        task_running = _is_running()
+                        restarted = bool(restart_ok) and task_running
+                        if not restarted:
+                            runtime_error = "restart_failed:task_not_running" if restart_ok else "restart_failed"
+                        # Legacy path restarts same instance/config; cannot guarantee new config applied.
+                        runtime_applied = False
+                        runtime_config_applied = False
+                    else:
+                        # Start path: prefer start_source_fn if provided (it may register+start),
+                        # otherwise use SourceManager.start_source directly. Do not invoke both.
+                        if start_source_fn is not None:
+                            before_running = _is_running()
+                            cb_result = await start_source_fn()
+                            task_running = _is_running()
+                            if isinstance(cb_result, str):
+                                start_result = cb_result
+                                if cb_result == "started":
+                                    started = (not before_running) and task_running
+                                    if not started and not task_running:
+                                        runtime_error = "start_failed:task_not_running"
+                                elif cb_result == "already_running":
+                                    started = False
+                                elif cb_result in ("not_ready", "unknown"):
+                                    started = False
+                                    runtime_error = f"{cb_result}: source not started"
+                                else:
+                                    started = (not before_running) and task_running
+                                    if not started and not task_running:
+                                        runtime_error = f"start_failed:unexpected_result:{cb_result}"
+                            else:
+                                # None/unknown return: infer from actual task liveness.
+                                started = (not before_running) and task_running
+                                if not started and not task_running:
+                                    runtime_error = "start_failed:task_not_running"
+                        elif source_manager is not None:
+                            before_running = _is_running()
+                            sm_result = await source_manager.start_source("fyers")
+                            start_result = sm_result
+                            task_running = _is_running()
+                            if sm_result == "started":
+                                started = (not before_running) and task_running
+                                if not started and not task_running:
+                                    runtime_error = "start_failed:task_not_running"
+                            elif sm_result == "already_running":
+                                started = False
+                            elif sm_result in ("not_ready", "unknown"):
+                                started = False
+                                runtime_error = f"{sm_result}: source not started"
+                            else:
+                                started = (not before_running) and task_running
+                                if not started and not task_running:
+                                    runtime_error = f"start_failed:unexpected_result:{sm_result}"
+                        else:
+                            runtime_error = "start_unavailable"
+                        # Legacy path cannot guarantee new config applied to existing/new instance.
+                        runtime_applied = False
+                        runtime_config_applied = False
+                else:
+                    # Disabled: stop and verify task is actually stopped.
+                    if source_manager is not None and _is_registered():
+                        stop_ok = await source_manager.stop_source("fyers")
+                        task_running = _is_running()
+                        if not stop_ok or task_running:
+                            runtime_error = "stop_failed:task_running" if task_running else "stop_failed"
+                            runtime_applied = False
+                        else:
+                            # Runtime control (stop) succeeded; config application to instance not guaranteed/needed.
+                            runtime_applied = False
+                    else:
+                        task_running = _is_running()
+                        runtime_applied = False
+                    runtime_config_applied = False
+            except Exception as exc:
+                runtime_error = f"runtime_failed:{type(exc).__name__}"
+            registered = "fyers" in (source_manager.enabled_sources or {}) if source_manager is not None else False
+            try:
+                task_running = bool(source_manager.task_running("fyers")) if source_manager is not None else False
+            except Exception:
+                task_running = False
+            result_runtime_config_applied = runtime_config_applied
+
         result: dict[str, Any] = {
             "configured": True,
             "enabled": enabled,
-            "registered": False,
+            "tbt_enabled": tbt_enabled,
+            "tbt_symbols": tbt_symbols,
+            "persisted": persisted,
+            "runtime_applied": runtime_applied,
+            "runtime_config_applied": result_runtime_config_applied,
+            "registered": registered,
+            "task_running": task_running,
+            "started": started,
+            "restarted": restarted,
         }
+        if start_result is not None:
+            result["start_result"] = start_result
+        if persist_error:
+            result["persist_error"] = persist_error
+        if runtime_error:
+            result["runtime_error"] = runtime_error
+            result["error"] = "runtime_apply_failed"
+        # Back-compat hint: restart_required only when not registered/applied as expected
         if enabled:
-            # Register + start at runtime (no server restart required).
-            if start_source_fn is not None:
-                try:
-                    await start_source_fn()
-                except Exception:
-                    logger.exception("fyers feed start failed")
-            result["registered"] = (
-                "fyers" in (source_manager.enabled_sources or {})
-                if source_manager is not None else False)
-            result["restart_required"] = not result["registered"]
+            if apply_source_fn is not None:
+                result["restart_required"] = not (registered and runtime_applied and runtime_error is None)
+            else:
+                # Legacy fallback cannot guarantee config applied to runtime instance.
+                result["restart_required"] = True if runtime_error is None else True
         else:
-            # Disable: stop the running source; keep the (stopped) registration
-            # and remove the durable config so a restart won't auto-start it.
-            if source_manager is not None and \
-                    "fyers" in (source_manager.enabled_sources or {}):
-                try:
-                    await source_manager.stop_source("fyers")
-                except Exception:
-                    logger.exception("fyers feed stop failed")
-            if sources_cfg is not None:
-                sources_cfg.pop("fyers", None)
-            if persist_source_fn is not None:
-                try:
-                    persist_source_fn(None)
-                except Exception:
-                    logger.warning("failed to remove fyers source config")
+            result["restart_required"] = False
         return _json(result)
 
     async def _delete_feed(request: Request) -> Response:

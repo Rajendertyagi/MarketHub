@@ -12,7 +12,7 @@ import sqlite3
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 25
 
 
 def get_schema_version(conn: sqlite3.Connection) -> int:

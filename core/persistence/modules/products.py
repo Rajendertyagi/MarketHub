@@ -184,6 +184,13 @@ def create_instrument_read_indexes(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_instr_underlying
         ON instruments(underlying, provider, segment)
     """)
+    # Provider-native API symbol lookup (v25): FYERS feed/TBT keys resolve by
+    # provider_symbol (instrument_token holds fyToken). Without this index the
+    # lookup scans the provider partition/full table on large catalogs.
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_instr_provider_symbol
+        ON instruments(provider, provider_symbol, instrument_token)
+    """)
 
 
 def migrate_v20_to_v21(conn: sqlite3.Connection) -> None:
@@ -192,6 +199,14 @@ def migrate_v20_to_v21(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA user_version = 21")
     conn.commit()
     logger.info("migrated v20->v21: added instrument read indexes")
+
+
+def migrate_v24_to_v25(conn: sqlite3.Connection) -> None:
+    """Add provider_symbol lookup index for FYERS API-symbol resolution (idempotent)."""
+    create_instrument_read_indexes(conn)
+    conn.execute("PRAGMA user_version = 25")
+    conn.commit()
+    logger.info("migrated v24->v25: added provider_symbol instrument index")
 
 
 def create_product_tables(conn: sqlite3.Connection) -> None:
@@ -376,6 +391,34 @@ def replace_provider_instruments_segmented_at(
         conn.close()
 
 
+def _apply_segmented_replace(
+    conn: sqlite3.Connection,
+    provider: str,
+    records: list[dict[str, Any]],
+    segments: Sequence[str],
+) -> int:
+    """Apply segment-scoped replace on an active transaction (no commit)."""
+    now = _now()
+    segs = [str(s) for s in segments if s]
+    if not segs:
+        return 0
+    placeholders = ", ".join("?" for _ in segs)
+    rows = []
+    for r in records:
+        if str(r.get("segment") or "") not in segs:
+            continue
+        row = _instrument_row(provider, r, now)
+        if row is not None:
+            rows.append(row)
+    conn.execute(
+        f"DELETE FROM instruments WHERE provider = ? "
+        f"AND (segment IN ({placeholders}) OR segment IS NULL)",
+        (provider, *segs),
+    )
+    _insert_instrument_rows(conn, rows)
+    return len(rows)
+
+
 def replace_provider_instruments_segmented(
     conn: sqlite3.Connection,
     provider: str,
@@ -393,28 +436,11 @@ def replace_provider_instruments_segmented(
     segments: they carry no segment ownership and would otherwise be
     orphaned by a segment-scoped delete.
     """
-    now = _now()
-    segs = [str(s) for s in segments if s]
-    if not segs:
-        return 0
-    placeholders = ", ".join("?" for _ in segs)
-    rows = []
-    for r in records:
-        if str(r.get("segment") or "") not in segs:
-            continue
-        row = _instrument_row(provider, r, now)
-        if row is not None:
-            rows.append(row)
     try:
         conn.execute("BEGIN IMMEDIATE")
-        conn.execute(
-            f"DELETE FROM instruments WHERE provider = ? "
-            f"AND (segment IN ({placeholders}) OR segment IS NULL)",
-            (provider, *segs),
-        )
-        _insert_instrument_rows(conn, rows)
+        count = _apply_segmented_replace(conn, provider, records, segments)
         conn.commit()
-        return len(rows)
+        return count
     except Exception:
         conn.rollback()
         raise
@@ -422,6 +448,75 @@ def replace_provider_instruments_segmented(
 
 # Kept outside the writers so the scope is validated once, before any SQL.
 _SCOPE_TEMP_TABLE = "_instruments_scope_tokens"
+
+
+def _apply_scoped_replace(
+    conn: sqlite3.Connection,
+    provider: str,
+    records: list[dict[str, Any]],
+    *,
+    segment: str,
+    scope_column: str,
+    scope_values: Sequence[str],
+) -> int:
+    """Apply predicate-scoped replace on an active transaction (no commit)."""
+    if scope_column not in _INSTRUMENT_COLUMNS:
+        raise ValueError(f"invalid scope column: {scope_column!r}")
+    if not segment:
+        raise ValueError("segment is required")
+    values = [str(v) for v in scope_values if str(v)]
+    if not values:
+        raise ValueError("scope_values must be non-empty")
+    now = _now()
+    rows: list[tuple[Any, ...]] = []
+    for r in records:
+        if str(r.get("segment") or "") != segment:
+            raise ValueError(
+                f"record outside scoped segment {segment!r}: "
+                f"{r.get('segment')!r}")
+        row = _instrument_row(provider, r, now)
+        if row is not None:
+            rows.append(row)
+    if not rows:
+        raise ValueError("scoped replace received no valid records")
+
+    placeholders = ", ".join("?" for _ in values)
+    scope_pred = f"segment = ? AND {scope_column} IN ({placeholders})"
+    scope_args: tuple[Any, ...] = (segment, *values)
+    conn.execute(
+        f"CREATE TEMP TABLE IF NOT EXISTS {_SCOPE_TEMP_TABLE} "
+        "(instrument_token TEXT PRIMARY KEY)")
+    conn.execute(f"DELETE FROM {_SCOPE_TEMP_TABLE}")
+    try:
+        conn.executemany(
+            f"INSERT INTO {_SCOPE_TEMP_TABLE} (instrument_token) "
+            "VALUES (?)",
+            [(str(row[1]),) for row in rows],
+        )
+    except sqlite3.IntegrityError as exc:
+        raise ScopedReplaceConflict(
+            "duplicate instrument_token in scoped batch") from exc
+    conflict = conn.execute(
+        f"SELECT i.instrument_token FROM instruments i "
+        f"JOIN {_SCOPE_TEMP_TABLE} t "
+        "ON t.instrument_token = i.instrument_token "
+        "WHERE i.provider = ? AND ("
+        "i.segment IS NULL OR i.segment <> ? OR "
+        f"i.{scope_column} IS NULL OR "
+        f"i.{scope_column} NOT IN ({placeholders})) LIMIT 1",
+        (provider, segment, *values),
+    ).fetchone()
+    if conflict is not None:
+        raise ScopedReplaceConflict(
+            f"{provider}: token {conflict[0]} already exists outside "
+            f"{segment}/{scope_column}={values}")
+    conn.execute(
+        f"DELETE FROM instruments WHERE provider = ? AND {scope_pred}",
+        (provider, *scope_args),
+    )
+    _insert_instrument_rows(conn, rows)
+    conn.execute(f"DELETE FROM {_SCOPE_TEMP_TABLE}")
+    return len(rows)
 
 
 def replace_provider_instruments_scoped_at(
@@ -475,69 +570,87 @@ def replace_provider_instruments_scoped(
       The transaction rolls back and :class:`ScopedReplaceConflict` is
       raised, leaving the catalogue untouched.
     """
-    if scope_column not in _INSTRUMENT_COLUMNS:
-        raise ValueError(f"invalid scope column: {scope_column!r}")
-    if not segment:
-        raise ValueError("segment is required")
-    values = [str(v) for v in scope_values if str(v)]
-    if not values:
-        raise ValueError("scope_values must be non-empty")
-    now = _now()
-    rows: list[tuple[Any, ...]] = []
-    for r in records:
-        if str(r.get("segment") or "") != segment:
-            raise ValueError(
-                f"record outside scoped segment {segment!r}: "
-                f"{r.get('segment')!r}")
-        row = _instrument_row(provider, r, now)
-        if row is not None:
-            rows.append(row)
-    if not rows:
-        raise ValueError("scoped replace received no valid records")
-
-    placeholders = ", ".join("?" for _ in values)
-    scope_pred = f"segment = ? AND {scope_column} IN ({placeholders})"
-    scope_args: tuple[Any, ...] = (segment, *values)
     try:
         conn.execute("BEGIN IMMEDIATE")
-        conn.execute(
-            f"CREATE TEMP TABLE IF NOT EXISTS {_SCOPE_TEMP_TABLE} "
-            "(instrument_token TEXT PRIMARY KEY)")
-        conn.execute(f"DELETE FROM {_SCOPE_TEMP_TABLE}")
-        try:
-            conn.executemany(
-                f"INSERT INTO {_SCOPE_TEMP_TABLE} (instrument_token) "
-                "VALUES (?)",
-                [(str(row[1]),) for row in rows],
-            )
-        except sqlite3.IntegrityError as exc:
-            raise ScopedReplaceConflict(
-                "duplicate instrument_token in scoped batch") from exc
-        conflict = conn.execute(
-            f"SELECT i.instrument_token FROM instruments i "
-            f"JOIN {_SCOPE_TEMP_TABLE} t "
-            "ON t.instrument_token = i.instrument_token "
-            "WHERE i.provider = ? AND ("
-            "i.segment IS NULL OR i.segment <> ? OR "
-            f"i.{scope_column} IS NULL OR "
-            f"i.{scope_column} NOT IN ({placeholders})) LIMIT 1",
-            (provider, segment, *values),
-        ).fetchone()
-        if conflict is not None:
-            raise ScopedReplaceConflict(
-                f"{provider}: token {conflict[0]} already exists outside "
-                f"{segment}/{scope_column}={values}")
-        conn.execute(
-            f"DELETE FROM instruments WHERE provider = ? AND {scope_pred}",
-            (provider, *scope_args),
-        )
-        _insert_instrument_rows(conn, rows)
-        conn.execute(f"DELETE FROM {_SCOPE_TEMP_TABLE}")
+        count = _apply_scoped_replace(
+            conn, provider, records, segment=segment,
+            scope_column=scope_column, scope_values=scope_values)
         conn.commit()
-        return len(rows)
+        return count
     except Exception:
         conn.rollback()
         raise
+
+
+def replace_provider_instruments_upstox_atomic_at(
+    db_path: str,
+    provider: str,
+    *,
+    enabled_segments: Sequence[str],
+    kept_records: list[dict[str, Any]],
+    write_scopes: dict[str, Any] | None = None,
+) -> tuple[int, set[str]]:
+    """Atomically replace all enabled Upstox segments in one transaction.
+
+    Applies predicate-scoped segment writes (e.g. BSE_FO SENSEX-only) and
+    segment-scoped writes for remaining enabled segments within a single
+    connection/transaction. Any failure rolls back the entire refresh.
+    """
+    scopes = write_scopes or {}
+    enabled = [str(s) for s in enabled_segments if s]
+    conn = open_instrument_connection(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        written = 0
+        covered_segments: set[str] = set()
+
+        for seg, scope in scopes.items():
+            if seg not in enabled:
+                continue
+            seg_rows = [r for r in kept_records if str(r.get("segment") or "") == seg]
+            if not seg_rows:
+                # Preserve existing scoped rows when no in-scope rows survived.
+                continue
+            written += _apply_scoped_replace(
+                conn, provider, seg_rows,
+                segment=scope.segment, scope_column=scope.column,
+                scope_values=scope.values)
+            covered_segments.add(seg)
+
+        other_segments = [s for s in enabled if s not in scopes]
+        if other_segments:
+            other_rows = [r for r in kept_records
+                          if str(r.get("segment") or "") in set(other_segments)]
+            written += _apply_segmented_replace(
+                conn, provider, other_rows, other_segments)
+            covered_segments.update(
+                s for s in other_segments
+                if any(str(r.get("segment") or "") == s for r in other_rows))
+        elif not scopes:
+            # Backward-compatible full replace for provider when no scopes/other split.
+            now = _now()
+            rows = [row for r in kept_records if (row := _instrument_row(provider, r, now))]
+            conn.execute("DELETE FROM instruments WHERE provider = ?", (provider,))
+            _insert_instrument_rows(conn, rows)
+            written = len(rows)
+            covered_segments.update(
+                str(r.get("segment") or "") for r in kept_records if r.get("segment"))
+
+        conn.commit()
+        return written, covered_segments
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# Supported product discovery excludes out-of-scope BSE derivatives that may
+# remain in storage for provider diagnostics/scoped-sync preservation.
+# Approved BSE F&O scope: SENSEX only (authoritative metadata).
+_SUPPORTED_PRODUCT_SQL = (
+    "(segment <> 'BSE_FO' OR segment IS NULL OR UPPER(COALESCE(underlying, '')) = 'SENSEX')"
+)
 
 
 def search_instruments(
@@ -572,7 +685,8 @@ def search_instruments(
     scope: list[str] = [instrument_type] if instrument_type else list(types or ())
     if ranked and not scope:
         scope = ["INDEX", "EQUITY", "ETF"]
-    sql = f"SELECT {', '.join(_INSTRUMENT_COLUMNS)} FROM instruments WHERE 1=1"
+    sql = (f"SELECT {', '.join(_INSTRUMENT_COLUMNS)} FROM instruments "
+           f"WHERE {_SUPPORTED_PRODUCT_SQL}")
     args: list[Any] = []
     if q:
         match = "tradingsymbol LIKE ? OR name LIKE ?"
@@ -625,8 +739,10 @@ def search_instruments(
                 " LENGTH(tradingsymbol), tradingsymbol")
     else:
         sql += " ORDER BY tradingsymbol"
-    sql += " LIMIT ?"
-    args.append(max(1, min(int(limit), 50 if ranked else 100)))
+    lim = int(limit)
+    if lim > 0:
+        sql += " LIMIT ?"
+        args.append(max(1, min(lim, 50 if ranked else 100)))
     conn.row_factory = sqlite3.Row
     try:
         return [dict(r) for r in conn.execute(sql, args)]
@@ -655,7 +771,7 @@ def find_by_exact_symbol(
         return []
     sql = (f"SELECT {', '.join(_INSTRUMENT_COLUMNS)} FROM instruments "
            "WHERE (UPPER(tradingsymbol) = ? OR UPPER(underlying) = ?) "
-           "AND instrument_type IS NOT NULL")
+           f"AND instrument_type IS NOT NULL AND {_SUPPORTED_PRODUCT_SQL}")
     args: list[Any] = [want, want]
     if provider:
         sql += " AND provider = ?"
@@ -695,7 +811,7 @@ def derivative_expiries(
     """
     sql = ("SELECT DISTINCT expiry FROM instruments "
            "WHERE underlying = ? AND instrument_type = ? "
-           "AND expiry IS NOT NULL")
+           f"AND expiry IS NOT NULL AND {_SUPPORTED_PRODUCT_SQL}")
     args: list[Any] = [underlying, instrument_type]
     if exchange:
         sql += " AND exchange = ?"
@@ -724,7 +840,7 @@ def option_strikes(
     """
     sql = (f"SELECT {', '.join(_INSTRUMENT_COLUMNS)} FROM instruments "
            "WHERE underlying = ? AND expiry = ? "
-           "AND instrument_type = 'OPTION'")
+           f"AND instrument_type = 'OPTION' AND {_SUPPORTED_PRODUCT_SQL}")
     args: list[Any] = [underlying, expiry]
     if exchange:
         sql += " AND exchange = ?"
@@ -784,6 +900,58 @@ def get_instrument(
         return dict(row) if row else None
     finally:
         conn.row_factory = None
+
+
+def get_instrument_by_provider_symbol(
+    conn: sqlite3.Connection,
+    provider_symbol: str,
+    *,
+    provider: str | None = None,
+) -> dict[str, Any] | None:
+    """Find a row by its provider-native API symbol (provider_symbol).
+
+    FYERS feed/TBT keys are the API symbol stored in provider_symbol, while
+    instrument_token holds the fyToken; callers resolving a provider key must
+    be able to match either.
+    """
+    key = (provider_symbol or "").strip()
+    if not key:
+        return None
+    sql = (f"SELECT {', '.join(_INSTRUMENT_COLUMNS)} FROM instruments "
+           "WHERE provider_symbol = ?")
+    args: list[Any] = [key]
+    if provider:
+        sql += " AND provider = ?"
+        args.append(provider)
+    sql += " ORDER BY provider, instrument_token LIMIT 1"
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(sql, args).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.row_factory = None
+
+
+def resolve_instrument_key(
+    conn: sqlite3.Connection, instrument_key: str,
+) -> dict[str, Any] | None:
+    """Resolve a provider-native key using one connection.
+
+    Precedence (preserved): upstox instrument_token, fyers instrument_token,
+    fyers provider_symbol (exact, provider-scoped). Search fallback is handled
+    by the caller to preserve existing behavior.
+    """
+    key = str(instrument_key or "")
+    if not key:
+        return None
+    for provider in ("upstox", "fyers"):
+        row = get_instrument(conn, provider, key)
+        if row:
+            return row
+    row = get_instrument_by_provider_symbol(conn, key, provider="fyers")
+    if row:
+        return row
+    return None
 
 
 def instruments_sync_state(conn: sqlite3.Connection) -> list[dict[str, Any]]:
@@ -1008,6 +1176,133 @@ def record_trigger(conn: sqlite3.Connection, alert_id: int) -> None:
     conn.commit()
 
 
+def commit_market_alert_trigger(
+    conn: sqlite3.Connection,
+    *,
+    alert_id: int,
+    exchange: str | None,
+    instrument_token: str | None,
+    tradingsymbol: str | None,
+    field: str | None,
+    operator: str | None,
+    threshold: float | None,
+    observed_value: float | None,
+    provider: str | None,
+    triggered_at: str,
+) -> int | None:
+    """Atomically commit a market-alert trigger (state + history) once.
+
+    Updates ``market_alerts`` to triggered only when the rule is still
+    enabled and inactive, then inserts one ``alert_trigger_history`` row in
+    the same transaction. Returns the history row id on commit, or ``None``
+    when the alert was not triggerable (already triggered/disabled/deleted/
+    raced). Any failure rolls back the whole transaction.
+    """
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        cur = conn.execute(
+            "UPDATE market_alerts SET state = 'triggered', triggered_at = ? "
+            "WHERE id = ? AND enabled = 1 AND state = 'inactive'",
+            (triggered_at, alert_id),
+        )
+        if cur.rowcount != 1:
+            conn.rollback()
+            return None
+        hist = conn.execute(
+            "INSERT INTO alert_trigger_history "
+            "(alert_id, exchange, instrument_token, tradingsymbol, field, "
+            " operator, threshold, observed_value, provider, triggered_at, "
+            " created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (alert_id, exchange, instrument_token, tradingsymbol, field,
+             operator, threshold if threshold is None else float(threshold),
+             observed_value if observed_value is None else float(observed_value),
+             provider, triggered_at, _now()),
+        )
+        conn.commit()
+        return int(hist.lastrowid)
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def commit_market_alert_trigger_with_event(
+    conn: sqlite3.Connection,
+    *,
+    alert_id: int,
+    exchange: str | None,
+    instrument_token: str | None,
+    tradingsymbol: str | None,
+    field: str | None,
+    operator: str | None,
+    threshold: float | None,
+    observed_value: float | None,
+    provider: str | None,
+    triggered_at: str,
+    event_id: str,
+    event_type: str,
+    event_source: str,
+    event_timestamp: str,
+    event_data: dict[str, Any],
+    event_routing: dict[str, Any] | None,
+    materialize_fn,
+) -> tuple[int, int] | None:
+    """Atomically commit market-alert trigger, history, and canonical event.
+
+    Performs in ONE ``BEGIN IMMEDIATE`` transaction:
+      1. conditional market_alerts state transition (inactive+enabled -> triggered)
+      2. alert_trigger_history insert
+      3. persistent_events insert
+      4. consumer materialization for the event
+
+    Returns ``(history_id, event_sequence)`` on commit, or ``None`` when the
+    alert was not triggerable (already triggered/disabled/deleted/raced).
+    Any failure rolls back everything.
+    """
+    import json
+
+    data_json = json.dumps(event_data, ensure_ascii=False, allow_nan=False)
+    routing_json = (
+        json.dumps(event_routing, ensure_ascii=False, allow_nan=False)
+        if event_routing is not None else None
+    )
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        cur = conn.execute(
+            "UPDATE market_alerts SET state = 'triggered', triggered_at = ? "
+            "WHERE id = ? AND enabled = 1 AND state = 'inactive'",
+            (triggered_at, alert_id),
+        )
+        if cur.rowcount != 1:
+            conn.rollback()
+            return None
+        hist = conn.execute(
+            "INSERT INTO alert_trigger_history "
+            "(alert_id, exchange, instrument_token, tradingsymbol, field, "
+            " operator, threshold, observed_value, provider, triggered_at, "
+            " created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (alert_id, exchange, instrument_token, tradingsymbol, field,
+             operator, threshold if threshold is None else float(threshold),
+             observed_value if observed_value is None else float(observed_value),
+             provider, triggered_at, _now()),
+        )
+        conn.execute(
+            "INSERT INTO persistent_events "
+            "(id, type, source, timestamp, data, routing, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (event_id, event_type, event_source, event_timestamp,
+             data_json, routing_json, event_timestamp),
+        )
+        seq = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        materialize_fn(conn, event_id, seq, event_routing)
+        conn.commit()
+        return int(hist.lastrowid), int(seq)
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def load_enabled_alerts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     try:
@@ -1141,7 +1436,7 @@ def option_underlyings(
 ) -> list[dict[str, Any]]:
     """Distinct option underlyings, optionally filtered by name/symbol."""
     sql = ("SELECT DISTINCT underlying FROM instruments "
-           "WHERE underlying IS NOT NULL")
+           f"WHERE underlying IS NOT NULL AND {_SUPPORTED_PRODUCT_SQL}")
     args: list[Any] = []
     if q:
         sql += " AND (underlying LIKE ? OR tradingsymbol LIKE ?)"
@@ -1163,7 +1458,7 @@ def option_expiries(
     try:
         rows = conn.execute(
             "SELECT DISTINCT expiry FROM instruments "
-            "WHERE underlying = ? AND expiry IS NOT NULL "
+            f"WHERE underlying = ? AND expiry IS NOT NULL AND {_SUPPORTED_PRODUCT_SQL} "
             "ORDER BY expiry", (underlying,))
         return [r["expiry"] for r in rows]
     finally:
@@ -1175,31 +1470,66 @@ def option_expiries(
 # ---------------------------------------------------------------------------
 
 def fno_underlying_rows(
-    conn: sqlite3.Connection, *, provider: str, today: str, limit: int = 2000,
+    conn: sqlite3.Connection, *, provider: str | None = None, today: str,
+    limit: int = 2000,
 ) -> list[dict[str, Any]]:
     """ENUMERATION read model: F&O stock underlyings, no contract counts.
 
-    Identical membership to :func:`fno_universe` but without the per-underlying
-    ``count(DISTINCT ...)`` aggregation — for callers that only need the
-    universe (navigation, coverage, universe resolution). Count consumers must
-    keep using :func:`fno_universe`.
+    When ``provider`` is None, membership is provider-neutral across all
+    providers (union of live NSE_FO contracts) and each underlying appears once
+    by canonical underlying identity. A representative equity row is chosen
+    deterministically (preferring Upstox, then Fyers) for display/routing hints.
+    When ``provider`` is set, membership is scoped to that provider.
     """
-    sql = """
-        SELECT DISTINCT f.underlying AS symbol,
-               eq.name AS name,
-               eq.instrument_token AS equity_key
-        FROM instruments f
-        JOIN instruments eq
-             ON eq.provider = f.provider
-             AND eq.segment = 'NSE_EQ'
-             AND eq.underlying = f.underlying
-        WHERE f.provider = ?
-          AND f.segment = 'NSE_FO'
-          AND f.instrument_type IN ('FUTURE', 'OPTION')
-          AND f.expiry >= ?
-        ORDER BY f.underlying LIMIT ?
-    """
-    args: list[Any] = [provider, today, max(1, min(int(limit), 1000))]
+    lim = max(1, min(int(limit), 5000))
+    if provider is not None:
+        sql = """
+            SELECT DISTINCT f.underlying AS symbol,
+                   eq.name AS name,
+                   eq.instrument_token AS equity_key
+            FROM instruments f
+            JOIN instruments eq
+                 ON eq.provider = f.provider
+                 AND eq.segment = 'NSE_EQ'
+                 AND eq.underlying = f.underlying
+            WHERE f.provider = ?
+              AND f.segment = 'NSE_FO'
+              AND f.instrument_type IN ('FUTURE', 'OPTION')
+              AND f.expiry >= ?
+            ORDER BY f.underlying LIMIT ?
+        """
+        args: list[Any] = [provider, today, lim]
+    else:
+        sql = """
+            WITH live AS (
+                SELECT DISTINCT underlying
+                FROM instruments
+                WHERE segment = 'NSE_FO'
+                  AND instrument_type IN ('FUTURE', 'OPTION')
+                  AND expiry >= ?
+                  AND underlying IS NOT NULL AND underlying != ''
+            ),
+            eq_ranked AS (
+                SELECT eq.underlying AS symbol,
+                       eq.name AS name,
+                       eq.instrument_token AS equity_key,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY eq.underlying
+                           ORDER BY CASE eq.provider
+                               WHEN 'upstox' THEN 0
+                               WHEN 'fyers' THEN 1
+                               ELSE 2 END, eq.provider, eq.instrument_token
+                       ) AS rn
+                FROM instruments eq
+                WHERE eq.segment = 'NSE_EQ'
+                  AND eq.underlying IN (SELECT underlying FROM live)
+            )
+            SELECT symbol, name, equity_key
+            FROM eq_ranked
+            WHERE rn = 1
+            ORDER BY symbol LIMIT ?
+        """
+        args = [today, lim]
     conn.row_factory = sqlite3.Row
     try:
         return [dict(r) for r in conn.execute(sql, args)]
@@ -1208,61 +1538,110 @@ def fno_underlying_rows(
 
 
 def fno_universe(
-    conn: sqlite3.Connection, *, provider: str, today: str,
+    conn: sqlite3.Connection, *, provider: str | None = None, today: str,
     q: str | None = None, limit: int = 500,
 ) -> list[dict[str, Any]]:
     """Equity underlyings with live (non-expired) F&O contracts.
 
-    Derived from structured catalog relationships — never a hard-coded
-    list, never substring matching:
-
-      * derivatives: segment NSE_FO, instrument_type FUTURE/OPTION,
-        underlying = the derivative's `underlying` column;
-      * the underlying is a STOCK (not an index) because an NSE_EQ cash row
-        whose canonical ``underlying`` equals the derivative's ``underlying``
-        must exist (indices live in the NSE_INDEX segment and have no cash
-        row). The link is the canonical ``underlying`` column for EVERY
-        provider — never a provider-native symbol;
-      * membership requires at least one contract with expiry >= today,
-        so expired-only underlyings drop out automatically after sync.
-
-    One grouped query — the universe is cheap to browse (no N+1, no
-    contract dumps). Returns underlyings, not contracts.
+    When ``provider`` is None, membership and counts are provider-neutral
+    across all providers (union). Contracts are deduped by canonical contract
+    identity (underlying, expiry, instrument_type, strike, option_type) so a
+    contract listed by multiple providers is counted once. Each underlying
+    appears once with a deterministically chosen representative equity row.
+    When ``provider`` is set, behavior is scoped to that provider.
     """
-    sql = """
-        SELECT f.underlying AS symbol,
-               eq.name AS name,
-               eq.instrument_token AS equity_key,
-               COUNT(DISTINCT CASE WHEN f.instrument_type = 'FUTURE'
-                    THEN f.expiry END) AS future_expiries,
-               COUNT(DISTINCT CASE WHEN f.instrument_type = 'OPTION'
-                    THEN f.expiry END) AS option_expiries,
-               COUNT(DISTINCT CASE WHEN f.instrument_type = 'FUTURE'
-                    THEN f.instrument_token END) AS futures_count,
-               COUNT(DISTINCT CASE WHEN f.instrument_type = 'OPTION'
-                    THEN f.instrument_token END) AS options_count,
-               MIN(CASE WHEN f.instrument_type = 'FUTURE'
-                    THEN f.expiry END) AS nearest_future,
-               MIN(CASE WHEN f.instrument_type = 'OPTION'
-                    THEN f.expiry END) AS nearest_option
-        FROM instruments f
-        JOIN instruments eq
-             ON eq.provider = f.provider
-             AND eq.segment = 'NSE_EQ'
-             AND eq.underlying = f.underlying
-        WHERE f.provider = ?
-          AND f.segment = 'NSE_FO'
-          AND f.instrument_type IN ('FUTURE', 'OPTION')
-          AND f.expiry >= ?
-        GROUP BY f.underlying
-    """
-    args: list[Any] = [provider, today]
-    if q:
-        sql += " HAVING f.underlying LIKE ? OR eq.name LIKE ?"
-        like = f"%{q}%"
-        args += [like, like]
-    sql += " ORDER BY f.underlying LIMIT ?"
-    args.append(max(1, min(int(limit), 1000)))
+    lim = max(1, min(int(limit), 5000))
+    if provider is not None:
+        sql = """
+            SELECT f.underlying AS symbol,
+                   eq.name AS name,
+                   eq.instrument_token AS equity_key,
+                   COUNT(DISTINCT CASE WHEN f.instrument_type = 'FUTURE'
+                        THEN f.expiry END) AS future_expiries,
+                   COUNT(DISTINCT CASE WHEN f.instrument_type = 'OPTION'
+                        THEN f.expiry END) AS option_expiries,
+                   COUNT(DISTINCT CASE WHEN f.instrument_type = 'FUTURE'
+                        THEN f.instrument_token END) AS futures_count,
+                   COUNT(DISTINCT CASE WHEN f.instrument_type = 'OPTION'
+                        THEN f.instrument_token END) AS options_count,
+                   MIN(CASE WHEN f.instrument_type = 'FUTURE'
+                        THEN f.expiry END) AS nearest_future,
+                   MIN(CASE WHEN f.instrument_type = 'OPTION'
+                        THEN f.expiry END) AS nearest_option
+            FROM instruments f
+            JOIN instruments eq
+                 ON eq.provider = f.provider
+                 AND eq.segment = 'NSE_EQ'
+                 AND eq.underlying = f.underlying
+            WHERE f.provider = ?
+              AND f.segment = 'NSE_FO'
+              AND f.instrument_type IN ('FUTURE', 'OPTION')
+              AND f.expiry >= ?
+            GROUP BY f.underlying
+        """
+        args: list[Any] = [provider, today]
+        if q:
+            sql += " HAVING f.underlying LIKE ? OR eq.name LIKE ?"
+            like = f"%{q}%"
+            args += [like, like]
+        sql += " ORDER BY f.underlying LIMIT ?"
+        args.append(lim)
+    else:
+        sql = """
+            WITH live AS (
+                SELECT DISTINCT underlying, expiry, instrument_type, strike, option_type
+                FROM instruments
+                WHERE segment = 'NSE_FO'
+                  AND instrument_type IN ('FUTURE', 'OPTION')
+                  AND expiry >= ?
+                  AND underlying IS NOT NULL AND underlying != ''
+            ),
+            eq_ranked AS (
+                SELECT eq.underlying AS symbol,
+                       eq.name AS name,
+                       eq.instrument_token AS equity_key,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY eq.underlying
+                           ORDER BY CASE eq.provider
+                               WHEN 'upstox' THEN 0
+                               WHEN 'fyers' THEN 1
+                               ELSE 2 END, eq.provider, eq.instrument_token
+                       ) AS rn
+                FROM instruments eq
+                WHERE eq.segment = 'NSE_EQ'
+                  AND eq.underlying IN (SELECT DISTINCT underlying FROM live)
+            ),
+            agg AS (
+                SELECT underlying AS symbol,
+                       COUNT(DISTINCT CASE WHEN instrument_type = 'FUTURE'
+                            THEN expiry END) AS future_expiries,
+                       COUNT(DISTINCT CASE WHEN instrument_type = 'OPTION'
+                            THEN expiry END) AS option_expiries,
+                       COUNT(CASE WHEN instrument_type = 'FUTURE' THEN 1 END)
+                            AS futures_count,
+                       COUNT(CASE WHEN instrument_type = 'OPTION' THEN 1 END)
+                            AS options_count,
+                       MIN(CASE WHEN instrument_type = 'FUTURE'
+                            THEN expiry END) AS nearest_future,
+                       MIN(CASE WHEN instrument_type = 'OPTION'
+                            THEN expiry END) AS nearest_option
+                FROM live
+                GROUP BY underlying
+            )
+            SELECT a.symbol, e.name, e.equity_key,
+                   a.future_expiries, a.option_expiries,
+                   a.futures_count, a.options_count,
+                   a.nearest_future, a.nearest_option
+            FROM agg a
+            JOIN eq_ranked e ON e.symbol = a.symbol AND e.rn = 1
+        """
+        args = [today]
+        if q:
+            sql += " WHERE a.symbol LIKE ? OR e.name LIKE ?"
+            like = f"%{q}%"
+            args += [like, like]
+        sql += " ORDER BY a.symbol LIMIT ?"
+        args.append(lim)
     conn.row_factory = sqlite3.Row
     try:
         return [dict(r) for r in conn.execute(sql, args)]
@@ -1273,17 +1652,18 @@ def fno_universe(
 def list_future_contracts(
     conn: sqlite3.Connection, *, provider: str | None = None,
     underlying: str | None = None, expiries: list[str] | None = None,
-    exchange: str | None = None, limit: int = 5000,
+    exchange: str | None = None, limit: int | None = 5000,
 ) -> list[dict[str, Any]]:
-    """Bulk read model: every FUTURE contract row in one query (no N+1).
+    """Bulk read model: FUTURE contract rows in one query (no N+1).
 
     Provider-neutral shape (provider tokens included as data, never assumed).
     Ordered by underlying, expiry. Optional provider / underlying / expiry /
     exchange filters keep callers from issuing per-underlying queries;
     ``exchange`` also lets the query use ``idx_instr_lookup``.
+    ``limit <= 0`` or ``None`` returns the complete result set (no silent cap).
     """
     sql = (f"SELECT {', '.join(_INSTRUMENT_COLUMNS)} FROM instruments "
-           "WHERE instrument_type = 'FUTURE'")
+           f"WHERE instrument_type = 'FUTURE' AND {_SUPPORTED_PRODUCT_SQL}")
     args: list[Any] = []
     if exchange:
         sql += " AND exchange = ?"
@@ -1298,8 +1678,10 @@ def list_future_contracts(
         placeholders = ",".join("?" for _ in expiries)
         sql += f" AND expiry IN ({placeholders})"
         args.extend(str(e) for e in expiries)
-    sql += " ORDER BY underlying, expiry, tradingsymbol LIMIT ?"
-    args.append(max(1, min(int(limit), 20000)))
+    sql += " ORDER BY underlying, expiry, tradingsymbol"
+    if limit is not None and int(limit) > 0:
+        sql += " LIMIT ?"
+        args.append(int(limit))
     conn.row_factory = sqlite3.Row
     try:
         return [dict(r) for r in conn.execute(sql, args)]
@@ -1431,7 +1813,8 @@ def browse_instruments(
     browsable. OPTION browse without an ``underlying`` scope is rejected by
     the app layer (unscoped option dedupe exceeds the latency budget).
     """
-    where = ["instrument_type IS NOT NULL", "instrument_type != ''"]
+    where = ["instrument_type IS NOT NULL", "instrument_type != ''",
+             _SUPPORTED_PRODUCT_SQL]
     args: list[Any] = []
     if types:
         where.append(

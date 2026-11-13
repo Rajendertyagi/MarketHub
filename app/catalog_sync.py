@@ -203,11 +203,19 @@ def sync_upstox_master(
                               tuple[list[dict[str, Any]], dict[str, int], int]],
     enabled_segments: Sequence[str],
     provider: str = "upstox",
+    validate_master: Callable[[str, Sequence[dict[str, Any]]], None] | None = None,
+    report_fn: Callable[[str, Sequence[dict[str, Any]]],
+                        dict[str, Any] | None] | None = None,
+    write_scopes: dict[str, WriteScope] | None = None,
 ) -> SyncResult:
     """Refresh the Upstox catalogue from one master file.
 
     The whole provider is one unit here (Upstox publishes a single BOD
     master), so a failure leaves the stored catalogue untouched.
+
+    ``write_scopes`` allows predicate-scoped replacement for specific
+    segments (e.g. BSE_FO Sensex-only) so rows outside the declared scope
+    are preserved. Other enabled segments are replaced segment-wise.
     """
     result = SyncResult(provider=provider, enabled=list(enabled_segments))
     try:
@@ -232,6 +240,8 @@ def sync_upstox_master(
     result.parsed = len(parsed_records)
     try:
         validate_upstox_master(parsed_records, enabled_segments)
+        if validate_master is not None:
+            validate_master("complete", parsed_records)
     except MasterValidationError as exc:
         result.ok = False
         result.aborted = True
@@ -239,6 +249,11 @@ def sync_upstox_master(
         result.failures.append(result.reason)
         logger.warning("upstox catalogue sync aborted (%s)", result.reason)
         return result
+
+    if report_fn is not None:
+        report = report_fn("complete", parsed_records)
+        if report is not None:
+            result.details["complete"] = dict(report)
 
     kept, seg_counts, filtered = filter_records(parsed_records,
                                                 enabled_segments)
@@ -250,7 +265,36 @@ def sync_upstox_master(
         return result
     result.kept = len(kept)
     result.filtered = filtered
-    result.records = store.replace_provider_instruments(provider, kept)
+
+    scopes = write_scopes or {}
+    try:
+        from core.persistence.modules import products as _products
+
+        written, covered_segments = _products.replace_provider_instruments_upstox_atomic_at(
+            store.db_path, provider,
+            enabled_segments=list(enabled_segments),
+            kept_records=kept,
+            write_scopes=scopes,
+        )
+        result.records = written
+        # Persisted count for scoped BSE_FO detail (if reported).
+        if "complete" in result.details and "BSE_FO" in scopes and "BSE_FO" in enabled_segments:
+            bse_persisted = sum(
+                1 for r in kept
+                if _segment_of(r) == "BSE_FO"
+                and str(r.get("underlying") or "").upper() == "SENSEX"
+            )
+            if bse_persisted:
+                result.details["complete"]["persisted"] = (
+                    result.details["complete"].get("persisted", 0) + bse_persisted)
+    except Exception as exc:
+        result.ok = False
+        result.aborted = True
+        result.reason = f"write failed: {type(exc).__name__}"
+        result.failures.append(result.reason)
+        logger.warning("upstox catalogue sync aborted (%s)", result.reason)
+        return result
+
     result.segment_counts = dict(seg_counts)
     result.masters = {"complete": "updated"}
     logger.info("upstox instrument sync: %d kept / %d parsed (%d filtered)",

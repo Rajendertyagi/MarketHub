@@ -6,11 +6,11 @@ topics live in the app layer (``app.market_indices``) — never here.
 
 Two concepts are kept deliberately separate:
 
-* **F&O indices** — underlyings with listed futures/options
-  (``FNO_INDEX_LABELS``). This is the canonical F&O index set; nothing may
-  maintain a second copy of it.
-* **broader market indices** — tracked/displayed indices that are NOT F&O
-  underlyings (e.g. INDIA VIX, SENSEX, BANKEX). They are present in the
+* **F&O indices** — underlyings with listed futures/options in MarketHub's
+  supported product scope (``FNO_INDEX_LABELS``). This is the canonical F&O
+  index set; nothing may maintain a second copy of it.
+* **broader market indices** — tracked/displayed indices that are NOT in the
+  supported F&O scope (e.g. INDIA VIX, BANKEX, NIFTYFPI). They remain in the
   registry for canonical identity but are never part of the F&O universe.
 
 This module imports no ``app`` and no ``brokers`` code (architecture
@@ -31,17 +31,19 @@ class CanonicalIndex:
     is_fno: bool = False
 
 
-# Order defines the canonical presentation order (F&O indices first).
+# Canonical index set. Supported F&O scope: NSE index F&O + BSE SENSEX F&O
+# only. This is the single source of truth — no other module may define its
+# own copy. Order is the canonical presentation order.
 CANONICAL_INDICES: tuple[CanonicalIndex, ...] = (
-    CanonicalIndex("NIFTY", "NSE", True),
-    CanonicalIndex("BANKNIFTY", "NSE", True),
-    CanonicalIndex("FINNIFTY", "NSE", True),
-    CanonicalIndex("MIDCPNIFTY", "NSE", True),
-    CanonicalIndex("NIFTYNXT50", "NSE", True),
-    CanonicalIndex("NIFTYFPI", "NSE", True),
-    CanonicalIndex("INDIA VIX", "NSE", False),
-    CanonicalIndex("SENSEX", "BSE", True),
-    CanonicalIndex("BANKEX", "BSE", True),
+    CanonicalIndex("NIFTY", "NSE", is_fno=True),
+    CanonicalIndex("BANKNIFTY", "NSE", is_fno=True),
+    CanonicalIndex("FINNIFTY", "NSE", is_fno=True),
+    CanonicalIndex("MIDCPNIFTY", "NSE", is_fno=True),
+    CanonicalIndex("NIFTYNXT50", "NSE", is_fno=True),
+    CanonicalIndex("NIFTYFPI", "NSE", is_fno=False),
+    CanonicalIndex("INDIA VIX", "NSE", is_fno=False),
+    CanonicalIndex("SENSEX", "BSE", is_fno=True),
+    CanonicalIndex("BANKEX", "BSE", is_fno=False),
 )
 
 # The ONLY authoritative F&O index list. Derived from CANONICAL_INDICES.

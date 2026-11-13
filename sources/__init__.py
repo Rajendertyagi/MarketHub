@@ -484,6 +484,59 @@ class SourceManager:
         logger.info("source '%s' restarted", name)
         return True
 
+    async def replace_source(self, name: str, source: Any, cfg: dict[str, Any]) -> bool:
+        """Replace a registered source instance and its configuration.
+
+        If the source is currently running, stop and await its task before
+        replacing the instance/config. The caller is responsible for starting
+        the new instance if desired.
+
+        On termination failure the existing source/config are preserved and a
+        RuntimeError is raised.
+        """
+        if source is None or not isinstance(cfg, dict):
+            raise ValueError("replace_source requires a source and config dict")
+        if name not in self._sources or name not in self._configs:
+            raise KeyError(f"unknown source '{name}'")
+
+        # Stop if running and verify termination before replacement.
+        if self.task_running(name):
+            stop_event = self._stop_events.get(name)
+            if stop_event is not None:
+                stop_event.set()
+            self._stop_intents[name] = "restart"
+            self._operator_stopped.discard(name)
+            if self._bg_manager is not None:
+                try:
+                    await self._bg_manager.cancel_and_wait(f"source:{name}")
+                except Exception as exc:
+                    logger.error(
+                        "replace_source: failed to stop '%s' before replacement: %s",
+                        name, type(exc).__name__)
+                    raise RuntimeError(
+                        f"failed to stop source '{name}' before replacement") from exc
+            if self.task_running(name):
+                logger.error(
+                    "replace_source: source '%s' still running after stop; aborting replacement",
+                    name)
+                raise RuntimeError(
+                    f"source '{name}' still running after stop; replacement aborted")
+
+        # Replace instance and config only after old task is confirmed stopped.
+        self._sources[name] = source
+        self._configs[name] = dict(cfg)
+        # Fresh stop event for the replacement instance.
+        self._stop_events[name] = asyncio.Event()
+        self._operator_stopped.discard(name)
+        return True
+
+    def update_config(self, name: str, cfg: dict[str, Any]) -> bool:
+        """Update stored configuration for a registered source without replacing instance."""
+        if name not in self._sources or not isinstance(cfg, dict):
+            return False
+        self._configs[name] = dict(cfg)
+        return True
+
     def get_status(self) -> dict[str, Any]:
         """Status of all registered sources, merged with task liveness.
 

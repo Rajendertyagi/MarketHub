@@ -48,7 +48,7 @@ from providers.capabilities import (
 from providers.registry import ProviderRegistry
 
 _INDICES = ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50",
-            "NIFTYFPI", "SENSEX", "BANKEX")
+            "SENSEX")
 
 
 def _registry(up=2000, fy=5000):
@@ -141,7 +141,7 @@ def test_universe_is_six_indices_plus_catalog_stocks() -> None:
     # index spots present, no hardcoded stock list
     index_spots = [c for c in plan.contracts
                    if c.kind == "index" and c.instrument_type == "SPOT"]
-    assert len(index_spots) == 8
+    assert len(index_spots) == 6
 
 
 def test_default_routing_prefers_first_provider() -> None:

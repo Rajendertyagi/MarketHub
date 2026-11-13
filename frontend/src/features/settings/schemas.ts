@@ -74,6 +74,19 @@ export const fyersSettingsSchema = z
   })
   .passthrough();
 
+export const fyersFeedConfigSchema = z
+  .object({
+    configured: z.boolean().optional(),
+    enabled: z.boolean().optional(),
+    registered: z.boolean().optional(),
+    state: z.string().nullable().optional(),
+    task_running: z.boolean().nullable().optional(),
+    restart_required: z.boolean().optional(),
+    tbt_enabled: z.boolean().optional(),
+    tbt_symbols: z.array(z.string()).optional(),
+  })
+  .passthrough();
+
 export const newsSourceConfigSchema = z
   .object({
     url: z.string().optional(),

@@ -62,6 +62,7 @@ from core.persistence.modules.products import (
     migrate_v11_to_v12,
     migrate_v20_to_v21,
     migrate_v21_to_v22,
+    migrate_v24_to_v25,
 )
 from core.persistence.modules.schema import (
     SCHEMA_VERSION,
@@ -190,6 +191,8 @@ class EventStore:
                         migrate_v22_to_v23(conn)
                     elif current_version == 23:
                         migrate_v23_to_v24(conn)
+                    elif current_version == 24:
+                        migrate_v24_to_v25(conn)
                     else:
                         raise RuntimeError(
                             f"unsupported schema version {current_version}; "
@@ -801,6 +804,24 @@ class EventStore:
         finally:
             conn.close()
 
+    def get_instrument_by_provider_symbol(
+        self, provider_symbol: str, *, provider: str | None = None,
+    ) -> dict[str, Any] | None:
+        conn = self._open(self._db_path)
+        try:
+            return _products.get_instrument_by_provider_symbol(
+                conn, provider_symbol, provider=provider)
+        finally:
+            conn.close()
+
+    def resolve_instrument_key(self, instrument_key: str) -> dict[str, Any] | None:
+        """Resolve a provider-native key with token-first then FYERS provider_symbol lookup."""
+        conn = self._open(self._db_path)
+        try:
+            return _products.resolve_instrument_key(conn, instrument_key)
+        finally:
+            conn.close()
+
     def instruments_sync_state(self) -> list[dict[str, Any]]:
         conn = self._open(self._db_path)
         try:
@@ -1157,6 +1178,100 @@ class EventStore:
         conn = self._open(self._db_path)
         try:
             _products.record_trigger(conn, alert_id)
+        finally:
+            conn.close()
+
+    def commit_market_alert_trigger(
+        self,
+        *,
+        alert_id: int,
+        exchange: str | None,
+        instrument_token: str | None,
+        tradingsymbol: str | None,
+        field: str | None,
+        operator: str | None,
+        threshold: float | None,
+        observed_value: float | None,
+        provider: str | None,
+        triggered_at: str | None = None,
+    ) -> int | None:
+        """Atomically commit market-alert trigger state + history once.
+
+        Returns the history row id when committed, or ``None`` when the alert
+        was not triggerable (already triggered/disabled/deleted/raced).
+        """
+        if triggered_at is None:
+            triggered_at = datetime.now(timezone.utc).isoformat()
+        conn = self._open(self._db_path)
+        try:
+            return _products.commit_market_alert_trigger(
+                conn,
+                alert_id=alert_id,
+                exchange=exchange,
+                instrument_token=instrument_token,
+                tradingsymbol=tradingsymbol,
+                field=field,
+                operator=operator,
+                threshold=threshold,
+                observed_value=observed_value,
+                provider=provider,
+                triggered_at=triggered_at,
+            )
+        finally:
+            conn.close()
+
+    def commit_market_alert_trigger_with_event(
+        self,
+        *,
+        alert_id: int,
+        exchange: str | None,
+        instrument_token: str | None,
+        tradingsymbol: str | None,
+        field: str | None,
+        operator: str | None,
+        threshold: float | None,
+        observed_value: float | None,
+        provider: str | None,
+        triggered_at: str | None = None,
+        event_id: str,
+        event_type: str,
+        event_source: str,
+        event_timestamp: str,
+        event_data: dict[str, Any],
+        event_routing: dict[str, Any] | None = None,
+    ) -> tuple[int, int] | None:
+        """Atomically commit market-alert trigger, history, and canonical event.
+
+        Returns ``(history_id, event_sequence)`` when committed, or ``None``
+        when the alert was not triggerable (already triggered/disabled/deleted/
+        raced). The event is persisted and consumer-materialized in the same
+        transaction as the trigger commitment.
+        """
+        if triggered_at is None:
+            triggered_at = datetime.now(timezone.utc).isoformat()
+        conn = self._open(self._db_path)
+        try:
+            return _products.commit_market_alert_trigger_with_event(
+                conn,
+                alert_id=alert_id,
+                exchange=exchange,
+                instrument_token=instrument_token,
+                tradingsymbol=tradingsymbol,
+                field=field,
+                operator=operator,
+                threshold=threshold,
+                observed_value=observed_value,
+                provider=provider,
+                triggered_at=triggered_at,
+                event_id=event_id,
+                event_type=event_type,
+                event_source=event_source,
+                event_timestamp=event_timestamp,
+                event_data=event_data,
+                event_routing=event_routing,
+                materialize_fn=lambda c, eid, seq, rt: _events.materialize_event_state(
+                    c, eid, seq, rt, self.is_event_relevant_internal),
+            )
         finally:
             conn.close()
 
@@ -1563,7 +1678,7 @@ class EventStore:
         finally:
             conn.close()
 
-    def fno_universe(self, *, provider: str, today: str,
+    def fno_universe(self, *, provider: str | None = None, today: str,
                      q: str | None = None, limit: int = 500) -> list[dict]:
         conn = self._open(self._db_path)
         try:
@@ -1572,7 +1687,7 @@ class EventStore:
         finally:
             conn.close()
 
-    def fno_underlying_rows(self, *, provider: str, today: str,
+    def fno_underlying_rows(self, *, provider: str | None = None, today: str,
                             limit: int = 2000) -> list[dict]:
         """Enumeration read model: F&O stock underlyings (no counts)."""
         conn = self._open(self._db_path)
