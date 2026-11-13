@@ -932,6 +932,28 @@ def get_instrument_by_provider_symbol(
         conn.row_factory = None
 
 
+def resolve_instrument_key(
+    conn: sqlite3.Connection, instrument_key: str,
+) -> dict[str, Any] | None:
+    """Resolve a provider-native key using one connection.
+
+    Precedence (preserved): upstox instrument_token, fyers instrument_token,
+    fyers provider_symbol (exact, provider-scoped). Search fallback is handled
+    by the caller to preserve existing behavior.
+    """
+    key = str(instrument_key or "")
+    if not key:
+        return None
+    for provider in ("upstox", "fyers"):
+        row = get_instrument(conn, provider, key)
+        if row:
+            return row
+    row = get_instrument_by_provider_symbol(conn, key, provider="fyers")
+    if row:
+        return row
+    return None
+
+
 def instruments_sync_state(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     try:

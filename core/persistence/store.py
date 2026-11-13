@@ -814,6 +814,14 @@ class EventStore:
         finally:
             conn.close()
 
+    def resolve_instrument_key(self, instrument_key: str) -> dict[str, Any] | None:
+        """Resolve a provider-native key with token-first then FYERS provider_symbol lookup."""
+        conn = self._open(self._db_path)
+        try:
+            return _products.resolve_instrument_key(conn, instrument_key)
+        finally:
+            conn.close()
+
     def instruments_sync_state(self) -> list[dict[str, Any]]:
         conn = self._open(self._db_path)
         try:

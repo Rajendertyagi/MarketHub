@@ -964,22 +964,13 @@ class InstrumentCatalog:
         if not instrument_key:
             return None
         key = str(instrument_key)
-        for provider in ("upstox", "fyers"):
-            try:
-                row = self.get(provider, key)
-            except Exception:
-                row = None
-            if row:
-                return row
-        # The Fyers REST/feed key is the API SYMBOL, which the catalogue
-        # stores in ``provider_symbol`` rather than ``instrument_token``.
         try:
-            row = self._store.get_instrument_by_provider_symbol(
-                key, provider="fyers")
+            row = self._store.resolve_instrument_key(key)
         except Exception:
             row = None
         if row:
             return row
+        # Preserve existing fallback: substring search then exact provider_symbol match.
         try:
             rows = self.search(q=key, limit=10)
         except Exception:

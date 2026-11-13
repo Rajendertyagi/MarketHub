@@ -443,6 +443,80 @@ def test_fresh_schema_includes_provider_symbol_index() -> None:
             con.close()
 
 
+def test_eventstore_init_migrates_v24_db_to_v25() -> None:
+    """Actual EventStore initialization path migrates a v24 DB copy to v25."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "v24.db")
+        store = EventStore(db_path)
+        store.replace_provider_instruments("fyers", [
+            {
+                "provider": "fyers",
+                "instrument_token": "10100000002885",
+                "exchange": "NSE",
+                "tradingsymbol": "RELIANCE",
+                "name": "RELIANCE INDUSTRIES LTD",
+                "instrument_type": "EQUITY",
+                "segment": "NSE_EQ",
+                "expiry": None, "strike": None, "option_type": None,
+                "lot_size": 1, "tick_size": 0.05, "isin": "INE002A01018",
+                "underlying": "RELIANCE",
+                "provider_symbol": "NSE:RELIANCE-EQ",
+            },
+        ])
+        # Simulate v24 state (pre-index) on a DB copy.
+        con = sqlite3.connect(db_path)
+        try:
+            con.execute("DROP INDEX IF EXISTS idx_instr_provider_symbol")
+            con.execute("PRAGMA user_version = 24")
+            con.commit()
+            before_rows = con.execute(
+                "SELECT provider,instrument_token,provider_symbol,tradingsymbol,segment "
+                "FROM instruments ORDER BY provider,instrument_token"
+            ).fetchall()
+            before_secrets = con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='secrets'"
+            ).fetchone()
+            assert con.execute("PRAGMA user_version").fetchone()[0] == 24
+            assert con.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_instr_provider_symbol'"
+            ).fetchone() is None
+        finally:
+            con.close()
+
+        # Actual initialization path performs migration.
+        migrated = EventStore(db_path)
+        assert migrated is not None
+
+        con = sqlite3.connect(db_path)
+        try:
+            assert con.execute("PRAGMA user_version").fetchone()[0] == 25
+            assert con.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_instr_provider_symbol'"
+            ).fetchone() is not None
+            after_rows = con.execute(
+                "SELECT provider,instrument_token,provider_symbol,tradingsymbol,segment "
+                "FROM instruments ORDER BY provider,instrument_token"
+            ).fetchall()
+            assert after_rows == before_rows
+            after_secrets = con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='secrets'"
+            ).fetchone()
+            assert after_secrets == before_secrets
+        finally:
+            con.close()
+
+        # Idempotent reopen.
+        EventStore(db_path)
+        con = sqlite3.connect(db_path)
+        try:
+            assert con.execute("PRAGMA user_version").fetchone()[0] == 25
+            assert con.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_instr_provider_symbol'"
+            ).fetchone()[0] == 1
+        finally:
+            con.close()
+
+
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-q"]))
