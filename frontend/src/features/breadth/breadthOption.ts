@@ -1,4 +1,4 @@
-import type { EChartsOption } from "echarts";
+import type { EChartsCoreOption as EChartsOption } from "echarts/core";
 import type { BreadthSnapshot } from "@/types";
 import { themeColors } from "@/utils/cssVar";
 

@@ -1,4 +1,4 @@
-import type { EChartsOption } from "echarts";
+import type { EChartsCoreOption as EChartsOption } from "echarts/core";
 import { describe, expect, it } from "vitest";
 import { buildBreadthBarOption } from "@/features/breadth/breadthOption";
 import { buildMarketMapOption } from "@/features/market-map/marketMapOption";

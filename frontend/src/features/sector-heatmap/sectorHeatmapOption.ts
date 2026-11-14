@@ -1,4 +1,4 @@
-import type { EChartsOption } from "echarts";
+import type { EChartsCoreOption as EChartsOption } from "echarts/core";
 import type { SectorHeatmapSnapshot } from "@/types";
 import { changeTileColor, type TileColors } from "@/utils/changeColor";
 import { themeColors } from "@/utils/cssVar";

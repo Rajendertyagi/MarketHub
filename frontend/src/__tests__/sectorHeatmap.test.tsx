@@ -12,9 +12,13 @@ const { echartsMock } = vi.hoisted(() => {
     on: vi.fn(),
   };
   const init = vi.fn(() => instance);
-  return { echartsMock: { init, instance } };
+  const use = vi.fn();
+  return { echartsMock: { init, instance, use } };
 });
-vi.mock("echarts", () => ({ init: echartsMock.init }));
+vi.mock("echarts/core", () => ({ init: echartsMock.init, use: echartsMock.use }));
+vi.mock("echarts/charts", () => ({ BarChart: {}, TreemapChart: {} }));
+vi.mock("echarts/components", () => ({ GridComponent: {}, TooltipComponent: {}, LegendComponent: {} }));
+vi.mock("echarts/renderers", () => ({ CanvasRenderer: {} }));
 
 vi.mock("@/api/market", () => ({
   getHistory: vi.fn(),

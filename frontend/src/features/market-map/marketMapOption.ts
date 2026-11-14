@@ -1,4 +1,4 @@
-import type { EChartsOption } from "echarts";
+import type { EChartsCoreOption as EChartsOption } from "echarts/core";
 import type { MapStock, MarketMapSector } from "@/types";
 import { changeTileColor, type TileColors, volumeTileColor } from "@/utils/changeColor";
 import { themeColors } from "@/utils/cssVar";
