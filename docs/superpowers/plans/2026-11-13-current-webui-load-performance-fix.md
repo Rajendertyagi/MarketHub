@@ -4,9 +4,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **No implementation in a planning-only/measurement-only assignment unless explicitly authorized by the user.**
 
-**Last updated:** 2026-11-14 (Sprint 04 WS1-04 published as `37c76d3`; follow-up corrections published as `501edeb`; WS1-05 build/chunk-size budgets published; WS2-06 moderate-endpoint profiling/optimization published; WS3-01 market SSE per-tick canonical selection/fan-out optimization implemented and verified in this pass)
+**Last updated:** 2026-11-14 (Sprint 04 WS1-04 published as `37c76d3`; follow-up corrections published as `501edeb`; WS1-05 build/chunk-size budgets published; WS2-06 moderate-endpoint profiling/optimization published; WS3-01 market SSE per-tick canonical selection/fan-out optimization published; WS3-02 frontend market quote update/render efficiency profiled and optimized in this pass)
 **Branch:** `develop`
-**Verified local/remote `origin/develop` (WS3-01 pass start):** `c2cafbd9baf8a4db89fc335ea0dad40be9d5ced1` (`docs(plan): record WS2-06 commit and CI results`, in sync after `git fetch origin`)
+**Verified local/remote `origin/develop` (WS3-02 pass start):** `59b15d6b5c7060b0707f0235db25ff12cc617052` (`docs(plan): record WS3-01 commit`, in sync after `git fetch origin`)
 **Publication state (verified 2026-11-14):** Audit docs commit `d0a8b0b4fb94855738603cdfeffd16291b3fdbb8` and consolidated master plan commit `81610ccc092f1b4f15bea6f2547adc3ad410a522` are **both published on `origin/develop`**. Earlier consolidation noted `d0a8b0b` as local-only/unpublished at that time; subsequent safe push published it (and `81610cc`). No force-push/rewrite performed.
 
 ## 1. Objective
@@ -344,6 +344,7 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 | 2026-11-14 | WS1-05: build/chunk-size budgets and verification | `b2fc973299a4199c1cd68186e43a9390f96cc532` | Manifest-based budget checker enforces initial JS/CSS/combined and largest JS chunk budgets in normal build and CI; measured baseline recorded; deliberate-exceed/missing-artifact checks verified; CI `ruff` https://github.com/Rajendertyagi/MarketHub/actions/runs/43623801247 and `frontend-build-budget` https://github.com/Rajendertyagi/MarketHub/actions/runs/43623801272 both **success** |
 | 2026-11-14 | WS2-06: profile/optimize `/api/market/breadth`, `/api/options/chain/view`, `/api/market/fno/universe` | `375e586c84706f1c305270b630275e5d3c9e6f22` | Evidence-backed epoch-keyed read-model/member caching; repeated-call latency reduced for F&O universe and option-chain paths, breadth warm path improved; focused regression tests, architecture boundaries, ruff, diff-check green; CI `ruff` https://github.com/Rajendertyagi/MarketHub/actions/runs/43626266293 **success** |
 | 2026-11-14 | WS3-01: market SSE per-tick canonical selection and fan-out cost | `8cb3c3abf1041295e811f4de3c7c3056ceb57bce` | Pre-computed canonical SSE payload once per market quote event in callback and reused by all subscribers; per-subscriber reselection/serialization removed on fast path with fallback preserved; isolated synthetic benchmarks show ~4-11x subscriber-side throughput improvement and lower per-event latency/memory at 1-50 subscribers; correctness/regression tests, architecture boundaries, ruff, diff-check green |
+| 2026-11-14 | WS3-02: frontend market quote update/render efficiency (profile-driven) | `bb9e135f467116292387568af968bf7361b17a9c` | Profiled dashboard quote render path (React Profiler, deterministic synthetic workloads, happy-dom/Vitest); memoized `TickerStrip` items to skip unchanged quote renders and avoided redundant canonical-map rebuild in `IndicesWidget` when `byCanonical` prop is provided; TickerStrip median render duration improved ~76% at 100 quotes and ~77% at 500 quotes in measured workload; existing behavior/contracts preserved; focused regression tests, typecheck, lint (changed files), build/budgets, `git diff --check` green |
 
 ## 15. Sprint 01 implementation results (2026-11-14)
 
@@ -784,5 +785,61 @@ Memory (tracemalloc, case-local): new path showed lower or comparable peak/curre
 - **Implementation commit:** `8cb3c3abf1041295e811f4de3c7c3056ceb57bce` — `perf(sse): reduce repeated market event processing` (https://github.com/Rajendertyagi/MarketHub/commit/8cb3c3abf1041295e811f4de3c7c3056ceb57bce)
 - **Status:** **COMPLETE** (safe, measured subscriber-side fan-out optimization with preserved delivery/correctness semantics). Push/CI recorded in follow-up plan commit/final report.
 
+## 22. WS3-02 implementation results (2026-11-14)
+
+### Scope and safety
+- **Authorized bounded changes only (WS3-02):** dashboard frontend market quote update/render path (`TickerStrip`, `IndicesWidget`) and focused dashboard regression tests; canonical plan update.
+- **Untouched:** backend quote processing, broker feeds, `MarketService`, `QuoteService`, `api/routes.py`, `app/server.py`, SSE protocol, `SSEManager`/shared subscription ownership/architecture, `useMarketQuotes` flush/visibility/reset/snapshot semantics, `QUOTE_FLUSH_MS`, quote identity/canonical selection, deferred secondary-widget loading, React Query behavior, dependencies, UI/layout/accessibility behavior, WS1-05/WS2-06/WS3-01. No full MarketHub app started; no broker login/token refresh/live market-data connections; no second MarketHub instance.
+- **HEAD at start:** `59b15d6b5c7060b0707f0235db25ff12cc617052` (`develop`, in sync with `origin/develop`).
+
+### Baseline and bottleneck (profiling evidence)
+- **Traced flow:** `SSEManager`/`useStream` → `useMarketQuotes` (shared snapshot, in-memory `Map` keyed by `quoteKey`, throttled flush `QUOTE_FLUSH_MS`, no React updates while hidden, immediate visibility flush, reset clears map/state, `byCanonical` derived from published quotes) → `DashboardView` → `TickerStrip`/`IndicesWidget` (and `WatchlistsView`/`WatchlistTable` as other hook consumers; behavior preserved).
+- **Method:** temporary deterministic React Profiler harness in Vitest/happy-dom (removed before commit), same workloads/environment for before/after. Synthetic quote sets (10/50/100/200/500), 20 flush-style rerenders with new quote arrays; 10% of quote objects replaced per update (stable object identity for unchanged quotes), representative of partial-update batches. Not browser heap/production runtime measurements.
+- **Baseline (before):**
+  - `TickerStrip` (React Profiler `actualDuration`, 21 commits including mount): n=10 med 0.679ms / p95 2.050ms / avg 1.156ms; n=100 med 5.454ms / p95 16.590ms / avg 6.639ms; n=500 med 25.891ms / p95 35.418ms / avg 27.515ms.
+  - `IndicesWidget` (10 index cards, 21-22 commits): n=50 quotes med 0.907ms / p95 2.169ms; n=200 quotes med 0.766ms / p95 1.695ms (low absolute cost; redundant canonical-map rebuild observed in code path when `byCanonical` prop already provided).
+  - `useMarketQuotes`: 1 commit per flush when changed (20/20 in synthetic burst), unchanged-map flushes remain no-op (existing test preserved), array materialization + `byCanonical` rebuild occur on each published flush (necessary for new state refs; unchanged quote objects retain identity in map).
+- **Bottleneck established:** `TickerStrip` re-rendered all ticker items on every parent/flush-driven rerender because it mapped inline over the full quote array without item-level memoization; unchanged quote objects already had stable identity but could not be skipped. `IndicesWidget` redundantly rebuilt a canonical-id map from all quotes even when the authoritative `byCanonical` prop was supplied (while still needing native-key fallback map).
+
+### Changes made (evidence-backed)
+- **`frontend/src/features/dashboard/components/TickerStrip.tsx`:** extracted `TickerItem` and wrapped with `React.memo`; `TickerStrip` now renders memoized items keyed by `exchange:instrument_token`. Unchanged quote object references skip item re-renders while updated quotes render with latest values. No visual/behavior/prop-contract changes.
+- **`frontend/src/features/dashboard/components/IndicesWidget.tsx`:** when `byCanonical` prop is provided, skip rebuilding canonical-id map from quotes and build only `byNativeKey` map; when prop is absent, preserve previous canonical+native map construction. `quoteFor` continues to prefer provided `byCanonical`, then local canonical fallback, then native-key/fyers-symbol fallback. Preserves canonical/native-key lookup behavior and payload compatibility fallback.
+
+### Rejected / not applied
+- **`SSEManager`/`useStream` redesign, `QUOTE_FLUSH_MS` changes, quote identity/canonical selection changes, global stores/reducers/workers/new deps:** out of scope / not justified.
+- **Broad memoization of all dashboard components:** not applied without evidence; focused on measured hot path.
+- **`useMarketQuotes` incremental `byCanonical` maintenance:** considered; current derived rebuild is simple/correct and not the dominant measured render cost in this pass (TickerStrip dominated). Deferred absent stronger evidence.
+
+### Before/after measurements (same harness/workloads/environment)
+| Component/workload | Before med / p95 / avg `actualDuration` (ms) | After med / p95 / avg (ms) | Commits | Notes |
+|---|---:|---:|---:|---|
+| `TickerStrip`, n=10 quotes, 20 partial updates (10% changed, stable refs for unchanged) | 0.679 / 2.050 / 1.156 | 0.278 / 0.655 / 0.805 | 21 | ~59% median reduction |
+| `TickerStrip`, n=100 quotes | 5.454 / 16.590 / 6.639 | 1.297 / 2.207 / 2.212 | 21 | ~76% median reduction |
+| `TickerStrip`, n=500 quotes | 25.891 / 35.418 / 27.515 | 6.075 / 32.449 / 9.775 | 21 | ~77% median reduction; p95 influenced by mount/outlier commit, median/avg improved materially |
+| `IndicesWidget`, 10 cards, n=50 quotes | 0.907 / 2.169 / 1.312 | 1.212 / 2.909 / 1.653 | 22 | low absolute cost, within noise; redundant canonical rebuild removed when prop provided |
+| `IndicesWidget`, 10 cards, n=200 quotes | 0.766 / 1.695 / 0.989 | 0.882 / 1.857 / 1.094 | 21-22 | low absolute cost, within noise; lookup behavior preserved |
+
+**Interpretation:** repeatable, meaningful improvement in the measured `TickerStrip` hot path (dominant dashboard quote-list render cost in profiled workloads) with unchanged quote object identity enabling memoized item skips. `IndicesWidget` change removes redundant work without measured render regression in this environment; correctness/fallback behavior preserved.
+
+### Correctness and regression tests
+- **Existing required tests:** `frontend/src/__tests__/useMarketQuotes.test.tsx`, `frontend/src/__tests__/dashboardLive.test.tsx`, `frontend/src/__tests__/dashboardDeferred.test.tsx` — **17 passed** (focused run).
+- **Added focused coverage (`dashboardLive.test.tsx`):** TickerStrip updates only changed quote's displayed values when other quote objects keep identity; IndicesWidget prefers canonical map lookup and falls back to native keys when canonical is unavailable.
+- **Preserved behaviors verified by existing tests:** unchanged-map no-op renders, hidden-tab buffering/visibility flush, reset clears state without resurrection, stream connection state, snapshot/live precedence semantics in hook tests, deferred secondary widgets mount/fetch only when visible, canonical/native-key lookup correctness.
+- **Full frontend tests:** `bun run test` → **36 files: 35 passed, 1 failed; 206 tests: 204 passed, 2 failed**. Only failures: `src/__tests__/EChart.test.tsx` (2 tests), pre-existing/unrelated (documented pre-Sprint 04 baseline), not modified.
+- **Typecheck:** `bun run typecheck` (`tsc --noEmit && tsc --noEmit -p tsconfig.test.json`) → **pass**.
+- **Lint:** `bun run lint` (`biome check src`) → **fails globally due to pre-existing unrelated formatting drift** (e.g. `src/app/routes.tsx`, previously documented); **changed files pass** (`biome check` clean for `src/features/dashboard/components/TickerStrip.tsx`, `src/features/dashboard/components/IndicesWidget.tsx`, `src/__tests__/dashboardLive.test.tsx`).
+- **Build/budgets:** `bun run build` → **pass** (`vite build` + bundle budget check). Initial JS 437,219 B (budget 512,000 B), initial CSS 70,704 B (81,920 B), initial JS+CSS 507,923 B (593,920 B), largest JS chunk 1,613,703 B lazy `ChartView` (1,835,008 B), ECharts lazy/outside initial graph — all budgets pass.
+- **Diff hygiene:** `git diff --check` → **clean**.
+
+### Known limitations
+- Measurements are deterministic synthetic React Profiler runs in Vitest/happy-dom, not browser DevTools traces, production runtime, or heap/GC measurements. Live browser LCP/INP/CLS/navigation/request-waterfall behavior remains unmeasured (no safe running app).
+- `TickerStrip` parent still receives a new quotes array on each flush and reconciles keys; item memoization avoids re-rendering unchanged memoized children but does not eliminate list reconciliation. `useMarketQuotes` still materializes a new quotes array and derives/publishes `byCanonical` on each changed flush.
+- Global frontend lint has pre-existing unrelated Biome formatting drift outside WS3-02 scope; changed files are lint-clean.
+- Pre-existing `EChart.test.tsx` failures remain unrelated and unmodified.
+
+### Commit / CI
+- **Implementation commit:** `bb9e135f467116292387568af968bf7361b17a9c` — `perf(frontend): reduce dashboard quote render churn` (https://github.com/Rajendertyagi/MarketHub/commit/bb9e135f467116292387568af968bf7361b17a9c)
+- **Status:** **COMPLETE** (profiled, evidence-backed render-efficiency improvement with preserved behavior/contracts). Push/CI recorded in follow-up plan commit/final report.
+
 ---
-**End of canonical master plan. Sprint 04 (WS1-04) published as `37c76d3` with follow-up corrections published as `501edeb`; WS1-05 build/chunk-size budgets published; WS2-06 moderate-endpoint profiling/optimization published; WS3-01 market SSE per-tick canonical selection/fan-out optimization implemented and verified in this pass (pre-computed canonical payload/SSE data with preserved contracts/freshness/semantics). Live browser/runtime verification remains blocked by safe-running-instance constraints.**
+**End of canonical master plan. Sprint 04 (WS1-04) published as `37c76d3` with follow-up corrections published as `501edeb`; WS1-05 build/chunk-size budgets published; WS2-06 moderate-endpoint profiling/optimization published; WS3-01 market SSE per-tick canonical selection/fan-out optimization published; WS3-02 frontend market quote update/render efficiency profiled and optimized in this pass (TickerStrip item memoization + IndicesWidget canonical-map reuse, preserved contracts/behavior). Live browser/runtime verification remains blocked by safe-running-instance constraints.**
