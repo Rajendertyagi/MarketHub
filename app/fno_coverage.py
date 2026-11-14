@@ -276,13 +276,31 @@ class FnoCoverageService:
             self._catalog_fingerprint(),
         )
 
-    def _skeleton_build_lock(self, key: tuple[Any, ...]) -> threading.Lock:
+    def _acquire_skeleton_build_lock(self, key: tuple[Any, ...]
+                                      ) -> tuple[threading.Lock, Callable[[], None]]:
+        """Return (lock, release) for a shared single-flight build lock.
+
+        The entry is ref-counted so unused lock objects can be removed without
+        affecting concurrent callers/waiters for the same key.
+        """
         with self._skeleton_build_locks_guard:
-            lock = self._skeleton_build_locks.get(key)
-            if lock is None:
-                lock = threading.Lock()
-                self._skeleton_build_locks[key] = lock
-            return lock
+            entry = self._skeleton_build_locks.get(key)
+            if entry is None:
+                entry = {"lock": threading.Lock(), "refs": 0}
+                self._skeleton_build_locks[key] = entry
+            entry["refs"] += 1
+            lock = entry["lock"]
+
+        def _release() -> None:
+            with self._skeleton_build_locks_guard:
+                cur = self._skeleton_build_locks.get(key)
+                if cur is not entry:
+                    return
+                cur["refs"] -= 1
+                if cur["refs"] <= 0:
+                    self._skeleton_build_locks.pop(key, None)
+
+        return lock, _release
 
     def _build_skeleton(self, cfg: dict[str, Any], requested: str | None,
                         catalog_fingerprint: tuple[Any, ...]) -> _CatalogSkeleton:
@@ -375,8 +393,6 @@ class FnoCoverageService:
             overflow = len(self._skeleton_cache) - self._MAX_SKELETON_CACHE
             for old_key in list(self._skeleton_cache.keys())[:overflow]:
                 self._skeleton_cache.pop(old_key, None)
-        # Keep build locks: pruning while a build is in-flight (key not yet
-        # cached) can break single-flight by replacing the active lock object.
 
     def _get_skeleton(self, cfg: dict[str, Any], requested: str | None) -> _CatalogSkeleton:
         key = self._skeleton_key(cfg, requested)
@@ -387,19 +403,22 @@ class FnoCoverageService:
                 cached = self._skeleton_cache.get(key)
                 if cached is not None:
                     return cached
-        lock = self._skeleton_build_lock(key)
-        with lock:
-            if cacheable:
-                with self._skeleton_cache_lock:
-                    cached = self._skeleton_cache.get(key)
-                    if cached is not None:
-                        return cached
-            skeleton = self._build_skeleton(cfg, requested, fingerprint)
-            if cacheable:
-                with self._skeleton_cache_lock:
-                    self._skeleton_cache[key] = skeleton
-                    self._prune_skeleton_state_locked()
-            return skeleton
+        lock, release = self._acquire_skeleton_build_lock(key)
+        try:
+            with lock:
+                if cacheable:
+                    with self._skeleton_cache_lock:
+                        cached = self._skeleton_cache.get(key)
+                        if cached is not None:
+                            return cached
+                skeleton = self._build_skeleton(cfg, requested, fingerprint)
+                if cacheable:
+                    with self._skeleton_cache_lock:
+                        self._skeleton_cache[key] = skeleton
+                        self._prune_skeleton_state_locked()
+                return skeleton
+        finally:
+            release()
 
     # -- universe ------------------------------------------------------------
 

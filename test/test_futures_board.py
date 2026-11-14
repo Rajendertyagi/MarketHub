@@ -241,6 +241,180 @@ def test_single_flight_one_build_per_key() -> None:
     assert len(results) == 6
 
 
+def test_build_lock_cleanup_after_sequential_distinct_keys() -> None:
+    import market.futures_board as fb
+    clear_board_cache()
+
+    def reader(exchange, token):
+        return {"ltp": 100, "open_interest": 10, "received_ts": NOW}
+
+    # At least 100 distinct keys sequentially.
+    for i in range(110):
+        inputs = [_future(f"SYM{i}", token=f"T{i}")]
+        get_futures_board(inputs, expiry=f"E{i}", quote_reader=reader, ttl=0.0)
+
+    # Expired entries pruned on access; unused build-lock entries cleaned up.
+    assert len(fb._cache) == 0
+    assert len(fb._build_locks) == 0
+
+
+def test_concurrent_identical_requests_single_build_and_lock_cleanup() -> None:
+    import market.futures_board as fb
+    clear_board_cache()
+    calls = [0]
+
+    def reader(exchange, token):
+        calls[0] += 1
+        time.sleep(0.02)
+        return {"ltp": 100, "open_interest": 10, "received_ts": NOW}
+
+    inputs = [_future("NIFTY", token="A"), _spot("NIFTY", token="S")]
+    results = []
+    errors = []
+    barrier = threading.Barrier(8)
+
+    def worker():
+        try:
+            barrier.wait(timeout=5)
+            results.append(get_futures_board(inputs, expiry="EID", quote_reader=reader))
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert not errors
+    assert len(results) == 8
+    assert calls[0] == 2  # one build (future + spot)
+    assert len(fb._build_locks) == 0
+
+
+def test_concurrent_distinct_requests_no_cross_key_blocking() -> None:
+    import market.futures_board as fb
+    clear_board_cache()
+    started = {"a": threading.Event(), "b": threading.Event()}
+    release = threading.Event()
+
+    def reader(exchange, token):
+        if token == "TA":
+            started["a"].set()
+            release.wait(timeout=5)
+        elif token == "TB":
+            started["b"].set()
+            release.wait(timeout=5)
+        return {"ltp": 100, "open_interest": 10, "received_ts": NOW}
+
+    errors = []
+    results = {}
+
+    def worker(name, token, expiry):
+        try:
+            inputs = [_future(name, token=token)]
+            results[name] = get_futures_board(inputs, expiry=expiry, quote_reader=reader)
+        except Exception as exc:
+            errors.append(exc)
+
+    t1 = threading.Thread(target=worker, args=("A", "TA", "EA"))
+    t2 = threading.Thread(target=worker, args=("B", "TB", "EB"))
+    t1.start()
+    t2.start()
+    assert started["a"].wait(timeout=5)
+    assert started["b"].wait(timeout=5), "distinct keys must not block each other"
+    release.set()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+    assert not errors
+    assert "A" in results and "B" in results
+    assert len(fb._build_locks) == 0
+
+
+def test_build_exception_cleans_up_lock() -> None:
+    import market.futures_board as fb
+    clear_board_cache()
+
+    def boom(exchange, token):
+        raise RuntimeError("quote failed hard")
+
+    # compute_futures_board catches quote reader exceptions per tile, so force
+    # failure at compute level to exercise get_futures_board cleanup.
+    orig = fb.compute_futures_board
+
+    def bad_compute(*a, **k):
+        raise RuntimeError("build failed")
+
+    fb.compute_futures_board = bad_compute  # type: ignore[assignment]
+    try:
+        inputs = [_future("NIFTY", token="A")]
+        try:
+            get_futures_board(inputs, expiry="EX", quote_reader=boom)
+            raise AssertionError("expected exception")
+        except RuntimeError:
+            pass
+        assert len(fb._build_locks) == 0
+    finally:
+        fb.compute_futures_board = orig  # type: ignore[assignment]
+
+    # Subsequent call succeeds.
+    def reader(exchange, token):
+        return {"ltp": 100, "open_interest": 10, "received_ts": NOW}
+    snap = get_futures_board([_future("NIFTY", token="A")], expiry="EX2", quote_reader=reader)
+    assert snap.eligible == 1
+    assert len(fb._build_locks) == 0
+
+
+def test_invalidation_while_active_and_no_removal_while_waiter() -> None:
+    import market.futures_board as fb
+    clear_board_cache()
+    build_started = threading.Event()
+    allow_finish = threading.Event()
+    orig = fb.compute_futures_board
+    calls = {"n": 0}
+
+    def slow_compute(*a, **k):
+        calls["n"] += 1
+        build_started.set()
+        allow_finish.wait(timeout=5)
+        return orig(*a, **k)
+
+    fb.compute_futures_board = slow_compute  # type: ignore[assignment]
+    errors = []
+    results = []
+
+    def reader(exchange, token):
+        return {"ltp": 100, "open_interest": 10, "received_ts": NOW}
+
+    inputs = [_future("NIFTY", token="A")]
+
+    def worker():
+        try:
+            results.append(get_futures_board(inputs, expiry="EINV", quote_reader=reader))
+        except Exception as exc:
+            errors.append(exc)
+
+    try:
+        t1 = threading.Thread(target=worker)
+        t2 = threading.Thread(target=worker)
+        t1.start()
+        assert build_started.wait(timeout=5)
+        t2.start()
+        time.sleep(0.05)
+        # Explicit invalidation while callers active must be safe.
+        clear_board_cache()
+        assert len(fb._build_locks) >= 1, "lock must not be removed while waiter/active caller depends on it"
+        allow_finish.set()
+        t1.join(timeout=10)
+        t2.join(timeout=10)
+        assert not errors
+        assert len(results) == 2
+        assert calls["n"] == 1, "single-flight must hold while waiter/active"
+        assert len(fb._build_locks) == 0
+    finally:
+        fb.compute_futures_board = orig  # type: ignore[assignment]
+
+
 # -- boundary ----------------------------------------------------------------
 
 def test_board_is_broker_and_app_free() -> None:

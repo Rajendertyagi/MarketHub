@@ -305,7 +305,7 @@ def filter_board(
 
 _cache: dict[Any, tuple[float, FuturesBoardSnapshot]] = {}
 _cache_lock = threading.Lock()
-_build_locks: dict[Any, threading.Lock] = {}
+_build_locks: dict[Any, dict[str, Any]] = {}
 _build_locks_guard = threading.Lock()
 
 
@@ -315,21 +315,36 @@ def _signature(inputs: Sequence[BoardInput], expiry: str) -> tuple[Any, ...]:
          c.provider_token or "") for c in inputs)))
 
 
-def _key_lock(key: Any) -> threading.Lock:
+def _acquire_build_lock(key: Any) -> tuple[threading.Lock, Callable[[], None]]:
+    """Return (lock, release) for a shared single-flight build lock.
+
+    Ref-counted so unused lock entries are removed when no caller is using or
+    waiting on the key, without replacing an in-flight lock.
+    """
     with _build_locks_guard:
-        lock = _build_locks.get(key)
-        if lock is None:
-            lock = threading.Lock()
-            _build_locks[key] = lock
-        return lock
+        entry = _build_locks.get(key)
+        if entry is None:
+            entry = {"lock": threading.Lock(), "refs": 0}
+            _build_locks[key] = entry
+        entry["refs"] += 1
+        lock = entry["lock"]
+
+    def _release() -> None:
+        with _build_locks_guard:
+            cur = _build_locks.get(key)
+            if cur is not entry:
+                return
+            cur["refs"] -= 1
+            if cur["refs"] <= 0:
+                _build_locks.pop(key, None)
+
+    return lock, _release
 
 
 def _prune_cache_locked(now: float, ttl: float) -> None:
     expired = [k for k, (ts, _) in _cache.items() if now - ts >= ttl]
     for k in expired:
         _cache.pop(k, None)
-    # Keep build locks: pruning them while a build is in-flight (key not yet
-    # cached) can break single-flight by replacing the active lock object.
 
 
 def get_futures_board(
@@ -348,21 +363,24 @@ def get_futures_board(
         if hit is not None and now - hit[0] < ttl:
             return hit[1]
         _prune_cache_locked(now, ttl)
-    lock = _key_lock(key)
-    with lock:
-        now = time.monotonic()
-        with _cache_lock:
-            hit = _cache.get(key)
-            if hit is not None and now - hit[0] < ttl:
-                return hit[1]
-        snap = compute_futures_board(
-            inputs, expiry=expiry, quote_reader=quote_reader,
-            previous_oi_reader=previous_oi_reader,
-            stale_minutes=stale_minutes, expiries=expiries)
-        with _cache_lock:
-            _cache[key] = (time.monotonic(), snap)
-            _prune_cache_locked(time.monotonic(), ttl)
-        return snap
+    lock, release = _acquire_build_lock(key)
+    try:
+        with lock:
+            now = time.monotonic()
+            with _cache_lock:
+                hit = _cache.get(key)
+                if hit is not None and now - hit[0] < ttl:
+                    return hit[1]
+            snap = compute_futures_board(
+                inputs, expiry=expiry, quote_reader=quote_reader,
+                previous_oi_reader=previous_oi_reader,
+                stale_minutes=stale_minutes, expiries=expiries)
+            with _cache_lock:
+                _cache[key] = (time.monotonic(), snap)
+                _prune_cache_locked(time.monotonic(), ttl)
+            return snap
+    finally:
+        release()
 
 
 def clear_board_cache() -> None:

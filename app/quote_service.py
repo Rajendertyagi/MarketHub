@@ -567,20 +567,60 @@ class QuoteService:
         wanted: set[str] = set()
         for cid in canonical_ids or ():
             wanted |= self._reference_ids(cid)
+
+        # Single-pass grouping with per-snapshot memoization to avoid repeated
+        # canonical/catalogue resolution for the same instrument token.
+        neutral_cache: dict[str, str | None] = {}
+        resolved_cache: dict[str, str | None] = {}
+
+        def _neutral(token: Any) -> str | None:
+            key = str(token or "").strip()
+            if not key:
+                return None
+            if key in neutral_cache:
+                return neutral_cache[key]
+            value = self.canonical_id_for(key)
+            neutral_cache[key] = value
+            return value
+
+        def _resolved(ref: Any) -> str | None:
+            key = str(ref or "").strip()
+            if not key:
+                return None
+            if key in resolved_cache:
+                return resolved_cache[key]
+            value = self.resolve_canonical(key)
+            resolved_cache[key] = value
+            return value
+
         groups: dict[str, list[Any]] = {}
         for q in all_quotes:
-            ids = self._quote_ids(q)
-            if not ids:
+            token = getattr(q, "instrument_token", None)
+            own_cid = getattr(q, "canonical_id", None)
+            symbol = getattr(q, "tradingsymbol", None)
+            neutral = _neutral(token)
+            group_key = neutral or (str(own_cid) if own_cid else "")
+            if not group_key and not token and not own_cid and not symbol:
                 continue
-            if wanted and not (ids & wanted):
-                continue
-            # ONE group per INSTRUMENT: the provider-neutral canonical id,
-            # so the quotes of two providers for the same instrument are
-            # selected against each other instead of reported twice.
-            key = self.canonical_id_for(
-                getattr(q, "instrument_token", None)) \
-                or getattr(q, "canonical_id", None) or ""
-            groups.setdefault(str(key), []).append(q)
+
+            if wanted:
+                ids: set[str] = set()
+                if own_cid:
+                    ids.add(str(own_cid))
+                    resolved_own = _resolved(own_cid)
+                    if resolved_own:
+                        ids.add(str(resolved_own))
+                if token:
+                    ids.add(str(token))
+                if symbol:
+                    ids.add(str(symbol))
+                if neutral:
+                    ids.add(neutral)
+                if not (ids & wanted):
+                    continue
+
+            groups.setdefault(str(group_key), []).append(q)
+
         out: list[dict[str, Any]] = []
         for group in groups.values():
             fresh = [q for q in group if self._is_fresh(q)]

@@ -355,19 +355,181 @@ def test_unparseable_catalog_fingerprint_is_not_cached(patch_futures_index):
     assert cat.future_reads == 4
 
 
-def test_skeleton_cache_and_lock_growth_bounded(patch_futures_index):
+def test_skeleton_cache_bounded_and_unused_locks_cleaned(patch_futures_index):
     cat = _CountingCat(sync_version=1)
     patch_futures_index(cat)
     svc = FnoCoverageService(cat, registry=_registry())
 
-    # Vary requested expiry to create distinct cache keys.
-    for i in range(40):
-        svc.plan(expiry=f"2026-10-{27 + (i % 2):02d}" if i % 3 == 0 else None)
-        # Also vary config to force more keys.
-        svc.plan(config={**svc._DEFAULT_CONFIG, "selected_expiry": f"2026-10-{27 + (i % 2):02d}", "expiry_policy": "selected"})
+    # At least 100 genuinely distinct cache keys sequentially.
+    for i in range(110):
+        cfg = {**svc._DEFAULT_CONFIG,
+               "selected_expiry": f"2026-11-{(i % 28) + 1:02d}",
+               "expiry_policy": "selected",
+               "stock_symbols": [f"SYM{i}"]}
+        svc.plan(config=cfg)
 
     assert len(svc._skeleton_cache) <= svc._MAX_SKELETON_CACHE
-    assert len(svc._skeleton_build_locks) <= svc._MAX_SKELETON_CACHE
+    # Unused build-lock entries must be cleaned up after sequential calls.
+    assert len(svc._skeleton_build_locks) == 0
+
+
+def test_unreliable_fingerprint_unique_keys_do_not_retain_locks(patch_futures_index):
+    class _NoSyncCat(_CountingCat):
+        def sync_state(self):
+            return []
+
+    cat = _NoSyncCat(sync_version=1)
+    patch_futures_index(cat)
+    svc = FnoCoverageService(cat, registry=_registry())
+
+    for i in range(120):
+        cfg = {**svc._DEFAULT_CONFIG,
+               "selected_expiry": f"2026-11-{(i % 28) + 1:02d}",
+               "expiry_policy": "selected",
+               "stock_symbols": [f"U{i}"]}
+        svc.plan(config=cfg)
+
+    # Uncacheable/unreliable fingerprints must not leave retained unused locks.
+    assert len(svc._skeleton_cache) == 0
+    assert len(svc._skeleton_build_locks) == 0
+
+
+def test_concurrent_identical_requests_single_build_and_lock_cleanup(patch_futures_index):
+    cat = _CountingCat(sync_version=1)
+    patch_futures_index(cat)
+    svc = FnoCoverageService(cat, registry=_registry())
+
+    results = []
+    errors = []
+    barrier = threading.Barrier(8)
+
+    def worker():
+        try:
+            barrier.wait(timeout=5)
+            results.append(svc.plan())
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert not errors
+    assert len(results) == 8
+    assert all(r.desired == results[0].desired for r in results)
+    assert cat.future_reads == 2
+    assert cat.equity_reads == 2
+    assert len(svc._skeleton_build_locks) == 0
+
+
+def test_concurrent_distinct_requests_no_cross_key_blocking(patch_futures_index):
+    cat = _CountingCat(sync_version=1)
+    patch_futures_index(cat)
+    svc = FnoCoverageService(cat, registry=_registry())
+
+    started = {"a": threading.Event(), "b": threading.Event()}
+    release = threading.Event()
+    orig = svc._build_skeleton
+
+    def slow_build(cfg, requested, fingerprint):
+        sel = (cfg or {}).get("selected_expiry")
+        if sel == "2026-11-01":
+            started["a"].set()
+            release.wait(timeout=5)
+        elif sel == "2026-11-02":
+            started["b"].set()
+            release.wait(timeout=5)
+        return orig(cfg, requested, fingerprint)
+
+    svc._build_skeleton = slow_build  # type: ignore[assignment]
+    errors = []
+    results = {}
+
+    def worker(name, day):
+        try:
+            cfg = {**svc._DEFAULT_CONFIG, "selected_expiry": f"2026-11-{day:02d}", "expiry_policy": "selected"}
+            results[name] = svc.plan(config=cfg)
+        except Exception as exc:
+            errors.append(exc)
+
+    t1 = threading.Thread(target=worker, args=("a", 1))
+    t2 = threading.Thread(target=worker, args=("b", 2))
+    t1.start()
+    t2.start()
+    assert started["a"].wait(timeout=5)
+    assert started["b"].wait(timeout=5), "distinct keys must not block each other"
+    release.set()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+    assert not errors
+    assert "a" in results and "b" in results
+    assert len(svc._skeleton_build_locks) == 0
+
+
+def test_build_exception_cleans_up_lock(patch_futures_index):
+    cat = _CountingCat(sync_version=1)
+    patch_futures_index(cat)
+    svc = FnoCoverageService(cat, registry=_registry())
+
+    def boom(cfg, requested, fingerprint):
+        raise RuntimeError("build failed")
+
+    svc._build_skeleton = boom  # type: ignore[assignment]
+    with pytest.raises(RuntimeError):
+        svc.plan()
+    assert len(svc._skeleton_build_locks) == 0
+
+    # Subsequent call can proceed (new lock/build attempt).
+    svc._build_skeleton = FnoCoverageService._build_skeleton.__get__(svc, FnoCoverageService)  # type: ignore[assignment]
+    p = svc.plan()
+    assert p.desired >= 0
+    assert len(svc._skeleton_build_locks) == 0
+
+
+def test_invalidation_while_callers_active_and_no_removal_while_waiter(patch_futures_index):
+    cat = _CountingCat(sync_version=1)
+    patch_futures_index(cat)
+    svc = FnoCoverageService(cat, registry=_registry())
+
+    build_started = threading.Event()
+    allow_finish = threading.Event()
+    orig = svc._build_skeleton
+    build_calls = {"n": 0}
+
+    def slow_build(cfg, requested, fingerprint):
+        build_calls["n"] += 1
+        build_started.set()
+        allow_finish.wait(timeout=5)
+        return orig(cfg, requested, fingerprint)
+
+    svc._build_skeleton = slow_build  # type: ignore[assignment]
+    errors = []
+    results = []
+
+    def worker():
+        try:
+            results.append(svc.plan())
+        except Exception as exc:
+            errors.append(exc)
+
+    t1 = threading.Thread(target=worker)
+    t2 = threading.Thread(target=worker)
+    t1.start()
+    assert build_started.wait(timeout=5)
+    t2.start()
+    time.sleep(0.05)  # let waiter register on same lock
+    # Explicit invalidation while callers active must be safe.
+    svc.invalidate_plan_cache()
+    assert len(svc._skeleton_build_locks) >= 1, "lock must not be removed while waiter/active caller depends on it"
+    allow_finish.set()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+    assert not errors
+    assert len(results) == 2
+    assert build_calls["n"] == 1, "single-flight must hold while waiter/active"
+    assert len(svc._skeleton_build_locks) == 0
 
 
 if __name__ == "__main__":
