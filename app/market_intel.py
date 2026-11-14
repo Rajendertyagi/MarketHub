@@ -203,10 +203,27 @@ class MarketIntel:
 
     def _find_underlying(self, name: str) -> dict[str, Any] | None:
         """Resolve an underlying name ('NIFTY', 'RELIANCE', 'NIFTY50') to
-        its INDEX row first, then EQUITY."""
+        its INDEX row first, then EQUITY.
+
+        Cached per (normalized name, catalog epoch): resolution is a pure
+        function of catalog state and is invoked on every chain/futures request.
+        """
         norm = self._norm(name)
         if not norm:
             return None
+        epoch = None
+        try:
+            epoch_fn = getattr(self._catalog, "catalog_epoch", None)
+            epoch = epoch_fn() if callable(epoch_fn) else None
+        except Exception:
+            epoch = None
+        cache = getattr(self, "_underlying_cache", None)
+        if cache is None or cache.get("_epoch") != epoch:
+            cache = {"_epoch": epoch}
+            self._underlying_cache = cache
+        if norm in cache:
+            return cache[norm]
+        result = None
         for itype in ("INDEX", "EQUITY"):
             # Targeted queries first (exact underlying key / substring),
             # then a normalized scan of that type's rows.
@@ -220,8 +237,14 @@ class MarketIntel:
                     if norm in (self._norm(row.get("underlying")),
                                 self._norm(row.get("tradingsymbol")),
                                 self._norm(row.get("name"))):
-                        return row
-        return None
+                        result = row
+                        break
+                if result is not None:
+                    break
+            if result is not None:
+                break
+        cache[norm] = result
+        return result
 
     @staticmethod
     def _provider_rank(row: dict[str, Any]) -> int:

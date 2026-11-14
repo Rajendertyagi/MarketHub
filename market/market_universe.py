@@ -36,15 +36,13 @@ from . import index_constituents as _idx
 
 UNIVERSE_NAMES: tuple[str, ...] = ("FNO", "NSE_EQ", "NIFTY50", "NIFTYNXT50", "BANKNIFTY")
 
-# Index membership is a curated constant, so its EXPENSIVE part is only the
-# per-symbol catalogue resolution (one exact lookup per constituent). The
-# resolved members are cached per universe as a pure function of
-# (universe, catalogue epoch); an epoch change makes the old entry
-# unreachable and the TTL bounds staleness for anything the epoch cannot
-# observe (e.g. provider enablement).
-_INDEX_CACHE_TTL_S = 300.0
-_INDEX_CACHE: dict[str, tuple[int | None, float, list[Member]]] = {}
-_INDEX_CACHE_LOCK = threading.Lock()
+# Resolved members are a pure function of (universe, catalogue epoch) for
+# catalog-derived universes. Cached and invalidated on epoch bumps; the TTL
+# bounds staleness for anything the epoch cannot observe. Callers receive a
+# copy so they cannot corrupt the cached list.
+_UNIVERSE_CACHE_TTL_S = 300.0
+_UNIVERSE_CACHE: dict[str, tuple[int | None, float, list[Member]]] = {}
+_UNIVERSE_CACHE_LOCK = threading.Lock()
 
 
 @dataclass
@@ -64,11 +62,13 @@ def resolve_universe(name: str, catalog: Any) -> list[Member]:
     """
     key = (name or "").upper()
     if key == "FNO":
-        return _resolve_fno(catalog)
+        # Membership depends on non-expired contracts (today) as well as epoch.
+        cache_key = f"FNO:{date.today().isoformat()}"
+        return _resolve_cached(cache_key, catalog, _resolve_fno)
     if key == "NSE_EQ":
-        return _resolve_nse_eq(catalog)
+        return _resolve_cached(key, catalog, _resolve_nse_eq)
     if key in _idx.INDEX_MEMBERS:
-        return _resolve_index_cached(key, catalog)
+        return _resolve_cached(key, catalog, _resolve_index)
     raise ValueError(f"unknown universe: {name}")
 
 
@@ -80,32 +80,31 @@ def _catalog_epoch(catalog: Any) -> int | None:
         return None
 
 
-def _resolve_index_cached(key: str, catalog: Any) -> list[Member]:
-    """Index members, cached by catalogue epoch.
+def _resolve_cached(key: str, catalog: Any, builder: Any) -> list[Member]:
+    """Universe members cached by catalogue epoch.
 
     Concurrent readers may compute the same list twice; that is harmless
     because the value is a pure function of (universe, epoch) and the cache
-    slot is replaced atomically with a fully-built list. Callers receive a
-    copy, so a consumer mutating its list cannot corrupt the cached one.
+    slot is replaced atomically with a fully-built list.
     """
     epoch = _catalog_epoch(catalog)
     if epoch is None:
         # Without an epoch the cache could serve members resolved against a
-        # catalogue that has since been replaced; resolve fresh instead.
-        return _resolve_index(key, catalog)
+        # stale catalogue indefinitely, so reads are not cached.
+        return builder(key, catalog)
     now = time.monotonic()
-    with _INDEX_CACHE_LOCK:
-        hit = _INDEX_CACHE.get(key)
+    with _UNIVERSE_CACHE_LOCK:
+        hit = _UNIVERSE_CACHE.get(key)
         if hit is not None and hit[0] == epoch \
-                and now - hit[1] < _INDEX_CACHE_TTL_S:
+                and now - hit[1] < _UNIVERSE_CACHE_TTL_S:
             return list(hit[2])
-    members = _resolve_index(key, catalog)
-    with _INDEX_CACHE_LOCK:
-        _INDEX_CACHE[key] = (epoch, now, members)
+    members = builder(key, catalog)
+    with _UNIVERSE_CACHE_LOCK:
+        _UNIVERSE_CACHE[key] = (epoch, now, members)
     return list(members)
 
 
-def _resolve_fno(catalog: Any) -> list[Member]:
+def _resolve_fno(key: str, catalog: Any) -> list[Member]:
     today = date.today().isoformat()
     # Enumeration only — provider-neutral membership.
     rows = fno_underlying_rows(catalog, provider=None, today=today,
@@ -119,7 +118,7 @@ def _resolve_fno(catalog: Any) -> list[Member]:
     return members
 
 
-def _resolve_nse_eq(catalog: Any) -> list[Member]:
+def _resolve_nse_eq(key: str, catalog: Any) -> list[Member]:
     # Prefer Upstox equity rows for stable storage keys when available.
     rows = catalog.equity_universe(provider="upstox", limit=5000)
     if not rows:

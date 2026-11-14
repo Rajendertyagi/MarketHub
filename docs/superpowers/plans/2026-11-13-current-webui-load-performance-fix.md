@@ -4,9 +4,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **No implementation in a planning-only/measurement-only assignment unless explicitly authorized by the user.**
 
-**Last updated:** 2026-11-14 (Sprint 04 WS1-04 published as `37c76d3`; follow-up corrections published as `501edeb`; WS1-05 build/chunk-size budgets implemented/verified in this pass)
+**Last updated:** 2026-11-14 (Sprint 04 WS1-04 published as `37c76d3`; follow-up corrections published as `501edeb`; WS1-05 build/chunk-size budgets published; WS2-06 moderate-endpoint profiling/optimization implemented and verified in this pass)
 **Branch:** `develop`
-**Verified local/remote `origin/develop` (WS1-05 pass start):** `f6ac437cf531f4aee1dd3cfde45f4c5d360bd3da` (`docs: finalize Sprint 04 correction publication status`, in sync after `git fetch origin`)
+**Verified local/remote `origin/develop` (WS2-06 pass start):** `0c25d965581ad57bf2d32579cfab0bae8bc400ba` (`docs(plan): record WS1-05 commit and CI results`, in sync after `git fetch origin`)
 **Publication state (verified 2026-11-14):** Audit docs commit `d0a8b0b4fb94855738603cdfeffd16291b3fdbb8` and consolidated master plan commit `81610ccc092f1b4f15bea6f2547adc3ad410a522` are **both published on `origin/develop`**. Earlier consolidation noted `d0a8b0b` as local-only/unpublished at that time; subsequent safe push published it (and `81610cc`). No force-push/rewrite performed.
 
 ## 1. Objective
@@ -260,7 +260,7 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 | WS2-03 | Profile/fix `/api/news` blocking I/O and processing | `PARTIAL` (Sprint 02: async store reads offloaded from event loop; isolated benchmark recorded; live endpoint latency unmeasured) | WS0-03, WS0-05 | `api/news_routes.py` (`_get_news`), `news/service.py` (`NewsService.news`, `_apply_filters`, `_dedup_items`), `core/persistence/modules/news.py` (`query_news_items`) | Measured improvement; filtering/ordering/dedup/response contract preserved; thread-safety understood |
 | WS2-04 | F&O coverage plan reuse/cache/single-flight for `/api/fno/coverage` and `/api/fno/catalog` | `VERIFIED` (Sprint 01 + Sprint 02 correctness hardening) | WS0-03 | `api/fno_coverage_routes.py` (`_coverage`, `_catalog`, `_plan_payload`), `app/fno_coverage.py` (`FnoCoverageService.plan`, `RoutingPlan.to_dict`) | Reduced recomputation/latency; correct invalidation; no stale dynamic capacity |
 | WS2-05 | `/api/futures/heatmap` plan reuse and board efficiency | `PARTIAL` (Sprint 01/02: plan skeleton reuse + cache correctness hardening benefit heatmap; board TTL/single-flight already present, expired-cache pruning added; board computation logic unchanged) | WS2-04, WS0-03 | `api/futures_heatmap.py`, `app/fno_coverage.py`, `market/futures_board.py` | Measured improvement; OI/buildup/coverage semantics preserved |
-| WS2-06 | Profile moderate endpoints (`/api/market/breadth`, `/api/options/chain/view`, `/api/market/fno/universe`) and optimize if measured | `NOT STARTED` | WS0-03 | `api/routes.py`, `market/breadth.py`, `market/market_universe.py`, `api/product_routes.py`, `app/market_intel.py`, FNO universe/catalog paths | Evidence-backed improvement or justified defer |
+| WS2-06 | Profile moderate endpoints (`/api/market/breadth`, `/api/options/chain/view`, `/api/market/fno/universe`) and optimize if measured | `DONE` (2026-11-14: profiled all three with isolated temp-DB benchmarks; implemented epoch-keyed catalog/universe caches for F&O universe count read model, option strikes, underlying resolution, and resolved universe members; preserved API contracts/freshness/canonical/provider semantics; focused tests + boundaries + ruff + diff-check green) | WS0-03 | `app/instruments.py`, `app/market_intel.py`, `market/market_universe.py`, `api/routes.py` (inspected), `api/product_routes.py` (inspected), `api/fno_routes.py` (inspected), `market/breadth.py` (inspected), `market/derivatives_universe.py` (inspected) | Evidence-backed improvement with before/after benchmarks and regression coverage |
 
 ### Workstream 3 — Realtime and data processing
 | Task ID | Task | Status | Dependencies | Key files/functions | Acceptance criteria |
@@ -322,6 +322,7 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 | 2026-11-14 | Sprint 03: implemented ref-counted single-flight lock lifecycle cleanup for F&O skeleton build locks and futures-board build locks | `app/fno_coverage.py`, `market/futures_board.py`, `test/test_fno_coverage_plan_cache.py`, `test/test_futures_board.py` | Unused lock entries cleaned up; no removal while waiter/active; exception-safe; cache bounds preserved; required concurrency/unique-key tests added |
 | 2026-11-14 | Sprint 03: investigated shared once-per-event canonical SSE processing before fan-out | `api/routes.py`, `core/sse_broker.py`, `app/server.py` (inspection) | Deferred: current generic broker broadcasts raw encoded lines and per-subscriber generators own canonical reselection/delivery semantics; safe shared processing would require architecture changes with delivery/ordering/backpressure risk not justified in bounded sprint |
 | 2026-11-14 | Implemented WS1-05 build/chunk-size budgets and verification (authorized) | Fresh isolated Vite 8/Rolldown production build + manifest (`.vite/manifest.json`), `frontend/scripts/check-bundle-budget.mjs`, `frontend/vite.config.ts`, `frontend/package.json`, `.github/workflows/frontend-build-budget.yml` | Enforced raw/uncompressed budgets for initial JS/CSS/combined and largest individual JS chunk (separate from initial load); integrated into normal frontend build and dedicated CI workflow; ECharts verified outside initial static graph; no app behavior/route/chunking/dependency changes |
+| 2026-11-14 | Implemented WS2-06 moderate-endpoint profiling/optimization (authorized) | Isolated temp-DB benchmarks (EventStore/InstrumentCatalog/MarketIntel, synthetic representative datasets), `app/instruments.py`, `app/market_intel.py`, `market/market_universe.py` | Added epoch-keyed caches: `InstrumentCatalog.fno_universe` full count-bearing read model with in-memory q/limit filtering, `InstrumentCatalog.option_strikes`, `MarketIntel._find_underlying`, and `market_universe.resolve_universe` member resolution (FNO/NSE_EQ/index, FNO cache key includes day for expiry correctness). Preserved API contracts, response fields/ordering, freshness/canonical/provider/missing-data semantics; no schema/dependency/provider/live-cache changes |
 
 ## 13. Progress log
 
@@ -341,6 +342,7 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 | 2026-11-14 | Sprint 03 Workstream A: full canonical quote snapshot optimization (`QuoteService.quotes`) + SSE initial snapshot reuse | (see §17 / commits) | Per-snapshot memoization of canonical/resolved ids; parity preserved; isolated synthetic benchmarks recorded; live endpoint/SSE unmeasured |
 | 2026-11-14 | Sprint 03 Workstream C: F&O/futures-board single-flight lock lifecycle cleanup | (see §17 / commits) | Ref-counted lock entries, exception-safe cleanup, no removal while waiter/active, >=100 distinct-key and concurrency tests added |
 | 2026-11-14 | WS1-05: build/chunk-size budgets and verification | `b2fc973299a4199c1cd68186e43a9390f96cc532` | Manifest-based budget checker enforces initial JS/CSS/combined and largest JS chunk budgets in normal build and CI; measured baseline recorded; deliberate-exceed/missing-artifact checks verified; CI `ruff` https://github.com/Rajendertyagi/MarketHub/actions/runs/43623801247 and `frontend-build-budget` https://github.com/Rajendertyagi/MarketHub/actions/runs/43623801272 both **success** |
+| 2026-11-14 | WS2-06: profile/optimize `/api/market/breadth`, `/api/options/chain/view`, `/api/market/fno/universe` | (this pass / commit pending) | Evidence-backed epoch-keyed read-model/member caching; repeated-call latency reduced for F&O universe and option-chain paths, breadth warm path improved; focused regression tests, architecture boundaries, ruff, diff-check green; CI recorded after push |
 
 ## 15. Sprint 01 implementation results (2026-11-14)
 
@@ -673,5 +675,55 @@ This demonstrates reduced initial secondary request/fan-out at dashboard mount w
 - Budgets are raw/uncompressed build sizes (not browser transfer/compressed sizes). Vite still emits large-chunk warnings for lazy `ChartView`/`echarts`; budgets now enforce limits but chunking behavior was not changed.
 - CI (post-push): `ruff` https://github.com/Rajendertyagi/MarketHub/actions/runs/43623801247 (**success**) and `frontend-build-budget` https://github.com/Rajendertyagi/MarketHub/actions/runs/43623801272 (**success**).
 
+## 20. WS2-06 implementation results (2026-11-14)
+
+### Scope and safety
+- **Authorized bounded changes only (WS2-06):** epoch-keyed, behavior-preserving read-model/member caching in `app/instruments.py`, `app/market_intel.py`, and `market/market_universe.py`; canonical plan update.
+- **Untouched:** route handlers/API contracts/response fields/ordering, quote freshness and stale-data semantics, canonical identity/provider priority/quote semantics, provider-neutral F&O membership and NSE+supported BSE SENSEX scope, option-chain listed-strike/ATM/expiry validation/window limits/missing-data behavior, provider quote enrichment logic, DB schema/migrations/production data, `config.json`/user settings, auth/startup/feed/broker/TBT/frontend, dependencies. No MarketHub app started; no broker login/feed/market-data connection/trading/production write.
+- **HEAD at start:** `0c25d965581ad57bf2d32579cfab0bae8bc400ba` (`develop`, in sync with `origin/develop`).
+
+### Profiling and root causes (isolated temp-DB benchmarks, synthetic representative datasets)
+Environment: local Python process, temp SQLite `EventStore` + `InstrumentCatalog`/`MarketIntel`, in-memory quote doubles; no live runtime/provider calls. Measurements are **synthetic/isolated** (not live endpoint timings).
+
+1. **`/api/market/fno/universe`** (`api/fno_routes.py` → `catalog.fno_universe` → store SQL): count-bearing provider-neutral aggregation ran on every request with no caching. Dataset: 200 F&O underlyings, 2 futures + 40 strikes×2 options per underlying (16,400 derivative rows) + equities.
+   - **Before (pre-change, same script/conditions):** cold 32.903 ms, warm 36.711 ms (p50-scale, repeated calls not cached).
+   - **Bottleneck:** repeated heavy SQL aggregation/grouping for catalog-derived, epoch-stable data.
+2. **`/api/options/chain/view`** (`api/product_routes.py::_intel_chain` → `MarketIntel.option_chain` + optional provider enrichment): catalog/assembly path repeated expensive lookups per request. Dataset: NIFTY index, 2 expiries, 100 strikes/expiry (400 option rows), 1,000 extra equities.
+   - **Before (pre-change, same script/conditions):** chain cold 10.551 ms, warm 10.424 ms p50; `find_underlying` 3.414 ms p50; `option_strikes` 0.810 ms p50 per call.
+   - **Bottlenecks:** repeated underlying resolution scans/lookups and repeated `option_strikes` DB reads for catalog-derived data.
+3. **`/api/market/breadth`** (`api/routes.py::_breadth` → `resolve_universe` + `compute_breadth`): FNO breadth benefited from F&O read-model cost; NSE_EQ/index universe member resolution rebuilt on each request (index had epoch cache, NSE_EQ/FNO member lists did not). Dataset: 200 F&O members with quotes; 1,700 NSE_EQ members.
+   - **Observed:** FNO breadth dominated by universe/read-model resolution on cold; NSE_EQ breadth ~12 ms warm (1,700 members) due to repeated universe resolution/member construction.
+
+### Implementation (evidence-backed, behavior-preserving)
+- **`app/instruments.py` — `InstrumentCatalog.fno_universe`:** cache full unfiltered count-bearing result per `(provider, today, catalog_epoch)` (epoch-bounded cache), fetch once via store (`q=None, limit=5000`), apply `q` (symbol/name, case-insensitive) and `limit` in memory. Preserves fields, ordering, membership/count/nearest-expiry semantics, and query behavior.
+- **`app/instruments.py` — `InstrumentCatalog.option_strikes`:** cache per `(underlying, expiry, exchange, catalog_epoch)`; return `list(rows)` copy. Catalog-derived, epoch-invalidated.
+- **`app/market_intel.py` — `MarketIntel._find_underlying`:** cache resolved row/None per `(normalized name, catalog_epoch)`; resolution logic unchanged.
+- **`market/market_universe.py` — `resolve_universe`:** unified epoch-keyed member cache for index, NSE_EQ, and F&O universes (F&O cache key includes `today` because membership depends on non-expired contracts). F&O resolution uses `fno_underlying_rows` enumeration read model (same symbol/name/equity_key membership fields) with existing provider-neutral/limit semantics; NSE_EQ/index resolution logic preserved. Returns copied lists.
+
+### Before/after benchmarks (same synthetic environment/conditions per comparison)
+| Endpoint/path | Dataset | Before | After | Notes |
+|---|---|---:|---:|---|
+| `/api/market/fno/universe` read model (`catalog.fno_universe`, provider-neutral, q=None, limit=300) | 200 underlyings, 16,400 derivative rows | cold 32.903 ms, warm 36.711 ms (repeated calls uncached) | cold 21.137 ms, warm 0.001 ms p50 / 0.002 ms p95 (n=20) | Warm/repeated polled requests avoid repeated SQL aggregation; q-filter warm 0.023 ms p50 (10 matches) |
+| `/api/options/chain/view` catalog/assembly (`MarketIntel.option_chain`, NIFTY, window=10, no provider enrichment) | 2 expiries, 100 strikes/expiry, 1,000 extra equities | cold 10.551 ms, warm 10.424 ms p50; `find_underlying` 3.414 ms, `option_strikes` 0.810 ms | cold 4.389 ms, warm 4.940 ms p50 / 4.214 ms (same-script runs); `find_underlying` 0.001 ms, `option_strikes` 0.000 ms, `derivative_expiries` 0.939 ms | ~53-60% warm improvement in isolated catalog/assembly path; provider enrichment/network latency unchanged and excluded |
+| `/api/market/breadth` F&O (`resolve_universe` + `compute_breadth`) | 200 F&O members, in-memory quotes | cold dominated by uncached F&O read-model resolution (see above) | cold 7.165 ms, warm 0.636 ms p50 (n=20) | Benefits from cached F&O read model + cached resolved members |
+| `/api/market/breadth` NSE_EQ (`resolve_universe` + `compute_breadth`) | 1,700 NSE_EQ members, in-memory quote misses | ~12 ms warm (pre-member-cache behavior) | cold 15.180 ms, warm 1.569 ms p50 (n=20) | Epoch-keyed resolved-member cache avoids repeated SQL/member construction |
+
+### Correctness/compatibility evidence
+- **F&O universe:** same count-bearing fields (`symbol`, `name`, `equity_key`, `futures_available`, `options_available`, `futures_count`, `options_count`, `future_expiries`, `option_expiries`, `nearest_future`, `nearest_option`), same ordering/limit/q behavior, provider-neutral membership preserved.
+- **Options chain:** `MarketIntel.option_chain` contract/selection/ATM/window/expiry validation/analytics logic unchanged; `option_strikes` and underlying resolution return equivalent catalog data keyed by epoch; provider enrichment path and missing-data behavior unchanged.
+- **Breadth:** `compute_breadth` unchanged; universe membership/eligible-unresolved handling/advance-decline-unchanged-unavailable classification/freshness semantics unchanged; F&O member source uses enumeration read model with equivalent membership fields.
+- **Cache invalidation:** all new caches keyed/bounded by `catalog_epoch()` (and F&O universe/member caches include `today` where expiry affects membership), so catalog sync/epoch bumps invalidate derived data; no live quote/provider snapshot caching added.
+
+### Verification (actual)
+- `python -m pytest test/test_breadth.py test/test_breadth_identity_resolution.py test/test_fno_universe.py test/test_fno_read_model_split.py test/test_fno_scope_architecture.py test/test_fno_read_paths.py test/test_derivatives_universe.py test/test_market_intel.py test/test_option_chain_routing.py test/test_options_analytics.py test/test_option_chain_history.py test/test_fno_chain_cache.py test/test_fno_routing_acceptance.py -q` → **120 passed in 5.35s**
+- `python -m pytest test/test_architecture_boundaries.py -q` → **17 passed in 1.48s**
+- `python -m ruff check app/instruments.py app/market_intel.py market/market_universe.py` → **All checks passed**
+- `git diff --check` → **clean**
+
+### Risks/limitations
+- Benchmarks are isolated/synthetic (temp SQLite + in-memory doubles), not live endpoint p50/p95 under production load/provider latency; provider enrichment and live quote freshness paths were not modified and remain subject to runtime/provider conditions.
+- New caches trade memory for repeated-read latency (bounded by catalog epoch/day keys and returned copies where appropriate); no TTL-based live-data caching introduced.
+- No DB schema/migration changes; no frontend/shared API contract changes.
+
 ---
-**End of canonical master plan. Sprint 04 (WS1-04) published as `37c76d3` with follow-up corrections published as `501edeb`; WS1-05 build/chunk-size budgets implemented/verified in this pass (manifest-based enforcement in normal build and CI). Live browser/runtime verification remains blocked by safe-running-instance constraints.**
+**End of canonical master plan. Sprint 04 (WS1-04) published as `37c76d3` with follow-up corrections published as `501edeb`; WS1-05 build/chunk-size budgets published; WS2-06 moderate-endpoint profiling/optimization implemented and verified in this pass (epoch-keyed catalog/universe caching with preserved contracts/freshness/semantics). Live browser/runtime verification remains blocked by safe-running-instance constraints.**

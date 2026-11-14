@@ -791,9 +791,33 @@ class InstrumentCatalog:
 
     def fno_universe(self, *, provider: str | None = None, today: str,
                      q: str | None = None, limit: int = 500) -> list[dict]:
-        """Equity underlyings with non-expired F&O contracts (read model)."""
-        return self._store.fno_universe(provider=provider, today=today,
-                                        q=q, limit=limit)
+        """Equity underlyings with non-expired F&O contracts (read model).
+
+        The count-bearing SQL is catalog-derived and changes only on a catalog
+        epoch bump (or day rollover for expiry filtering), so the full
+        unfiltered result is cached per (provider, today, epoch) and q/limit
+        are applied in memory. This preserves response shape, ordering, and
+        membership/count semantics while avoiding repeated heavy aggregation.
+        """
+        epoch = self.catalog_epoch()
+        cache = getattr(self, "_fno_universe_cache", None)
+        if cache is None or cache.get("_epoch") != epoch:
+            cache = {"_epoch": epoch}
+            self._fno_universe_cache = cache
+        key = (provider, today)
+        rows = cache.get(key)
+        if rows is None:
+            # Fetch the complete provider/day universe once; store caps at 5000.
+            rows = self._store.fno_universe(provider=provider, today=today,
+                                            q=None, limit=5000)
+            cache[key] = rows
+        if q:
+            ql = str(q).lower()
+            rows = [r for r in rows
+                    if ql in str(r.get("symbol") or "").lower()
+                    or ql in str(r.get("name") or "").lower()]
+        lim = max(1, min(int(limit), 5000))
+        return rows[:lim]
 
     def fno_underlying_rows(self, *, provider: str | None = None, today: str,
                             limit: int = 2000) -> list[dict]:
@@ -807,8 +831,23 @@ class InstrumentCatalog:
 
     def option_strikes(self, underlying: str, expiry: str,
                        exchange: str | None = None) -> list[dict]:
-        return self._store.option_strikes(underlying, expiry,
-                                          exchange=exchange)
+        """Option contracts for one underlying+expiry (catalog-derived).
+
+        Cached per (underlying, expiry, exchange, catalog epoch): the result is
+        a pure function of catalog state and is read on every chain request.
+        """
+        epoch = self.catalog_epoch()
+        cache = getattr(self, "_option_strikes_cache", None)
+        if cache is None or cache.get("_epoch") != epoch:
+            cache = {"_epoch": epoch}
+            self._option_strikes_cache = cache
+        key = (str(underlying).strip().upper(), str(expiry), exchange)
+        rows = cache.get(key)
+        if rows is None:
+            rows = self._store.option_strikes(underlying, expiry,
+                                              exchange=exchange)
+            cache[key] = rows
+        return list(rows)
 
     def get(self, provider: str, token: str) -> dict[str, Any] | None:
         return self._store.get_instrument(provider, token)
