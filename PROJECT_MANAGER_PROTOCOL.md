@@ -261,7 +261,110 @@ Critical acceptance criterion: the same instrument and market state should resol
 4. **Coverage:** supported NSE instruments/contracts, major indices, BSE SENSEX F&O, correct provider mappings, complete and discoverable catalog data.
 5. **Performance:** important but not at the expense of correctness. Avoid unnecessary DB queries, repeated catalog scans, duplicate subscriptions, unnecessary serialization, and excessive in-process work. Preserve existing performance work/documentation (`docs/performance/` preserved).
 
-**Engineering posture:** Keep architecture simple and robust. Prefer existing services/abstractions/adapters/identity/catalog/subscription mechanisms and small targeted fixes. Avoid unnecessary rewrites, abstraction layers, duplicate functionality, extra services without demonstrated need, unnecessary branches/scripts, unnecessary DB merge operations, or replacing behavior without understanding consumers.
+**Engineering posture:** Keep architecture simple and robust. Prefer existing MarketHub canonical services/abstractions/adapters/identity/catalog/subscription mechanisms and small targeted fixes where they fit. Avoid unnecessary rewrites, abstraction layers, duplicate functionality, extra services without demonstrated need, unnecessary branches/scripts, unnecessary DB merge operations, or replacing behavior without understanding consumers. This does not require preserving unsuitable technology, dependencies, or designs when evidence supports a better alternative (see §7.5).
+
+### 7.5 Technology-agnostic engineering and best-solution principle
+
+MarketHub must remain open to better engineering solutions. The current technology stack, dependencies, frameworks, libraries, architecture, and implementation choices are a **starting point, not a permanent restriction**. Do not defend existing code, libraries, or architectural decisions simply because they already exist. Evaluate alternatives objectively.
+
+**Objective:** build the best possible MarketHub — fast, reliable, maintainable, secure, and scalable — using the most appropriate technologies available. The goal is not to minimize dependencies, custom code, or lines of code independently; the goal is the best overall engineering outcome.
+
+#### 7.5.1 Technology-agnostic decision-making
+Agents must be free to **evaluate and recommend** (subject to evidence, safety, and authorization requirements in this protocol):
+- Adding new third-party packages and libraries.
+- Removing unnecessary dependencies.
+- Replacing existing packages with better alternatives.
+- Replacing individual components or architectural layers.
+- Changing frameworks, runtimes, databases, storage technologies, or communication protocols.
+- Adopting established industry-standard solutions.
+- Introducing specialized tools when they provide measurable benefits.
+
+A recommendation to replace a technology does **not** automatically authorize implementation, migration, dependency changes, commits, or destructive actions. All existing workflow, approval, safety, and Git rules remain in force.
+
+#### 7.5.2 Prefer established solutions where appropriate
+Before implementing complex functionality from scratch, investigate whether a mature solution already exists. Evaluate relevant options such as official SDKs/APIs, mature open-source libraries, established frameworks, database/caching solutions, task queues/background-processing systems, networking/streaming libraries, serialization/validation tools, and build/testing/monitoring/profiling tools.
+
+- Prefer an established solution when it provides better correctness, reliability, security, maintainability, or performance without introducing disproportionate complexity.
+- Do not reinvent functionality that is already solved well by a proven dependency.
+- Do not assume that writing custom code is better than using an established package.
+- Do not add dependencies unnecessarily; simple functionality should remain simple.
+
+#### 7.5.3 Dependency evaluation requirements
+Before introducing, removing, or replacing an important dependency, evaluate:
+1. Functional suitability and correctness.
+2. Performance and resource consumption.
+3. Startup and runtime overhead.
+4. Memory and CPU usage.
+5. Maintenance activity and release history.
+6. Security vulnerabilities and update practices.
+7. Licensing and commercial restrictions.
+8. Compatibility with the existing stack.
+9. Migration effort and maintenance burden.
+10. Long-term reliability and ecosystem maturity.
+
+Compare viable alternatives rather than choosing the first package found. For meaningful architectural decisions, document the selected solution, alternatives considered, trade-offs, and supporting evidence. Do not treat popularity alone as proof of quality.
+
+#### 7.5.4 Custom-code policy
+Custom code is justified when:
+- No suitable maintained solution exists.
+- Existing packages cannot satisfy MarketHub's requirements.
+- A specialized implementation is demonstrably more efficient.
+- A small adapter or integration layer is needed around an established library.
+
+Avoid:
+- Reimplementing established protocols.
+- Building unnecessary custom frameworks.
+- Duplicating existing package functionality.
+- Excessive abstractions and wrappers.
+- Creating infrastructure that an existing dependency already provides.
+- Introducing dependencies for trivial functionality.
+
+Prefer minimal custom integration code around proven components.
+
+#### 7.5.5 Performance-first engineering
+Evaluate performance across the entire application where relevant: startup/initialization, frontend initial loading/rendering, backend API latency/throughput, database access/query efficiency, real-time market data processing, SSE/WebSocket delivery/fan-out, CPU/memory consumption, threading/async/concurrency, network overhead/serialization, and build/deployment overhead.
+
+- Measure before optimizing whenever possible.
+- Use appropriate benchmarks, profilers, tracing tools, and monitoring libraries.
+- Do not claim performance improvements based solely on source-code changes or theoretical complexity reductions.
+- Distinguish synthetic benchmarks from actual application measurements.
+
+#### 7.5.6 Architecture and migration freedom
+Agents must be allowed to recommend replacing fundamentally unsuitable components when evidence supports the decision. Do not preserve a poor design merely because it already exists.
+
+For significant replacements:
+- Understand current behavior and dependencies.
+- Identify affected consumers and API contracts.
+- Establish regression and compatibility tests.
+- Evaluate migration and rollback strategies.
+- Preserve important functionality and user data.
+- Avoid unnecessary UI or behavior changes.
+- Validate the replacement before removing the old implementation.
+
+Prefer incremental, reversible migrations when practical. Do not undertake major architectural rewrites without clear justification and an appropriate migration plan.
+
+#### 7.5.7 Research before implementation
+For non-trivial engineering decisions:
+- Research current, maintained alternatives.
+- Consult official documentation first.
+- Check current package versions and compatibility.
+- Review known limitations and security advisories.
+- Compare practical trade-offs.
+- Run small isolated experiments when uncertainty is significant.
+
+Use up-to-date external research when required. Do not rely exclusively on outdated model knowledge.
+
+#### 7.5.8 Required engineering decision format (significant decisions)
+For significant technology or architecture decisions, provide:
+- **Problem:** What existing limitation are we solving?
+- **Current approach:** What technology or implementation is currently used?
+- **Alternatives:** Which packages, tools, or architectures were evaluated?
+- **Recommendation:** What is the strongest overall solution?
+- **Trade-offs:** Performance, reliability, complexity, security, maintenance, and cost.
+- **Migration:** What needs to change, what must remain compatible, and how can we roll back?
+- **Verification:** What tests and measurements will prove the new approach works?
+
+Do not force this entire format onto trivial changes.
 
 ---
 
@@ -424,7 +527,7 @@ The following were explicitly protected in recent narrowly scoped P0 work and/or
 - No unnecessary abstractions/frameworks or large rewrites.
 - Preserve read-only market-data behavior (no trading/order placement).
 - Do not weaken validation, auth, credential handling, or session persistence.
-- No DB schema changes unless a concrete correctness issue cannot be solved otherwise (explain before proceeding). No new dependencies without justification/approval.
+- No DB schema changes unless a concrete correctness issue cannot be solved otherwise (explain before proceeding). Do not add, remove, or replace dependencies without evidence, justification, and explicit authorization appropriate to the change/risk; dependency and technology changes must follow §7.5 (evaluation, trade-offs, migration/rollback, and verification as applicable).
 - Preserve all existing user changes and untracked files (including `docs/performance/`).
 
 ---
@@ -492,6 +595,7 @@ Before any implementation: inspect current repo/Git state, read this protocol an
 
 ## 16. Dated change log
 
+- **2026-11-14 (this session, documentation-only):** Integrated technology-agnostic engineering and best-solution principles into `PROJECT_MANAGER_PROTOCOL.md` (root; requested path was `docs/PROJECT_MANAGER_PROTOCOL.md` but existing protocol lives at repository root). Added §7.5 covering technology-agnostic decision-making, preference for established solutions, dependency evaluation, custom-code policy, performance-first engineering, architecture/migration freedom, research-before-implementation, and significant-decision format; reconciled engineering posture and dependency-change constraints to allow evidence-based evaluation/recommendation while preserving existing workflow, approval, safety, protected-area, and Git rules. Did not modify application code, dependencies, configuration, production data, or unrelated documentation.
 - **2026-11-10 (this session, documentation-only):** Expanded and consolidated `PROJECT_MANAGER_PROTOCOL.md` (root) from a short generic protocol into a MarketHub-specific operating manual while preserving core workflow/permission/evidence principles. Added product definition and supported scope, architecture overview, priorities, historical decisions/commits, P0-A/P0-B workstreams, latest local uncommitted P0 checkpoint (verified diffs/status), known gaps, protected areas/constraints, recommended next steps, key references, and current worktree snapshot. Verified facts from direct inspection: git branch/HEAD/status, protocol/P0 plan/PROJECT_CONTEXT locations and contents, and current diffs in `api/routes.py`, `api/fno_routes.py`, `core/persistence/modules/products.py`. Did not modify implementation code/tests/schemas/runtime state; did not commit/push/merge/rebase; preserved `docs/performance/` and all pre-existing uncommitted work.
 - **2026-11-10 (prior, recorded in earlier protocol):** Initial generic Project Manager Protocol created at root (requirements/audit/research/planning/review/verification workflow, permission/safety, evidence standards). Superseded in structure by this consolidated version but core principles retained.
 - **Historical (see `docs/PROJECT_CONTEXT.md` and Git history):** Earlier project-context snapshots and remediation/consolidation records exist; consult and re-verify against current code/state before relying on them.
