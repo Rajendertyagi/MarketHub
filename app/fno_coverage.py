@@ -19,6 +19,7 @@ each canonical contract maps to at most one provider by default.
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
@@ -121,6 +122,22 @@ class RoutingPlan:
         }
 
 
+@dataclass(frozen=True)
+class _CatalogSkeleton:
+    """Immutable/catalog-derived plan inputs (no dynamic provider state)."""
+
+    catalog_fingerprint: tuple[Any, ...]
+    config_key: tuple[Any, ...]
+    symbols: tuple[str, ...]
+    index_set: frozenset[str]
+    expiries: tuple[str, ...]
+    selected: dict[tuple[str, str], tuple[str, ...]]
+    groups: dict[tuple[str, str, str, str], dict[str, dict[str, Any]]]
+    equity_spot_map: dict[str, dict[str, str]]
+    index_spot_keys: dict[str, dict[str, str]]
+    errors: tuple[str, ...] = ()
+
+
 class FnoCoverageService:
     """Broker-neutral F&O routing + coverage over the catalog + registry."""
 
@@ -146,6 +163,10 @@ class FnoCoverageService:
         self._status_provider = status_provider
         self._subscribed_provider = subscribed_provider
         self._config_reader = config_reader
+        self._skeleton_cache: dict[tuple[Any, ...], _CatalogSkeleton] = {}
+        self._skeleton_cache_lock = threading.Lock()
+        self._skeleton_build_locks: dict[tuple[Any, ...], threading.Lock] = {}
+        self._skeleton_build_locks_guard = threading.Lock()
 
     # -- registry / config ---------------------------------------------------
 
@@ -174,6 +195,164 @@ class FnoCoverageService:
                     merged[key] = value
             return merged
         return dict(self._DEFAULT_CONFIG)
+
+    def invalidate_plan_cache(self) -> None:
+        """Drop cached catalog-derived plan skeletons.
+
+        Call after catalog sync/expiry-affecting catalog changes. Dynamic
+        provider state is always computed fresh per plan() call.
+        """
+        with self._skeleton_cache_lock:
+            self._skeleton_cache.clear()
+
+    def _catalog_fingerprint(self) -> tuple[Any, ...]:
+        """Best-effort catalog sync fingerprint for skeleton invalidation."""
+        try:
+            state = self._catalog.sync_state()
+        except Exception:
+            return ("no-sync-state",)
+        if not state:
+            return ("empty-sync-state",)
+        try:
+            items = []
+            for row in state:
+                if isinstance(row, dict):
+                    items.append(tuple(sorted(
+                        (str(k), str(v)) for k, v in row.items())))
+                else:
+                    items.append(str(row))
+            return tuple(sorted(items))
+        except Exception:
+            return (str(state),)
+
+    @staticmethod
+    def _config_key(cfg: dict[str, Any]) -> tuple[Any, ...]:
+        index_labels = tuple(sorted(str(x).strip().upper()
+                                    for x in (cfg.get("index_labels") or [])
+                                    if str(x).strip()))
+        stock_symbols = tuple(sorted(str(x).strip().upper()
+                                     for x in (cfg.get("stock_symbols") or [])
+                                     if str(x).strip()))
+        return (
+            bool(cfg.get("enabled", True)),
+            index_labels,
+            str(cfg.get("stock_mode", "all")),
+            stock_symbols,
+            cfg.get("preferred_provider") or None,
+            cfg.get("fallback_provider") or None,
+            str(cfg.get("expiry_policy", "nearest")),
+            cfg.get("selected_expiry") or None,
+        )
+
+    def _skeleton_key(self, cfg: dict[str, Any], requested: str | None) -> tuple[Any, ...]:
+        return (requested or None, self._config_key(cfg), self._catalog_fingerprint())
+
+    def _skeleton_build_lock(self, key: tuple[Any, ...]) -> threading.Lock:
+        with self._skeleton_build_locks_guard:
+            lock = self._skeleton_build_locks.get(key)
+            if lock is None:
+                lock = threading.Lock()
+                self._skeleton_build_locks[key] = lock
+            return lock
+
+    def _build_skeleton(self, cfg: dict[str, Any], requested: str | None,
+                        catalog_fingerprint: tuple[Any, ...]) -> _CatalogSkeleton:
+        config_key = self._config_key(cfg)
+        symbols, index_set = self._universe_symbols(cfg)
+        wanted = set(symbols)
+
+        try:
+            all_rows = []
+            for exch in ("NSE", "BSE"):
+                try:
+                    all_rows.extend(
+                        row
+                        for rows in futures_index(
+                            self._catalog, exchange=exch).values()
+                        for row in rows
+                    )
+                except Exception:
+                    pass
+        except Exception as exc:
+            return _CatalogSkeleton(
+                catalog_fingerprint=catalog_fingerprint,
+                config_key=config_key,
+                symbols=tuple(symbols),
+                index_set=frozenset(index_set),
+                expiries=(),
+                selected={},
+                groups={},
+                equity_spot_map={},
+                index_spot_keys={},
+                errors=(f"catalog future read failed: {type(exc).__name__}",),
+            )
+
+        expiries_by_contract: dict[tuple[str, str], set[str]] = {}
+        for row in all_rows or []:
+            und = str(row.get("underlying") or "").upper()
+            if und not in wanted:
+                continue
+            exp = str(row.get("expiry") or "")
+            if not exp:
+                continue
+            exch = str(row.get("exchange") or "NSE")
+            expiries_by_contract.setdefault((exch, und), set()).add(exp)
+        expiries = sorted({e for s in expiries_by_contract.values() for e in s})
+
+        selected: dict[tuple[str, str], tuple[str, ...]] = {}
+        for (exch, und), und_expiries in expiries_by_contract.items():
+            chosen = self._nearest_expiries(und_expiries, cfg, requested, 2)
+            if chosen:
+                selected[(exch, und)] = tuple(chosen)
+
+        errors: list[str] = []
+        if not selected:
+            errors.append("no listed futures expiry for the configured universe")
+
+        groups: dict[tuple[str, str, str, str], dict[str, dict[str, Any]]] = {}
+        for row in all_rows or []:
+            und = str(row.get("underlying") or "").upper()
+            if und not in wanted:
+                continue
+            exch = str(row.get("exchange") or "NSE")
+            exp = str(row.get("expiry") or "")
+            if exp not in selected.get((exch, und), ()):
+                continue
+            key = (exch, und, exp, FUTURE)
+            groups.setdefault(key, {})[str(row.get("provider") or "")] = row
+
+        equity_spot_map = self._equity_spot_map()
+        index_spot_keys = self._index_spot_keys()
+
+        return _CatalogSkeleton(
+            catalog_fingerprint=catalog_fingerprint,
+            config_key=config_key,
+            symbols=tuple(symbols),
+            index_set=frozenset(index_set),
+            expiries=tuple(expiries),
+            selected=selected,
+            groups=groups,
+            equity_spot_map=equity_spot_map,
+            index_spot_keys=index_spot_keys,
+            errors=tuple(errors),
+        )
+
+    def _get_skeleton(self, cfg: dict[str, Any], requested: str | None) -> _CatalogSkeleton:
+        key = self._skeleton_key(cfg, requested)
+        with self._skeleton_cache_lock:
+            cached = self._skeleton_cache.get(key)
+            if cached is not None:
+                return cached
+        lock = self._skeleton_build_lock(key)
+        with lock:
+            with self._skeleton_cache_lock:
+                cached = self._skeleton_cache.get(key)
+                if cached is not None:
+                    return cached
+            skeleton = self._build_skeleton(cfg, requested, key[2])
+            with self._skeleton_cache_lock:
+                self._skeleton_cache[key] = skeleton
+            return skeleton
 
     # -- universe ------------------------------------------------------------
 
@@ -333,8 +512,11 @@ class FnoCoverageService:
     def _spot_candidates(
         self, symbol: str, kind: str,
         equity_map: dict[str, dict[str, str]] | None = None,
+        index_spot_keys: dict[str, dict[str, str]] | None = None,
     ) -> dict[str, str]:
         if kind == KIND_INDEX:
+            if index_spot_keys is not None:
+                return index_spot_keys.get(symbol, {})
             return self._index_spot_keys().get(symbol, {})
         return (equity_map or {}).get(symbol, {})
 
@@ -343,14 +525,21 @@ class FnoCoverageService:
     def plan(self, *, expiry: str | None = None,
              config: dict[str, Any] | None = None,
              required_caps: frozenset[str] = REQUIRED_FNO_CAPS) -> RoutingPlan:
-        """Compute the desired provider-routed F&O plan (no feed changes)."""
+        """Compute the desired provider-routed F&O plan (no feed changes).
+
+        Catalog-derived computation (universe, futures rows/groups/expiries,
+        spot-key maps) is cached and reused across calls when the catalog
+        fingerprint and relevant config/expiry inputs are unchanged. Dynamic
+        provider state (status/availability, subscribed keys, capacity usage,
+        routing decisions) is always computed fresh per call.
+        """
         cfg = config if config is not None else self._config()
         reg = self._reg()
         plan = RoutingPlan(enabled=bool(cfg.get("enabled", True)),
                            expiry_requested=expiry or "latest",
                            expiry_resolved=None)
 
-        # Provider summaries (broker-neutral).
+        # Provider summaries (broker-neutral, dynamic).
         for pid in reg.ids():
             desc = reg.get(pid)
             plan.providers.append({
@@ -368,69 +557,21 @@ class FnoCoverageService:
         if not plan.enabled:
             return plan
 
-        symbols, index_set = self._universe_symbols(cfg)
-        wanted = set(symbols)
+        skeleton = self._get_skeleton(cfg, expiry)
+        plan.expiries = list(skeleton.expiries)
+        if skeleton.errors:
+            plan.errors.extend(skeleton.errors)
+            if not skeleton.selected:
+                plan.expiry_resolved = None
+                return plan
 
-        # ONE bulk future read for ALL expiries (no per-underlying queries),
-        # served from the shared canonical futures index so the workspace,
-        # coverage and futures board never rebuild it independently.
-        try:
-            all_rows = []
-            for exch in ("NSE", "BSE"):
-                try:
-                    all_rows.extend(
-                        row
-                        for rows in futures_index(
-                            self._catalog, exchange=exch).values()
-                        for row in rows
-                    )
-                except Exception:
-                    pass
-        except Exception as exc:
-            plan.errors.append(f"catalog future read failed: {type(exc).__name__}")
-            return plan
-
-        # Expiries are resolved PER (exchange, underlying): an NSE expiry
-        # must never discard a valid BSE contract (and vice versa).
-        expiries_by_contract: dict[tuple[str, str], set[str]] = {}
-        for row in all_rows or []:
-            und = str(row.get("underlying") or "").upper()
-            if und not in wanted:
-                continue
-            exp = str(row.get("expiry") or "")
-            if not exp:
-                continue
-            exch = str(row.get("exchange") or "NSE")
-            expiries_by_contract.setdefault((exch, und), set()).add(exp)
-        expiries = sorted({e for s in expiries_by_contract.values() for e in s})
-        plan.expiries = expiries
-
-        # The nearest TWO valid futures expiries per underlying (the
-        # established streamed-universe policy).
-        selected: dict[tuple[str, str], list[str]] = {}
-        for (exch, und), und_expiries in expiries_by_contract.items():
-            chosen = self._nearest_expiries(und_expiries, cfg, expiry, 2)
-            if chosen:
-                selected[(exch, und)] = chosen
-        if not selected:
+        if not skeleton.selected:
             plan.errors.append(
                 "no listed futures expiry for the configured universe")
             plan.expiry_resolved = None
             return plan
         plan.expiry_resolved = min(
-            (exps[0] for exps in selected.values() if exps), default=None)
-
-        groups: dict[tuple[str, str, str, str], dict[str, dict]] = {}
-        for row in all_rows or []:
-            und = str(row.get("underlying") or "").upper()
-            if und not in wanted:
-                continue
-            exch = str(row.get("exchange") or "NSE")
-            exp = str(row.get("expiry") or "")
-            if exp not in selected.get((exch, und), ()):
-                continue
-            key = (exch, und, exp, FUTURE)
-            groups.setdefault(key, {})[str(row.get("provider") or "")] = row
+            (exps[0] for exps in skeleton.selected.values() if exps), default=None)
 
         preferred = cfg.get("preferred_provider") or None
         fallback = cfg.get("fallback_provider") or None
@@ -443,10 +584,10 @@ class FnoCoverageService:
         # SPOTS first: the underlying's own quote is the highest-priority
         # subscription (a spotless underlying is useless), so a saturated
         # provider budget can never starve it. Futures follow.
-        equity_map = self._equity_spot_map()
-        for und in symbols:
-            kind = KIND_INDEX if und in index_set else KIND_EQUITY
-            candidates = self._spot_candidates(und, kind, equity_map)
+        for und in skeleton.symbols:
+            kind = KIND_INDEX if und in skeleton.index_set else KIND_EQUITY
+            candidates = self._spot_candidates(
+                und, kind, skeleton.equity_spot_map, skeleton.index_spot_keys)
             if not candidates:
                 continue
             contract, pid = self._route_spot(
@@ -458,8 +599,8 @@ class FnoCoverageService:
                 plan.keys_by_provider.setdefault(pid, []).append(
                     contract.provider_token or "")
 
-        for (exchange, und, exp, itype), by_prov in sorted(groups.items()):
-            kind = KIND_INDEX if und in index_set else KIND_EQUITY
+        for (exchange, und, exp, itype), by_prov in sorted(skeleton.groups.items()):
+            kind = KIND_INDEX if und in skeleton.index_set else KIND_EQUITY
             contract, pid = self._route_one(
                 und, kind, exchange, exp, itype, by_prov, order,
                 required_caps, used, plan)
