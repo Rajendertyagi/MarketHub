@@ -19,46 +19,29 @@
 3. **Do not start coding** because an investigation looks complete. Present findings + plan and wait for explicit approval (see `docs/PROJECT_MANAGER_PROTOCOL.md` / `AGENTS.md`).
 4. **No destructive Git ops** (`reset`/`clean`/force push/history rewrite/amend) and **no live service restart or live DB modifications** without explicit authorization. Preserve unrelated working-tree changes.
 
-## 2. Current repo state (verified 2026-11-10)
+## 2. Current repo state (verified 2026-11-14, Sprint 04 pass start)
 
 | Item | Value |
 |---|---|
 | Repo | `D:\Temp\MarketHub` / `Rajendertyagi/MarketHub` |
-| Current branch | `develop` (clean, up to date with `origin/develop`) |
-| `develop` / `origin/develop` | `f4e65962b162fff7ac3d78f599f5b9ebc6b09f62` — `docs: add Project Manager Protocol` |
-| `main` / `origin/main` (default, stable) | `4d0ceb558238ef00173fc5475b245b72a86e50d0` — `fix(alerts): restore baseline-first crossing semantics` (**unchanged** during 2026-11-10 consolidation) |
-| Permanent branches | **Exactly 2:** `main`, `develop` (obsolete branches deleted with approval; see change log) |
+| Current branch | `develop` |
+| `develop` / `origin/develop` (start of Sprint 04 pass) | `ff6cceaf42bff2d9ace81d9d932edae2f2f082d5` — `docs(protocol): fix table of contents anchor for investigation workflow` (in sync after `git fetch origin`; Sprint 04 commit/push pending in this pass) |
+| `main` / `origin/main` (default, stable) | `4d0ceb558238ef00173fc5475b245b72a86e50d0` — `fix(alerts): restore baseline-first crossing semantics` (**untouched**) |
+| Permanent branches | **Exactly 2:** `main`, `develop` |
 | Protections | `main`: PR required (0 approvals) + required status check `lint` (non-strict), no force/delete. `develop`: no force/delete (practical; no PR requirement / no required status checks on push). Default branch `main`. |
 | Tags/releases (intact) | Tags: `exe-35064251523`, `exe-35072882240`, `exe-35082963187`, `exe-35229434409`, `latest-exe`, `v0.3.0-rc.1`. Existing GitHub releases/assets preserved. |
+| Preserved untracked files (do not touch) | `config.json.pre_tbt_activation_20261111_191221.bak`, `docs/performance/2026-11-10-backend-optimization-simplification-architecture-review.md`, `docs/performance/2026-11-10-backend-performance-audit.md`, `docs/performance/2026-11-10-full-stack-performance-reliability-audit.md`, `docs/performance/2026-11-10-scanner-phase1-implementation-plan.md`, `docs/performance/2026-11-10-webui-system-performance-audit.md`, `docs/performance/2026-11-13-webui-live-performance-inspection.md` |
 
-## 3. Verified baselines (2026-11-10, this session)
+## 3. Verified baselines (point-in-time; re-verify before relying)
 
-- **Backend:** `1754 passed, 4 skipped, 0 failed`.
-- **Frontend:** `35 files / 199 tests passed, 0 failed`.
-- **Frontend quality gates:** typecheck and production build pass.
-- **Architecture/auth guardrails:** `pytest test/test_architecture_boundaries.py` and auth/startup freeze/regression checks green (targeted run: 49 passed). **Login must not regress.**
-- Re-verify before relying on these numbers; they are point-in-time evidence.
+- **2026-11-10 (historical):** Backend `1754 passed, 4 skipped, 0 failed`; frontend `35 files / 199 tests passed, 0 failed`; frontend typecheck/build pass; architecture/auth guardrails green (targeted 49 passed). **Login must not regress.**
+- **2026-11-14 Sprint 04 (frontend/dashboard scope, this pass):** targeted dashboard tests `2 files / 7 tests passed` (`dashboardLive.test.tsx`, `dashboardDeferred.test.tsx`); full frontend suite `35 files passed, 1 failed; 199 tests passed, 2 failed` — failure unrelated/pre-existing `src/__tests__/EChart.test.tsx` (2 tests), not modified; frontend typecheck pass; Biome pass on changed dashboard/test paths (full `biome check src` has pre-existing unrelated formatting drift in `src/app/routes.tsx`, `src/features/dashboard/components/IndicesWidget.tsx`); isolated production build pass (`vite build --outDir %TEMP%\markethub-sprint04-dist`, `✓ built`, existing large lazy-chunk warnings unchanged). Backend/architecture guardrails not rerun in this frontend-only sprint.
 
-## 4. Recent completed work (2026-11-10, on `develop`)
+## 4. Recent completed work (selected, on `develop`)
 
-Validated remediations and consolidation (evidence-based; no protected auth implementation changes; no live 7070/DB changes; no EXE build/publish):
-
-- `686ee85` — Fyers restore/web auth tests aligned to current contracts.
-- `58fb0be` — deterministic date pinning for F&O/scanner tests.
-- `cfe8320` — F&O strike sort fix.
-- `281302e` — News/Market Map tests aligned to current UI; `MarketMapView` `useElementSize` callback-ref fix.
-- `3c88e5b` — Scanner/Sector Heatmap tests aligned to current UI.
-- `541f16c` — Alerts tests aligned; Fyers TBT reconnect backoff made interruptible; `test_tbt24_shutdown_during_backoff` made deterministic.
-- `e87d182` — repo-addressable warning/lifecycle fixes (`core/runtime.py` no-op coro close, awaited barrier, `inspect.iscoroutinefunction`, `sources/test_source.py __test__ = False`, `websockets.asyncio.client.connect`).
-- `400e419` — server lifecycle/config: top-level Starlette lifespan `@asynccontextmanager` (startup/shutdown ordering preserved) + uvicorn `ws="websockets-sansio"`.
-- `b90adce` — merged remote-only `e95ac21` (`docs(plan): draft Phase 4 indicator catalog scope`); conflict in `docs/plans/2026-10-27-unified-catalog-and-chart-plan.md` resolved preserving local status/decisions and incorporating the drafted proposal as **non-authorized/deferred**.
-- `beb60ea`, `80ee786` — frontend lint/type cleanups (unused `useRef` / unused ResizeObserver stub param).
-- `9877a21` — `.github/workflows/build-exe.yml` made safe/tag-driven (see §5).
-- `f4e6596` — added `PROJECT_MANAGER_PROTOCOL.md` (later relocated to `docs/PROJECT_MANAGER_PROTOCOL.md`).
-
-**Branch consolidation (approved):** deleted local+remote `fno-provider-agnostic`, `feature/market-phase-c-sse`, `b8-production-hardening`, `audit/b8-performance-measurement` after containment/preservation checks. `main`/`develop` retained; no force push, no history rewrite, no tag/release deletion.
-
-**B8A benchmark evidence:** preserved and verified (bundle + clean artifacts zip + README) outside Git tracking, then `D:\Temp\MarketHub\project-archive\` was deleted after verification. **No durable benchmark archive copy remains in the repo/workspace**; recover only from any external copy retained by the maintainer. Incompatible `bcd0074` non-benchmark hunks were excluded from integration by design.
+- **2026-11-10 consolidation/remediations (historical):** `686ee85`, `58fb0be`, `cfe8320`, `281302e`, `3c88e5b`, `541f16c`, `e87d182`, `400e419`, `b90adce`, `beb60ea`, `80ee786`, `9877a21`, `f4e6596` (protocol later relocated to `docs/PROJECT_MANAGER_PROTOCOL.md`). Branch consolidation completed (obsolete branches deleted with approval); `main`/`develop` retained. B8A benchmark evidence not durably present in repo/workspace after approved deletion of `project-archive/`.
+- **2026-11-14 performance/protocol work (published on `origin/develop`):** Sprint 01 `0fc3e58`, `d7ccfa5`, `c99404f`; Sprint 02 `fb6231b`, `4213ece`, `a4d4d4b`, `f7281db`; Sprint 03 `75b9ae8`; protocol updates `e0dc8cc`, `b00877a`, `ff6ccea`. See `docs/superpowers/plans/2026-11-13-current-webui-load-performance-fix.md` for evidence, measurements, and limitations.
+- **2026-11-14 Sprint 04 WS1-04 (this pass, pending commit/push):** dashboard shell vs secondary data separation — deferred visibility-aware mount/fetch for Sectors, Breadth, F&O, Movers in `frontend/src/features/dashboard/DashboardView.tsx` via `frontend/src/features/dashboard/useInViewport.ts`; critical `useMarketQuotes`/SSE/ticker/indices remain immediate; widget query keys, polling intervals, freshness, and functionality preserved once visible. Added `frontend/src/__tests__/dashboardDeferred.test.tsx`. Evidence: targeted dashboard tests 7/7 pass; full frontend 199/201 pass with 2 unrelated pre-existing `EChart.test.tsx` failures; typecheck pass; changed-path Biome pass; isolated production build pass. Live browser/network/runtime measurements remain blocked.
 
 ## 5. EXE release workflow (current, prepared — not executed)
 

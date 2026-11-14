@@ -4,10 +4,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **No implementation in a planning-only/measurement-only assignment unless explicitly authorized by the user.**
 
-**Last updated:** 2026-11-14 (WS0 measurement/documentation pass)
+**Last updated:** 2026-11-14 (Sprint 04 WS1-04 dashboard secondary-widget deferral implemented/verified; publication pending commit/push in this pass)
 **Branch:** `develop`
-**Verified local HEAD (this pass start):** `81610ccc092f1b4f15bea6f2547adc3ad410a522` (`docs(plan): consolidate MarketHub performance and simplification master plan`)
-**Verified remote `origin/develop` (this pass):** `81610ccc092f1b4f15bea6f2547adc3ad410a522` (in sync after `git fetch origin`)
+**Verified local HEAD (this pass start):** `ff6cceaf42bff2d9ace81d9d932edae2f2f082d5` (`docs(protocol): fix table of contents anchor for investigation workflow`)
+**Verified remote `origin/develop` (this pass start):** `ff6cceaf42bff2d9ace81d9d932edae2f2f082d5` (in sync after `git fetch origin`)
 **Publication state (verified 2026-11-14):** Audit docs commit `d0a8b0b4fb94855738603cdfeffd16291b3fdbb8` and consolidated master plan commit `81610ccc092f1b4f15bea6f2547adc3ad410a522` are **both published on `origin/develop`**. Earlier consolidation noted `d0a8b0b` as local-only/unpublished at that time; subsequent safe push published it (and `81610cc`). No force-push/rewrite performed.
 
 ## 1. Objective
@@ -250,7 +250,7 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 | WS1-01 | Route-level lazy loading for non-critical routes (keep shell small) | `VERIFIED` (Sprint 01) | WS0-04 | `frontend/src/routes/router.tsx`, feature entrypoints | Initial bundle/chunks reduced; routes load on demand; navigation tests pass |
 | WS1-02 | Remove global echarts preload / isolate echarts to needed routes | `VERIFIED` (Sprint 01) | WS0-04, WS1-01 | `frontend/dist/index.html` (build output), `frontend/vite.config.ts`, `frontend/src/components/EChart.tsx`, chart/breadth/sector/fno consumers | Non-chart initial load excludes echarts preload; chart features intact |
 | WS1-03 | Evaluate ECharts modular imports (`echarts/core`) with required registrations only | `VERIFIED` (Sprint 01) | WS1-02 | `frontend/src/components/EChart.tsx`, `features/breadth/breadthOption.ts`, `features/sector-heatmap/sectorHeatmapOption.ts`, `features/fno/fnoOption.ts`, `features/market-map/marketMapOption.ts` | Bundle reduced or justified no-change; theme/disposal/resize/interactions/tests preserved |
-| WS1-04 | Dashboard shell vs secondary data separation; defer non-critical widgets | `NOT STARTED` | WS0-02, WS0-03 | `frontend/src/features/dashboard/DashboardView.tsx`, `useMarketQuotes.ts`, widget components | Faster first useful content; no harmful freshness loss |
+| WS1-04 | Dashboard shell vs secondary data separation; defer non-critical widgets | `DONE` (Sprint 04: visibility-aware deferred mount/fetch for Sectors, Breadth, F&O, Movers; critical quotes/SSE/ticker/indices remain immediate; query keys/intervals/freshness/widget behavior preserved once visible) | WS0-02, WS0-03 | `frontend/src/features/dashboard/DashboardView.tsx`, `frontend/src/features/dashboard/useInViewport.ts`, widget components (unchanged), `frontend/src/__tests__/dashboardDeferred.test.tsx` | Faster first useful content / reduced initial secondary request burst; no harmful freshness loss once visible; browser trace/LCP unmeasured |
 | WS1-05 | Build/chunk-size budgets and verification | `PARTIAL` (Sprint 01: build verified, budgets not formally enforced) | WS1-01..04 | `frontend/vite.config.ts`, CI/build scripts (if approved) | Budgets recorded/enforced; build green |
 
 ### Workstream 2 — Backend and API performance
@@ -403,7 +403,7 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 - Targeted tests: `src/__tests__/analyticsOptions.test.ts`, `src/__tests__/breadth.test.tsx`, `src/__tests__/sectorHeatmap.test.tsx`, `src/__tests__/futuresHeatmap.test.tsx`, `src/__tests__/fnoFormat.test.ts` → **28 passed** across 5 files.
 - Chart functionality/themes/resize/disposal preserved by existing `EChart` lifecycle contract; modular registrations cover bar/treemap/grid/tooltip/legend/canvas used by current chart options.
 
-**Risks/limitations:** No browser DevTools trace/LCP/INP/CLS/navigation timing captured (no safe running app). Dashboard widget polling/fan-out unchanged (WS1-04 not addressed). Build chunk-size budgets not formally enforced in CI/config (WS1-05 partial). Vite still warns about large lazy chunks (`ChartView`, `echarts`) which are expected on-demand chunks.
+**Risks/limitations:** No browser DevTools trace/LCP/INP/CLS/navigation timing captured (no safe running app). Dashboard secondary-widget initial request burst reduced by WS1-04 visibility-aware deferral (Sprint 04), but live browser/network timing remains unmeasured. Build chunk-size budgets not formally enforced in CI/config (WS1-05 partial). Vite still warns about large lazy chunks (`ChartView`, `echarts`) which are expected on-demand chunks.
 
 **Commit:** `d7ccfa59f61983cacef94a2565c00501a96c6104` — `perf(frontend): lazy-load routes and isolate modular echarts from initial bundle`
 
@@ -574,5 +574,42 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 - Full snapshot benchmark is isolated/synthetic (in-memory quotes/catalog doubles), not live API latency. SSE per-event/subscriber fan-out benchmark not run against live runtime; shared per-event canonical processing deferred with evidence.
 - `QuoteService.quotes()` still performs full-universe grouping/selection per snapshot build (necessary for correctness) but with reduced repeated identity resolution work.
 
+## 18. Sprint 04 implementation results (2026-11-14)
+
+### Scope and safety
+- **Authorized bounded changes only (WS1-04):** dashboard shell vs secondary data separation by deferring only Sectors, Breadth, F&O, and Movers with a visibility-aware strategy; relevant frontend tests; this master plan and `docs/PROJECT_CONTEXT.md`.
+- **Critical behavior preserved:** `useMarketQuotes` snapshot/SSE/ticker/indices initialization remains immediate in `DashboardView`; `IndicesWidget` and `TickerStrip` mount eagerly; no backend/auth/startup/broker/feed/subscription/DB/config changes.
+- **Preserved contracts:** existing widget query keys, `refetchInterval` values, freshness/staleness behavior, widget functionality, and protected architecture boundaries unchanged. No live app started; no broker/feed side effects triggered.
+- **HEAD at start:** `ff6cceaf42bff2d9ace81d9d932edae2f2f082d5` (`develop`, in sync with `origin/develop`).
+
+### Workstream 1 — Dashboard shell vs secondary data separation (WS1-04, DONE)
+
+**Problem/evidence:** `DashboardView` eagerly mounted `SectorsWidget`, `BreadthWidget`, `FnoWidget`, and `MoversWidget`, so their React Query hooks fired immediately on dashboard render (secondary request burst) even when below the fold, while critical quotes/SSE/ticker/indices were already the primary shell.
+
+**Implementation (visibility-aware, minimal):**
+- Added `frontend/src/features/dashboard/useInViewport.ts`: IntersectionObserver-based visibility gate that flips to mounted/visible once intersecting and stays mounted; falls back to visible when `IntersectionObserver` is unavailable (non-browser/test safety).
+- Updated `frontend/src/features/dashboard/DashboardView.tsx`: wrapped each secondary widget in `DeferredSecondary` (`rootMargin: "200px 0px"` prefetch margin) so Sectors/Breadth/F&O/Movers mount and begin fetching only when near/inside the viewport. Critical `StreamStatus`, `TickerStrip`, `useMarketQuotes`, and `IndicesWidget` remain immediate and unchanged.
+- Widget components, query keys, polling intervals (`SectorsWidget`/`BreadthWidget` 8s, `FnoWidget`/`MoversWidget` 15s), and data/freshness behavior unchanged once mounted.
+
+**Exact changed files:** `frontend/src/features/dashboard/DashboardView.tsx`, `frontend/src/features/dashboard/useInViewport.ts`, `frontend/src/__tests__/dashboardDeferred.test.tsx`, `docs/superpowers/plans/2026-11-13-current-webui-load-performance-fix.md`, `docs/PROJECT_CONTEXT.md`.
+
+**Before/after request behavior (dashboard mount, evidence-based):**
+| Scenario | Critical quotes snapshot (`getMarketQuotes`) | Indices subscriptions (`getSubscriptions`) | Secondary widget fetches (`getSectorHeatmap`, `getBreadth`, `getFnoUniverse`, `runScanner`) |
+|---|---:|---:|---:|
+| Before (eager mount, pre-Sprint 04 code path) | immediate | immediate | **4 immediate** on dashboard render (all secondary widgets mounted) |
+| After, secondary section not visible (`dashboardDeferred.test.tsx`, non-intersecting observer) | immediate | immediate | **0** until visible |
+| After, secondary section becomes visible (`dashboardDeferred.test.tsx`, intersecting observer) | immediate | immediate | **4** after visibility (same queries/keys/intervals) |
+
+This demonstrates reduced initial secondary request/fan-out at dashboard mount while preserving on-visible fetch behavior and unchanged polling/freshness contracts. Live browser network waterfall/LCP/INP/CLS timing remains unmeasured (no safe running app).
+
+**Tests/verification (actual):**
+- Targeted: `frontend/node_modules/.bin/vitest.exe run src/__tests__/dashboardLive.test.tsx src/__tests__/dashboardDeferred.test.tsx` → **2 files passed, 7 tests passed**.
+- Full frontend suite: `frontend/node_modules/.bin/vitest.exe run` → **35 files passed, 1 failed; 199 tests passed, 2 failed**. Failure is **unrelated/pre-existing in this environment**: `src/__tests__/EChart.test.tsx` (2 tests: `initializes, applies option, and disposes on unmount`, `re-applies option when option prop changes`) — not modified by Sprint 04; no dashboard/chart integration changes made.
+- Typecheck: `frontend/node_modules/.bin/tsc.exe --noEmit` and `tsc --noEmit -p tsconfig.test.json` → **pass**.
+- Lint (changed frontend paths): `frontend/node_modules/.bin/biome.exe check src/features/dashboard/DashboardView.tsx src/features/dashboard/useInViewport.ts src/__tests__/dashboardDeferred.test.tsx` → **pass** (Biome config schema/deprecation warnings pre-existing). Full `biome check src` reports pre-existing formatting issues in unrelated files (`src/app/routes.tsx`, `src/features/dashboard/components/IndicesWidget.tsx`) not modified in this sprint; not churned.
+- Production build (isolated output): `frontend/node_modules/.bin/vite.exe build --outDir %TEMP%\markethub-sprint04-dist` → **built successfully** (`✓ built in 3.10s`, 1202 modules transformed; existing large-chunk warnings for lazy `ChartView`/`echarts` unchanged).
+
+**Risks/limitations:** No browser DevTools trace/LCP/INP/CLS/navigation timing or live network waterfall captured (no safe running app). Deferral is viewport-based with 200px prefetch margin; widgets below the fold do not fetch until near-visible (intended), but once visible they retain existing polling intervals/freshness behavior. `EChart.test.tsx` failures and unrelated Biome formatting drift pre-existed and were not addressed to avoid scope churn.
+
 ---
-**End of canonical master plan. Sprint 03 bounded implementation completed for full snapshot optimization (measured, parity-preserving) and F&O/futures-board lock lifecycle (bounded, tested); shared SSE per-event fan-out optimization deferred as unsafe/unproven in bounded scope; live runtime verification remains blocked by safe-running-instance constraints.**
+**End of canonical master plan. Sprint 04 (WS1-04) implemented visibility-aware deferral for dashboard secondary widgets (Sectors/Breadth/F&O/Movers) with critical quotes/SSE/ticker/indices immediate and preserved query keys/intervals/freshness; live browser/runtime verification remains blocked by safe-running-instance constraints.**
