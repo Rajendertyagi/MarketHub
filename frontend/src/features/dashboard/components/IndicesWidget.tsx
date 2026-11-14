@@ -36,28 +36,29 @@ export function IndicesWidget({ quotes, byCanonical }: Props) {
   });
 
   const { byCanonicalId, byNativeKey } = useMemo(() => {
-    const canonical = new Map<string, MarketQuote>();
+    const canonical = byCanonical ? null : new Map<string, MarketQuote>();
     const native = new Map<string, MarketQuote>();
     for (const q of quotes) {
-      const cid = (q as { canonical_id?: string | null }).canonical_id;
-      if (cid && !canonical.has(cid)) canonical.set(cid, q);
+      if (canonical) {
+        const cid = (q as { canonical_id?: string | null }).canonical_id;
+        if (cid && !canonical.has(cid)) canonical.set(cid, q);
+      }
       const nk = q.instrument_token;
       if (nk && !native.has(nk)) native.set(nk, q);
     }
     return { byCanonicalId: canonical, byNativeKey: native };
-  }, [quotes]);
+  }, [quotes, byCanonical]);
 
   const quoteFor = (idx: IndexDef): MarketQuote | undefined => {
     if (idx.canonical_id) {
-      const selected = byCanonical?.get(idx.canonical_id) ?? byCanonicalId.get(idx.canonical_id);
+      const selected = byCanonical?.get(idx.canonical_id) ?? byCanonicalId?.get(idx.canonical_id);
       if (selected) return selected;
     }
     // Fallback: the quote store keys a quote by the NATIVE token of the
     // provider that served it, and either provider may be the one that
     // answered for this index. Try both identifiers.
     return (
-      byNativeKey.get(idx.key) ??
-      (idx.fyers_symbol ? byNativeKey.get(idx.fyers_symbol) : undefined)
+      byNativeKey.get(idx.key) ?? (idx.fyers_symbol ? byNativeKey.get(idx.fyers_symbol) : undefined)
     );
   };
 

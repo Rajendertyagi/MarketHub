@@ -64,6 +64,40 @@ describe("TickerStrip staleness", () => {
     render(<TickerStrip quotes={[quote(FRESH_TS)]} />);
     expect(screen.queryByText("stale")).not.toBeInTheDocument();
   });
+
+  it("updates only the changed quote's displayed values when other quote objects keep identity", () => {
+    const a = {
+      exchange: "NSE",
+      instrument_token: "A",
+      tradingsymbol: "AAA",
+      ltp: 100,
+      change: 1,
+      change_percent: 1,
+      volume: 10,
+      received_ts: FRESH_TS,
+    };
+    const b = {
+      exchange: "NSE",
+      instrument_token: "B",
+      tradingsymbol: "BBB",
+      ltp: 200,
+      change: 2,
+      change_percent: 1,
+      volume: 20,
+      received_ts: FRESH_TS,
+    };
+    const { rerender } = render(<TickerStrip quotes={[a, b]} />);
+    expect(screen.getByText("AAA")).toBeInTheDocument();
+    expect(screen.getByText("BBB")).toBeInTheDocument();
+    expect(screen.getByText("100.00")).toBeInTheDocument();
+    expect(screen.getByText("200.00")).toBeInTheDocument();
+
+    const bUpdated = { ...b, ltp: 201, change: 3 };
+    rerender(<TickerStrip quotes={[a, bUpdated]} />);
+    expect(screen.getByText("100.00")).toBeInTheDocument();
+    expect(screen.getByText("201.00")).toBeInTheDocument();
+    expect(screen.queryByText("200.00")).not.toBeInTheDocument();
+  });
 });
 
 describe("IndicesWidget staleness", () => {
@@ -85,6 +119,39 @@ describe("IndicesWidget staleness", () => {
     renderWithProviders(<IndicesWidget quotes={quotes} />);
     const card = await screen.findByRole("link", { name: /NIFTY 50.*stale data/ });
     expect(card).toHaveTextContent("stale");
+  });
+
+  it("prefers canonical map lookup and falls back to native keys when canonical is unavailable", async () => {
+    (getSubscriptions as ReturnType<typeof vi.fn>).mockResolvedValue({
+      indices: [
+        { label: "NIFTY 50", key: "NSE:NIFTY50", canonical_id: "NSE:INDEX:NIFTY", enabled: true },
+        { label: "BANKNIFTY", key: "NSE:BANKNIFTY", enabled: true },
+      ],
+    });
+    const canonicalQuote = {
+      exchange: "NSE",
+      instrument_token: "NSE:NIFTY50",
+      tradingsymbol: "NIFTY 50",
+      ltp: 25000,
+      change: 10,
+      change_percent: 0.04,
+      canonical_id: "NSE:INDEX:NIFTY",
+      received_ts: FRESH_TS,
+    };
+    const nativeQuote = {
+      exchange: "NSE",
+      instrument_token: "NSE:BANKNIFTY",
+      tradingsymbol: "BANKNIFTY",
+      ltp: 52000,
+      change: -20,
+      change_percent: -0.04,
+      received_ts: FRESH_TS,
+    };
+    const quotes = [canonicalQuote, nativeQuote];
+    const byCanonical = new Map([["NSE:INDEX:NIFTY", canonicalQuote]]);
+    renderWithProviders(<IndicesWidget quotes={quotes} byCanonical={byCanonical} />);
+    expect(await screen.findByRole("link", { name: /NIFTY 50 25,000\.00/ })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: /BANKNIFTY 52,000\.00/ })).toBeInTheDocument();
   });
 });
 
