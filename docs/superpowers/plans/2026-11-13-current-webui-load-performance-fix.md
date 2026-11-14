@@ -256,11 +256,11 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 ### Workstream 2 — Backend and API performance
 | Task ID | Task | Status | Dependencies | Key files/functions | Acceptance criteria |
 |---|---|---|---|---|---|
-| WS2-01 | Profile and optimize `/api/market/quotes` snapshot path (canonical parity) | `NOT STARTED` | WS0-03, WS0-05 | `api/routes.py` (`_market_quotes`, `_quotes_snapshot`), `app/quote_service.py` (`QuoteService.quotes`), `market/quote_coordinator.py` | Measured latency/timeout improvement; snapshot/SSE/reset/canonical parity tests pass |
-| WS2-02 | Investigate/fix `/api/alerts` root cause (DB vs contention vs workload) | `NOT STARTED` | WS0-03, WS0-05 | `api/product_routes.py` (`build_alert_routes._list`), `core/persistence/store.py` (`list_market_alerts`), `core/persistence/modules/products.py` (`list_alerts`) | Root cause evidenced; fix measured if applied; contract preserved |
-| WS2-03 | Profile/fix `/api/news` blocking I/O and processing | `NOT STARTED` | WS0-03, WS0-05 | `api/news_routes.py` (`_get_news`), `news/service.py` (`NewsService.news`, `_apply_filters`, `_dedup_items`), `core/persistence/modules/news.py` (`query_news_items`) | Measured improvement; filtering/ordering/dedup/response contract preserved; thread-safety understood |
-| WS2-04 | F&O coverage plan reuse/cache/single-flight for `/api/fno/coverage` and `/api/fno/catalog` | `VERIFIED` (Sprint 01, microbenchmark/test evidence) | WS0-03 | `api/fno_coverage_routes.py` (`_coverage`, `_catalog`, `_plan_payload`), `app/fno_coverage.py` (`FnoCoverageService.plan`, `RoutingPlan.to_dict`) | Reduced recomputation/latency; correct invalidation; no stale dynamic capacity |
-| WS2-05 | `/api/futures/heatmap` plan reuse and board efficiency | `PARTIAL` (Sprint 01: plan skeleton reuse benefits heatmap; board logic unchanged) | WS2-04, WS0-03 | `api/futures_heatmap.py`, `app/fno_coverage.py`, `market/futures_board.py` | Measured improvement; OI/buildup/coverage semantics preserved |
+| WS2-01 | Profile and optimize `/api/market/quotes` snapshot path (canonical parity) | `PARTIAL` (Sprint 02: SSE/single-instrument canonical lookup optimized with parity tests; snapshot full-build path unchanged; live endpoint latency unmeasured) | WS0-03, WS0-05 | `api/routes.py` (`_market_quotes`, `_quotes_snapshot`, `_market_stream`), `app/quote_service.py` (`QuoteService.quote`, `QuoteService.quotes`), `market/quote_coordinator.py` | Measured latency/timeout improvement; snapshot/SSE/reset/canonical parity tests pass |
+| WS2-02 | Investigate/fix `/api/alerts` root cause (DB vs contention vs workload) | `PARTIAL` (Sprint 02: profiled with isolated temp DB; no code change justified beyond existing `to_thread` DB read; live contention unmeasured) | WS0-03, WS0-05 | `api/product_routes.py` (`build_alert_routes._list`), `core/persistence/store.py` (`list_market_alerts`), `core/persistence/modules/products.py` (`list_alerts`) | Root cause evidenced; fix measured if applied; contract preserved |
+| WS2-03 | Profile/fix `/api/news` blocking I/O and processing | `PARTIAL` (Sprint 02: async store reads offloaded from event loop; isolated benchmark recorded; live endpoint latency unmeasured) | WS0-03, WS0-05 | `api/news_routes.py` (`_get_news`), `news/service.py` (`NewsService.news`, `_apply_filters`, `_dedup_items`), `core/persistence/modules/news.py` (`query_news_items`) | Measured improvement; filtering/ordering/dedup/response contract preserved; thread-safety understood |
+| WS2-04 | F&O coverage plan reuse/cache/single-flight for `/api/fno/coverage` and `/api/fno/catalog` | `VERIFIED` (Sprint 01 + Sprint 02 correctness hardening) | WS0-03 | `api/fno_coverage_routes.py` (`_coverage`, `_catalog`, `_plan_payload`), `app/fno_coverage.py` (`FnoCoverageService.plan`, `RoutingPlan.to_dict`) | Reduced recomputation/latency; correct invalidation; no stale dynamic capacity |
+| WS2-05 | `/api/futures/heatmap` plan reuse and board efficiency | `PARTIAL` (Sprint 01/02: plan skeleton reuse + cache correctness hardening benefit heatmap; board TTL/single-flight already present, expired-cache pruning added; board computation logic unchanged) | WS2-04, WS0-03 | `api/futures_heatmap.py`, `app/fno_coverage.py`, `market/futures_board.py` | Measured improvement; OI/buildup/coverage semantics preserved |
 | WS2-06 | Profile moderate endpoints (`/api/market/breadth`, `/api/options/chain/view`, `/api/market/fno/universe`) and optimize if measured | `NOT STARTED` | WS0-03 | `api/routes.py`, `market/breadth.py`, `market/market_universe.py`, `api/product_routes.py`, `app/market_intel.py`, FNO universe/catalog paths | Evidence-backed improvement or justified defer |
 
 ### Workstream 3 — Realtime and data processing
@@ -316,6 +316,9 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 | 2026-11-14 | Executed WS0 measurement-only pass with safety constraints (no app start, no broker/config/DB changes) | static build/route/config/version inspection, read-only SQLite `EXPLAIN QUERY PLAN` on `data/events.db` | WS0-01 verified; WS0-02/03 blocked; WS0-04/05 partial; WS0-06 provisional targets recorded |
 | 2026-11-14 | Corrected frontend baseline metric labeling (initial JS vs lazy ChartView) | commit `2bb215ffafa6d19f023489c4b51a7488fe7ad24f` | Clarified uncompressed asset-size baseline; no behavior change |
 | 2026-11-14 | Implemented Sprint 01 bounded performance improvements (F&O plan skeleton cache + frontend route lazy-loading/modular ECharts) | commits `0fc3e585dc4b4ee111e62bd8553f5e737a07e2ec`, `d7ccfa59f61983cacef94a2565c00501a96c6104` | Measured backend recomputation reduction (microbenchmark/tests) and major initial frontend bundle/preload reduction (isolated build comparison); no API contract/canonical/auth/broker/config/DB changes |
+| 2026-11-14 | Sprint 02: optimized quote single-instrument canonical lookup (SSE hot path) via direct store-key reads with full-scan fallback | commit `4213ece2ac168aa6f969257bb5b718faf2fc210d`, `app/quote_service.py` | Eliminates O(N) full-quote scans per lookup when storage keys resolve; parity tests passed; live endpoint/SSE rates unmeasured |
+| 2026-11-14 | Sprint 02: offloaded synchronous news store reads from async request path | commit `a4d4d4b6f3a788cfae79222145495282bbf10e3b`, `news/service.py` | Prevents event-loop blocking on DB reads; isolated benchmark recorded; response/filter/sort/dedup contract preserved |
+| 2026-11-14 | Sprint 02: hardened F&O coverage skeleton cache correctness (date rollover, enabled-provider set, unreliable fingerprint no-cache, cache growth bound) and pruned expired futures-board cache entries | commit `fb6231b7c1e87f6dff9ba2fe6c202dbdd6688e1b`, `app/fno_coverage.py`, `market/futures_board.py`, `test/test_fno_coverage_plan_cache.py` | Prevents stale expiry/universe reuse and unbounded cache growth; dynamic provider state remains fresh; regression tests added |
 
 ## 13. Progress log
 
@@ -329,6 +332,9 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 | 2026-11-14 | Corrected frontend initial asset baseline metrics | `2bb215ffafa6d19f023489c4b51a7488fe7ad24f` | Documentation-only correction |
 | 2026-11-14 | Sprint 01 backend: F&O coverage plan skeleton cache/single-flight with fresh dynamic routing | `0fc3e585dc4b4ee111e62bd8553f5e737a07e2ec` | `app/fno_coverage.py`, `test/test_fno_coverage_plan_cache.py`; parity/invalidation/freshness/concurrency tests + microbenchmark |
 | 2026-11-14 | Sprint 01 frontend: route lazy-loading + modular ECharts isolation | `d7ccfa59f61983cacef94a2565c00501a96c6104` | Router/EChart/option builders/tests updated; isolated build shows initial preload excludes echarts and initial JS+CSS reduced |
+| 2026-11-14 | Sprint 02 F&O cache correctness hardening + futures-board cache pruning | `fb6231b7c1e87f6dff9ba2fe6c202dbdd6688e1b` | Date rollover/enabled-provider/unreliable-fingerprint/growth fixes with regression tests; futures board expired-entry pruning |
+| 2026-11-14 | Sprint 02 quotes: direct single-instrument canonical lookup optimization | `4213ece2ac168aa6f969257bb5b718faf2fc210d` | `app/quote_service.py`; avoids full quote scans on SSE per-event path when keys resolve; quote/SSE parity tests passed |
+| 2026-11-14 | Sprint 02 news: async DB read offload | `a4d4d4b6f3a788cfae79222145495282bbf10e3b` | `news/service.py`; store reads moved off event loop via `asyncio.to_thread`; news tests passed |
 
 ## 15. Sprint 01 implementation results (2026-11-14)
 
@@ -396,13 +402,115 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 
 **Commit:** `d7ccfa59f61983cacef94a2565c00501a96c6104` — `perf(frontend): lazy-load routes and isolate modular echarts from initial bundle`
 
+## 16. Sprint 02 implementation results (2026-11-14)
+
+### Scope and safety
+- **Authorized bounded changes only:** market quote read/SSE path, news service async DB access, alerts profiling (no schema/index/prod-data changes), F&O coverage cache correctness hardening, futures board cache pruning, relevant tests, and this master plan.
+- **Untouched:** `config.json`, credentials/auth/session persistence, startup restoration, broker login/feed lifecycle/subscription reconciliation, FYERS TBT, canonical market identity/quote semantics, production DB contents/schema, frontend UI, unrelated features. No full app launched; no broker connections triggered; no production DB writes.
+- **HEAD at start:** `c99404f1ce7a3500dc43e06c6c7c95a441d0f349` (`develop`, in sync with `origin/develop`).
+
+### Workstream A — Market quote snapshot and SSE performance (WS2-01 PARTIAL)
+
+**Problem/evidence (historical 2026-11-13):** `/api/market/quotes` timed out ~20s. Source inspection showed `QuoteService.quote()` scanned the full quote collection per lookup (`await self._quotes()` + candidate scan), and `api/routes.py` `_market_stream` re-selected canonical quote per live event via `quote_service.quote(ref)`.
+
+**Implementation:** Optimized `QuoteService.quote()` in `app/quote_service.py` to resolve provider storage keys and read candidates directly from `market_service.get_quote_now()` (O(k) per instrument, k = provider keys/candidates) before falling back to the previous full-scan behavior for correctness in unusual identity mappings. Preserved canonical identity resolution, provider ownership/priority, freshness/stale semantics, fallback behavior, snapshot/SSE consistency intent, ordering/duplicate handling, and API response structure.
+
+**Exact changed files:** `app/quote_service.py`.
+
+**Before/after (isolated service microbenchmark, synthetic in-memory `MarketService`, 3000 instruments × 2 providers = 6000 quotes, 2026-11-14):**
+| Path | Iterations | p50 | p95 | Notes |
+|---|---:|---:|---:|---|
+| Full canonical-id scan over all quotes (pre-optimization algorithmic cost) | 1000 | 0.196 ms | 0.306 ms | `O(N)` scan per lookup |
+| Direct `get_quote_now(exchange, token)` store-key read (optimized primitive) | 20000 | 0.0001 ms | 0.0002 ms | `O(1)` per key; optimized `quote()` uses direct candidate reads + selection |
+
+**Interpretation:** For SSE per-event canonical reselection, avoiding full-universe scans removes repeated O(N) work per update when storage keys resolve (typical path). This is a repeatable isolated microbenchmark, **not** a live `/api/market/quotes` or live SSE latency measurement.
+
+**Tests/verification:** `python -m pytest test/test_quote_service_parity.py test/test_quote_coordinator.py test/test_quote_canonical_parity.py test/test_market_sse.py test/test_sse_stream.py -q` → **25 passed, 1 skipped**. `python -m ruff check app/quote_service.py` → clean.
+
+**Risks/limitations:** Snapshot endpoint still builds full canonical payload (`quote_service.quotes()`/coordinator snapshot) and remains cached for 1s in route; no live endpoint/browser/SSE/process measurements. Full-scan fallback retained for correctness.
+
+**Commit:** `4213ece2ac168aa6f969257bb5b718faf2fc210d` — `perf(quotes): avoid full quote scans for single-instrument canonical lookups`
+
+### Workstream B — News API performance (WS2-03 PARTIAL)
+
+**Problem/evidence (historical 2026-11-13):** `/api/news` ~9.0s. `NewsService.news()` (async) performed synchronous store reads (`list_sources`/`query_news_items`) and Python-side filtering/sorting/dedup in the request path.
+
+**Implementation:** Offloaded synchronous store reads in `news/service.py` to `asyncio.to_thread` for `news()`, `get_item()`, `freshness()`, `last_refresh_at()`, and sentiment source resolution/persistence (`_resolve_sources`, `update_news_sentiments`) while preserving search/source/symbol/sentiment/sort/dedup/pagination/limits/response behavior. Store opens per-call SQLite connections (`EventStore._open`), so threaded reads are compatible with existing store usage.
+
+**Exact changed files:** `news/service.py`.
+
+**Before/after (isolated temp DB, `EventStore` + `NewsService`, 3 sources, 2000 `news_items`, `NewsFilter(limit=50)`, 30 iterations, warm, 2026-11-14):**
+| Stage/metric | Measurement |
+|---|---:|
+| Total `await svc.news(filter)` (after offload) | p50 5.154 ms, p95 6.096 ms, max 6.724 ms |
+| Rows fetched (query over-fetch headroom) | up to 300 rows for limit 50 (`max(limit*5, limit+50)`) |
+| DB/query + Python processing split | Not separately instrumented in this pass; DB read now non-blocking to event loop |
+
+**Interpretation:** Isolated request/service processing is fast on 2k rows; historical 9s not reproduced in isolated environment. Primary justified fix applied: remove synchronous DB blocking from async path. **Not** a live `/api/news` latency measurement.
+
+**Tests/verification:** `python -m pytest test/test_news_tools.py test/test_l1_logging_news.py -q` → **48 passed**. `python -m ruff check news/service.py` → clean.
+
+**Risks/limitations:** No live endpoint p50/p95; no schema/index/prod-data changes; over-fetch/filter/sort/dedup semantics preserved (no DB-side semantic rewrite without stronger evidence).
+
+**Commit:** `a4d4d4b6f3a788cfae79222145495282bbf10e3b` — `perf(news): offload synchronous store reads from async request path`
+
+### Workstream C — Alerts API performance (WS2-02 PARTIAL)
+
+**Problem/evidence (historical 2026-11-13):** `/api/alerts` ~5.9s. Prior read-only plan showed `SCAN market_alerts` + temp B-tree sort on 5 rows (not causal). Route already used `asyncio.to_thread(store.list_market_alerts)`.
+
+**Profiling (isolated temp DB, 500 `market_alerts`, 50 iterations, 2026-11-14):**
+| Component | Measurement | Notes |
+|---|---:|---|
+| `await asyncio.to_thread(store.list_market_alerts)` | p50 2.281 ms, p95 3.140 ms, max 3.537 ms | DB query + row conversion in thread |
+| `engine.recent_notifications(10)` | in-memory slice under lock (`app/alerts.py`) | no DB/I/O observed |
+| Route serialization | not separately timed; payload is small JSON for tested sizes | contract preserved |
+
+**Root-cause assessment:** No evidence in isolated profiling that DB query/serialization/notification retrieval dominates at realistic small-medium row counts; route already avoids blocking DB on event loop. Historical 5.9s remains **unreproduced/unexplained** without live contention/process/thread-pool/runtime measurements.
+
+**Implementation:** No application-code change justified by measurements (avoided speculative changes). No schema/index/prod-data changes.
+
+**Tests/verification:** `python -m pytest test/test_alert_boundary.py test/test_alert_history.py test/test_alert_monitoring.py test/test_alert_reliability.py test/test_alert_trigger_events.py test/test_market_alert_concurrency.py -q` → **69 passed**.
+
+**Risks/limitations:** Live thread-pool contention, concurrent workload, and runtime environment effects not measured (no safe running app).
+
+**Commit:** none (evidence-only; no justified code change).
+
+### Workstream D — Futures heatmap and F&O cache hardening (WS2-04 VERIFIED hardening, WS2-05 PARTIAL)
+
+**D1 correctness hardening (`app/fno_coverage.py`, `test/test_fno_coverage_plan_cache.py`):**
+- **Date rollover:** skeleton key now includes `date.today().isoformat()` because expiry selection depends on current date; deterministic rollover test added.
+- **Provider enabled-state changes:** skeleton key now includes enabled provider set (`registry.enabled_ids()` snapshot) because universe selection depends on enabled providers; regression test added.
+- **Missing/unreliable catalog fingerprint:** `sync_state()` missing/empty/exception/unparseable now treated as unreliable and **not cached** (correctness over indefinite reuse); regression tests added.
+- **Cache growth:** skeleton cache bounded (`_MAX_SKELETON_CACHE=32`) with oldest-entry eviction; build locks retained (not pruned while in-flight) to preserve single-flight correctness.
+- **Dynamic freshness preserved:** provider status/availability/subscribed/capacity/routing still computed fresh per `plan()` call.
+
+**D2 futures heatmap/board (`market/futures_board.py`, `api/futures_heatmap.py` unchanged):**
+- `get_futures_board()` already had TTL cache + single-flight; added expired-entry pruning on access to prevent stale cached-entry accumulation. Build locks retained to avoid breaking single-flight.
+- Heatmap path benefits from Sprint 01/02 cheaper `coverage.plan()` and existing board cache; board computation/OI/buildup/ordering logic unchanged.
+
+**Exact changed files:** `app/fno_coverage.py`, `market/futures_board.py`, `test/test_fno_coverage_plan_cache.py`.
+
+**Tests/verification:**
+- `python -m pytest test/test_fno_coverage.py test/test_futures_heatmap_api.py test/test_fno_coverage_plan_cache.py test/test_futures_board.py -q` → **38 passed** (includes date rollover, enabled-provider change, missing/unparseable fingerprint no-cache, cache bound, existing parity/freshness/single-flight/heatmap/board tests).
+- `python -m ruff check app/fno_coverage.py market/futures_board.py test/test_fno_coverage_plan_cache.py` → clean.
+
+**Risks/limitations:** No live `/api/futures/heatmap` endpoint latency measured. Build-lock maps can still retain keys for distinct historical cache keys in pathological churn, but skeleton cache is bounded and futures-board expired entries are pruned; correctness prioritized over aggressive lock pruning.
+
+**Commit:** `fb6231b7c1e87f6dff9ba2fe6c202dbdd6688e1b` — `perf(fno): harden coverage plan cache for rollover, provider changes, and growth`
+
+### Sprint 02 verification summary
+- **Targeted relevant tests:** 180 passed, 1 skipped (`quote/market/sse/news/alerts/fno/futures/heatmap` suites listed above).
+- **Architecture boundaries:** `python -m pytest test/test_architecture_boundaries.py -q` → **17 passed**.
+- **Ruff (changed backend/test files):** `python -m ruff check app/fno_coverage.py app/quote_service.py market/futures_board.py news/service.py test/test_fno_coverage_plan_cache.py` → clean.
+- **Frontend:** not modified; typecheck/build not rerun (no shared frontend code changed).
+
 ## 14. Remaining unmeasured / conflicts / open evidence
 
 - **Unmeasured (blocked):** live API rerun on current HEAD/runtime (p50/p95/max/status/size/timeouts/errors, cold/warm) for `/api/market/quotes`, `/api/news`, `/api/alerts`, `/api/fno/coverage`, `/api/fno/catalog`, `/api/futures/heatmap`, `/api/market/breadth`, `/api/options/chain/view`, `/api/market/fno/universe`; browser DevTools traces (LCP/INP/CLS/long tasks/JS parse-execute/memory, cold/warm navigation, dashboard first useful content, request waterfall/duplicates/console errors); SSE connection/message/reconnect/error rates and frontend update frequency; sustained Python CPU/memory, startup time, event-loop/thread-pool contention; SQLite query durations/contention under load.
-- **Partially measured:** frontend bundle/preload/route chunking and installed versions (static + isolated build comparison); read-only DB table counts and `EXPLAIN QUERY PLAN` for selected alerts/news queries; F&O plan recomputation microbenchmark (test fixtures, not live endpoint latency).
-- **Publication:** `d0a8b0b`, `81610cc`, `b73249f`, `2bb215f` published on `origin/develop`. Sprint 01 commits `0fc3e58`, `d7ccfa5` and this plan-update commit require safe publication after commit.
+- **Partially measured:** frontend bundle/preload/route chunking and installed versions (static + isolated build comparison); read-only DB table counts and `EXPLAIN QUERY PLAN` for selected alerts/news queries; F&O plan recomputation microbenchmark (test fixtures, not live endpoint latency); quote lookup microbenchmark (synthetic in-memory, 6000 quotes); news service isolated temp-DB benchmark (2000 rows); alerts isolated temp-DB query benchmark (500 rows).
+- **Publication:** `d0a8b0b`, `81610cc`, `b73249f`, `2bb215f`, `0fc3e58`, `d7ccfa5`, `c99404f` published on `origin/develop`. Sprint 02 commits `fb6231b`, `4213ece`, `a4d4d4b` and this plan-update commit require safe publication after commit.
 - **Proof gaps:** route helper body-level duplication, identity consolidation safety, broker feed lifecycle extraction, legacy branch retirement preconditions, and any "unused" claims require deeper evidence before action.
 - **No known conflicting evidence** against top priorities (backend stalls + frontend initial payload/fan-out), but all fixes remain measurement-gated.
 
 ---
-**End of canonical master plan. Implementation started only for explicitly authorized Sprint 01 scope; further implementation requires review/authorization as appropriate.**
+**End of canonical master plan. Sprint 02 bounded implementation completed with repeatable isolated evidence and passing regression checks; live runtime verification remains blocked by safe-running-instance constraints.**
