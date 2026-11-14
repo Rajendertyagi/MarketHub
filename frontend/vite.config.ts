@@ -20,6 +20,7 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     sourcemap: true,
+    manifest: true,
     rollupOptions: {
       output: {
         // Vite 8 bundles with rolldown, which requires the function form of

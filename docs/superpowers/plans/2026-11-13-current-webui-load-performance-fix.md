@@ -4,9 +4,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **No implementation in a planning-only/measurement-only assignment unless explicitly authorized by the user.**
 
-**Last updated:** 2026-11-14 (Sprint 04 WS1-04 published as `37c76d3`; follow-up corrections published as `501edeb`)
+**Last updated:** 2026-11-14 (Sprint 04 WS1-04 published as `37c76d3`; follow-up corrections published as `501edeb`; WS1-05 build/chunk-size budgets implemented/verified in this pass)
 **Branch:** `develop`
-**Verified local/remote `origin/develop`:** `501edeb8d3bee33e606a75a00e4c4f734558775f` (`fix(dashboard): stabilize deferred widget observers and placeholders`, in sync)
+**Verified local/remote `origin/develop` (WS1-05 pass start):** `f6ac437cf531f4aee1dd3cfde45f4c5d360bd3da` (`docs: finalize Sprint 04 correction publication status`, in sync after `git fetch origin`)
 **Publication state (verified 2026-11-14):** Audit docs commit `d0a8b0b4fb94855738603cdfeffd16291b3fdbb8` and consolidated master plan commit `81610ccc092f1b4f15bea6f2547adc3ad410a522` are **both published on `origin/develop`**. Earlier consolidation noted `d0a8b0b` as local-only/unpublished at that time; subsequent safe push published it (and `81610cc`). No force-push/rewrite performed.
 
 ## 1. Objective
@@ -250,7 +250,7 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 | WS1-02 | Remove global echarts preload / isolate echarts to needed routes | `VERIFIED` (Sprint 01) | WS0-04, WS1-01 | `frontend/dist/index.html` (build output), `frontend/vite.config.ts`, `frontend/src/components/EChart.tsx`, chart/breadth/sector/fno consumers | Non-chart initial load excludes echarts preload; chart features intact |
 | WS1-03 | Evaluate ECharts modular imports (`echarts/core`) with required registrations only | `VERIFIED` (Sprint 01) | WS1-02 | `frontend/src/components/EChart.tsx`, `features/breadth/breadthOption.ts`, `features/sector-heatmap/sectorHeatmapOption.ts`, `features/fno/fnoOption.ts`, `features/market-map/marketMapOption.ts` | Bundle reduced or justified no-change; theme/disposal/resize/interactions/tests preserved |
 | WS1-04 | Dashboard shell vs secondary data separation; defer non-critical widgets | `DONE` (Sprint 04 published `37c76d3`; follow-up corrections published `501edeb`: visibility-aware deferred mount/fetch for Sectors, Breadth, F&O, Movers; critical quotes/SSE/ticker/indices remain immediate; query keys/intervals/freshness/widget behavior preserved once visible; observer options/deps stabilized, placeholder/layout reservation added, regression tests strengthened) | WS0-02, WS0-03 | `frontend/src/features/dashboard/DashboardView.tsx`, `frontend/src/features/dashboard/useInViewport.ts`, widget components (unchanged), `frontend/src/__tests__/dashboardDeferred.test.tsx`, `frontend/src/styles/features/dashboard.css` | Faster first useful content / reduced initial secondary request burst; no harmful freshness loss once visible; browser trace/LCP unmeasured |
-| WS1-05 | Build/chunk-size budgets and verification | `PARTIAL` (Sprint 01: build verified, budgets not formally enforced) | WS1-01..04 | `frontend/vite.config.ts`, CI/build scripts (if approved) | Budgets recorded/enforced; build green |
+| WS1-05 | Build/chunk-size budgets and verification | `DONE` (2026-11-14: Vite manifest enabled; manifest/index-based budget checker enforces initial JS/CSS/combined and largest JS chunk budgets with ~10-15% headroom; integrated into normal frontend build; dedicated CI workflow added; budgets pass on fresh build; deliberate-exceed and missing-artifact checks fail as expected) | WS1-01..04 | `frontend/vite.config.ts`, `frontend/package.json`, `frontend/scripts/check-bundle-budget.mjs`, `.github/workflows/frontend-build-budget.yml` | Budgets recorded/enforced; build green; CI gate added |
 
 ### Workstream 2 — Backend and API performance
 | Task ID | Task | Status | Dependencies | Key files/functions | Acceptance criteria |
@@ -321,6 +321,7 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 | 2026-11-14 | Sprint 03: optimized full canonical quote snapshot grouping/resolution in `QuoteService.quotes()` with per-snapshot memoization; SSE initial snapshot reuses same optimized path | `app/quote_service.py`, `api/routes.py` (existing reuse), isolated benchmark `D:\Coding\OpenCode\user\tmp\opencode\bench_sprint03_snapshot.py` | Parity preserved (canonical/provider/freshness/stale/grouping/selection/payload); isolated synthetic benchmark shows improvement (see §17); live endpoint/SSE latency unmeasured |
 | 2026-11-14 | Sprint 03: implemented ref-counted single-flight lock lifecycle cleanup for F&O skeleton build locks and futures-board build locks | `app/fno_coverage.py`, `market/futures_board.py`, `test/test_fno_coverage_plan_cache.py`, `test/test_futures_board.py` | Unused lock entries cleaned up; no removal while waiter/active; exception-safe; cache bounds preserved; required concurrency/unique-key tests added |
 | 2026-11-14 | Sprint 03: investigated shared once-per-event canonical SSE processing before fan-out | `api/routes.py`, `core/sse_broker.py`, `app/server.py` (inspection) | Deferred: current generic broker broadcasts raw encoded lines and per-subscriber generators own canonical reselection/delivery semantics; safe shared processing would require architecture changes with delivery/ordering/backpressure risk not justified in bounded sprint |
+| 2026-11-14 | Implemented WS1-05 build/chunk-size budgets and verification (authorized) | Fresh isolated Vite 8/Rolldown production build + manifest (`.vite/manifest.json`), `frontend/scripts/check-bundle-budget.mjs`, `frontend/vite.config.ts`, `frontend/package.json`, `.github/workflows/frontend-build-budget.yml` | Enforced raw/uncompressed budgets for initial JS/CSS/combined and largest individual JS chunk (separate from initial load); integrated into normal frontend build and dedicated CI workflow; ECharts verified outside initial static graph; no app behavior/route/chunking/dependency changes |
 
 ## 13. Progress log
 
@@ -339,6 +340,7 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 | 2026-11-14 | Sprint 02 news: async DB read offload | `a4d4d4b6f3a788cfae79222145495282bbf10e3b` | `news/service.py`; store reads moved off event loop via `asyncio.to_thread`; news tests passed |
 | 2026-11-14 | Sprint 03 Workstream A: full canonical quote snapshot optimization (`QuoteService.quotes`) + SSE initial snapshot reuse | (see §17 / commits) | Per-snapshot memoization of canonical/resolved ids; parity preserved; isolated synthetic benchmarks recorded; live endpoint/SSE unmeasured |
 | 2026-11-14 | Sprint 03 Workstream C: F&O/futures-board single-flight lock lifecycle cleanup | (see §17 / commits) | Ref-counted lock entries, exception-safe cleanup, no removal while waiter/active, >=100 distinct-key and concurrency tests added |
+| 2026-11-14 | WS1-05: build/chunk-size budgets and verification | (this pass / commit pending) | Manifest-based budget checker enforces initial JS/CSS/combined and largest JS chunk budgets in normal build and CI; measured baseline recorded; deliberate-exceed/missing-artifact checks verified |
 
 ## 15. Sprint 01 implementation results (2026-11-14)
 
@@ -370,7 +372,7 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 
 **Commit:** `0fc3e585dc4b4ee111e62bd8553f5e737a07e2ec` — `perf(fno): cache catalog-derived coverage plan skeleton with fresh dynamic routing`
 
-### Workstream B — Frontend initial-load performance (WS1-01/02/03 verified, WS1-05 partial)
+### Workstream B — Frontend initial-load performance (WS1-01/02/03 verified; WS1-05 completed 2026-11-14)
 
 **Problem/evidence:** Eager route graph and full `echarts` import/global preload on initial page; baseline initial JS+CSS (entry/preload graph, uncompressed assets) 1,807,783 B with ECharts preload 1,116,589 B.
 
@@ -402,7 +404,7 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 - Targeted tests: `src/__tests__/analyticsOptions.test.ts`, `src/__tests__/breadth.test.tsx`, `src/__tests__/sectorHeatmap.test.tsx`, `src/__tests__/futuresHeatmap.test.tsx`, `src/__tests__/fnoFormat.test.ts` → **28 passed** across 5 files.
 - Chart functionality/themes/resize/disposal preserved by existing `EChart` lifecycle contract; modular registrations cover bar/treemap/grid/tooltip/legend/canvas used by current chart options.
 
-**Risks/limitations:** No browser DevTools trace/LCP/INP/CLS/navigation timing captured (no safe running app). Dashboard secondary-widget initial request burst reduced by WS1-04 visibility-aware deferral (Sprint 04), but live browser/network timing remains unmeasured. Build chunk-size budgets not formally enforced in CI/config (WS1-05 partial). Vite still warns about large lazy chunks (`ChartView`, `echarts`) which are expected on-demand chunks.
+**Risks/limitations:** No browser DevTools trace/LCP/INP/CLS/navigation timing captured (no safe running app). Dashboard secondary-widget initial request burst reduced by WS1-04 visibility-aware deferral (Sprint 04), but live browser/network timing remains unmeasured. Vite still warns about large lazy chunks (`ChartView`, `echarts`) which are expected on-demand chunks; WS1-05 now enforces raw/uncompressed build-size budgets (initial JS/CSS/combined and largest individual JS chunk) in normal build verification and CI, but does not change chunking behavior.
 
 **Commit:** `d7ccfa59f61983cacef94a2565c00501a96c6104` — `perf(frontend): lazy-load routes and isolate modular echarts from initial bundle`
 
@@ -624,5 +626,52 @@ This demonstrates reduced initial secondary request/fan-out at dashboard mount w
 
 **Risks/limitations:** No browser DevTools trace/LCP/INP/CLS/navigation timing or live network waterfall captured (no safe running app). Deferral is viewport-based with 200px prefetch margin; widgets below the fold do not fetch until near-visible (intended), but once visible they retain existing polling intervals/freshness behavior. Lightweight placeholder space reduces avoidable layout shift but exact live layout/CLS remains unmeasured. `EChart.test.tsx` failures (confirmed pre-Sprint 04 vs `ff6ccea`) and unrelated Biome formatting drift pre-existed and were not addressed to avoid scope churn.
 
+## 19. WS1-05 implementation results (2026-11-14)
+
+### Scope and safety
+- **Authorized bounded changes only (WS1-05):** frontend build-manifest generation, bundle budget checker script, normal build-script integration, dedicated frontend build/budget CI workflow, and canonical plan update.
+- **Untouched:** application routes/lazy-loading decisions, ECharts imports/manual chunking behavior, React Query/polling/API/dashboard behavior, backend/auth/credentials/broker/feed/DB/config/production data, dependencies, and unrelated workflows/tests/docs. No MarketHub app started; no broker login/feed activity triggered.
+- **HEAD at start:** `f6ac437cf531f4aee1dd3cfde45f4c5d360bd3da` (`develop`, in sync with `origin/develop`).
+
+### Implementation
+- **Manifest:** enabled `build.manifest: true` in `frontend/vite.config.ts` so Vite emits `.vite/manifest.json` for reliable build-graph analysis.
+- **Budget checker:** added `frontend/scripts/check-bundle-budget.mjs` (Node built-ins only, no new dependencies). It reads `index.html` and `.vite/manifest.json`, finds the HTML entry, recursively follows static `imports` (dynamic imports excluded), counts each initial JS/CSS file once, reports initial JS, initial CSS, combined initial JS+CSS, and largest individual JS chunk, verifies ECharts JS chunk(s) exist but are outside the initial static load graph, fails clearly on missing manifest/artifacts, and exits non-zero on budget violations. Output includes actual size, allowed size, remaining headroom, and pass/fail per budget.
+- **Build integration:** updated `frontend/package.json` so normal production build verification runs `tsc --noEmit && tsc --noEmit -p tsconfig.test.json && vite build && node scripts/check-bundle-budget.mjs` (automatic; no separate optional command required). Added `build:budget` for explicit checks against a given outDir.
+- **CI enforcement:** added `.github/workflows/frontend-build-budget.yml` (minimal, dedicated). Triggers on push/PR for `frontend/**` and the workflow file; Windows runner; Bun `1.4.4` via `oven-sh/setup-bun@v2`; `bun install --frozen-lockfile`; runs `bun run build` (TypeScript checks + Vite build + budget check). No backend suites, no deploy/release/publish actions.
+
+### Measured build baseline (fresh isolated production build, 2026-11-14)
+- **Command:** `cd frontend; .\node_modules\.bin\vite.exe build --outDir "$env:TEMP\markethub-ws105-verify"` (isolated; existing `frontend/dist` not overwritten)
+- **Build:** Vite v8.3.7, 1202 modules transformed, `✓ built in 2.48s`, manifest emitted (`.vite/manifest.json`).
+- **Initial static load graph (from manifest/index):** `assets/index-B5nBvyON.js` (143,050 B), `assets/rolldown-runtime-XKyaHtl9.js` (726 B), `assets/query-B0JyiKZ_.js` (43,367 B), `assets/react-DviEPBuS.js` (250,006 B), `assets/index-BCJZi7qZ.css` (70,704 B).
+- **Measured (raw/uncompressed build sizes):**
+  - Initial JS: **437,149 B** (426.90 KiB)
+  - Initial CSS: **70,704 B** (69.05 KiB)
+  - Combined initial JS+CSS: **507,853 B** (495.95 KiB)
+  - Largest individual JS chunk (overall): **1,613,703 B** (1.54 MiB, `assets/ChartView-DLXi2Ztt.js`, lazy-loaded)
+  - ECharts chunk: **545,838 B** (`assets/echarts-DBNUSy3J.js`, lazy-loaded, **outside initial static load graph**)
+
+### Budgets (raw/uncompressed, ~10-15% headroom over measured baseline)
+| Budget | Measured | Limit | Headroom | Rationale |
+|---|---:|---:|---:|---|
+| Initial JS | 437,149 B (426.90 KiB) | 512,000 B (500.00 KiB) | 74,851 B (73.10 KiB) | ~17% headroom over current initial static JS graph; catches meaningful initial-load regressions without noisy failures |
+| Initial CSS | 70,704 B (69.05 KiB) | 81,920 B (80.00 KiB) | 11,216 B (10.95 KiB) | ~16% headroom over current initial CSS |
+| Initial JS+CSS | 507,853 B (495.95 KiB) | 593,920 B (580.00 KiB) | 86,067 B (84.05 KiB) | ~17% headroom over combined initial payload; separate from per-chunk budget |
+| Largest individual JS chunk | 1,613,703 B (1.54 MiB, lazy `ChartView`) | 1,835,008 B (1.75 MiB) | 221,305 B (216.12 KiB) | ~14% headroom over current largest chunk; bounds large lazy chunks while keeping initial-load budget separate (lazy ChartView/ECharts excluded from initial totals) |
+
+### Verification (actual)
+- `cd frontend; .\node_modules\.bin\tsc.exe --noEmit` → **pass**
+- `cd frontend; .\node_modules\.bin\tsc.exe --noEmit -p tsconfig.test.json` → **pass**
+- `cd frontend; .\node_modules\.bin\vite.exe build --outDir "$env:TEMP\markethub-ws105-verify"` → **pass** (`✓ built in 2.48s`, manifest generated)
+- `cd frontend; bun scripts/check-bundle-budget.mjs "$env:TEMP\markethub-ws105-verify"` → **PASS** (all budgets within limits; ECharts confirmed lazy/outside initial graph)
+- Manifest/checker integration: `.vite/manifest.json` present and consumed; initial graph resolved from HTML entry static imports; ECharts chunk reported as lazy/excluded from initial.
+- Deliberate budget exceed (safe temp fixture): copied verified build to temp dir, inflated initial JS asset (`assets/index-B5nBvyON.js`) by 120,000 B, ran checker → **FAIL** (Initial JS and Initial JS+CSS exceeded; `EXIT:1`).
+- Missing artifact/manifest: ran checker against nonexistent outDir → **FAIL** with clear message (`Missing build artifact ... index.html`, `EXIT:1`).
+- `node --check frontend/scripts/check-bundle-budget.mjs` not run locally (`node` unavailable in this environment); script executed successfully with Bun and is plain Node-compatible ESM.
+- `git diff --check` → clean (informational CRLF warnings only).
+
+### Risks/limitations
+- Budgets are raw/uncompressed build sizes (not browser transfer/compressed sizes). Vite still emits large-chunk warnings for lazy `ChartView`/`echarts`; budgets now enforce limits but chunking behavior was not changed.
+- CI workflow added but its first GitHub Actions run/result is recorded after commit/push in this pass.
+
 ---
-**End of canonical master plan. Sprint 04 (WS1-04) published as `37c76d3` with follow-up corrections published as `501edeb` (visibility-aware deferral for dashboard secondary widgets with critical quotes/SSE/ticker/indices immediate and preserved query keys/intervals/freshness; observer stability, placeholder/layout reservation, strengthened tests, documentation/EChart-baseline evidence). Live browser/runtime verification remains blocked by safe-running-instance constraints.**
+**End of canonical master plan. Sprint 04 (WS1-04) published as `37c76d3` with follow-up corrections published as `501edeb`; WS1-05 build/chunk-size budgets implemented/verified in this pass (manifest-based enforcement in normal build and CI). Live browser/runtime verification remains blocked by safe-running-instance constraints.**
