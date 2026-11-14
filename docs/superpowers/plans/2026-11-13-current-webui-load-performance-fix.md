@@ -2,13 +2,13 @@
 
 > **Canonical single source of truth.** This file is the authoritative, continuously maintained record for MarketHub performance and code-simplification work. Update this plan (do not create competing plans). Supporting audit/reference docs remain useful, but implementation sequence, task tracking, decisions, evidence, and progress live here.
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **No implementation in a planning-only assignment unless explicitly authorized by the user.**
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **No implementation in a planning-only/measurement-only assignment unless explicitly authorized by the user.**
 
-**Last updated:** 2026-11-14  
-**Branch:** `develop`  
-**Verified local HEAD at consolidation:** `d0a8b0b4fb94855738603cdfeffd16291b3fdbb8` (`docs(perf): add 2026-11-14 comprehensive codebase audit and roadmap`)  
-**Verified remote `origin/develop` at consolidation:** `08b3071f43b8d0875d3b2ada080cd668a37aaa56`  
-**Publication state (investigated 2026-11-14):** Audit docs commit `d0a8b0b` exists **locally on `develop`** and is **ahead 1** of `origin/develop`; it is **not published** to remote at time of investigation. It contains only the six 2026-11-14 audit docs. No force-push/rewrite performed. This consolidation commit must be published safely on `develop` (pushing `develop` will also publish `d0a8b0b` if still ahead; verify remote state before push).
+**Last updated:** 2026-11-14 (WS0 measurement/documentation pass)
+**Branch:** `develop`
+**Verified local HEAD (this pass start):** `81610ccc092f1b4f15bea6f2547adc3ad410a522` (`docs(plan): consolidate MarketHub performance and simplification master plan`)
+**Verified remote `origin/develop` (this pass):** `81610ccc092f1b4f15bea6f2547adc3ad410a522` (in sync after `git fetch origin`)
+**Publication state (verified 2026-11-14):** Audit docs commit `d0a8b0b4fb94855738603cdfeffd16291b3fdbb8` and consolidated master plan commit `81610ccc092f1b4f15bea6f2547adc3ad410a522` are **both published on `origin/develop`**. Earlier consolidation noted `d0a8b0b` as local-only/unpublished at that time; subsequent safe push published it (and `81610cc`). No force-push/rewrite performed.
 
 ## 1. Objective
 
@@ -19,26 +19,28 @@ Turn MarketHub into a lean, fast, resource-efficient application without losing 
 
 **Do not start implementation until the user reviews and authorizes this updated master plan.**
 
-## 2. Planning assignment rule (this session)
+## 2. Assignment rules (this session: measurement/documentation only)
 
 - **No application code or configuration changes.**
 - **No `config.json`, credentials, DB/schema/data, build output, or user-generated file changes.**
+- **No optimization/refactor/implementation (WS1–WS5).**
+- **No POST/PUT/PATCH/DELETE or state-changing endpoints.** No broker login/refresh, no new broker WebSocket/market-data connections, no FYERS/TBT/Upstox setting changes, no `test_source` enable/disable.
+- **No starting a second app instance; do not stop/restart user process.** Do not start app blindly if startup may initiate broker connections/external side effects without config changes.
 - **No broad git staging.** Stage/commit only exact intended documentation file paths.
 - **No destructive git commands, no force-push, no history rewrite.**
-- This session's deliverable is the consolidated master plan and its safe publication on `develop`.
 
 ## 3. Source documents consolidated
 
 | Document | Role | Status |
 |---|---|---|
-| `docs/performance/2026-11-14-comprehensive-codebase-audit.md` | Full audit summary, validation, boundaries, limitations | **[V] Local commit `d0a8b0b`, unpublished to origin at consolidation** |
-| `docs/performance/2026-11-14-prioritized-optimization-roadmap.md` | P0–P3 roadmap with evidence/risks/tests | **[V] Local commit `d0a8b0b`, unpublished** |
-| `docs/performance/2026-11-14-route-api-performance-baseline.md` | Historical samples + static baseline + rerun protocol | **[V] Local commit `d0a8b0b`, unpublished** |
-| `docs/performance/2026-11-14-code-bloat-inventory.md` | Bloat/duplication/dead-surface inventory | **[V] Local commit `d0a8b0b`, unpublished** |
-| `docs/performance/2026-11-14-dependency-bundle-report.md` | Dependency and bundle-size report | **[V] Local commit `d0a8b0b`, unpublished** |
-| `docs/performance/2026-11-14-performance-opportunities.md` | Opportunity list with impact/risk | **[V] Local commit `d0a8b0b`, unpublished** |
-| `docs/performance/2026-11-10-webui-system-performance-audit.md` | Prior webui/system audit (suspects, gaps) | **[V] Present in repo (untracked in working tree at consolidation; preserve)** |
-| `docs/performance/2026-11-13-webui-live-performance-inspection.md` | Live HTTP/build inspection evidence | **[V] Present in repo (untracked in working tree at consolidation; preserve)** |
+| `docs/performance/2026-11-14-comprehensive-codebase-audit.md` | Full audit summary, validation, boundaries, limitations | **[V] Published on `origin/develop` (`d0a8b0b`)** |
+| `docs/performance/2026-11-14-prioritized-optimization-roadmap.md` | P0–P3 roadmap with evidence/risks/tests | **[V] Published on `origin/develop` (`d0a8b0b`)** |
+| `docs/performance/2026-11-14-route-api-performance-baseline.md` | Historical samples + static baseline + rerun protocol | **[V] Published on `origin/develop` (`d0a8b0b`)** |
+| `docs/performance/2026-11-14-code-bloat-inventory.md` | Bloat/duplication/dead-surface inventory | **[V] Published on `origin/develop` (`d0a8b0b`)** |
+| `docs/performance/2026-11-14-dependency-bundle-report.md` | Dependency and bundle-size report | **[V] Published on `origin/develop` (`d0a8b0b`)** |
+| `docs/performance/2026-11-14-performance-opportunities.md` | Opportunity list with impact/risk | **[V] Published on `origin/develop` (`d0a8b0b`)** |
+| `docs/performance/2026-11-10-webui-system-performance-audit.md` | Prior webui/system audit (suspects, gaps) | **[V] Present in repo (untracked in working tree; preserved)** |
+| `docs/performance/2026-11-13-webui-live-performance-inspection.md` | Live HTTP/build inspection evidence | **[V] Present in repo (untracked in working tree; preserved)** |
 
 ## 4. Evidence standard and publication verification
 
@@ -46,7 +48,7 @@ Turn MarketHub into a lean, fast, resource-efficient application without losing 
 - **[S] Strongly suspected:** plausible from tracing/structure, not profiled/measured in controlled reproduction.
 - **[U] Not yet measured:** requires runtime profiling/traces/benchmarks.
 
-**Publication discrepancy (resolved by investigation):** prior report claimed `d0a8b0b` created on develop; remote `origin/develop` was `08b3071...` and remains so at consolidation. Investigation shows `d0a8b0b` is **local-only, unpublished, on `develop` (ahead 1)**, not on another branch and not overwritten. All existing work preserved.
+**Publication verification (2026-11-14, this pass):** `git status --short` clean of tracked changes at start (untracked preserved files only); `git branch --show-current` = `develop`; `git rev-parse HEAD` = `81610ccc092f1b4f15bea6f2547adc3ad410a522`; `git fetch origin`; `git ls-remote origin refs/heads/develop` = `81610ccc092f1b4f15bea6f2547adc3ad410a522`; `git worktree list --porcelain` shows main worktree on `develop` plus detached/other worktrees (no overlap). `d0a8b0b` and `81610cc` confirmed published on `origin/develop`. No divergence, no reset/force-push/rebase/clean.
 
 ## 5. Global constraints and protected boundaries
 
@@ -147,22 +149,24 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 | SQLite query planning | https://www.sqlite.org/eqp.html , https://www.sqlite.org/queryplanner.html | Use `EXPLAIN QUERY PLAN`/index analysis before schema/index changes (schema protected). |
 | Web Vitals | https://web.dev/articles/vitals | Reference thresholds (field, 75th percentile): LCP ≤ 2.5s, INP ≤ 200ms, CLS ≤ 0.1; not guaranteed per local run. |
 
+**Installed versions (verified 2026-11-14, `frontend/package.json`):** React `^19.3.1`, react-router-dom `^7.18.5`, Vite `^8.3.7`, `@tanstack/react-query` `^5.107.1`, echarts `^6.1.0`, TypeScript `^7.0.2`.
+
 ## 9. Performance targets and acceptance criteria
 
 **Do not promise millisecond cold loads.** Finalize MarketHub-specific numeric targets after baseline measurement (WS-0). Use Web Vitals as reference thresholds, not guarantees.
 
-| Metric | Reference/target (to finalize after baseline) | Notes |
-|---|---|---|
-| LCP | ≤ 2.5s (Web Vitals reference) | Field 75th percentile reference; measure locally with traces |
-| INP | ≤ 200ms (Web Vitals reference) | Interaction responsiveness |
-| CLS | ≤ 0.1 (Web Vitals reference) | Visual stability |
-| Warm route navigation | TBD after baseline | Target near-instant for lightweight routes; heavy routes on-demand with feedback |
-| Dashboard first useful content | TBD after baseline | Shell/critical data prioritized |
-| API p50/p95 | TBD per endpoint after baseline | Prior severe samples: quotes timeout, alerts ~5.9s, news ~9.0s, fno coverage/catalog ~3.7–3.9s, futures heatmap ~3.4s |
-| Quote SSE processing cost | TBD after profiling | Per-tick CPU/allocations/client fan-out cost |
-| CPU/memory | TBD after baseline | No sustained growth/regression outweighing benefit |
-| Bundle sizes | TBD budgets after baseline | Reduce initial JS/preload materially (echarts off non-chart initial path) |
-| Background network requests | TBD after baseline | No unnecessary duplicate/polling bursts |
+| Metric | Current baseline (2026-11-14 static / 2026-11-13 prior runtime) | Proposed target (improvement goal unless noted) | Rationale | Measurement method | Status |
+|---|---|---|---|---|---|
+| LCP | **[U]** no browser trace this pass (no running app) | ≤ 2.5s (Web Vitals reference) | Field 75th percentile reference; local trace needed | Browser DevTools/Lighthouse trace on cold/warm dashboard | **DEFERRED** (needs runtime) |
+| INP | **[U]** | ≤ 200ms (Web Vitals reference) | Interaction responsiveness | Browser interaction trace | **DEFERRED** |
+| CLS | **[U]** | ≤ 0.1 (Web Vitals reference) | Visual stability | Browser trace | **DEFERRED** |
+| Initial JS (non-map, dist assets) | **[V]** 3,421,444 bytes total (7 files): `echarts` 1,116,589, `ChartView` 1,613,661, `index` 326,558, `react` 250,006, `query` 43,367, `index.css` 70,537, runtime 726 | Reduce initial-route JS by removing global echarts preload from non-chart routes; budget TBD after WS1 design | `frontend/dist/index.html` modulepreloads echarts on all routes | `Get-ChildItem frontend/dist/assets` + `index.html` inspection | **Baseline recorded (static)** |
+| Initial preload graph | **[V]** `index.html` preloads `rolldown-runtime`, `query`, `react`, `echarts` + loads `index.js`/`index.css` | Non-chart routes must not preload echarts chunk | Eager route graph + full echarts import | `frontend/dist/index.html`, `frontend/src/routes/router.tsx`, `frontend/src/components/EChart.tsx` | **Baseline recorded** |
+| Route chunking | **[V]** Only `ChartView` lazy (`ChartView-BGB_DAs1.js` 1,613,661 B); other routes eager in router | Lazy-load non-critical/heavy routes; keep shell small | Reduce initial parse/execute and request burst | Router/build inspection | **Baseline recorded** |
+| API p50/p95 (target endpoints) | **[V prior, 2026-11-13]** quotes timeout ~20s, news ~9.0s, alerts ~5.9s, fno/coverage ~3.7s, fno/catalog ~3.9s, futures/heatmap ~3.4s, breadth ~682ms, options/chain/view ~620ms | p95 < 1s for read endpoints where feasible; no timeouts; finalize per-endpoint after fresh baseline | Prior samples show severe stalls; must rerun on current HEAD/runtime | Controlled GET requests, p50/p95/max/status/size, cold/warm | **DEFERRED** (no safe running app) |
+| Dashboard first useful content / warm nav | **[U]** | TBD after runtime baseline | Shell/critical data prioritized | Browser trace + route timing | **DEFERRED** |
+| SSE/message rates & CPU/memory | **[U]** | TBD after runtime baseline | Realtime cost/fan-out unknown | SSE connection/message counts, process CPU/RAM sampling | **DEFERRED** |
+| DB query plans (alerts/news) | **[V static, read-only]** `market_alerts` (5 rows): `SCAN market_alerts` + `USE TEMP B-TREE FOR ORDER BY` (created_at). `news_items` (816 rows): `SCAN news_items USING INDEX idx_news_items_published` for recent query. `news_articles` has no `published_at` column (query shape differs). | Avoid unnecessary full scans/temp sorts on hot paths as data grows; confirm with runtime latency | Small current row counts but plan indicates sort strategy | `sqlite3` read-only `EXPLAIN QUERY PLAN` via Python | **Baseline recorded (static)** |
 
 **Every optimization must demonstrate:** (1) reproducible improvement, (2) no functional regression, (3) no correctness/freshness regression, (4) no increased resource usage outweighing benefits.
 
@@ -175,14 +179,70 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 - **Problem / Evidence / Exact files & functions / Proposed solution / Dependencies / Functional risks / Tests / Before-after benchmark / Acceptance criteria / Actual result / Commit reference / Status**
 
 ### Workstream 0 — Baseline and instrumentation
+
 | Task ID | Task | Status | Dependencies | Key files/areas | Acceptance criteria |
 |---|---|---|---|---|---|
-| WS0-01 | Verify/publish audit docs state and preserve untracked perf docs | `NOT STARTED` | none | git history/worktrees/remote, `docs/performance/*` | Publication state recorded; no data loss; safe publish plan |
-| WS0-02 | Capture reproducible runtime baseline (cold/warm routes, dashboard first useful content, route API requests) | `NOT STARTED` | WS0-01 | `docs/performance/2026-11-14-route-api-performance-baseline.md` protocol | Baseline artifact with conditions/timestamps |
-| WS0-03 | Capture API p50/p95, timeout/error rates for target endpoints | `NOT STARTED` | WS0-02 | `/api/market/quotes`, `/api/news`, `/api/alerts`, `/api/fno/coverage`, `/api/fno/catalog`, `/api/futures/heatmap`, `/api/market/breadth`, `/api/options/chain/view`, comparisons | Reproducible latency table |
-| WS0-04 | Capture frontend metrics (JS/CSS transfer, parse/execute, LCP/INP/CLS where possible, long tasks, renders) | `NOT STARTED` | WS0-02 | browser traces, `frontend/dist/*`, routes | Trace-backed metrics |
-| WS0-05 | Capture SSE/message rates, Python CPU/memory, DB query latency/plans, startup time | `NOT STARTED` | WS0-02 | `/api/market/stream`, `/api/logs/stream`, `core/persistence/*`, server process | Measured realtime/resource baseline |
-| WS0-06 | Finalize MarketHub-specific targets from baseline | `NOT STARTED` | WS0-02..05 | this plan §9 | Targets recorded with rationale |
+| WS0-01 | Verify/publish audit docs state and preserve untracked perf docs | `VERIFIED` | none | git history/worktrees/remote, `docs/performance/*` | Publication state recorded; no data loss; safe publish plan |
+| WS0-02 | Capture reproducible runtime baseline (cold/warm routes, dashboard first useful content, route API requests) | `BLOCKED` | WS0-01 | `docs/performance/2026-11-14-route-api-performance-baseline.md` protocol | Baseline artifact with conditions/timestamps |
+| WS0-03 | Capture API p50/p95, timeout/error rates for target endpoints | `BLOCKED` | WS0-02 | `/api/market/quotes`, `/api/news`, `/api/alerts`, `/api/fno/coverage`, `/api/fno/catalog`, `/api/futures/heatmap`, `/api/market/breadth`, `/api/options/chain/view`, comparisons | Reproducible latency table |
+| WS0-04 | Capture frontend metrics (JS/CSS transfer, parse/execute, LCP/INP/CLS where possible, long tasks, renders) | `PARTIAL` (static verified, runtime/browser blocked) | WS0-02 | browser traces, `frontend/dist/*`, routes | Trace-backed metrics |
+| WS0-05 | Capture SSE/message rates, Python CPU/memory, DB query latency/plans, startup time | `PARTIAL` (static DB plans verified, runtime blocked) | WS0-02 | `/api/market/stream`, `/api/logs/stream`, `core/persistence/*`, server process | Measured realtime/resource baseline |
+| WS0-06 | Finalize MarketHub-specific targets from baseline | `PARTIAL` (provisional targets recorded; runtime finalization deferred) | WS0-02..05 | this plan §9 | Targets recorded with rationale |
+
+#### WS0 detailed records (2026-11-14)
+
+**WS0-01 — VERIFIED**
+- **Problem:** Confirm audit/master-plan publication state and preserve existing work.
+- **Evidence:** `git status --short` showed only untracked preserved files (`config.json.pre_tbt_activation_20261111_191221.bak`, 7 untracked perf docs). `git branch --show-current`=`develop`. `git rev-parse HEAD`=`81610ccc092f1b4f15bea6f2547adc3ad410a522`. `git fetch origin` completed. `git ls-remote origin refs/heads/develop`=`81610ccc092f1b4f15bea6f2547adc3ad410a522`. `git worktree list --porcelain` inspected (main + detached/other worktrees). No listener on port 7070; no `python/python3/uvicorn` processes observed.
+- **Exact files/functions involved:** git metadata, `docs/performance/*`, `docs/superpowers/plans/2026-11-13-current-webui-load-performance-fix.md`.
+- **Actual result:** `d0a8b0b4fb94855738603cdfeffd16291b3fdbb8` (audit docs) and `81610ccc092f1b4f15bea6f2547adc3ad410a522` (master plan) confirmed published on `origin/develop`; local/remote in sync; no divergence/data loss.
+- **Acceptance criteria outcome:** Met.
+- **Commit reference:** `d0a8b0b`, `81610cc` (published).
+
+**WS0-02 — BLOCKED (runtime/browser)**
+- **Problem:** Need cold/warm load, dashboard first useful content, route navigation, initial API request fan-out, console/network errors.
+- **Evidence/conditions:** 2026-11-14, Windows, repo `D:\Temp\MarketHub`, branch `develop` @ `81610cc`. No existing MarketHub instance detected (no port 7070 listener, no python/uvicorn processes). `app/server.py` contains startup/restore/source wiring and broker-related initialization paths (e.g. auth restore, source manager/feed setup); starting app may initiate broker connections or external side effects without config changes. Assignment forbids starting second instance, triggering broker login/refresh/websocket/market-data connections, or changing config.
+- **Method attempted/available:** Static inspection only; no safe runtime/browser measurement possible.
+- **Limitations:** No cold/warm timings, no dashboard first-useful-content, no route navigation timings, no live request waterfall/duplicates/console errors.
+- **Reproducible:** N/A (blocked).
+- **Acceptance criteria outcome:** Not met (blocked by safety constraints).
+
+**WS0-03 — BLOCKED (runtime API)**
+- **Problem:** Need p50/p95/max/status/size/timeout/error for target GET endpoints.
+- **Evidence/conditions:** Same as WS0-02; no safe running instance. Prior samples retained as historical evidence only (2026-11-13): `/api/market/quotes` timeout ~20s, `/api/news` ~9.0s, `/api/alerts` ~5.9s, `/api/fno/coverage` ~3.7s, `/api/fno/catalog` ~3.9s, `/api/futures/heatmap` ~3.4s, `/api/market/breadth` ~682ms, `/api/options/chain/view` ~620ms. `/api/market/fno/universe` not remeasured.
+- **Method:** No GET requests issued (no app). No POST/PUT/PATCH/DELETE/state-changing calls.
+- **Limitations:** No current-head latency table; cold/warm not measured.
+- **Acceptance criteria outcome:** Not met (blocked).
+
+**WS0-04 — PARTIAL (static verified; browser/runtime blocked)**
+- **Problem:** Need JS/CSS transfer, parse/execute, LCP/INP/CLS, long tasks, route chunks, ECharts loading behavior.
+- **Evidence (2026-11-14, static):**
+  - `frontend/dist/index.html`: modulepreloads `/ui/assets/rolldown-runtime-XKyaHtl9.js`, `/ui/assets/query-B0JyiKZ_.js`, `/ui/assets/react-DviEPBuS.js`, `/ui/assets/echarts-BBcsMa3e.js`; loads `/ui/assets/index-CJsytrag.js` and `/ui/assets/index-ni0kl9kI.css`.
+  - `frontend/dist/assets` (non-map, 7 files, 3,421,444 bytes total): `echarts-BBcsMa3e.js` 1,116,589, `ChartView-BGB_DAs1.js` 1,613,661, `index-CJsytrag.js` 326,558, `react-DviEPBuS.js` 250,006, `index-ni0kl9kI.css` 70,537, `query-B0JyiKZ_.js` 43,367, `rolldown-runtime-XKyaHtl9.js` 726. Source maps (5 files) total 14,681,142 bytes (not initial transfer).
+  - `frontend/src/routes/router.tsx`: all major routes eagerly imported; only `ChartView` lazy-loaded via `React.lazy`/`Suspense`.
+  - `frontend/vite.config.ts`: Vite 8/Rolldown `manualChunks` function splits `echarts/zrender`, `react/react-dom/react-router*`, `@tanstack` into separate chunks; `build.sourcemap: true`, `outDir: dist`.
+  - `frontend/package.json`: React 19.3.1, Vite 8.3.7, TanStack Query 5.107.1, echarts 6.1.0.
+- **Method:** File size inspection (`Get-ChildItem`), `index.html`/source/config reads. No `frontend/dist` overwritten; no build run.
+- **Limitations:** No browser transfer waterfall, parse/compile/execute timing, LCP/INP/CLS, long tasks, render counts, console errors. No precompressed asset inventory beyond observed dist files.
+- **Acceptance criteria outcome:** Partially met (static/build evidence recorded); runtime trace-backed metrics blocked.
+
+**WS0-05 — PARTIAL (static DB plans verified; runtime/SSE/process blocked)**
+- **Problem:** Need SSE connection/message rates, reconnects/errors, render/update frequency, Python CPU/memory, SQLite query duration/plans, startup time, event-loop/thread-pool contention evidence.
+- **Evidence (2026-11-14, static/read-only DB):**
+  - No running app/process; SSE and Python process metrics unavailable.
+  - SQLite DB present: `data/events.db` (80,310,272 bytes, last write 2026-11-14 13:23:52). Backups/test DBs observed but not queried. Read-only inspection via `python` + `sqlite3.connect("file:data/events.db?mode=ro", uri=True)`.
+  - Tables (30): includes `market_alerts`, `news_items`, `news_articles`, `instruments`, `condition_alerts`, etc.
+  - Counts: `market_alerts`=5, `news_items`=816, `news_articles`=0, `instruments`=151,485, `condition_alerts`=0.
+  - Query plans: `SELECT * FROM market_alerts ORDER BY created_at DESC` → `SCAN market_alerts` + `USE TEMP B-TREE FOR ORDER BY`. `SELECT * FROM news_items ORDER BY published_at DESC LIMIT 200` → `SCAN news_items USING INDEX idx_news_items_published`. `news_articles` recent-by-`published_at` plan unavailable (`no such column: published_at`).
+- **Method:** Read-only SQLite URI connection and `EXPLAIN QUERY PLAN`; no schema/index/data/WAL changes.
+- **Limitations:** No query durations, no contention/lock evidence, no runtime SSE rates, no CPU/memory/startup measurements.
+- **Acceptance criteria outcome:** Partially met (DB plans/counts recorded); runtime/realtime/resource baseline blocked.
+
+**WS0-06 — PARTIAL (provisional targets recorded)**
+- **Problem:** Finalize MarketHub-specific targets from collected baseline.
+- **Evidence:** Static baselines recorded (bundle/preload/route chunking, DB plans/counts) and prior runtime samples retained; runtime/browser/SSE/API rerun unavailable.
+- **Actual result:** Provisional targets added in §9 with rationale/method/status; per-endpoint/runtime targets remain deferred until safe fresh measurements.
+- **Acceptance criteria outcome:** Partially met (targets recorded with rationale; finalization pending runtime evidence).
 
 ### Workstream 1 — WebUI and bundle optimization
 | Task ID | Task | Status | Dependencies | Key files/functions | Acceptance criteria |
@@ -250,8 +310,10 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 |---|---|---|---|
 | 2026-11-13 | Created initial webui performance fix plan (measurement-first) | `docs/performance/2026-11-10-webui-system-performance-audit.md`, `docs/performance/2026-11-13-webui-live-performance-inspection.md` | Established baseline tasks/priorities |
 | 2026-11-13 | Reviewed TBT/Fyers commits; kept perf priorities unchanged | git commits `e8a9489..733f3ed` | No measured bottleneck impact attributed to TBT changes |
-| 2026-11-14 | Completed comprehensive read-only audit; produced 6 audit docs (local commit `d0a8b0b`, unpublished at consolidation) | audit docs in `docs/performance/2026-11-14-*` | Consolidated evidence/roadmap/baseline/bloat/deps/opportunities |
-| 2026-11-14 | Consolidated all findings into this canonical master plan; removed unsafe broad staging instruction from legacy task text | this file | Single source of truth for planning/execution tracking |
+| 2026-11-14 | Completed comprehensive read-only audit; produced 6 audit docs | audit docs in `docs/performance/2026-11-14-*`, commit `d0a8b0b4fb94855738603cdfeffd16291b3fdbb8` | Consolidated evidence/roadmap/baseline/bloat/deps/opportunities |
+| 2026-11-14 | Consolidated all findings into this canonical master plan; removed unsafe broad staging instruction from legacy task text | commit `81610ccc092f1b4f15bea6f2547adc3ad410a522` | Single source of truth for planning/execution tracking |
+| 2026-11-14 | Verified publication: `d0a8b0b` and `81610cc` both published on `origin/develop` (remote/local in sync) | `git fetch`, `git ls-remote origin refs/heads/develop`, `git rev-parse HEAD`, worktree/status inspection | Corrected prior local-only/unpublished bookkeeping; no force-push/rewrite |
+| 2026-11-14 | Executed WS0 measurement-only pass with safety constraints (no app start, no broker/config/DB changes) | static build/route/config/version inspection, read-only SQLite `EXPLAIN QUERY PLAN` on `data/events.db` | WS0-01 verified; WS0-02/03 blocked; WS0-04/05 partial; WS0-06 provisional targets recorded |
 
 ## 13. Progress log
 
@@ -259,13 +321,15 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 |---|---|---|---|
 | 2026-11-13 | Initial plan created | (see git history) | WebUI load/perf plan |
 | 2026-11-13 | Plan updated with live inspection and TBT review | (see git history) | Evidence-backed priorities retained |
-| 2026-11-14 | 6 audit docs committed locally | `d0a8b0b` (local, unpublished at consolidation) | Exact files only |
-| 2026-11-14 | Master plan consolidated (this update) | `TBD (this session)` | Planning-only; no app/config changes |
+| 2026-11-14 | 6 audit docs committed and published | `d0a8b0b4fb94855738603cdfeffd16291b3fdbb8` | Exact files only; published on `origin/develop` |
+| 2026-11-14 | Master plan consolidated and published | `81610ccc092f1b4f15bea6f2547adc3ad410a522` | Planning-only; no app/config changes; published on `origin/develop` |
+| 2026-11-14 | Corrected publication/progress records and added WS0 baseline evidence | `TBD (this session)` | Measurement/documentation only; runtime/browser/API/SSE/process measurements blocked by no-safe-running-instance constraint |
 
 ## 14. Remaining unmeasured / conflicts / open evidence
 
-- **Unmeasured:** live API rerun on current HEAD/runtime, browser DevTools traces (LCP/INP/CLS/long tasks/JS execution/memory), SSE tick/message rates, sustained Python CPU/memory, SQLite query plans/contention, effective runtime config/data dir for live process.
-- **Publication:** `d0a8b0b` (audit docs) local-only/unpublished at consolidation; this plan commit will also need safe publication to `origin/develop`.
+- **Unmeasured (blocked this pass):** live API rerun on current HEAD/runtime (p50/p95/max/status/size/timeouts/errors, cold/warm) for `/api/market/quotes`, `/api/news`, `/api/alerts`, `/api/fno/coverage`, `/api/fno/catalog`, `/api/futures/heatmap`, `/api/market/breadth`, `/api/options/chain/view`, `/api/market/fno/universe`; browser DevTools traces (LCP/INP/CLS/long tasks/JS parse-execute/memory, cold/warm navigation, dashboard first useful content, request waterfall/duplicates/console errors); SSE connection/message/reconnect/error rates and frontend update frequency; sustained Python CPU/memory, startup time, event-loop/thread-pool contention; SQLite query durations/contention under load.
+- **Partially measured (static):** frontend bundle/preload/route chunking and installed versions; read-only DB table counts and `EXPLAIN QUERY PLAN` for selected alerts/news queries.
+- **Publication:** resolved — `d0a8b0b` and `81610cc` published on `origin/develop` (verified 2026-11-14). This session's doc correction requires safe publication after commit.
 - **Proof gaps:** route helper body-level duplication, identity consolidation safety, broker feed lifecycle extraction, legacy branch retirement preconditions, and any "unused" claims require deeper evidence before action.
 - **No known conflicting evidence** against top priorities (backend stalls + frontend initial payload/fan-out), but all fixes remain measurement-gated.
 
