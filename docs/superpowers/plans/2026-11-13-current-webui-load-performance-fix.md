@@ -247,11 +247,11 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 ### Workstream 1 — WebUI and bundle optimization
 | Task ID | Task | Status | Dependencies | Key files/functions | Acceptance criteria |
 |---|---|---|---|---|---|
-| WS1-01 | Route-level lazy loading for non-critical routes (keep shell small) | `NOT STARTED` | WS0-04 | `frontend/src/routes/router.tsx`, feature entrypoints | Initial bundle/chunks reduced; routes load on demand; navigation tests pass |
-| WS1-02 | Remove global echarts preload / isolate echarts to needed routes | `NOT STARTED` | WS0-04, WS1-01 | `frontend/dist/index.html` (build output), `frontend/vite.config.ts`, `frontend/src/components/EChart.tsx`, chart/breadth/sector/fno consumers | Non-chart initial load excludes echarts preload; chart features intact |
-| WS1-03 | Evaluate ECharts modular imports (`echarts/core`) with required registrations only | `NOT STARTED` | WS1-02 | `frontend/src/components/EChart.tsx`, `features/breadth/breadthOption.ts`, `features/sector-heatmap/sectorHeatmapOption.ts`, `features/fno/fnoOption.ts`, `features/market-map/marketMapOption.ts` | Bundle reduced or justified no-change; theme/disposal/resize/interactions/tests preserved |
+| WS1-01 | Route-level lazy loading for non-critical routes (keep shell small) | `VERIFIED` (Sprint 01) | WS0-04 | `frontend/src/routes/router.tsx`, feature entrypoints | Initial bundle/chunks reduced; routes load on demand; navigation tests pass |
+| WS1-02 | Remove global echarts preload / isolate echarts to needed routes | `VERIFIED` (Sprint 01) | WS0-04, WS1-01 | `frontend/dist/index.html` (build output), `frontend/vite.config.ts`, `frontend/src/components/EChart.tsx`, chart/breadth/sector/fno consumers | Non-chart initial load excludes echarts preload; chart features intact |
+| WS1-03 | Evaluate ECharts modular imports (`echarts/core`) with required registrations only | `VERIFIED` (Sprint 01) | WS1-02 | `frontend/src/components/EChart.tsx`, `features/breadth/breadthOption.ts`, `features/sector-heatmap/sectorHeatmapOption.ts`, `features/fno/fnoOption.ts`, `features/market-map/marketMapOption.ts` | Bundle reduced or justified no-change; theme/disposal/resize/interactions/tests preserved |
 | WS1-04 | Dashboard shell vs secondary data separation; defer non-critical widgets | `NOT STARTED` | WS0-02, WS0-03 | `frontend/src/features/dashboard/DashboardView.tsx`, `useMarketQuotes.ts`, widget components | Faster first useful content; no harmful freshness loss |
-| WS1-05 | Build/chunk-size budgets and verification | `NOT STARTED` | WS1-01..04 | `frontend/vite.config.ts`, CI/build scripts (if approved) | Budgets recorded/enforced; build green |
+| WS1-05 | Build/chunk-size budgets and verification | `PARTIAL` (Sprint 01: build verified, budgets not formally enforced) | WS1-01..04 | `frontend/vite.config.ts`, CI/build scripts (if approved) | Budgets recorded/enforced; build green |
 
 ### Workstream 2 — Backend and API performance
 | Task ID | Task | Status | Dependencies | Key files/functions | Acceptance criteria |
@@ -259,8 +259,8 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 | WS2-01 | Profile and optimize `/api/market/quotes` snapshot path (canonical parity) | `NOT STARTED` | WS0-03, WS0-05 | `api/routes.py` (`_market_quotes`, `_quotes_snapshot`), `app/quote_service.py` (`QuoteService.quotes`), `market/quote_coordinator.py` | Measured latency/timeout improvement; snapshot/SSE/reset/canonical parity tests pass |
 | WS2-02 | Investigate/fix `/api/alerts` root cause (DB vs contention vs workload) | `NOT STARTED` | WS0-03, WS0-05 | `api/product_routes.py` (`build_alert_routes._list`), `core/persistence/store.py` (`list_market_alerts`), `core/persistence/modules/products.py` (`list_alerts`) | Root cause evidenced; fix measured if applied; contract preserved |
 | WS2-03 | Profile/fix `/api/news` blocking I/O and processing | `NOT STARTED` | WS0-03, WS0-05 | `api/news_routes.py` (`_get_news`), `news/service.py` (`NewsService.news`, `_apply_filters`, `_dedup_items`), `core/persistence/modules/news.py` (`query_news_items`) | Measured improvement; filtering/ordering/dedup/response contract preserved; thread-safety understood |
-| WS2-04 | F&O coverage plan reuse/cache/single-flight for `/api/fno/coverage` and `/api/fno/catalog` | `NOT STARTED` | WS0-03 | `api/fno_coverage_routes.py` (`_coverage`, `_catalog`, `_plan_payload`), `app/fno_coverage.py` (`FnoCoverageService.plan`, `RoutingPlan.to_dict`) | Reduced recomputation/latency; correct invalidation; no stale dynamic capacity |
-| WS2-05 | `/api/futures/heatmap` plan reuse and board efficiency | `NOT STARTED` | WS2-04, WS0-03 | `api/futures_heatmap.py`, `app/fno_coverage.py`, `market/futures_board.py` | Measured improvement; OI/buildup/coverage semantics preserved |
+| WS2-04 | F&O coverage plan reuse/cache/single-flight for `/api/fno/coverage` and `/api/fno/catalog` | `VERIFIED` (Sprint 01, microbenchmark/test evidence) | WS0-03 | `api/fno_coverage_routes.py` (`_coverage`, `_catalog`, `_plan_payload`), `app/fno_coverage.py` (`FnoCoverageService.plan`, `RoutingPlan.to_dict`) | Reduced recomputation/latency; correct invalidation; no stale dynamic capacity |
+| WS2-05 | `/api/futures/heatmap` plan reuse and board efficiency | `PARTIAL` (Sprint 01: plan skeleton reuse benefits heatmap; board logic unchanged) | WS2-04, WS0-03 | `api/futures_heatmap.py`, `app/fno_coverage.py`, `market/futures_board.py` | Measured improvement; OI/buildup/coverage semantics preserved |
 | WS2-06 | Profile moderate endpoints (`/api/market/breadth`, `/api/options/chain/view`, `/api/market/fno/universe`) and optimize if measured | `NOT STARTED` | WS0-03 | `api/routes.py`, `market/breadth.py`, `market/market_universe.py`, `api/product_routes.py`, `app/market_intel.py`, FNO universe/catalog paths | Evidence-backed improvement or justified defer |
 
 ### Workstream 3 — Realtime and data processing
@@ -314,6 +314,8 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 | 2026-11-14 | Consolidated all findings into this canonical master plan; removed unsafe broad staging instruction from legacy task text | commit `81610ccc092f1b4f15bea6f2547adc3ad410a522` | Single source of truth for planning/execution tracking |
 | 2026-11-14 | Verified publication: `d0a8b0b` and `81610cc` both published on `origin/develop` (remote/local in sync) | `git fetch`, `git ls-remote origin refs/heads/develop`, `git rev-parse HEAD`, worktree/status inspection | Corrected prior local-only/unpublished bookkeeping; no force-push/rewrite |
 | 2026-11-14 | Executed WS0 measurement-only pass with safety constraints (no app start, no broker/config/DB changes) | static build/route/config/version inspection, read-only SQLite `EXPLAIN QUERY PLAN` on `data/events.db` | WS0-01 verified; WS0-02/03 blocked; WS0-04/05 partial; WS0-06 provisional targets recorded |
+| 2026-11-14 | Corrected frontend baseline metric labeling (initial JS vs lazy ChartView) | commit `2bb215ffafa6d19f023489c4b51a7488fe7ad24f` | Clarified uncompressed asset-size baseline; no behavior change |
+| 2026-11-14 | Implemented Sprint 01 bounded performance improvements (F&O plan skeleton cache + frontend route lazy-loading/modular ECharts) | commits `0fc3e585dc4b4ee111e62bd8553f5e737a07e2ec`, `d7ccfa59f61983cacef94a2565c00501a96c6104` | Measured backend recomputation reduction (microbenchmark/tests) and major initial frontend bundle/preload reduction (isolated build comparison); no API contract/canonical/auth/broker/config/DB changes |
 
 ## 13. Progress log
 
@@ -323,15 +325,84 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 | 2026-11-13 | Plan updated with live inspection and TBT review | (see git history) | Evidence-backed priorities retained |
 | 2026-11-14 | 6 audit docs committed and published | `d0a8b0b4fb94855738603cdfeffd16291b3fdbb8` | Exact files only; published on `origin/develop` |
 | 2026-11-14 | Master plan consolidated and published | `81610ccc092f1b4f15bea6f2547adc3ad410a522` | Planning-only; no app/config changes; published on `origin/develop` |
-| 2026-11-14 | Corrected publication/progress records and added WS0 baseline evidence | `TBD (this session)` | Measurement/documentation only; runtime/browser/API/SSE/process measurements blocked by no-safe-running-instance constraint |
+| 2026-11-14 | Corrected publication/progress records and added WS0 baseline evidence | `b73249f8263f94b463fe830c2ecd608273410500` | Measurement/documentation only; runtime/browser/API/SSE/process measurements blocked by no-safe-running-instance constraint |
+| 2026-11-14 | Corrected frontend initial asset baseline metrics | `2bb215ffafa6d19f023489c4b51a7488fe7ad24f` | Documentation-only correction |
+| 2026-11-14 | Sprint 01 backend: F&O coverage plan skeleton cache/single-flight with fresh dynamic routing | `0fc3e585dc4b4ee111e62bd8553f5e737a07e2ec` | `app/fno_coverage.py`, `test/test_fno_coverage_plan_cache.py`; parity/invalidation/freshness/concurrency tests + microbenchmark |
+| 2026-11-14 | Sprint 01 frontend: route lazy-loading + modular ECharts isolation | `d7ccfa59f61983cacef94a2565c00501a96c6104` | Router/EChart/option builders/tests updated; isolated build shows initial preload excludes echarts and initial JS+CSS reduced |
+
+## 15. Sprint 01 implementation results (2026-11-14)
+
+### Scope and safety
+- **Authorized bounded changes only:** frontend route-loading/ECharts area and F&O coverage/heatmap planning area.
+- **Untouched:** `config.json`, credentials/auth/session persistence, startup restoration, broker login/feed lifecycle, FYERS TBT, canonical market identity/quote semantics, production DB contents/schema, unrelated features. No full app launched; no broker connections triggered.
+- **HEAD at start:** `2bb215ffafa6d19f023489c4b51a7488fe7ad24f` (`develop`).
+
+### Workstream A — Backend F&O performance (WS2-04 verified, WS2-05 partial)
+
+**Problem/evidence:** `FnoCoverageService.plan()` rebuilt catalog-derived futures/universe/spot-key structures on every call; `/api/fno/coverage`, `/api/fno/catalog`, `/api/futures/heatmap` all invoke `coverage.plan()`.
+
+**Implementation:** Added catalog-derived skeleton caching in `app/fno_coverage.py` keyed by requested expiry + relevant config + catalog sync fingerprint, with single-flight build protection and explicit `invalidate_plan_cache()`. Skeleton caches immutable/catalog-derived inputs (universe symbols/index set, futures groups/selected expiries, equity/index spot-key maps). **Dynamic provider state is always computed fresh per call** (provider status/availability, subscribed keys, budget usage/capacity, routing/state decisions), preserving dynamic capacity freshness and existing behavior/contracts.
+
+**Exact changed files:** `app/fno_coverage.py`, `test/test_fno_coverage_plan_cache.py` (new).
+
+**Tests/verification:**
+- `python -m pytest test/test_fno_coverage.py test/test_futures_heatmap_api.py test/test_fno_coverage_plan_cache.py -q -s` → **24 passed** (includes parity, skeleton reuse, catalog-sync invalidation, explicit invalidation, dynamic-state freshness with cached skeleton, single-flight concurrency, microbenchmark).
+- `python -m pytest test/test_architecture_boundaries.py -q` → **17 passed**.
+- `python -m ruff check app/fno_coverage.py api/fno_coverage_routes.py api/futures_heatmap.py test/test_fno_coverage_plan_cache.py` → clean.
+
+**Benchmark (repeatable microbenchmark, isolated test fixtures/data, not live endpoint latency):**
+- `test_fno_coverage_plan_cache.py::test_plan_microbenchmark_repeated_calls`
+- **Before (uncached catalog-derived rebuild per call, implied):** each `plan()` would perform catalog futures index reads (NSE+BSE) and equity universe reads per provider.
+- **After (warm skeleton cache):** 50 repeated `plan()` calls, `elapsed_s=0.002747`, `per_call_ms=0.055`, `catalog_future_reads=2`, `equity_reads=2` (no additional catalog reads after initial skeleton build). Single-flight test confirmed one skeleton build under 8 concurrent callers.
+- **Dynamic freshness verified:** provider status/subscription changes reflected in routing/state on subsequent calls while skeleton/catalog reads remained cached.
+
+**Risks/limitations:** Catalog fingerprint uses `catalog.sync_state()` best-effort; if sync state is unavailable, cache key falls back conservatively. No live endpoint p50/p95 measured (no safe running app). `api/fno_coverage_routes.py`/`api/futures_heatmap.py` unchanged functionally but benefit from cheaper `coverage.plan()` calls.
+
+**Commit:** `0fc3e585dc4b4ee111e62bd8553f5e737a07e2ec` — `perf(fno): cache catalog-derived coverage plan skeleton with fresh dynamic routing`
+
+### Workstream B — Frontend initial-load performance (WS1-01/02/03 verified, WS1-05 partial)
+
+**Problem/evidence:** Eager route graph and full `echarts` import/global preload on initial page; baseline initial JS+CSS (entry/preload graph, uncompressed assets) 1,807,783 B with ECharts preload 1,116,589 B.
+
+**Implementation:**
+- Lazy-loaded non-critical/heavy routes in `frontend/src/routes/router.tsx` with `React.lazy`/`Suspense` fallbacks (dashboard kept eager as initial shell route; chart and chart-heavy/feature routes loaded on demand).
+- Switched `frontend/src/components/EChart.tsx` to modular `echarts/core` with required registrations only (`BarChart`, `TreemapChart`, `GridComponent`, `TooltipComponent`, `LegendComponent`, `CanvasRenderer`) and resilient init/resize/update/dispose handling.
+- Updated chart option builder type imports to `echarts/core` (`breadthOption.ts`, `sectorHeatmapOption.ts`, `fnoOption.ts`, `marketMapOption.ts`).
+- Updated affected frontend tests/mocks for modular echarts (`analyticsOptions.test.ts`, `breadth.test.tsx`, `sectorHeatmap.test.tsx`).
+
+**Exact changed files:** `frontend/src/routes/router.tsx`, `frontend/src/components/EChart.tsx`, `frontend/src/features/breadth/breadthOption.ts`, `frontend/src/features/fno/fnoOption.ts`, `frontend/src/features/market-map/marketMapOption.ts`, `frontend/src/features/sector-heatmap/sectorHeatmapOption.ts`, `frontend/src/__tests__/analyticsOptions.test.ts`, `frontend/src/__tests__/breadth.test.tsx`, `frontend/src/__tests__/sectorHeatmap.test.tsx`.
+
+**Build comparison (isolated output `--outDir ../.tmp-frontend-dist-sprint01`, temp dir removed after measurement; existing `frontend/dist` not overwritten):**
+
+| Metric | Baseline (recorded) | Sprint 01 build | Delta |
+|---|---:|---:|---:|
+| Initial JS resources (entry/preload graph, uncompressed) | 1,737,246 B | 436,387 B (`index` 142,288 + `react` 250,006 + `query` 43,367 + runtime 726) | **-1,300,859 B (-74.9%)** |
+| Initial CSS (uncompressed) | 70,537 B | 70,537 B | 0 B |
+| Combined initial JS+CSS (entry/preload graph) | 1,807,783 B | 506,924 B | **-1,300,859 B (-72.0%)** |
+| ECharts global preload on initial page | 1,116,589 B (preloaded) | **0 B (not preloaded)** | **removed from initial load** |
+| ECharts chunk (lazy, modular) | 1,116,589 B (full, preloaded) | 545,838 B (`echarts-DBNUSy3J.js`, on-demand) | **-570,751 B (-51.1%)** |
+| ChartView chunk (lazy) | 1,613,661 B | 1,613,703 B | ~same |
+| Initial `index.html` modulepreloads | runtime, query, react, echarts | runtime, query, react | echarts removed |
+
+**Route/chunk behavior:** non-critical routes emitted as separate lazy chunks (e.g. `BreadthView`, `SectorHeatmapView`, `MarketMapView`, `FuturesHeatmapView`, `FnoWorkspaceView`, `OptionChainView`, settings/news/alerts/etc.). Dashboard remains eager.
+
+**Tests/verification:**
+- `bun run typecheck` (frontend) → **pass**.
+- `bun run build -- --outDir ../.tmp-frontend-dist-sprint01` → **pass** (isolated; temp output removed).
+- Targeted tests: `src/__tests__/analyticsOptions.test.ts`, `src/__tests__/breadth.test.tsx`, `src/__tests__/sectorHeatmap.test.tsx`, `src/__tests__/futuresHeatmap.test.tsx`, `src/__tests__/fnoFormat.test.ts` → **28 passed** across 5 files.
+- Chart functionality/themes/resize/disposal preserved by existing `EChart` lifecycle contract; modular registrations cover bar/treemap/grid/tooltip/legend/canvas used by current chart options.
+
+**Risks/limitations:** No browser DevTools trace/LCP/INP/CLS/navigation timing captured (no safe running app). Dashboard widget polling/fan-out unchanged (WS1-04 not addressed). Build chunk-size budgets not formally enforced in CI/config (WS1-05 partial). Vite still warns about large lazy chunks (`ChartView`, `echarts`) which are expected on-demand chunks.
+
+**Commit:** `d7ccfa59f61983cacef94a2565c00501a96c6104` — `perf(frontend): lazy-load routes and isolate modular echarts from initial bundle`
 
 ## 14. Remaining unmeasured / conflicts / open evidence
 
-- **Unmeasured (blocked this pass):** live API rerun on current HEAD/runtime (p50/p95/max/status/size/timeouts/errors, cold/warm) for `/api/market/quotes`, `/api/news`, `/api/alerts`, `/api/fno/coverage`, `/api/fno/catalog`, `/api/futures/heatmap`, `/api/market/breadth`, `/api/options/chain/view`, `/api/market/fno/universe`; browser DevTools traces (LCP/INP/CLS/long tasks/JS parse-execute/memory, cold/warm navigation, dashboard first useful content, request waterfall/duplicates/console errors); SSE connection/message/reconnect/error rates and frontend update frequency; sustained Python CPU/memory, startup time, event-loop/thread-pool contention; SQLite query durations/contention under load.
-- **Partially measured (static):** frontend bundle/preload/route chunking and installed versions; read-only DB table counts and `EXPLAIN QUERY PLAN` for selected alerts/news queries.
-- **Publication:** resolved — `d0a8b0b` and `81610cc` published on `origin/develop` (verified 2026-11-14). This session's doc correction requires safe publication after commit.
+- **Unmeasured (blocked):** live API rerun on current HEAD/runtime (p50/p95/max/status/size/timeouts/errors, cold/warm) for `/api/market/quotes`, `/api/news`, `/api/alerts`, `/api/fno/coverage`, `/api/fno/catalog`, `/api/futures/heatmap`, `/api/market/breadth`, `/api/options/chain/view`, `/api/market/fno/universe`; browser DevTools traces (LCP/INP/CLS/long tasks/JS parse-execute/memory, cold/warm navigation, dashboard first useful content, request waterfall/duplicates/console errors); SSE connection/message/reconnect/error rates and frontend update frequency; sustained Python CPU/memory, startup time, event-loop/thread-pool contention; SQLite query durations/contention under load.
+- **Partially measured:** frontend bundle/preload/route chunking and installed versions (static + isolated build comparison); read-only DB table counts and `EXPLAIN QUERY PLAN` for selected alerts/news queries; F&O plan recomputation microbenchmark (test fixtures, not live endpoint latency).
+- **Publication:** `d0a8b0b`, `81610cc`, `b73249f`, `2bb215f` published on `origin/develop`. Sprint 01 commits `0fc3e58`, `d7ccfa5` and this plan-update commit require safe publication after commit.
 - **Proof gaps:** route helper body-level duplication, identity consolidation safety, broker feed lifecycle extraction, legacy branch retirement preconditions, and any "unused" claims require deeper evidence before action.
 - **No known conflicting evidence** against top priorities (backend stalls + frontend initial payload/fan-out), but all fixes remain measurement-gated.
 
 ---
-**End of canonical master plan. Do not start implementation until user reviews and authorizes.**
+**End of canonical master plan. Implementation started only for explicitly authorized Sprint 01 scope; further implementation requires review/authorization as appropriate.**
