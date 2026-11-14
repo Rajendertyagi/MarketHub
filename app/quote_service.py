@@ -497,16 +497,56 @@ class QuoteService:
         if not cid:
             return None
         wanted = self._reference_ids(canonical_id)
-        quotes = await self._quotes()
-        candidates = [q for q in quotes
-                      if self._quote_ids(q) & wanted]
+
+        # Fast path: resolve to provider storage keys and read directly from the
+        # market store (O(k) per instrument) instead of scanning all quotes.
+        candidates: list[Any] = []
+        seen_keys: set[tuple[str, str]] = set()
+        get_now = getattr(self._market_service, "get_quote_now", None)
+        if get_now is not None:
+            for ex, key in self.storage_keys(canonical_id):
+                pair = (str(ex or ""), str(key))
+                if pair in seen_keys:
+                    continue
+                seen_keys.add(pair)
+                exchanges = [ex] if ex else [""]
+                if "|" in key:
+                    exchanges.append(key.split("|", 1)[0].split("_", 1)[0])
+                q = None
+                for candidate_ex in exchanges:
+                    try:
+                        q = get_now(str(candidate_ex or ""), key)
+                    except Exception:
+                        q = None
+                    if q is not None:
+                        break
+                if q is not None and self._quote_ids(q) & wanted:
+                    candidates.append(q)
+            # Also try the resolved/canonical id as a direct store key.
+            if not candidates:
+                for ex in ("",):
+                    try:
+                        q = get_now(ex, cid)
+                    except Exception:
+                        q = None
+                    if q is not None and (self._quote_ids(q) & wanted
+                                          or getattr(q, "instrument_token", None) == cid):
+                        candidates.append(q)
+
+        # Correctness fallback: if direct lookup found nothing, preserve the
+        # previous full-scan behavior (handles unusual identity mappings).
         if not candidates:
-            # The reference may be a provider STORAGE key: find the
-            # instrument it addresses and use ITS canonical id.
+            quotes = await self._quotes()
             candidates = [q for q in quotes
-                          if getattr(q, "instrument_token", None) == cid]
-            if candidates:
-                cid = getattr(candidates[0], "canonical_id", None) or cid
+                          if self._quote_ids(q) & wanted]
+            if not candidates:
+                # The reference may be a provider STORAGE key: find the
+                # instrument it addresses and use ITS canonical id.
+                candidates = [q for q in quotes
+                              if getattr(q, "instrument_token", None) == cid]
+                if candidates:
+                    cid = getattr(candidates[0], "canonical_id", None) or cid
+
         fresh = [q for q in candidates if self._is_fresh(q)]
         selection = select_best_quote(
             fresh or candidates, stale_after_seconds=self._fresh_window,
