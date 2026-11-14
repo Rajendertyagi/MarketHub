@@ -324,6 +324,14 @@ def _key_lock(key: Any) -> threading.Lock:
         return lock
 
 
+def _prune_cache_locked(now: float, ttl: float) -> None:
+    expired = [k for k, (ts, _) in _cache.items() if now - ts >= ttl]
+    for k in expired:
+        _cache.pop(k, None)
+    # Keep build locks: pruning them while a build is in-flight (key not yet
+    # cached) can break single-flight by replacing the active lock object.
+
+
 def get_futures_board(
     inputs: Sequence[BoardInput], *, expiry: str,
     quote_reader: QuoteReader,
@@ -334,15 +342,18 @@ def get_futures_board(
 ) -> FuturesBoardSnapshot:
     """TTL-cached board with single-flight protection (one build per key)."""
     key = _signature(inputs, expiry)
+    now = time.monotonic()
     with _cache_lock:
         hit = _cache.get(key)
-        if hit is not None and time.monotonic() - hit[0] < ttl:
+        if hit is not None and now - hit[0] < ttl:
             return hit[1]
+        _prune_cache_locked(now, ttl)
     lock = _key_lock(key)
     with lock:
+        now = time.monotonic()
         with _cache_lock:
             hit = _cache.get(key)
-            if hit is not None and time.monotonic() - hit[0] < ttl:
+            if hit is not None and now - hit[0] < ttl:
                 return hit[1]
         snap = compute_futures_board(
             inputs, expiry=expiry, quote_reader=quote_reader,
@@ -350,6 +361,7 @@ def get_futures_board(
             stale_minutes=stale_minutes, expiries=expiries)
         with _cache_lock:
             _cache[key] = (time.monotonic(), snap)
+            _prune_cache_locked(time.monotonic(), ttl)
         return snap
 
 

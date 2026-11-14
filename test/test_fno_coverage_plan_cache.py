@@ -276,5 +276,99 @@ def test_plan_microbenchmark_repeated_calls(patch_futures_index):
     print(f"BENCH fno_coverage.plan repeated={n} elapsed_s={elapsed:.6f} per_call_ms={(elapsed/n)*1000:.3f} catalog_future_reads={cat.future_reads} equity_reads={cat.equity_reads}")
 
 
+def test_date_rollover_invalidates_skeleton(monkeypatch, patch_futures_index):
+    import app.fno_coverage as fno_cov
+
+    class _Day1(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 9, 1)
+
+    class _Day2(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 9, 2)
+
+    monkeypatch.setattr(fno_cov, "date", _Day1)
+    cat = _CountingCat(sync_version=1)
+    patch_futures_index(cat)
+    svc = FnoCoverageService(cat, registry=_registry())
+
+    svc.plan()
+    assert cat.future_reads == 2
+    svc.plan()
+    assert cat.future_reads == 2
+
+    # Same catalog/config but next day: expiry validity depends on today, so
+    # skeleton must be recomputed (no stale expiry selection across rollover).
+    monkeypatch.setattr(fno_cov, "date", _Day2)
+    svc.plan()
+    assert cat.future_reads == 4
+
+
+def test_enabled_provider_change_invalidates_skeleton(patch_futures_index):
+    cat = _CountingCat(sync_version=1)
+    patch_futures_index(cat)
+    reg = _registry()
+    svc = FnoCoverageService(cat, registry=reg)
+
+    svc.plan()
+    assert cat.future_reads == 2
+    svc.plan()
+    assert cat.future_reads == 2
+
+    # Universe selection depends on enabled providers; disabling one must not
+    # reuse a skeleton built for a different enabled-provider set.
+    reg._enabled.discard("fyers")
+    svc.plan()
+    assert cat.future_reads == 4
+
+
+def test_missing_catalog_fingerprint_is_not_cached(patch_futures_index):
+    class _NoSyncCat(_CountingCat):
+        def sync_state(self):
+            return []
+
+    cat = _NoSyncCat(sync_version=1)
+    patch_futures_index(cat)
+    svc = FnoCoverageService(cat, registry=_registry())
+
+    svc.plan()
+    assert cat.future_reads == 2
+    svc.plan()
+    # Unreliable/missing fingerprint: correctness over caching, so rebuild.
+    assert cat.future_reads == 4
+
+
+def test_unparseable_catalog_fingerprint_is_not_cached(patch_futures_index):
+    class _BadSyncCat(_CountingCat):
+        def sync_state(self):
+            raise RuntimeError("boom")
+
+    cat = _BadSyncCat(sync_version=1)
+    patch_futures_index(cat)
+    svc = FnoCoverageService(cat, registry=_registry())
+
+    svc.plan()
+    assert cat.future_reads == 2
+    svc.plan()
+    assert cat.future_reads == 4
+
+
+def test_skeleton_cache_and_lock_growth_bounded(patch_futures_index):
+    cat = _CountingCat(sync_version=1)
+    patch_futures_index(cat)
+    svc = FnoCoverageService(cat, registry=_registry())
+
+    # Vary requested expiry to create distinct cache keys.
+    for i in range(40):
+        svc.plan(expiry=f"2026-10-{27 + (i % 2):02d}" if i % 3 == 0 else None)
+        # Also vary config to force more keys.
+        svc.plan(config={**svc._DEFAULT_CONFIG, "selected_expiry": f"2026-10-{27 + (i % 2):02d}", "expiry_policy": "selected"})
+
+    assert len(svc._skeleton_cache) <= svc._MAX_SKELETON_CACHE
+    assert len(svc._skeleton_build_locks) <= svc._MAX_SKELETON_CACHE
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q", "-s"]))

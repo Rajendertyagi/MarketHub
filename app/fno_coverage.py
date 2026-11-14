@@ -206,13 +206,18 @@ class FnoCoverageService:
             self._skeleton_cache.clear()
 
     def _catalog_fingerprint(self) -> tuple[Any, ...]:
-        """Best-effort catalog sync fingerprint for skeleton invalidation."""
+        """Best-effort catalog sync fingerprint for skeleton invalidation.
+
+        Returns a stable fingerprint only when catalog sync state is available
+        and parseable. Unreliable/missing fingerprints must not be treated as
+        proof that catalog-derived data is unchanged.
+        """
         try:
             state = self._catalog.sync_state()
         except Exception:
-            return ("no-sync-state",)
+            return ("unreliable-sync-state", "exception")
         if not state:
-            return ("empty-sync-state",)
+            return ("unreliable-sync-state", "empty")
         try:
             items = []
             for row in state:
@@ -221,9 +226,16 @@ class FnoCoverageService:
                         (str(k), str(v)) for k, v in row.items())))
                 else:
                     items.append(str(row))
-            return tuple(sorted(items))
+            fingerprint = tuple(sorted(items))
+            if not fingerprint:
+                return ("unreliable-sync-state", "empty-items")
+            return ("sync-state", fingerprint)
         except Exception:
-            return (str(state),)
+            return ("unreliable-sync-state", "unparseable")
+
+    @staticmethod
+    def _fingerprint_cacheable(fingerprint: tuple[Any, ...]) -> bool:
+        return bool(fingerprint) and fingerprint[0] == "sync-state"
 
     @staticmethod
     def _config_key(cfg: dict[str, Any]) -> tuple[Any, ...]:
@@ -244,8 +256,25 @@ class FnoCoverageService:
             cfg.get("selected_expiry") or None,
         )
 
+    def _enabled_provider_key(self) -> tuple[str, ...]:
+        """Enabled provider set affects universe symbol selection."""
+        try:
+            return tuple(sorted(str(p) for p in self._reg().enabled_ids()))
+        except Exception:
+            return ()
+
     def _skeleton_key(self, cfg: dict[str, Any], requested: str | None) -> tuple[Any, ...]:
-        return (requested or None, self._config_key(cfg), self._catalog_fingerprint())
+        # Expiry selection depends on today's date (nearest/valid-expiry logic),
+        # and universe selection depends on enabled providers. Include both so a
+        # long-running process cannot reuse a stale skeleton across rollover or
+        # provider enable/disable changes.
+        return (
+            requested or None,
+            self._config_key(cfg),
+            self._enabled_provider_key(),
+            date.today().isoformat(),
+            self._catalog_fingerprint(),
+        )
 
     def _skeleton_build_lock(self, key: tuple[Any, ...]) -> threading.Lock:
         with self._skeleton_build_locks_guard:
@@ -337,21 +366,39 @@ class FnoCoverageService:
             errors=tuple(errors),
         )
 
+    _MAX_SKELETON_CACHE = 32
+
+    def _prune_skeleton_state_locked(self) -> None:
+        """Bound cache growth (caller holds relevant locks as needed)."""
+        if len(self._skeleton_cache) > self._MAX_SKELETON_CACHE:
+            # Drop oldest insertion-order entries (dict preserves insertion order).
+            overflow = len(self._skeleton_cache) - self._MAX_SKELETON_CACHE
+            for old_key in list(self._skeleton_cache.keys())[:overflow]:
+                self._skeleton_cache.pop(old_key, None)
+        # Keep build locks: pruning while a build is in-flight (key not yet
+        # cached) can break single-flight by replacing the active lock object.
+
     def _get_skeleton(self, cfg: dict[str, Any], requested: str | None) -> _CatalogSkeleton:
         key = self._skeleton_key(cfg, requested)
-        with self._skeleton_cache_lock:
-            cached = self._skeleton_cache.get(key)
-            if cached is not None:
-                return cached
-        lock = self._skeleton_build_lock(key)
-        with lock:
+        fingerprint = key[4]
+        cacheable = self._fingerprint_cacheable(fingerprint)
+        if cacheable:
             with self._skeleton_cache_lock:
                 cached = self._skeleton_cache.get(key)
                 if cached is not None:
                     return cached
-            skeleton = self._build_skeleton(cfg, requested, key[2])
-            with self._skeleton_cache_lock:
-                self._skeleton_cache[key] = skeleton
+        lock = self._skeleton_build_lock(key)
+        with lock:
+            if cacheable:
+                with self._skeleton_cache_lock:
+                    cached = self._skeleton_cache.get(key)
+                    if cached is not None:
+                        return cached
+            skeleton = self._build_skeleton(cfg, requested, fingerprint)
+            if cacheable:
+                with self._skeleton_cache_lock:
+                    self._skeleton_cache[key] = skeleton
+                    self._prune_skeleton_state_locked()
             return skeleton
 
     # -- universe ------------------------------------------------------------
