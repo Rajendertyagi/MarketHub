@@ -244,7 +244,9 @@ class NewsService:
         if filters is None:
             filters = NewsFilter()
 
-        sources = self._resolve_sources(filters)
+        # Source resolution and DB query are synchronous store operations;
+        # run them off the event loop to avoid blocking request handling.
+        sources = await asyncio.to_thread(self._resolve_sources, filters)
         sources_queried = [s.source_id for s in sources]
 
         newer_than: str | None = None
@@ -262,7 +264,8 @@ class NewsService:
         # because provider symbol tags are sparsely populated; the SQL
         # symbols scope exists for stores whose symbols column is filled.
         query_limit = max(filters.limit * 5, filters.limit + 50)
-        rows = self._store.query_news_items(
+        rows = await asyncio.to_thread(
+            self._store.query_news_items,
             source_ids=[s.source_id for s in sources] or None,
             categories=list(filters.categories) if filters.categories else None,
             symbols=None,
@@ -309,12 +312,13 @@ class NewsService:
         ref = (item_ref or "").strip()
         if not ref:
             return None
-        row = self._store.get_news_item(ref)
+        row = await asyncio.to_thread(self._store.get_news_item, ref)
         if row is None:
-            row = self._store.get_news_item_by_public_id(ref)
+            row = await asyncio.to_thread(self._store.get_news_item_by_public_id, ref)
         if row is None:
             return None
-        names = {s.source_id: s.name for s in self.list_sources()}
+        sources = await asyncio.to_thread(self.list_sources)
+        names = {s.source_id: s.name for s in sources}
         article = self._row_to_item(row, names.get(row.get("source_id")))
         if article is None:
             return None
@@ -337,8 +341,12 @@ class NewsService:
         stale source from a healthy one.  Never raises on missing data -
         unknown values are reported as ``None``.
         """
-        latest_published = self._store.latest_news_published_at()
-        last_success = self._store.last_news_successful_fetch_at()
+        latest_published, last_success, latest_fetched, sources = await asyncio.gather(
+            asyncio.to_thread(self._store.latest_news_published_at),
+            asyncio.to_thread(self._store.last_news_successful_fetch_at),
+            asyncio.to_thread(self._store.latest_news_fetched_at),
+            asyncio.to_thread(self._store.get_news_source_health),
+        )
 
         def _age_minutes(value: str | None) -> float | None:
             if not value:
@@ -355,16 +363,16 @@ class NewsService:
 
         return {
             "latest_published_at": latest_published,
-            "latest_fetched_at": self._store.latest_news_fetched_at(),
+            "latest_fetched_at": latest_fetched,
             "last_successful_fetch": last_success,
             "publish_age_minutes": _age_minutes(latest_published),
             "fetch_age_minutes": _age_minutes(last_success),
-            "sources": list(self._store.get_news_source_health()),
+            "sources": list(sources),
         }
 
     async def last_refresh_at(self) -> str | None:
         """Newest successful source fetch (None when never fetched)."""
-        return self._store.last_news_successful_fetch_at()
+        return await asyncio.to_thread(self._store.last_news_successful_fetch_at)
 
     # ── Sentiment analysis ──────────────────────────────────────────────────
 
@@ -384,7 +392,7 @@ class NewsService:
         scored: list[tuple[str, float, str]] = []
         # Stable ids (shared with the durable rows) so scores persist
         # and repeated ingestion never double-counts an item.
-        sources = {s.source_id: s for s in self._resolve_sources(filters)}
+        sources = {s.source_id: s for s in await asyncio.to_thread(self._resolve_sources, filters)}
 
         for item in result.articles:
             text = self._item_text(item)
@@ -402,7 +410,7 @@ class NewsService:
 
         if scored:
             try:
-                self._store.update_news_sentiments(scored)
+                await asyncio.to_thread(self._store.update_news_sentiments, scored)
             except Exception as exc:
                 logger.debug("sentiment persist skipped: %s", exc)
 
