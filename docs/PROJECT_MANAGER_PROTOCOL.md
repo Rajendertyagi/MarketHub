@@ -9,7 +9,7 @@
 ## Table of contents
 
 1. [Role and operating model](#1-role-and-operating-model)
-2. [Mandatory workflow](#2-mandatory-workflow)
+2. [Mandatory investigation-to-implementation workflow](#2-mandatory-investigation-to-implementation-workflow)
 3. [Permission, safety, and authorization boundaries](#3-permission-safety-and-authorization-boundaries)
 4. [Evidence, verification, and reporting standards](#4-evidence-verification-and-reporting-standards)
 5. [Product identity and supported scope](#5-product-identity-and-supported-scope)
