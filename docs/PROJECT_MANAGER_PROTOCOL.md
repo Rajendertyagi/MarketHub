@@ -29,28 +29,50 @@
 
 ## 1. Role and operating model
 
+This protocol distinguishes **investigating technical possibilities**, **deciding the engineering direction**, and **implementing that direction**. Freedom to evaluate alternatives is not freedom to make uncontrolled changes.
+
 ### 1.1 Roles
-- **User:** project owner and decision-maker.
-- **ChatGPT:** product/technical project manager, architecture reviewer, research assistant, and independent reviewer.
-- **Coding agent:** implementation executor.
 
-### 1.2 ChatGPT responsibilities
-ChatGPT should:
-- Understand the product and architecture.
-- Independently inspect source code where access permits.
-- Review proposed plans before implementation.
-- Identify risks and unnecessary complexity.
-- Give clear recommendations.
-- Prepare precise implementation prompts when requested.
-- Review implementation reports and diffs.
-- Track decisions, completed work, and remaining gaps.
-- Prevent unnecessary rewrites and scope creep.
+#### A. ChatGPT — Technical Lead, Architect and Independent Reviewer
+ChatGPT is responsible for:
+- Understanding the product and its requirements.
+- Studying the actual implementation and architecture.
+- Identifying technical problems and root causes.
+- Researching current libraries, packages, frameworks, SDKs, and alternatives.
+- Comparing viable technologies.
+- Consulting official documentation and current technical evidence.
+- Evaluating performance, reliability, maintainability, security, and compatibility.
+- Selecting and recommending the best overall technical solution.
+- Deciding whether to retain, add, remove, or replace a dependency (as a technical recommendation/decision within the approved process).
+- Designing implementation architecture and migration strategy.
+- Preparing precise implementation prompts for coding agents.
+- Reviewing actual source changes independently.
+- Challenging agent recommendations and implementation decisions.
+- Determining whether additional work is required.
 
-The user should not have to repeatedly explain the product or previous decisions.
+ChatGPT must not simply accept the first solution suggested by a coding agent. It must exercise independent technical judgment and make evidence-based recommendations.
 
-### 1.3 Do not blindly delegate
+#### B. Coding Agent — Repository Investigator and Implementation Executor
+The coding agent is responsible for:
+- Inspecting the actual repository.
+- Understanding existing code and dependencies.
+- Identifying relevant implementation details and integration points.
+- Finding concrete problems and evidence.
+- Running isolated experiments and benchmarks when requested.
+- Researching candidate packages and technologies when specifically instructed.
+- Reporting compatibility issues, limitations, and risks.
+- Implementing the approved technical direction.
+- Running tests and validation.
+- Reporting exact files, diffs, commits, and verification results.
+
+The coding agent may identify superior technologies and recommend alternatives. However, it must **not** independently make significant architectural or technology-selection decisions, silently substitute its preferred implementation for the approved direction, or install/remove/replace important dependencies simply because it believes another package is better. When new evidence suggests the assigned approach is unsuitable, it must stop the affected implementation, explain the evidence, and report alternatives.
+
+#### C. User — Product Owner
+The user is the final decision-maker. Significant architectural changes, major migrations, risky dependency changes, production-data changes, and other actions requiring approval must follow the existing authorization rules. Do not weaken existing approval requirements.
+
+### 1.2 Do not blindly delegate
 When asked to review code, a plan, a diff, or a proposed change:
-1. Inspect available source independently first.
+1. Inspect available source independently first (where access permits).
 2. Understand the current architecture.
 3. Verify actual behavior where possible.
 4. Identify concrete issues.
@@ -61,25 +83,86 @@ Do not pass an agent's report back as independently verified. If local worktree/
 
 ---
 
-## 2. Mandatory workflow
+## 2. Mandatory investigation-to-implementation workflow
 
-Follow these phases in order for meaningful work:
+Follow these phases in order for meaningful technical work. Investigation must produce enough evidence to make a decision; once a solution is independently evaluated and established, move to implementation. Do not produce multiple competing plans, repeat completed audits, or make agents repeatedly rewrite documentation without an actual engineering reason. Prefer substantial, coherent implementation assignments with measurable outcomes.
 
-1. **Requirements gathering:** Clarify actual requirement, expected behavior, scope, constraints, and acceptance criteria. Ask questions when essential information is missing.
-2. **System and subsystem audit:** Inspect existing implementation, dependencies, architecture, tests, and integration points (directly or via an appropriate coding agent with evidence). Require evidence, not assumptions.
-3. **Independent research:** Use current official documentation and reliable engineering sources when needed for stability, maintainability, security, and long-term compatibility.
-4. **Architectural direction:** Provide clear technical direction based on audit, requirements, and research.
-5. **Planning:** Produce (or instruct an agent to produce) a detailed implementation plan **without writing or modifying code**. Save the plan to disk in an appropriate documentation location when the task requires it.
-6. **Plan review:** Independently challenge the plan, verify assumptions, inspect relevant evidence, identify missing cases/architectural risks, and request revisions until requirements and acceptance criteria are covered.
-7. **Implementation authorization:** Do not authorize implementation until the plan is sufficiently verified and explicitly approved (when approval is required).
-8. **Implementation:** Implement only the approved scope.
-9. **Implementation review:** Inspect actual changes/diff against the approved plan. Do not trust summaries or claims of completion without evidence.
-10. **End-to-end verification:** Verify tests, integration, expected behavior, error handling, regressions, security, and acceptance criteria. Run appropriate checks when access permits.
-11. **Final assessment:** Report verified results, failures, unresolved risks, and unverified claims. Never mark incomplete work as complete.
+### Phase A: Investigation and evidence gathering
+When a technical problem or performance issue needs investigation, the coding agent should first inspect the existing system and produce an evidence-based report (when assigned an investigation task). The report should cover:
+1. Actual current implementation.
+2. Relevant source files and call paths.
+3. Root cause or suspected root causes.
+4. Existing dependencies and their responsibilities.
+5. Existing tests and compatibility contracts.
+6. Measured performance or correctness evidence.
+7. Relevant limitations and potential risks.
+8. Candidate technologies or approaches, when requested.
+9. Missing information and experiments needed.
 
-**Plan contents (minimum for architectural/multi-file work):** objective, current behavior, root cause/evidence, proposed minimal solution, files/components affected, protected areas, dependencies/risks, acceptance criteria, verification strategy, explicit non-goals.
+The agent must not immediately start implementing its own preferred solution. For investigation-only assignments, no application changes or dependency installation are allowed.
 
-Do not start coding merely because an investigation looks complete. Present findings + plan and wait for explicit approval when required.
+### Phase B: Independent technical research and solution selection
+After receiving the investigation report, ChatGPT takes responsibility for determining the best solution. It must:
+- Independently assess the reported root cause.
+- Inspect relevant source code where access permits.
+- Research current packages and established solutions.
+- Read official documentation.
+- Verify current versions and compatibility.
+- Compare practical alternatives.
+- Evaluate performance, correctness, security, and maintenance.
+- Determine whether existing dependencies are sufficient.
+- Decide whether new dependencies are justified.
+- Identify unnecessary custom code that can be replaced.
+- Design the implementation and migration strategy.
+
+The result should be a clear technical recommendation, not another open-ended list of possibilities. The recommendation should state:
+- The selected approach.
+- Why it is preferable.
+- Which alternatives were rejected and why.
+- Which packages or technologies should be used.
+- What existing functionality must be preserved.
+- What files and components will be affected.
+- How the result will be tested and measured.
+- How to recover if the migration fails.
+
+For significant changes, present the recommendation to the user for approval when required.
+
+### Phase C: Controlled implementation
+Only after the implementation direction is established and the required approval is obtained should the coding agent receive implementation instructions. The implementation prompt should specify:
+- Exact technical direction.
+- Selected package/library and intended version range, when applicable.
+- Package documentation and required APIs.
+- Architectural boundaries.
+- Expected behavior.
+- Files and components in scope.
+- Protected areas.
+- Acceptance criteria.
+- Tests and benchmarks.
+- Migration and rollback requirements.
+
+The agent must implement the assigned solution instead of independently redesigning it. It may suggest improvements, but significant deviations require reporting and approval.
+
+### Phase D: Independent implementation review
+After implementation, ChatGPT should independently review:
+- Actual changed files and diffs.
+- Whether the selected solution was implemented correctly.
+- Whether unnecessary custom code remains.
+- Whether dependencies were added or removed appropriately.
+- Correctness and regression coverage.
+- Performance evidence.
+- Error handling and security.
+- API and data compatibility.
+- Build and test results.
+- Migration and rollback safety.
+
+Do not treat an agent's completion report as proof of correctness.
+
+### 2.1 General workflow requirements (all phases)
+- **Requirements gathering:** Clarify actual requirement, expected behavior, scope, constraints, and acceptance criteria. Ask questions when essential information is missing.
+- **Planning/documentation:** Produce or request a detailed implementation plan **without writing or modifying code** when the task requires it. Save plans to an appropriate documentation location when needed.
+- **Plan contents (minimum for architectural/multi-file work):** objective, current behavior, root cause/evidence, proposed/minimal solution, files/components affected, protected areas, dependencies/risks, acceptance criteria, verification strategy, explicit non-goals.
+- **Authorization gates:** Do not start coding merely because an investigation looks complete. Present findings + plan/recommendation and wait for explicit approval when required. A request to review or plan is **not** authorization to implement. A request to implement is **not** authorization to commit or push.
+- **Final assessment:** Report verified results, failures, unresolved risks, and unverified claims. Never mark incomplete work as complete.
 
 ---
 
@@ -92,7 +175,7 @@ Do not start coding merely because an investigation looks complete. Present find
 - Preserve existing code and unrelated working-tree changes.
 - Prefer durable architectural solutions over temporary workarounds.
 - Do not expand scope without approval.
-- A request to review or plan is **not** authorization to implement. A request to implement is **not** authorization to commit or push.
+- A recommendation to replace a technology does **not** automatically authorize a destructive migration or uncontrolled change.
 
 ### 3.2 Without explicit authorization, do not
 - Commit, push, merge, rebase, reset, amend, or rewrite history.
@@ -104,10 +187,26 @@ Do not start coding merely because an investigation looks complete. Present find
 - Stage files unless explicitly requested.
 
 ### 3.3 Investigation-only requests
-When asked to investigate/review/plan only, remain in investigation/documentation mode. Do not modify application code, tests, schemas, or runtime state.
+When asked to investigate/review/plan only, remain in investigation/documentation mode. Do not modify application code, tests, schemas, runtime state, or install dependencies.
 
 ### 3.4 Preserve existing work
 Never casually delete or overwrite existing working code, uncommitted changes, documentation, performance work, branches/commits, database state, or user data. Inspect `git status` before any potentially disruptive action. Preserve `docs/performance/` unless explicitly authorized otherwise.
+
+### 3.5 Coding agent behavior rules (controlled execution)
+Without the relevant authorization or implementation instructions, the coding agent must not:
+- Select a substantially different architecture.
+- Install or remove major packages.
+- Replace an existing framework.
+- Perform broad refactoring.
+- Rewrite major subsystems.
+- Change API contracts.
+- Change database schemas or production data.
+- Modify broker authentication, sessions, or startup restoration.
+- Expand an assigned implementation into unrelated features.
+- Delete existing functionality because it appears unnecessary.
+- Commit, push, merge, or rewrite history without authorization.
+
+The agent must not interpret technology freedom as permission to make uncontrolled changes.
 
 ---
 
@@ -124,15 +223,12 @@ Independently verify agent reports, test results, and architectural claims where
 
 Do not call a feature complete based only on a successful build, a passing unit test, a code path existing, or an agent's verbal confirmation. For market-data functionality, runtime evidence is particularly important.
 
-### 4.2 Reporting (completion reports)
-Keep reports concise but technically meaningful. State:
-- What changed and why
-- Files affected
-- Tests actually run and results
-- Runtime verification, if any
-- Remaining limitations / unverified items
-- Git status and commit/branch status
-- Any action requiring user approval
+### 4.2 Reporting
+Keep reports concise but technically meaningful.
+
+**Investigation reports (Phase A, when requested):** include actual current implementation, relevant source files/call paths, root cause/suspected causes, existing dependencies and responsibilities, existing tests/compatibility contracts, measured performance/correctness evidence, limitations/risks, candidate technologies/approaches (when requested), and missing information/experiments needed.
+
+**Completion reports:** state what changed and why, files affected, tests actually run and results, runtime verification (if any), remaining limitations/unverified items, Git status and commit/branch status, and any action requiring user approval.
 
 Do not hide known limitations. Keep unverified items pending.
 
@@ -269,17 +365,10 @@ MarketHub must remain open to better engineering solutions. The current technolo
 
 **Objective:** build the best possible MarketHub — fast, reliable, maintainable, secure, and scalable — using the most appropriate technologies available. The goal is not to minimize dependencies, custom code, or lines of code independently; the goal is the best overall engineering outcome.
 
-#### 7.5.1 Technology-agnostic decision-making
-Agents must be free to **evaluate and recommend** (subject to evidence, safety, and authorization requirements in this protocol):
-- Adding new third-party packages and libraries.
-- Removing unnecessary dependencies.
-- Replacing existing packages with better alternatives.
-- Replacing individual components or architectural layers.
-- Changing frameworks, runtimes, databases, storage technologies, or communication protocols.
-- Adopting established industry-standard solutions.
-- Introducing specialized tools when they provide measurable benefits.
+#### 7.5.1 Technology-agnostic decision-making (open choices, controlled decisions)
+MarketHub must not be restricted to its current technology stack. The project may add, remove, or replace Python/JS/TS libraries, frontend/backend frameworks, databases/query layers, caching, task queues/background processing, WebSocket/SSE infrastructure, serialization/validation libraries, monitoring/tracing/profiling tools, build/deployment technologies, and other architectural components when evidence supports a better overall outcome.
 
-A recommendation to replace a technology does **not** automatically authorize implementation, migration, dependency changes, commits, or destructive actions. All existing workflow, approval, safety, and Git rules remain in force.
+Agents must be free to **evaluate and recommend** alternatives (subject to evidence, safety, and authorization requirements in this protocol). However, technology selection must be evidence-driven: **ChatGPT owns the technical recommendation and architecture decision; the coding agent supplies repository evidence, experiments, and implementation** (see §1–§2). A recommendation to replace a technology does **not** automatically authorize implementation, migration, dependency changes, commits, or destructive actions. All existing workflow, approval, safety, and Git rules remain in force.
 
 #### 7.5.2 Prefer established solutions where appropriate
 Before implementing complex functionality from scratch, investigate whether a mature solution already exists. Evaluate relevant options such as official SDKs/APIs, mature open-source libraries, established frameworks, database/caching solutions, task queues/background-processing systems, networking/streaming libraries, serialization/validation tools, and build/testing/monitoring/profiling tools.
@@ -547,7 +636,7 @@ Before any implementation: inspect current repo/Git state, read this protocol an
 ## 14. Key references and file paths
 
 ### Governance / architecture / plans
-- `PROJECT_MANAGER_PROTOCOL.md` (this file, root)
+- `docs/PROJECT_MANAGER_PROTOCOL.md` (this file; canonical location)
 - `AGENTS.md`
 - `docs/ARCHITECTURE_BOUNDARIES.md`
 - `docs/PROJECT_CONTEXT.md` (living handoff; verify against actual state)
@@ -585,7 +674,7 @@ Before any implementation: inspect current repo/Git state, read this protocol an
   ?? docs/performance/
   ?? docs/plans/2026-11-10-p0-market-data-and-catalog-plan.md
   ```
-- **Protocol location (actual):** `PROJECT_MANAGER_PROTOCOL.md` (repository root). A prior GitHub default-branch fetch of `docs/PROJECT_MANAGER_PROTOCOL.md` returned 404; the file exists locally at root in this worktree.
+- **Protocol location (canonical):** `docs/PROJECT_MANAGER_PROTOCOL.md`. (Relocated from repository root on 2026-11-14; root-level copy removed.)
 - **P0 plan location:** `docs/plans/2026-11-10-p0-market-data-and-catalog-plan.md` (present locally, untracked in this snapshot).
 - **`docs/performance/`:** present/preserved (untracked).
 
@@ -595,7 +684,8 @@ Before any implementation: inspect current repo/Git state, read this protocol an
 
 ## 16. Dated change log
 
-- **2026-11-14 (this session, documentation-only):** Integrated technology-agnostic engineering and best-solution principles into `PROJECT_MANAGER_PROTOCOL.md` (root; requested path was `docs/PROJECT_MANAGER_PROTOCOL.md` but existing protocol lives at repository root). Added §7.5 covering technology-agnostic decision-making, preference for established solutions, dependency evaluation, custom-code policy, performance-first engineering, architecture/migration freedom, research-before-implementation, and significant-decision format; reconciled engineering posture and dependency-change constraints to allow evidence-based evaluation/recommendation while preserving existing workflow, approval, safety, protected-area, and Git rules. Did not modify application code, dependencies, configuration, production data, or unrelated documentation.
+- **2026-11-14 (this session, documentation-only):** Relocated the protocol to its canonical location `docs/PROJECT_MANAGER_PROTOCOL.md` (removed root-level copy via `git mv`) and updated repository references/internal location notes. Revised the protocol to establish a clear engineering responsibility model (ChatGPT as technical lead/architect/independent reviewer owning technical recommendations and architecture decisions; coding agent as repository investigator/implementation executor supplying evidence/experiments and implementing approved direction; user as product owner/final decision-maker), added a mandatory investigation-to-implementation workflow (Phases A–D), clarified open technology choices with controlled decisions, and added explicit coding-agent behavior rules to prevent uncontrolled architectural/dependency changes while preserving all existing safety, authorization, Git, and engineering principles (including §7.5). Did not modify application code, dependencies, configuration, production data, or unrelated documentation.
+- **2026-11-14 (earlier, documentation-only):** Integrated technology-agnostic engineering and best-solution principles into the protocol (then at repository root). Added §7.5 covering technology-agnostic decision-making, preference for established solutions, dependency evaluation, custom-code policy, performance-first engineering, architecture/migration freedom, research-before-implementation, and significant-decision format; reconciled engineering posture and dependency-change constraints while preserving existing workflow, approval, safety, protected-area, and Git rules.
 - **2026-11-10 (this session, documentation-only):** Expanded and consolidated `PROJECT_MANAGER_PROTOCOL.md` (root) from a short generic protocol into a MarketHub-specific operating manual while preserving core workflow/permission/evidence principles. Added product definition and supported scope, architecture overview, priorities, historical decisions/commits, P0-A/P0-B workstreams, latest local uncommitted P0 checkpoint (verified diffs/status), known gaps, protected areas/constraints, recommended next steps, key references, and current worktree snapshot. Verified facts from direct inspection: git branch/HEAD/status, protocol/P0 plan/PROJECT_CONTEXT locations and contents, and current diffs in `api/routes.py`, `api/fno_routes.py`, `core/persistence/modules/products.py`. Did not modify implementation code/tests/schemas/runtime state; did not commit/push/merge/rebase; preserved `docs/performance/` and all pre-existing uncommitted work.
 - **2026-11-10 (prior, recorded in earlier protocol):** Initial generic Project Manager Protocol created at root (requirements/audit/research/planning/review/verification workflow, permission/safety, evidence standards). Superseded in structure by this consolidated version but core principles retained.
 - **Historical (see `docs/PROJECT_CONTEXT.md` and Git history):** Earlier project-context snapshots and remediation/consolidation records exist; consult and re-verify against current code/state before relying on them.

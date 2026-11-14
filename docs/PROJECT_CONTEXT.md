@@ -3,7 +3,7 @@
 > **Purpose:** durable handoff so a new chat / AI-coding-agent session can resume
 > MarketHub work from the *actual* project state without re-explaining. Read this
 > plus `AGENTS.md`, `docs/ARCHITECTURE_BOUNDARIES.md`, and
-> `PROJECT_MANAGER_PROTOCOL.md` before acting. **Verify the real repo state before
+> `docs/PROJECT_MANAGER_PROTOCOL.md` before acting. **Verify the real repo state before
 > acting** — counts/SHAs here are snapshots, not assumptions.
 >
 > **Living file.** Update after meaningful investigations, approved changes, test
@@ -14,9 +14,9 @@
 
 ## 1. How to resume
 
-1. Read **this file** → `AGENTS.md` → `docs/ARCHITECTURE_BOUNDARIES.md` (zones, protected core, §21 auth/startup frozen) → `PROJECT_MANAGER_PROTOCOL.md`.
+1. Read **this file** → `AGENTS.md` → `docs/ARCHITECTURE_BOUNDARIES.md` (zones, protected core, §21 auth/startup frozen) → `docs/PROJECT_MANAGER_PROTOCOL.md`.
 2. Re-inspect actual state: `git status`, branch/HEAD, `git log -1`, and run relevant checks. Do not assume baselines are current.
-3. **Do not start coding** because an investigation looks complete. Present findings + plan and wait for explicit approval (see `PROJECT_MANAGER_PROTOCOL.md` / `AGENTS.md`).
+3. **Do not start coding** because an investigation looks complete. Present findings + plan and wait for explicit approval (see `docs/PROJECT_MANAGER_PROTOCOL.md` / `AGENTS.md`).
 4. **No destructive Git ops** (`reset`/`clean`/force push/history rewrite/amend) and **no live service restart or live DB modifications** without explicit authorization. Preserve unrelated working-tree changes.
 
 ## 2. Current repo state (verified 2026-11-10)
@@ -54,7 +54,7 @@ Validated remediations and consolidation (evidence-based; no protected auth impl
 - `b90adce` — merged remote-only `e95ac21` (`docs(plan): draft Phase 4 indicator catalog scope`); conflict in `docs/plans/2026-10-27-unified-catalog-and-chart-plan.md` resolved preserving local status/decisions and incorporating the drafted proposal as **non-authorized/deferred**.
 - `beb60ea`, `80ee786` — frontend lint/type cleanups (unused `useRef` / unused ResizeObserver stub param).
 - `9877a21` — `.github/workflows/build-exe.yml` made safe/tag-driven (see §5).
-- `f4e6596` — added `PROJECT_MANAGER_PROTOCOL.md`.
+- `f4e6596` — added `PROJECT_MANAGER_PROTOCOL.md` (later relocated to `docs/PROJECT_MANAGER_PROTOCOL.md`).
 
 **Branch consolidation (approved):** deleted local+remote `fno-provider-agnostic`, `feature/market-phase-c-sse`, `b8-production-hardening`, `audit/b8-performance-measurement` after containment/preservation checks. `main`/`develop` retained; no force push, no history rewrite, no tag/release deletion.
 
@@ -79,7 +79,7 @@ Validated remediations and consolidation (evidence-based; no protected auth impl
 
 - `AGENTS.md` — task-zone declaration, no protected-subsystem crossing, stop/report if crossing required, verify `git diff` + affected boundary + protected baseline.
 - `docs/ARCHITECTURE_BOUNDARIES.md` — subsystem map, allowed/forbidden deps, protected core, red-zone files, auth/startup frozen (§21).
-- `PROJECT_MANAGER_PROTOCOL.md` — required workflow, approval, evidence, and safety rules.
+- `docs/PROJECT_MANAGER_PROTOCOL.md` — required workflow, approval, evidence, and safety rules.
 - `test/test_architecture_boundaries.py` — import-boundary/auth-ownership guardrail (keep green). Ruff gate is pinned/minimal per `pyproject.toml` and CI config.
 - **Security:** never store credentials, access tokens, API secrets, or OAuth codes in this file.
 
