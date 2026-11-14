@@ -919,8 +919,8 @@ Memory (tracemalloc, case-local): new path showed lower or comparable peak/curre
 - `EventStore` per-operation connection lifecycle not changed (no measured contention evidence).
 
 ### Commit / CI
-- **Implementation commit:** (see git history / final report; pushed to `origin/develop` in this pass)
-- **Plan record commit:** (see git history / final report)
+- **Implementation commit:** `90bf5d6c6fa9c0abc7e24fc5f813320f6fe5e43e` — `perf(runtime): offload previous-OI recorder flush from event loop` (https://github.com/Rajendertyagi/MarketHub/commit/90bf5d6c6fa9c0abc7e24fc5f813320f6fe5e43e)
+- **Plan record commits:** `b484249be3f1f0935cc8afd66858a4657680c666` (plan content recorded; commit message mislabeled due to local staging error, unpushed history preserved), plus follow-up plan SHA recorded in final report after push.
 - **Status:** **COMPLETE for safely verifiable backend items in scope** (profiled/verified with evidence; one justified background-task contention fix; no schema/migration/auth/broker/feed/canonical-contract changes).
 
 ---
