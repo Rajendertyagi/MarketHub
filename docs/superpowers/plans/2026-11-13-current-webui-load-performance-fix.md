@@ -340,7 +340,7 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 | 2026-11-14 | Sprint 02 news: async DB read offload | `a4d4d4b6f3a788cfae79222145495282bbf10e3b` | `news/service.py`; store reads moved off event loop via `asyncio.to_thread`; news tests passed |
 | 2026-11-14 | Sprint 03 Workstream A: full canonical quote snapshot optimization (`QuoteService.quotes`) + SSE initial snapshot reuse | (see §17 / commits) | Per-snapshot memoization of canonical/resolved ids; parity preserved; isolated synthetic benchmarks recorded; live endpoint/SSE unmeasured |
 | 2026-11-14 | Sprint 03 Workstream C: F&O/futures-board single-flight lock lifecycle cleanup | (see §17 / commits) | Ref-counted lock entries, exception-safe cleanup, no removal while waiter/active, >=100 distinct-key and concurrency tests added |
-| 2026-11-14 | WS1-05: build/chunk-size budgets and verification | (this pass / commit pending) | Manifest-based budget checker enforces initial JS/CSS/combined and largest JS chunk budgets in normal build and CI; measured baseline recorded; deliberate-exceed/missing-artifact checks verified |
+| 2026-11-14 | WS1-05: build/chunk-size budgets and verification | `b2fc973299a4199c1cd68186e43a9390f96cc532` | Manifest-based budget checker enforces initial JS/CSS/combined and largest JS chunk budgets in normal build and CI; measured baseline recorded; deliberate-exceed/missing-artifact checks verified; CI `ruff` https://github.com/Rajendertyagi/MarketHub/actions/runs/43623801247 and `frontend-build-budget` https://github.com/Rajendertyagi/MarketHub/actions/runs/43623801272 both **success** |
 
 ## 15. Sprint 01 implementation results (2026-11-14)
 
@@ -671,7 +671,7 @@ This demonstrates reduced initial secondary request/fan-out at dashboard mount w
 
 ### Risks/limitations
 - Budgets are raw/uncompressed build sizes (not browser transfer/compressed sizes). Vite still emits large-chunk warnings for lazy `ChartView`/`echarts`; budgets now enforce limits but chunking behavior was not changed.
-- CI workflow added but its first GitHub Actions run/result is recorded after commit/push in this pass.
+- CI (post-push): `ruff` https://github.com/Rajendertyagi/MarketHub/actions/runs/43623801247 (**success**) and `frontend-build-budget` https://github.com/Rajendertyagi/MarketHub/actions/runs/43623801272 (**success**).
 
 ---
 **End of canonical master plan. Sprint 04 (WS1-04) published as `37c76d3` with follow-up corrections published as `501edeb`; WS1-05 build/chunk-size budgets implemented/verified in this pass (manifest-based enforcement in normal build and CI). Live browser/runtime verification remains blocked by safe-running-instance constraints.**
