@@ -116,16 +116,34 @@ class PreviousOiRecorder:
 
     # -- batched flush -------------------------------------------------------
 
-    def flush(self) -> int:
-        """Write all accumulated snapshots in one batched transaction."""
+    def _take_pending(self) -> list[dict[str, Any]]:
         with self._lock:
             rows = list(self._pending.values())
             self._pending.clear()
             self._last_flush = self._clock()
+        return rows
+
+    def _write_rows(self, rows: list[dict[str, Any]]) -> int:
         if not rows:
             return 0
         try:
             return int(self._store.upsert_previous_oi_snapshots(rows))
+        except Exception:
+            logger.exception("previous-OI flush failed")
+            return 0
+
+    def flush(self) -> int:
+        """Write all accumulated snapshots in one batched transaction."""
+        return self._write_rows(self._take_pending())
+
+    async def flush_async(self) -> int:
+        """Async flush: offloads the synchronous DB write from the event loop."""
+        rows = self._take_pending()
+        if not rows:
+            return 0
+        try:
+            return int(await asyncio.to_thread(
+                self._store.upsert_previous_oi_snapshots, rows))
         except Exception:
             logger.exception("previous-OI flush failed")
             return 0
@@ -136,6 +154,12 @@ class PreviousOiRecorder:
             due = (self._clock() - self._last_flush) >= self._flush_interval
         return self.flush() if due else 0
 
+    async def maybe_flush_async(self) -> int:
+        """Async maybe_flush: offloads the synchronous DB write from the event loop."""
+        with self._lock:
+            due = (self._clock() - self._last_flush) >= self._flush_interval
+        return await self.flush_async() if due else 0
+
     async def run(self, stop_event: asyncio.Event) -> None:
         """Periodic flush loop; flushes once more on shutdown."""
         try:
@@ -145,8 +169,8 @@ class PreviousOiRecorder:
                                            timeout=min(5.0, self._flush_interval))
                     break
                 except asyncio.TimeoutError:
-                    self.maybe_flush()
+                    await self.maybe_flush_async()
         except asyncio.CancelledError:
             raise
         finally:
-            self.flush()
+            await self.flush_async()
