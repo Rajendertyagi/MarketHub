@@ -12,6 +12,10 @@ export function useInViewport<T extends Element>(
   const ref = useRef<T | null>(null);
   const [visible, setVisible] = useState(() => typeof IntersectionObserver === "undefined");
 
+  const root = options?.root ?? null;
+  const rootMargin = options?.rootMargin;
+  const threshold = options?.threshold;
+
   useEffect(() => {
     if (visible) return;
     const el = ref.current;
@@ -19,15 +23,18 @@ export function useInViewport<T extends Element>(
       setVisible(true);
       return;
     }
-    const obs = new IntersectionObserver((entries) => {
-      if (entries.some((e) => e.isIntersecting)) {
-        setVisible(true);
-        obs.disconnect();
-      }
-    }, options);
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisible(true);
+          obs.disconnect();
+        }
+      },
+      { root, rootMargin, threshold },
+    );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [visible, options]);
+  }, [visible, root, rootMargin, threshold]);
 
   return [ref, visible];
 }

@@ -9,9 +9,15 @@ import { TickerStrip } from "./components/TickerStrip";
 import { useInViewport } from "./useInViewport";
 import { useMarketQuotes } from "./useMarketQuotes";
 
+const SECONDARY_IO_OPTIONS: IntersectionObserverInit = { rootMargin: "200px 0px" };
+
 function DeferredSecondary({ children }: { children: ReactNode }) {
-  const [ref, visible] = useInViewport<HTMLDivElement>({ rootMargin: "200px 0px" });
-  return <div ref={ref}>{visible ? children : null}</div>;
+  const [ref, visible] = useInViewport<HTMLDivElement>(SECONDARY_IO_OPTIONS);
+  return (
+    <div ref={ref} className="dash-secondary-slot">
+      {visible ? children : <div className="dash-secondary-placeholder" aria-hidden="true" />}
+    </div>
+  );
 }
 
 export function DashboardView() {

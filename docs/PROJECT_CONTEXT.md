@@ -19,13 +19,13 @@
 3. **Do not start coding** because an investigation looks complete. Present findings + plan and wait for explicit approval (see `docs/PROJECT_MANAGER_PROTOCOL.md` / `AGENTS.md`).
 4. **No destructive Git ops** (`reset`/`clean`/force push/history rewrite/amend) and **no live service restart or live DB modifications** without explicit authorization. Preserve unrelated working-tree changes.
 
-## 2. Current repo state (verified 2026-11-14, Sprint 04 pass start)
+## 2. Current repo state (verified 2026-11-14, Sprint 04 follow-up correction pass start)
 
 | Item | Value |
 |---|---|
 | Repo | `D:\Temp\MarketHub` / `Rajendertyagi/MarketHub` |
 | Current branch | `develop` |
-| `develop` / `origin/develop` (start of Sprint 04 pass) | `ff6cceaf42bff2d9ace81d9d932edae2f2f082d5` — `docs(protocol): fix table of contents anchor for investigation workflow` (in sync after `git fetch origin`; Sprint 04 commit/push pending in this pass) |
+| `develop` / `origin/develop` (start of this correction pass) | `37c76d3f1e87c5011fa66e9abe4603f7a6a5c6ee` — `perf(dashboard): defer secondary widgets until visible` (Sprint 04 WS1-04 published; in sync after `git fetch origin`) |
 | `main` / `origin/main` (default, stable) | `4d0ceb558238ef00173fc5475b245b72a86e50d0` — `fix(alerts): restore baseline-first crossing semantics` (**untouched**) |
 | Permanent branches | **Exactly 2:** `main`, `develop` |
 | Protections | `main`: PR required (0 approvals) + required status check `lint` (non-strict), no force/delete. `develop`: no force/delete (practical; no PR requirement / no required status checks on push). Default branch `main`. |
@@ -35,13 +35,15 @@
 ## 3. Verified baselines (point-in-time; re-verify before relying)
 
 - **2026-11-10 (historical):** Backend `1754 passed, 4 skipped, 0 failed`; frontend `35 files / 199 tests passed, 0 failed`; frontend typecheck/build pass; architecture/auth guardrails green (targeted 49 passed). **Login must not regress.**
-- **2026-11-14 Sprint 04 (frontend/dashboard scope, this pass):** targeted dashboard tests `2 files / 7 tests passed` (`dashboardLive.test.tsx`, `dashboardDeferred.test.tsx`); full frontend suite `35 files passed, 1 failed; 199 tests passed, 2 failed` — failure unrelated/pre-existing `src/__tests__/EChart.test.tsx` (2 tests), not modified; frontend typecheck pass; Biome pass on changed dashboard/test paths (full `biome check src` has pre-existing unrelated formatting drift in `src/app/routes.tsx`, `src/features/dashboard/components/IndicesWidget.tsx`); isolated production build pass (`vite build --outDir %TEMP%\markethub-sprint04-dist`, `✓ built`, existing large lazy-chunk warnings unchanged). Backend/architecture guardrails not rerun in this frontend-only sprint.
+- **2026-11-14 Sprint 04 WS1-04 (published `37c76d3`):** targeted dashboard tests `2 files / 7 tests passed` (`dashboardLive.test.tsx`, `dashboardDeferred.test.tsx`); full frontend suite `35 files passed, 1 failed; 199 tests passed, 2 failed` — `src/__tests__/EChart.test.tsx` (2 tests) failed identically on parent `ff6ccea` in isolated temp-worktree comparison (pre-Sprint 04), not modified; frontend typecheck pass; Biome pass on changed dashboard/test paths (full `biome check src` has pre-existing unrelated formatting drift in `src/app/routes.tsx`, `src/features/dashboard/components/IndicesWidget.tsx`); isolated production build pass. Backend/architecture guardrails not rerun in this frontend-only sprint.
+- **2026-11-14 Sprint 04 follow-up correction pass (this pass, pending commit/push):** stabilizes `IntersectionObserver` options/effect deps to prevent observer churn on dashboard rerenders, adds lightweight reserved placeholder/layout space for deferred secondary slots, strengthens deferral regression tests (IO fallback, cleanup, rerenders, no duplicate requests, single activation per widget, critical requests immediate), and corrects stale documentation. Verification results recorded in final report/canonical plan after rerun.
 
 ## 4. Recent completed work (selected, on `develop`)
 
 - **2026-11-10 consolidation/remediations (historical):** `686ee85`, `58fb0be`, `cfe8320`, `281302e`, `3c88e5b`, `541f16c`, `e87d182`, `400e419`, `b90adce`, `beb60ea`, `80ee786`, `9877a21`, `f4e6596` (protocol later relocated to `docs/PROJECT_MANAGER_PROTOCOL.md`). Branch consolidation completed (obsolete branches deleted with approval); `main`/`develop` retained. B8A benchmark evidence not durably present in repo/workspace after approved deletion of `project-archive/`.
 - **2026-11-14 performance/protocol work (published on `origin/develop`):** Sprint 01 `0fc3e58`, `d7ccfa5`, `c99404f`; Sprint 02 `fb6231b`, `4213ece`, `a4d4d4b`, `f7281db`; Sprint 03 `75b9ae8`; protocol updates `e0dc8cc`, `b00877a`, `ff6ccea`. See `docs/superpowers/plans/2026-11-13-current-webui-load-performance-fix.md` for evidence, measurements, and limitations.
-- **2026-11-14 Sprint 04 WS1-04 (this pass, pending commit/push):** dashboard shell vs secondary data separation — deferred visibility-aware mount/fetch for Sectors, Breadth, F&O, Movers in `frontend/src/features/dashboard/DashboardView.tsx` via `frontend/src/features/dashboard/useInViewport.ts`; critical `useMarketQuotes`/SSE/ticker/indices remain immediate; widget query keys, polling intervals, freshness, and functionality preserved once visible. Added `frontend/src/__tests__/dashboardDeferred.test.tsx`. Evidence: targeted dashboard tests 7/7 pass; full frontend 199/201 pass with 2 unrelated pre-existing `EChart.test.tsx` failures; typecheck pass; changed-path Biome pass; isolated production build pass. Live browser/network/runtime measurements remain blocked.
+- **2026-11-14 Sprint 04 WS1-04 (published):** `37c76d3f1e87c5011fa66e9abe4603f7a6a5c6ee` — dashboard shell vs secondary data separation: deferred visibility-aware mount/fetch for Sectors, Breadth, F&O, Movers in `frontend/src/features/dashboard/DashboardView.tsx` via `frontend/src/features/dashboard/useInViewport.ts`; critical `useMarketQuotes`/SSE/ticker/indices remain immediate; widget query keys, polling intervals, freshness, and functionality preserved once visible. Added `frontend/src/__tests__/dashboardDeferred.test.tsx`. EChart failures confirmed pre-Sprint 04 vs `ff6ccea` (isolated temp worktree comparison).
+- **2026-11-14 Sprint 04 follow-up corrections (this pass, pending commit/push):** independent-review fixes on top of `37c76d3` — stable observer options/deps, reserved placeholder/layout space for deferred slots, strengthened regression tests, and documentation corrections. See canonical plan/final report for verification and publication details.
 
 ## 5. EXE release workflow (current, prepared — not executed)
 
