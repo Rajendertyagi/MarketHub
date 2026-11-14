@@ -4,9 +4,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **No implementation in a planning-only/measurement-only assignment unless explicitly authorized by the user.**
 
-**Last updated:** 2026-11-14 (Sprint 04 WS1-04 published as `37c76d3`; follow-up corrections published as `501edeb`; WS1-05 build/chunk-size budgets published; WS2-06 moderate-endpoint profiling/optimization implemented and verified in this pass)
+**Last updated:** 2026-11-14 (Sprint 04 WS1-04 published as `37c76d3`; follow-up corrections published as `501edeb`; WS1-05 build/chunk-size budgets published; WS2-06 moderate-endpoint profiling/optimization published; WS3-01 market SSE per-tick canonical selection/fan-out optimization implemented and verified in this pass)
 **Branch:** `develop`
-**Verified local/remote `origin/develop` (WS2-06 pass start):** `0c25d965581ad57bf2d32579cfab0bae8bc400ba` (`docs(plan): record WS1-05 commit and CI results`, in sync after `git fetch origin`)
+**Verified local/remote `origin/develop` (WS3-01 pass start):** `c2cafbd9baf8a4db89fc335ea0dad40be9d5ced1` (`docs(plan): record WS2-06 commit and CI results`, in sync after `git fetch origin`)
 **Publication state (verified 2026-11-14):** Audit docs commit `d0a8b0b4fb94855738603cdfeffd16291b3fdbb8` and consolidated master plan commit `81610ccc092f1b4f15bea6f2547adc3ad410a522` are **both published on `origin/develop`**. Earlier consolidation noted `d0a8b0b` as local-only/unpublished at that time; subsequent safe push published it (and `81610cc`). No force-push/rewrite performed.
 
 ## 1. Objective
@@ -343,6 +343,7 @@ Use documentation matching versions actually installed in MarketHub (`frontend/p
 | 2026-11-14 | Sprint 03 Workstream C: F&O/futures-board single-flight lock lifecycle cleanup | (see §17 / commits) | Ref-counted lock entries, exception-safe cleanup, no removal while waiter/active, >=100 distinct-key and concurrency tests added |
 | 2026-11-14 | WS1-05: build/chunk-size budgets and verification | `b2fc973299a4199c1cd68186e43a9390f96cc532` | Manifest-based budget checker enforces initial JS/CSS/combined and largest JS chunk budgets in normal build and CI; measured baseline recorded; deliberate-exceed/missing-artifact checks verified; CI `ruff` https://github.com/Rajendertyagi/MarketHub/actions/runs/43623801247 and `frontend-build-budget` https://github.com/Rajendertyagi/MarketHub/actions/runs/43623801272 both **success** |
 | 2026-11-14 | WS2-06: profile/optimize `/api/market/breadth`, `/api/options/chain/view`, `/api/market/fno/universe` | `375e586c84706f1c305270b630275e5d3c9e6f22` | Evidence-backed epoch-keyed read-model/member caching; repeated-call latency reduced for F&O universe and option-chain paths, breadth warm path improved; focused regression tests, architecture boundaries, ruff, diff-check green; CI `ruff` https://github.com/Rajendertyagi/MarketHub/actions/runs/43626266293 **success** |
+| 2026-11-14 | WS3-01: market SSE per-tick canonical selection and fan-out cost | (implementation commit; see §21) | Pre-computed canonical SSE payload once per market quote event in callback and reused by all subscribers; per-subscriber reselection/serialization removed on fast path with fallback preserved; isolated synthetic benchmarks show ~4-11x subscriber-side throughput improvement and lower per-event latency/memory at 1-50 subscribers; correctness/regression tests, architecture boundaries, ruff, diff-check green |
 
 ## 15. Sprint 01 implementation results (2026-11-14)
 
@@ -725,5 +726,63 @@ Environment: local Python process, temp SQLite `EventStore` + `InstrumentCatalog
 - New caches trade memory for repeated-read latency (bounded by catalog epoch/day keys and returned copies where appropriate); no TTL-based live-data caching introduced.
 - No DB schema/migration changes; no frontend/shared API contract changes.
 
+## 21. WS3-01 implementation results (2026-11-14)
+
+### Scope and safety
+- **Authorized bounded changes only (WS3-01):** market quote update callback and market SSE subscriber delivery path to reduce repeated per-subscriber canonical selection/serialization; focused regression tests; canonical plan update.
+- **Untouched:** `app/auth/**`, credential/session persistence, broker login/token refresh, feed startup/shutdown lifecycle, subscription reconciliation, FYERS TBT behavior, provider routing/canonical market identity rules, production DB schema/migrations/data, `config.json`/user settings, unrelated frontend/API features, `EventBroker`/SSE architecture redesign. No real broker login, market-data connection, trading action, production write, or app restart. No second MarketHub instance started.
+- **HEAD at start:** `c2cafbd9baf8a4db89fc335ea0dad40be9d5ced1` (`develop`, in sync with `origin/develop`).
+
+### Baseline and bottleneck (evidence)
+- **Data path (traced):** `MarketService.apply_quote()` (post-commit, accepted+changed) → `app/server.py::_on_market_quote_update` serializes raw quote (`quote_to_dict`), JSON-encodes envelope, broadcasts to dedicated `_market_event_broker` (`core/sse_broker.EventBroker`, same pre-encoded string fanned out to each subscriber queue) → `api/routes.py::_market_stream` (per subscriber) parsed each broker line, extracted ref, called `quote_service.quote(ref)` to re-select canonical/freshness-gated payload, then re-serialized and emitted SSE frame; fallback yielded raw broker envelope when no canonical selection available.
+- **Bottleneck:** repeated per-subscriber work on every live market event: JSON parse of broker line + async canonical reselection (`QuoteService.quote` → store/candidate lookup + selection + payload build) + JSON/SSE serialization, multiplied by subscriber count. Work done once per event in callback was only raw quote serialization/broadcast; canonical selection/serialization was repeated per connected subscriber.
+- **Sprint 03 context re-evaluated:** shared once-per-event processing was previously deferred due to delivery/ownership/semantics risk. Current code showed a safe seam: callback already runs post-commit with the applied quote and access to `QuoteService`; computing the same canonical payload once and sharing an immutable pre-serialized representation preserves selection/freshness/provenance while avoiding per-subscriber reselection. No broker architecture change required.
+
+### Chosen approach
+- **`app/server.py::_on_market_quote_update`:** after building the raw quote envelope, resolve ref (`canonical_id`/`instrument_token`/`tradingsymbol`) and compute canonical payload once via `quote_service.quote(ref)` (same selection/provenance/freshness path as REST/SSE reselection). On success, attach immutable `canonical` payload and pre-serialized `canonical_sse` (`json.dumps({"type":"quote","data":canonical_payload})`) to the broadcast envelope; broadcast once. Alert evaluation remains sequential after broadcast and unchanged.
+- **`api/routes.py::_market_stream`:** for live broker events, parse envelope once per subscriber; if `canonical_sse` is present, emit it directly as the SSE `quote` frame (no `quote_service.quote()` call, no canonical payload re-serialization). If absent, preserve existing per-event reselection path (`quote_service.quote` / coordinator fallback) and raw-envelope fallback exactly. Initial snapshot/reset/reconnect behavior unchanged.
+- **Why safe:** canonical payload is computed from the same post-commit store state/event context; `EventBroker` still fans out the same immutable string object per event; subscriber fallback preserves compatibility for raw/test broadcasts and missing canonical selection; no mutable shared quote objects; no event ownership/queue/backpressure/cleanup semantics changed.
+
+### Rejected alternatives
+- **Generic `EventBroker` redesign / new messaging framework:** unnecessary and risky for delivery semantics; rejected.
+- **Broadcasting pre-encoded SSE frames as the only broker contract:** would break raw-envelope fallback/tests and broaden contract changes; rejected in favor of additive envelope fields with fallback.
+- **Skipping canonical reselection without equivalent canonical payload:** would risk stale/incorrect selection when multiple providers represent the same canonical instrument; rejected.
+- **Caching mutable quote objects across subscribers:** unsafe shared mutable state; rejected.
+
+### Exact changed files
+- `app/server.py` — pre-compute canonical selected payload/SSE data once per market quote update and include in broadcast envelope.
+- `api/routes.py` — market SSE subscriber fast path consumes pre-computed `canonical_sse`; existing reselection/fallback preserved.
+- `test/test_market_sse_fanout.py` (new) — focused WS3-01 regression coverage.
+
+### Before/after benchmark results (isolated/synthetic, deterministic fake quote sources; not live endpoint measurements)
+Environment: local Python process, in-memory fake `MarketService`/catalog/`QuoteService`, real `core.sse_broker.EventBroker`, 20 canonical instruments × 2 provider representations (40 stored quotes), 100 events/case, burst delivery unless noted. "Old" = simulated per-subscriber reselection/serialization path (equivalent to prior subscriber work). "New" = pre-computed canonical SSE payload path (callback computes once per event; subscribers emit pre-serialized data). All events delivered; `subs_end=0` in all cases.
+
+| Workload | Subscribers | Old wall / CPU | New wall / CPU | Old events/s (subscriber-events) | New events/s | Old med / p95 (ms/event/subscriber) | New med / p95 | Delivered |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Burst, multi-instrument, multi-provider | 1 | 0.5933s / 0.5000s | 0.0104s / 0.0156s | 169 | 9,651 | 0.4443 / 1.1201 | 0.0793 / 0.1677 | 100/100 |
+| Burst, multi-instrument, multi-provider | 5 | 0.2375s / 0.2344s | 0.0460s / 0.0469s | 2,105 | 10,858 | 0.3939 / 0.7895 | 0.0732 / 0.1464 | 500/500 |
+| Burst, multi-instrument, multi-provider | 20 | 0.8489s / 0.8125s | 0.1664s / 0.1719s | 2,356 | 12,019 | 0.3654 / 0.7126 | 0.0730 / 0.1127 | 2000/2000 |
+| Burst, multi-instrument, multi-provider | 50 | 2.5549s / 2.4219s | 0.5484s / 0.5156s | 1,957 | 9,118 | 0.3949 / 0.9226 | 0.0783 / 0.1723 | 5000/5000 |
+| Duplicate events, same instrument | 5 | 0.1061s / 0.1094s | 0.0500s / 0.0469s | 4,712 | 9,996 | 0.1685 / 0.3554 | 0.0727 / 0.1507 | 500/500 |
+| Low rate (yield between events), 50 events | 10 | 0.2327s / 0.2188s | 0.0475s / 0.0469s | 2,148 | 10,531 | 0.3709 / 0.7698 | 0.0732 / 0.1477 | 500/500 |
+
+Memory (tracemalloc, case-local): new path showed lower or comparable peak/current memory in measured cases (e.g. 50-subscriber burst peak 255,339 B new vs 289,130 B old; 20-subscriber 112,235 B vs 137,348 B). No queue growth/drops observed in benchmark cases (queue size 4096, all delivered).
+
+### Correctness and regression tests
+- **New focused tests:** `test/test_market_sse_fanout.py` — one subscriber canonical payload/provenance fields, multiple subscribers identical payload, event ordering, duplicate/changed-event delivery ordering, reset/reconnect snapshot behavior, slow-subscriber bounded queue behavior (fast subscriber not blocked), disconnect/cleanup (`subscriber_count` returns to zero). **7 passed**.
+- **Relevant existing tests:** `python -m pytest test/test_market_sse.py test/test_sse_stream.py test/test_quote_service_parity.py test/test_quote_coordinator.py test/test_quote_canonical_parity.py test/test_market_sse_fanout.py -q` → **32 passed, 1 skipped**.
+- **Architecture boundaries:** `python -m pytest test/test_architecture_boundaries.py -q` → **17 passed**.
+- **Lint/diff:** `python -m ruff check app/server.py api/routes.py test/test_market_sse_fanout.py` → **All checks passed**; `git diff --check` → **clean**.
+
+### Known limitations
+- Benchmarks are isolated/synthetic (in-memory fakes, no live broker/provider/network/runtime contention), not live endpoint/SSE/browser measurements. Live runtime/browser/SSE/process measurements remain blocked by safe-running-instance constraints.
+- Fast path avoids per-subscriber reselection/serialization but subscribers still parse the broker envelope once to read `canonical_sse`; `EventBroker` and queue semantics unchanged.
+- Canonical payload is computed once in the callback (post-commit) per accepted+changed quote event; this moves selection cost from N subscribers to 1 producer-side computation per event (beneficial at N>1, roughly neutral at N=1) while preserving canonical selection/freshness/provenance.
+- No changes to provider routing, canonical identity rules, quote freshness/stale classification logic, SSE event names/IDs/payload shape, initial snapshot/reset/reconnect semantics, heartbeats, subscriber isolation, queue/backpressure limits, or frontend expectations.
+
+### Commit / CI
+- **Implementation commit:** (see git history / final report; pushed to `origin/develop` in this pass)
+- **Status:** **COMPLETE** (safe, measured subscriber-side fan-out optimization with preserved delivery/correctness semantics).
+
 ---
-**End of canonical master plan. Sprint 04 (WS1-04) published as `37c76d3` with follow-up corrections published as `501edeb`; WS1-05 build/chunk-size budgets published; WS2-06 moderate-endpoint profiling/optimization implemented and verified in this pass (epoch-keyed catalog/universe caching with preserved contracts/freshness/semantics). Live browser/runtime verification remains blocked by safe-running-instance constraints.**
+**End of canonical master plan. Sprint 04 (WS1-04) published as `37c76d3` with follow-up corrections published as `501edeb`; WS1-05 build/chunk-size budgets published; WS2-06 moderate-endpoint profiling/optimization published; WS3-01 market SSE per-tick canonical selection/fan-out optimization implemented and verified in this pass (pre-computed canonical payload/SSE data with preserved contracts/freshness/semantics). Live browser/runtime verification remains blocked by safe-running-instance constraints.**

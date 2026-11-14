@@ -259,8 +259,37 @@ async def _on_market_quote_update(quote: Quote) -> None:
     Single JSON encoding point: the canonical serializer produces the dict,
     this wraps it in the stable market envelope and encodes once —
     EventBroker.broadcast expects a pre-encoded string.
+
+    The canonical (selected, freshness-gated) payload is resolved once here
+    so every SSE subscriber can deliver the same representation without
+    repeating selection/serialization per subscriber.
     """
-    envelope = {"type": "quote", "data": quote_to_dict(quote)}
+    raw = quote_to_dict(quote)
+    envelope: dict[str, Any] = {"type": "quote", "data": raw}
+
+    # Pre-compute canonical selection once for all subscribers. The
+    # subscriber path falls back to per-event reselection when this is
+    # absent, preserving delivery for raw/test broadcasts.
+    ref = (getattr(quote, "canonical_id", None)
+           or getattr(quote, "instrument_token", None)
+           or getattr(quote, "tradingsymbol", None))
+    quote_svc = globals().get("_quote_service")
+    if ref and quote_svc is not None:
+        try:
+            canonical_payload = await quote_svc.quote(str(ref))
+        except Exception:
+            canonical_payload = None
+        if canonical_payload is not None:
+            try:
+                canonical_sse = json.dumps(
+                    {"type": "quote", "data": canonical_payload},
+                    ensure_ascii=False, allow_nan=False)
+            except (TypeError, ValueError):
+                canonical_sse = None
+            if canonical_sse is not None:
+                envelope["canonical"] = canonical_payload
+                envelope["canonical_sse"] = canonical_sse
+
     try:
         line = json.dumps(envelope, ensure_ascii=False, allow_nan=False)
     except (TypeError, ValueError):
