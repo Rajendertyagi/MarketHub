@@ -75,8 +75,13 @@ def test_starting_a_test_server_does_not_modify_the_config() -> None:
     """A full server start/stop cycle leaves config.json byte-identical."""
     from helpers import lifecycle
 
-    before = _config_bytes()
     lifecycle.restore_leftover_config()
+    # Ensure lifecycle captures this test's baseline (a leaked cached original
+    # from an earlier test in the same process would make restore_environment
+    # write back stale bytes, breaking isolation without indicating a real
+    # config-mutation regression).
+    lifecycle._server_original_config = None
+    before = _config_bytes()
 
     async def scenario():
         proc = await lifecycle.start_server()
@@ -93,7 +98,10 @@ def test_starting_a_test_server_does_not_modify_the_config() -> None:
 
 
 def test_the_leftover_backup_is_removed_after_a_clean_run() -> None:
+    from helpers import lifecycle
 
+    lifecycle.restore_leftover_config()
+    lifecycle._server_original_config = None
     asyncio.run(_start_stop())
     assert not (_PROJECT_DIR / "config.json.testbak").exists()
 
