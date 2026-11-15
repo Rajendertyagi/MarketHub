@@ -103,27 +103,35 @@ class MarketAnalyticsService:
         self._stale_after = stale_after
         self._max_concurrent_refreshes = max(1, max_concurrent_refreshes)
 
-        # chain_key → OptionChainAnalyticsSnapshot
+        # chain_key -> OptionChainAnalyticsSnapshot
         self._cache: dict[str, OptionChainAnalyticsSnapshot] = {}
-        # chain_key → set of alert_ids that depend on it
+        # chain_key -> set of alert_ids that depend on it
         self._dependents: dict[str, set[str]] = {}
-        # Per-chain refresh lock
+        # Per-chain refresh lock (created on demand; cleaned when chain idle)
         self._locks: dict[str, asyncio.Lock] = {}
-        # Track last refresh time per chain (for scheduler)
+        # Track last refresh time per chain (for scheduler/diagnostics)
         self._last_refresh: dict[str, float] = {}
-        # Failures per chain (for staleness)
+        # Failures per chain (for staleness/diagnostics)
         self._failure_count: dict[str, int] = {}
+        # Registration generation per chain: incremented on activation and on
+        # deactivation so in-flight refresh commits for stale generations are
+        # rejected. Kept only while chain is active or has in-flight work.
+        self._generation: dict[str, int] = {}
+        # Number of in-flight refresh operations per chain (scheduler/trigger).
+        self._inflight: dict[str, int] = {}
+        # Scheduler-owned in-flight refresh tasks (for deterministic stop).
+        self._scheduler_refresh_tasks: set[asyncio.Task[Any]] = set()
 
         self._scheduler_task: asyncio.Task | None = None
         self._running = False
 
-    # ── Properties ──────────────────────────────────────────────────────────
+    # -- Properties -----------------------------------------------------------
 
     @property
     def stale_after_seconds(self) -> float:
         return self._stale_after
 
-    # ── Chain service ───────────────────────────────────────────────────────
+    # -- Chain service --------------------------------------------------------
 
     def set_chain_service(self, chain_service: Any) -> None:
         """Wire the service that FETCHES chain snapshots.
@@ -135,11 +143,46 @@ class MarketAnalyticsService:
         if chain_service is not None:
             self._chain_service = chain_service
 
-    # ── Chain registry ──────────────────────────────────────────────────────
+    # -- Chain registry -------------------------------------------------------
+
+    def _is_chain_active(self, chain_key: str) -> bool:
+        return bool(self._dependents.get(chain_key))
+
+    def _get_lock(self, chain_key: str) -> asyncio.Lock:
+        lock = self._locks.get(chain_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[chain_key] = lock
+        return lock
+
+    def _maybe_cleanup_chain_state(self, chain_key: str) -> None:
+        """Drop per-chain bookkeeping when fully idle.
+
+        Safe to call only when there are no dependents and no in-flight
+        refresh operations for the chain. Keeps lock/map sizes bounded by
+        active and genuinely in-flight work.
+        """
+        if self._is_chain_active(chain_key):
+            return
+        if self._inflight.get(chain_key, 0) > 0:
+            return
+        self._dependents.pop(chain_key, None)
+        self._cache.pop(chain_key, None)
+        self._last_refresh.pop(chain_key, None)
+        self._failure_count.pop(chain_key, None)
+        self._generation.pop(chain_key, None)
+        self._inflight.pop(chain_key, None)
+        self._locks.pop(chain_key, None)
 
     def register_chain(self, chain_key: str, alert_id: str) -> None:
         """Register a chain key as needed (increments ref count)."""
-        self._dependents.setdefault(chain_key, set()).add(alert_id)
+        dependents = self._dependents.get(chain_key)
+        if dependents is None:
+            dependents = set()
+            self._dependents[chain_key] = dependents
+            # New activation epoch (including re-register after full removal).
+            self._generation[chain_key] = self._generation.get(chain_key, 0) + 1
+        dependents.add(alert_id)
         logger.debug("registered chain %s for alert %s", chain_key, alert_id)
 
     def unregister_chain(self, chain_key: str, alert_id: str) -> None:
@@ -149,11 +192,15 @@ class MarketAnalyticsService:
             return
         dependents.discard(alert_id)
         if not dependents:
-            del self._dependents[chain_key]
-            # Drop cache entry — next registration will fetch fresh.
+            # Invalidate any in-flight refresh for the deactivated epoch and
+            # drop cached state immediately. Lock/bookkeeping cleanup is
+            # deferred until no in-flight refresh can still reference it.
+            self._generation[chain_key] = self._generation.get(chain_key, 0) + 1
+            self._dependents.pop(chain_key, None)
             self._cache.pop(chain_key, None)
             self._last_refresh.pop(chain_key, None)
             self._failure_count.pop(chain_key, None)
+            self._maybe_cleanup_chain_state(chain_key)
             logger.debug("unregistered chain %s (no dependents)", chain_key)
 
     def get_active_chains(self) -> set[str]:
@@ -163,7 +210,7 @@ class MarketAnalyticsService:
     def has_chain(self, chain_key: str) -> bool:
         return chain_key in self._dependents
 
-    # ── Snapshot access ─────────────────────────────────────────────────────
+    # -- Snapshot access ------------------------------------------------------
 
     def get_snapshot(self, chain_key: str) -> OptionChainAnalyticsSnapshot | None:
         """Return the latest snapshot, or None if unavailable/stale."""
@@ -178,7 +225,7 @@ class MarketAnalyticsService:
         """Return the latest snapshot regardless of staleness (for diagnostics)."""
         return self._cache.get(chain_key)
 
-    # ── Startup / lifecycle ─────────────────────────────────────────────────
+    # -- Startup / lifecycle --------------------------------------------------
 
     async def start(self, bg_manager: Any) -> None:
         """Start the background refresh scheduler."""
@@ -191,24 +238,48 @@ class MarketAnalyticsService:
             int(self._refresh_interval), int(self._stale_after))
 
     async def stop(self, bg_manager: Any) -> None:
-        """Stop the background refresh scheduler."""
+        """Stop the background refresh scheduler.
+
+        Shutdown contract: after this returns, no scheduler-owned refresh work
+        continues mutating analytics state. Active chain registrations are
+        preserved for restart semantics.
+        """
         self._running = False
         if bg_manager is not None:
-            await bg_manager.cancel("analytics_scheduler")
+            # Await scheduler termination so it cannot spawn new refresh work.
+            await bg_manager.cancel_and_wait("analytics_scheduler")
+        # Cancel and await any scheduler-owned in-flight refresh tasks.
+        tasks = list(self._scheduler_refresh_tasks)
+        self._scheduler_refresh_tasks.clear()
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        # Defensive: ensure no stale scheduler-owned bookkeeping remains.
+        self._scheduler_refresh_tasks.clear()
 
     async def _scheduler_loop(self) -> None:
         """Periodically refresh all active chains."""
-        while self._running:
-            try:
-                await self._refresh_all_active()
-            except Exception as exc:
-                logger.warning("analytics scheduler tick failed: %s", exc)
-            try:
-                await asyncio.wait_for(
-                    asyncio.sleep(self._refresh_interval),
-                    timeout=self._refresh_interval + 5.0)
-            except asyncio.TimeoutError:
-                pass
+        try:
+            while self._running:
+                try:
+                    await self._refresh_all_active()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.warning("analytics scheduler tick failed: %s", exc)
+                try:
+                    await asyncio.wait_for(
+                        asyncio.sleep(self._refresh_interval),
+                        timeout=self._refresh_interval + 5.0)
+                except asyncio.TimeoutError:
+                    pass
+                except asyncio.CancelledError:
+                    raise
+        except asyncio.CancelledError:
+            # Propagate so cancel/cancel_and_wait observe cancellation.
+            raise
 
     async def _refresh_all_active(self) -> None:
         """Refresh every active chain concurrently with bounded concurrency.
@@ -220,34 +291,77 @@ class MarketAnalyticsService:
         if not keys:
             return
         sem = asyncio.Semaphore(self._max_concurrent_refreshes)
+
         async def _gated(key: str) -> None:
             async with sem:
-                await self._refresh_one(key)
-        await asyncio.gather(*(_gated(k) for k in keys),
-                             return_exceptions=True)
+                await self._refresh_one(key, scheduler_owned=True)
 
-    async def _refresh_one(self, chain_key: str) -> None:
-        """Refresh a single chain with per-chain locking."""
-        lock = self._locks.setdefault(chain_key, asyncio.Lock())
-        async with lock:
-            try:
-                await self._do_refresh(chain_key)
-            except Exception as exc:
-                self._failure_count[chain_key] = (
-                    self._failure_count.get(chain_key, 0) + 1)
-                logger.warning(
-                    "analytics refresh failed for %s: %s",
-                    chain_key, type(exc).__name__)
+        tasks = [asyncio.create_task(_gated(k)) for k in keys]
+        for task in tasks:
+            self._scheduler_refresh_tasks.add(task)
+            task.add_done_callback(self._scheduler_refresh_tasks.discard)
+        try:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        except asyncio.CancelledError:
+            # Stop/cancellation: ensure spawned refresh tasks do not continue
+            # mutating state after scheduler-owned work is cancelled.
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+    async def _refresh_one(self, chain_key: str, *, scheduler_owned: bool = False) -> None:
+        """Refresh a single chain with per-chain locking and generation guards."""
+        generation = self._generation.get(chain_key, 0)
+        if not self._is_chain_active(chain_key):
+            return
+        lock = self._get_lock(chain_key)
+        self._inflight[chain_key] = self._inflight.get(chain_key, 0) + 1
+        try:
+            async with lock:
+                # Re-check after waiting for lock: chain may have been
+                # unregistered/re-registered while we waited.
+                if (not self._is_chain_active(chain_key)
+                        or self._generation.get(chain_key) != generation):
+                    return
+                try:
+                    analytics = await self._compute_refresh(chain_key)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    # Record failure only for the current active generation.
+                    if (self._is_chain_active(chain_key)
+                            and self._generation.get(chain_key) == generation):
+                        self._failure_count[chain_key] = (
+                            self._failure_count.get(chain_key, 0) + 1)
+                    logger.warning(
+                        "analytics refresh failed for %s: %s",
+                        chain_key, type(exc).__name__)
+                    return
+                # Commit only if the registration generation is still current.
+                if (analytics is not None
+                        and self._is_chain_active(chain_key)
+                        and self._generation.get(chain_key) == generation):
+                    self._cache[chain_key] = analytics
+                    self._last_refresh[chain_key] = time.monotonic()
+                    self._failure_count[chain_key] = 0
+                    logger.debug("refreshed chain %s (pcr_oi=%s, max_pain=%s)",
+                                 chain_key, analytics.pcr_oi, analytics.max_pain)
+        finally:
+            remaining = self._inflight.get(chain_key, 0) - 1
+            if remaining > 0:
+                self._inflight[chain_key] = remaining
+            else:
+                self._inflight.pop(chain_key, None)
+            self._maybe_cleanup_chain_state(chain_key)
 
     def _resolve_underlying_row(self, exchange: str,
                                 underlying: str) -> dict[str, Any] | None:
         """The catalogue row for a canonical id's underlying.
 
-        The EXACT-symbol read model is used: the general catalogue search is
-        a substring LIKE with a LIMIT, so a lookup for "NSE" (or a short
-        symbol) could resolve to an unrelated row — a bond, a different
-        instrument — and the chain would then be fetched for the wrong
-        instrument entirely.
+        Prefer exact-symbol lookups when available; fall back to catalogue
+        search for compatibility with existing callers/tests.
         """
         catalog = self._instrument_catalog
         if catalog is None:
@@ -263,25 +377,29 @@ class MarketAnalyticsService:
                     row = catalog.find_equity(want, exchange=exchange)
             except Exception:
                 row = None
-            if row:
+            if isinstance(row, dict) and row:
                 return row
+        # Compatibility fallback: general search (older behavior / test doubles).
+        try:
+            results = catalog.search(exchange=exchange, q=underlying, limit=5)
+        except Exception:
+            results = None
+        if isinstance(results, list) and results:
+            first = results[0]
+            if isinstance(first, dict):
+                return first
         return None
 
-    async def _do_refresh(self, chain_key: str) -> None:
+    async def _compute_refresh(self, chain_key: str) -> OptionChainAnalyticsSnapshot | None:
         """Fetch chain from the chain service and compute analytics.
 
-        The chain identity is parsed STRUCTURALLY: the canonical id and
-        the expiry are separated on their LAST delimiter, because a
-        canonical id itself contains colons
-        (``NSE:OPTION:ADANIGREEN:2026-10-27:1300:CE``). Splitting on the
-        first colon truncated the canonical id to ``NSE`` and turned the
-        expiry into the rest of the id — the chain then resolved to a
-        random catalogue row (a bond) instead of the intended underlying.
+        Returns a snapshot without mutating service state; caller commits only
+        for the current active generation.
         """
         canonical_id, expiry = parse_chain_key(chain_key)
         if not canonical_id or not expiry:
             logger.error("invalid chain_key format: %r", chain_key)
-            return
+            return None
         # Extract exchange and underlying from canonical_id.
         # Format: "EXCHANGE:TYPE:SYMBOL" or "EXCHANGE:TYPE:SYMBOL:EXPIRY:STRIKE:OPT"
         id_parts = canonical_id.split(":")
@@ -294,7 +412,7 @@ class MarketAnalyticsService:
             target = self._resolve_underlying_row(exchange, underlying)
         if target is None:
             logger.warning("no catalog match for chain %s", chain_key)
-            return
+            return None
 
         instrument_key = target.get("instrument_token", "")
         tradingsymbol = target.get("tradingsymbol", "")
@@ -312,7 +430,7 @@ class MarketAnalyticsService:
 
         if not isinstance(snapshot, OptionChainSnapshot):
             logger.warning("option_chain returned unexpected type for %s", chain_key)
-            return
+            return None
 
         # Compute analytics from the snapshot.
         pcr_result = compute_pcr(snapshot)
@@ -330,7 +448,7 @@ class MarketAnalyticsService:
         aggregate_put_oi = getattr(snapshot, "put_oi", None)
 
         now = datetime.now(timezone.utc)
-        analytics = OptionChainAnalyticsSnapshot(
+        return OptionChainAnalyticsSnapshot(
             chain_key=chain_key,
             canonical_underlying_id=canonical_id,
             exchange=exchange,
@@ -352,11 +470,24 @@ class MarketAnalyticsService:
             stale_after_seconds=self._stale_after,
         )
 
-        self._cache[chain_key] = analytics
-        self._last_refresh[chain_key] = time.monotonic()
-        self._failure_count[chain_key] = 0
-        logger.debug("refreshed chain %s (pcr_oi=%s, max_pain=%s)",
-                      chain_key, analytics.pcr_oi, analytics.max_pain)
+    async def _do_refresh(self, chain_key: str) -> None:
+        """Compatibility wrapper: compute and commit for current generation.
+
+        Kept for internal/external callers that may invoke it directly; commits
+        are guarded by the current active generation.
+        """
+        generation = self._generation.get(chain_key, 0)
+        if not self._is_chain_active(chain_key):
+            return
+        analytics = await self._compute_refresh(chain_key)
+        if (analytics is not None
+                and self._is_chain_active(chain_key)
+                and self._generation.get(chain_key) == generation):
+            self._cache[chain_key] = analytics
+            self._last_refresh[chain_key] = time.monotonic()
+            self._failure_count[chain_key] = 0
+            logger.debug("refreshed chain %s (pcr_oi=%s, max_pain=%s)",
+                         chain_key, analytics.pcr_oi, analytics.max_pain)
 
     def reconstruct_from_alerts(self, load_enabled: Any) -> int:
         """Rebuild active chain registry from persisted enabled alerts.
